@@ -1,0 +1,1872 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { api, patch, post } from './api';
+import { completedMessages } from './codex';
+import type { Overview, Project, RecordData } from './types';
+
+type Field = {
+  name: string;
+  label: string;
+  type?: 'text' | 'textarea' | 'select';
+  options?: string[];
+  required?: boolean;
+};
+const priorities = ['low', 'medium', 'high', 'critical'];
+const questionStates = [
+  'open',
+  'under_discussion',
+  'awaiting_validation',
+  'resolved',
+  'reopened',
+];
+const taskStates = ['backlog', 'ready', 'in_progress', 'blocked', 'completed'];
+const decisionStates = ['proposed', 'accepted', 'superseded', 'rejected'];
+const titleField: Field = { name: 'title', label: 'Title', required: true };
+const descriptionField: Field = {
+  name: 'description',
+  label: 'Description',
+  type: 'textarea',
+};
+const priorityField: Field = {
+  name: 'priority',
+  label: 'Priority',
+  type: 'select',
+  options: priorities,
+};
+const label = (value: string) => value.replaceAll('_', ' ');
+function Badge({ value = '' }: { value?: string }) {
+  return <span className={`badge ${value}`}>{label(value)}</span>;
+}
+function Markdown({ children }: { children?: string }) {
+  return children ? (
+    <div className="markdown">
+      <ReactMarkdown
+        components={{
+          img: ({ alt }) => <span>[Image: {alt || 'image'}]</span>,
+        }}
+      >
+        {children}
+      </ReactMarkdown>
+    </div>
+  ) : (
+    <span className="muted">None recorded.</span>
+  );
+}
+function ErrorBox({ error }: { error: string }) {
+  return error ? (
+    <div className="error" role="alert">
+      {error}
+    </div>
+  ) : null;
+}
+function Empty({ children }: { children: React.ReactNode }) {
+  return <div className="empty">{children}</div>;
+}
+
+function Form({
+  title,
+  fields,
+  initial = {},
+  onSave,
+  onClose,
+}: {
+  title: string;
+  fields: Field[];
+  initial?: Record<string, any>;
+  onSave: (data: Record<string, any>) => Promise<unknown>;
+  onClose: () => void;
+}) {
+  const [values, setValues] = useState<Record<string, any>>(() =>
+    Object.fromEntries(
+      fields.map((f) => [
+        f.name,
+        initial[f.name] ??
+          (
+            {
+              priority: 'medium',
+              category: 'technical',
+              source: 'user',
+            } as Record<string, string>
+          )[f.name] ??
+          f.options?.[0] ??
+          '',
+      ]),
+    ),
+  );
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  return (
+    <div className="modal-backdrop">
+      <section
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+      >
+        <div className="section-title">
+          <h2>{title}</h2>
+          <button
+            className="quiet"
+            disabled={saving}
+            onClick={onClose}
+            aria-label="Close form"
+          >
+            ×
+          </button>
+        </div>
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setSaving(true);
+            setError('');
+            try {
+              await onSave(values);
+              onClose();
+            } catch (e) {
+              setError(String((e as Error).message));
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          {fields.map((f) => (
+            <label key={f.name}>
+              {f.label}
+              {f.required ? ' *' : ''}
+              {f.type === 'textarea' ? (
+                <textarea
+                  value={values[f.name]}
+                  required={f.required}
+                  rows={4}
+                  onChange={(e) =>
+                    setValues({ ...values, [f.name]: e.target.value })
+                  }
+                />
+              ) : f.type === 'select' ? (
+                <select
+                  value={values[f.name]}
+                  onChange={(e) =>
+                    setValues({ ...values, [f.name]: e.target.value })
+                  }
+                >
+                  {f.options?.map((o) => (
+                    <option key={o} value={o}>
+                      {label(o)}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <input
+                  value={values[f.name]}
+                  required={f.required}
+                  onChange={(e) =>
+                    setValues({ ...values, [f.name]: e.target.value })
+                  }
+                />
+              )}
+            </label>
+          ))}
+          <ErrorBox error={error} />
+          <div className="actions">
+            <button
+              type="button"
+              className="secondary"
+              disabled={saving}
+              onClick={onClose}
+            >
+              Cancel
+            </button>
+            <button disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+const projectFields: Field[] = [
+  { name: 'name', label: 'Project name', required: true },
+  descriptionField,
+  { name: 'goals', label: 'Goals', type: 'textarea' },
+  { name: 'status', label: 'Development stage' },
+  {
+    name: 'repository_path',
+    label: 'Existing local Git repository (absolute path, optional)',
+  },
+  { name: 'git_remote', label: 'Git remote (optional)' },
+  { name: 'tags', label: 'Tags (comma separated)' },
+];
+const projectBody = (data: Record<string, any>) => ({
+  ...data,
+  repository_path: data.repository_path || null,
+  git_remote: data.git_remote || '',
+  tags: String(data.tags)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean),
+});
+
+export default function App() {
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [selected, setSelected] = useState<number | null>(null);
+  const [error, setError] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const fetchProjects = useCallback(async () => {
+    const data = await api<Project[]>('/projects');
+    setProjects(data);
+    setSelected((current) =>
+      current !== null && data.some((p) => p.id === current)
+        ? current
+        : (data[0]?.id ?? null),
+    );
+  }, []);
+  useEffect(() => {
+    fetchProjects()
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [fetchProjects]);
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-icon">P</span>
+          <div>
+            ProjectHub<small>Research workspace</small>
+          </div>
+        </div>
+        <div className="sidebar-label">YOUR PROJECTS</div>
+        <div className="project-list">
+          {projects.map((p) => (
+            <button
+              key={p.id}
+              className={`project-option ${p.id === selected ? 'selected' : ''}`}
+              onClick={() => setSelected(p.id)}
+            >
+              <span className="project-dot" />
+              {p.name}
+            </button>
+          ))}
+        </div>
+        <button className="add-project" onClick={() => setAdding(true)}>
+          ＋ Add project
+        </button>
+        <div className="sidebar-footer">
+          <span className="local-dot" /> Local workspace
+          <br />
+          <small>
+            Knowledge stays on this computer.
+            <br />
+            Codex requests go to OpenAI.
+          </small>
+        </div>
+      </aside>
+      <div className="workspace">
+        <header className="topbar">
+          <span>PROJECT WORKSPACE</span>
+          <span className="local-label">● localhost</span>
+        </header>
+        <ErrorBox error={error} />
+        {loading ? (
+          <Empty>Loading projects…</Empty>
+        ) : selected === null ? (
+          <main>
+            <div className="page-heading">
+              <p className="eyebrow">YOUR RESEARCH, CONNECTED</p>
+              <h1>A clear place for project knowledge.</h1>
+              <p>
+                Keep questions, evidence, decisions, and development tasks
+                together.
+              </p>
+            </div>
+            <button onClick={() => setAdding(true)}>
+              Register your first project
+            </button>
+          </main>
+        ) : (
+          <ProjectWorkspace
+            key={selected}
+            projectId={selected}
+            onProjectChanged={fetchProjects}
+          />
+        )}
+      </div>
+      {adding && (
+        <Form
+          title="Add project"
+          fields={projectFields}
+          initial={{ status: 'planning' }}
+          onClose={() => setAdding(false)}
+          onSave={async (data) => {
+            const p = await post('/projects', projectBody(data));
+            await fetchProjects();
+            setSelected(p.id);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function ProjectWorkspace({
+  projectId,
+  onProjectChanged,
+}: {
+  projectId: number;
+  onProjectChanged: () => Promise<void>;
+}) {
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [view, setView] = useState('Dashboard');
+  const [error, setError] = useState('');
+  const [form, setForm] = useState<{
+    title: string;
+    fields: Field[];
+    initial?: any;
+    save: (data: any) => Promise<unknown>;
+  } | null>(null);
+  const [report, setReport] = useState<any>(null);
+  const [search, setSearch] = useState('');
+  const [results, setResults] = useState<any[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  const base = `/projects/${projectId}`;
+  const load = useCallback(async () => {
+    const result = await api<Overview>(`${base}/overview`);
+    if (alive.current) setOverview(result);
+  }, [base]);
+  useEffect(() => {
+    alive.current = true;
+    load().catch((e) => setError(e.message));
+    return () => {
+      alive.current = false;
+    };
+  }, [load]);
+  async function run(action: () => Promise<unknown>) {
+    setError('');
+    setBusy(true);
+    try {
+      await action();
+      await load();
+    } catch (e) {
+      if (alive.current) setError((e as Error).message);
+    } finally {
+      if (alive.current) setBusy(false);
+    }
+  }
+  function edit(
+    title: string,
+    fields: Field[],
+    endpoint: string,
+    initial?: any,
+    transform: (d: any) => any = (d) => d,
+  ) {
+    setForm({
+      title,
+      fields,
+      initial,
+      save: async (data) => {
+        await (initial ? patch : post)(`${base}${endpoint}`, transform(data));
+        await load();
+      },
+    });
+  }
+  if (!overview)
+    return (
+      <main>
+        <ErrorBox error={error} />
+        <Empty>
+          {error
+            ? 'Project could not be loaded.'
+            : 'Loading project knowledge…'}
+        </Empty>
+      </main>
+    );
+  const { project, questions, decisions, tasks, notes, activity } = overview;
+  const accepted = decisions.filter((d) => d.status === 'accepted');
+  const open = questions.filter((q) => q.status !== 'resolved');
+  const tabs = [
+    'Dashboard',
+    'Questions',
+    'Decisions',
+    'Tasks',
+    'Knowledge',
+    'Architecture',
+    'Codex',
+    'Reviews',
+  ];
+  return (
+    <>
+      <div className="project-header">
+        <div>
+          <p className="eyebrow">
+            PROJECT / {String(project.id).padStart(2, '0')}
+          </p>
+          <h1>{project.name}</h1>
+          <p className="muted">
+            {project.description ||
+              'Add a description to give this project context.'}
+          </p>
+        </div>
+        <div className="project-actions">
+          <Badge value={project.status} />
+          <button
+            className="secondary"
+            onClick={() =>
+              setForm({
+                title: 'Edit project',
+                fields: projectFields,
+                initial: { ...project, tags: project.tags.join(', ') },
+                save: async (data) => {
+                  await patch(base, projectBody(data));
+                  await load();
+                  await onProjectChanged();
+                },
+              })
+            }
+          >
+            Edit overview
+          </button>
+        </div>
+      </div>
+      <nav className="tabs" aria-label="Project sections">
+        {tabs.map((t) => (
+          <button
+            key={t}
+            className={view === t ? 'active' : ''}
+            onClick={() => {
+              setView(t);
+              setReport(null);
+              setResults(null);
+            }}
+          >
+            {t}
+          </button>
+        ))}
+      </nav>
+      <main>
+        <ErrorBox error={error} />
+        <form
+          className="search-bar"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            await run(async () => {
+              const r = await api(
+                `${base}/search?q=${encodeURIComponent(search)}`,
+              );
+              setResults(Array.isArray(r) ? r : (r.results ?? []));
+            });
+          }}
+        >
+          <span aria-hidden="true">⌕</span>
+          <input
+            aria-label="Search project knowledge"
+            placeholder="Search this project's knowledge…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <button className="secondary" disabled={busy || !search.trim()}>
+            Search
+          </button>
+          {results && (
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => setResults(null)}
+            >
+              Clear
+            </button>
+          )}
+        </form>
+        {results ? (
+          <section className="card">
+            <h2>Search results</h2>
+            {results.length ? (
+              results.map((r, i) => (
+                <article className="list-item" key={i}>
+                  <small>{r.entity_type ?? r.kind ?? r.type ?? 'Record'}</small>
+                  <h3>{r.title}</h3>
+                  <p>{r.snippet ?? r.content ?? r.description}</p>
+                </article>
+              ))
+            ) : (
+              <Empty>No matching records in this project.</Empty>
+            )}
+          </section>
+        ) : (
+          <>
+            {view === 'Dashboard' && (
+              <>
+                <div className="metrics">
+                  {[
+                    [open.length, 'Open questions'],
+                    [accepted.length, 'Accepted decisions'],
+                    [
+                      tasks.filter((t) => t.status !== 'completed').length,
+                      'Active tasks',
+                    ],
+                    [notes.length, 'Knowledge notes'],
+                  ].map(([value, name]) => (
+                    <div className="metric" key={name}>
+                      <strong>{value}</strong>
+                      <span>{name}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="two-column">
+                  <section className="card">
+                    <div className="section-title">
+                      <h2>Project overview</h2>
+                      <span className="subtle-label">RECORDED FACTS</span>
+                    </div>
+                    <h4>Goals</h4>
+                    <Markdown>{project.goals}</Markdown>
+                    <h4>Repository</h4>
+                    <code className="repository">
+                      {project.repository_path ?? 'No repository registered'}
+                    </code>
+                    <div className="tags">
+                      {project.tags.map((t) => (
+                        <span key={t}>{t}</span>
+                      ))}
+                    </div>
+                    <button
+                      className="secondary"
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => setReport(await api(`${base}/summary`)))
+                      }
+                    >
+                      View structured summary
+                    </button>
+                  </section>
+                  <section className="card">
+                    <div className="section-title">
+                      <h2>Open questions</h2>
+                      <button
+                        className="quiet"
+                        onClick={() => setView('Questions')}
+                      >
+                        View all →
+                      </button>
+                    </div>
+                    {open.slice(0, 5).map((q) => (
+                      <div className="compact-row" key={q.id}>
+                        <h3>{q.title}</h3>
+                        <Badge value={q.status} />
+                      </div>
+                    ))}
+                    {!open.length && <Empty>No open questions.</Empty>}
+                  </section>
+                  <section className="card">
+                    <h2>Accepted decisions</h2>
+                    {accepted.slice(0, 5).map((d) => (
+                      <div className="compact-row" key={d.id}>
+                        <h3>{d.title}</h3>
+                        <p>{d.description}</p>
+                      </div>
+                    ))}
+                    {!accepted.length && (
+                      <Empty>
+                        Accepted answers and decisions will appear here.
+                      </Empty>
+                    )}
+                  </section>
+                  <section className="card">
+                    <h2>Latest activity</h2>
+                    {activity.slice(0, 8).map((a) => (
+                      <div className="activity" key={a.id}>
+                        <span className="activity-dot" />
+                        <div>
+                          <strong>
+                            {label(a.action ?? a.event_type ?? 'Updated')}
+                          </strong>
+                          <p>
+                            {a.entity_type ?? ''}{' '}
+                            {a.entity_id ? `#${a.entity_id}` : ''}
+                          </p>
+                          <small>
+                            {new Date(a.created_at).toLocaleString()}
+                          </small>
+                        </div>
+                      </div>
+                    ))}
+                    {!activity.length && <Empty>No activity recorded.</Empty>}
+                  </section>
+                </div>
+              </>
+            )}
+            {view === 'Questions' && (
+              <>
+                <div className="section-title">
+                  <div>
+                    <h2>Questions & answers</h2>
+                    <p className="muted">
+                      Explore alternatives, preserve evidence, and make
+                      decisions explicitly.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() =>
+                      edit(
+                        'New question',
+                        [
+                          titleField,
+                          descriptionField,
+                          { name: 'category', label: 'Category' },
+                          priorityField,
+                        ],
+                        '/questions',
+                        undefined,
+                      )
+                    }
+                  >
+                    ＋ New question
+                  </button>
+                </div>
+                {!questions.length && (
+                  <Empty>
+                    Create a question to start recording alternatives.
+                  </Empty>
+                )}
+                {questions.map((q) => (
+                  <section className="card question" key={q.id}>
+                    <div className="section-title">
+                      <div>
+                        <small>
+                          QUESTION #{q.id} · {q.category || 'General'}
+                        </small>
+                        <h2>{q.title}</h2>
+                      </div>
+                      <div className="inline">
+                        <Badge value={q.priority} />
+                        <Badge value={q.status} />
+                      </div>
+                    </div>
+                    <Markdown>{q.description}</Markdown>
+                    <div className="actions left">
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          edit(
+                            'Edit question',
+                            [
+                              titleField,
+                              descriptionField,
+                              { name: 'category', label: 'Category' },
+                              priorityField,
+                              ...((q.status === 'resolved'
+                                ? []
+                                : [
+                                    {
+                                      name: 'status',
+                                      label: 'Status',
+                                      type: 'select',
+                                      options: questionStates.filter(
+                                        (s) => s !== 'resolved',
+                                      ),
+                                    },
+                                  ]) as Field[]),
+                            ],
+                            `/questions/${q.id}`,
+                            q,
+                          )
+                        }
+                      >
+                        Edit
+                      </button>
+                      {q.status === 'resolved' && (
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            run(() => post(`${base}/questions/${q.id}/reopen`))
+                          }
+                        >
+                          Reopen question
+                        </button>
+                      )}
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          edit(
+                            'Propose answer',
+                            [
+                              {
+                                name: 'solution',
+                                label: 'Proposed solution',
+                                type: 'textarea',
+                                required: true,
+                              },
+                              {
+                                name: 'explanation',
+                                label: 'Explanation',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'advantages',
+                                label: 'Advantages',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'limitations',
+                                label: 'Limitations',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'evidence',
+                                label: 'Evidence / references',
+                                type: 'textarea',
+                              },
+                              { name: 'source', label: 'Author / source' },
+                            ],
+                            `/questions/${q.id}/answers`,
+                          )
+                        }
+                      >
+                        ＋ Propose answer
+                      </button>
+                    </div>
+                    <div className="answers">
+                      {q.answers?.map((a: RecordData) => (
+                        <article
+                          key={a.id}
+                          className={`answer ${a.status === 'accepted' ? 'accepted-answer' : ''}`}
+                        >
+                          <div className="section-title">
+                            <h3>{a.solution}</h3>
+                            <Badge value={a.status} />
+                          </div>
+                          <Markdown>{a.explanation}</Markdown>
+                          {['advantages', 'limitations', 'evidence'].map(
+                            (key) =>
+                              a[key] && (
+                                <div key={key}>
+                                  <h4>{label(key)}</h4>
+                                  <Markdown>{a[key]}</Markdown>
+                                </div>
+                              ),
+                          )}
+                          <small>Source: {a.source || 'Not recorded'}</small>
+                          {a.status !== 'accepted' && (
+                            <div className="actions left">
+                              <button
+                                disabled={busy}
+                                onClick={() =>
+                                  setForm({
+                                    title: 'Accept proposed answer',
+                                    fields: [
+                                      {
+                                        name: 'create_task',
+                                        label:
+                                          'Also create implementation task?',
+                                        type: 'select',
+                                        options: ['no', 'yes'],
+                                      },
+                                    ],
+                                    save: async (data) => {
+                                      await post(
+                                        `${base}/questions/${q.id}/accept`,
+                                        {
+                                          answer_id: a.id,
+                                          create_task:
+                                            data.create_task === 'yes',
+                                        },
+                                      );
+                                      await load();
+                                    },
+                                  })
+                                }
+                              >
+                                Accept answer
+                              </button>
+                            </div>
+                          )}
+                        </article>
+                      ))}
+                    </div>
+                  </section>
+                ))}
+              </>
+            )}
+            {view === 'Decisions' && (
+              <>
+                <div className="section-title">
+                  <div>
+                    <h2>Decision register</h2>
+                    <p className="muted">
+                      Every change is preserved in audit history.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() =>
+                      edit(
+                        'Propose decision',
+                        [
+                          titleField,
+                          descriptionField,
+                          {
+                            name: 'rationale',
+                            label: 'Rationale',
+                            type: 'textarea',
+                          },
+                          {
+                            name: 'alternatives',
+                            label: 'Considered alternatives',
+                            type: 'textarea',
+                          },
+                          {
+                            name: 'evidence',
+                            label: 'Evidence / references',
+                            type: 'textarea',
+                          },
+                          {
+                            name: 'limitations',
+                            label: 'Limitations',
+                            type: 'textarea',
+                          },
+                        ],
+                        '/decisions',
+                      )
+                    }
+                  >
+                    ＋ Propose decision
+                  </button>
+                </div>
+                {!decisions.length && <Empty>No decisions recorded.</Empty>}
+                {decisions.map((d) => (
+                  <section className="card" key={d.id}>
+                    <div className="section-title">
+                      <div>
+                        <small>
+                          DECISION #{d.id}
+                          {d.question_id ? ` · QUESTION #${d.question_id}` : ''}
+                        </small>
+                        <h2>{d.title}</h2>
+                      </div>
+                      <Badge value={d.status} />
+                    </div>
+                    <Markdown>{d.description}</Markdown>
+                    {[
+                      'rationale',
+                      'alternatives',
+                      'evidence',
+                      'limitations',
+                    ].map(
+                      (key) =>
+                        d[key] && (
+                          <div key={key}>
+                            <h4>{label(key)}</h4>
+                            <Markdown>{d[key]}</Markdown>
+                          </div>
+                        ),
+                    )}
+                    <div className="actions left">
+                      <button
+                        className="secondary"
+                        onClick={() =>
+                          edit(
+                            'Revise decision',
+                            [
+                              titleField,
+                              descriptionField,
+                              {
+                                name: 'rationale',
+                                label: 'Rationale',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'alternatives',
+                                label: 'Alternatives',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'evidence',
+                                label: 'Evidence',
+                                type: 'textarea',
+                              },
+                              {
+                                name: 'limitations',
+                                label: 'Limitations',
+                                type: 'textarea',
+                              },
+                              ...((d.answer_id
+                                ? []
+                                : [
+                                    {
+                                      name: 'status',
+                                      label: 'Status',
+                                      type: 'select',
+                                      options:
+                                        d.status === 'superseded'
+                                          ? decisionStates.filter(
+                                              (s) => s !== 'accepted',
+                                            )
+                                          : decisionStates,
+                                    },
+                                  ]) as Field[]),
+                            ],
+                            `/decisions/${d.id}`,
+                            d,
+                          )
+                        }
+                      >
+                        Revise / change status
+                      </button>
+                      {d.answer_id && d.status === 'accepted' && (
+                        <button
+                          className="secondary"
+                          disabled={busy}
+                          onClick={() =>
+                            run(() =>
+                              post(`${base}/questions/${d.question_id}/reopen`),
+                            )
+                          }
+                        >
+                          Reopen related question
+                        </button>
+                      )}
+                      {d.status === 'accepted' && (
+                        <>
+                          <button
+                            className="secondary"
+                            disabled={busy}
+                            onClick={() =>
+                              run(() => post(`${base}/decisions/${d.id}/tasks`))
+                            }
+                          >
+                            Create implementation task
+                          </button>
+                          <button
+                            className="secondary"
+                            onClick={() => setView('Codex')}
+                          >
+                            Send decision to Codex →
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  </section>
+                ))}
+              </>
+            )}
+            {view === 'Tasks' && (
+              <>
+                <div className="section-title">
+                  <h2>Development tasks</h2>
+                  <button
+                    onClick={() =>
+                      edit(
+                        'New task',
+                        [
+                          titleField,
+                          descriptionField,
+                          priorityField,
+                          {
+                            name: 'status',
+                            label: 'Status',
+                            type: 'select',
+                            options: taskStates,
+                          },
+                        ],
+                        '/tasks',
+                      )
+                    }
+                  >
+                    ＋ New task
+                  </button>
+                </div>
+                <div className="task-board">
+                  {taskStates.map((status) => (
+                    <section className="task-column" key={status}>
+                      <h3>
+                        {label(status)}{' '}
+                        <span>
+                          {tasks.filter((t) => t.status === status).length}
+                        </span>
+                      </h3>
+                      {tasks
+                        .filter((t) => t.status === status)
+                        .map((t) => (
+                          <article className="task" key={t.id}>
+                            <Badge value={t.priority} />
+                            <h3>{t.title}</h3>
+                            <p>{t.description}</p>
+                            {t.decision_id && (
+                              <small>Decision #{t.decision_id}</small>
+                            )}
+                            <button
+                              className="quiet"
+                              onClick={() =>
+                                edit(
+                                  'Edit task',
+                                  [
+                                    titleField,
+                                    descriptionField,
+                                    priorityField,
+                                    {
+                                      name: 'status',
+                                      label: 'Status',
+                                      type: 'select',
+                                      options: taskStates,
+                                    },
+                                  ],
+                                  `/tasks/${t.id}`,
+                                  t,
+                                )
+                              }
+                            >
+                              Edit task →
+                            </button>
+                          </article>
+                        ))}
+                    </section>
+                  ))}
+                </div>
+              </>
+            )}
+            {view === 'Knowledge' && (
+              <>
+                <div className="section-title">
+                  <div>
+                    <h2>Project knowledge</h2>
+                    <p className="muted">
+                      Notes, assumptions, references, and imported text.
+                      Imported content is untrusted data.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() =>
+                      edit(
+                        'New knowledge note',
+                        [
+                          titleField,
+                          {
+                            name: 'content',
+                            label: 'Markdown content',
+                            type: 'textarea',
+                          },
+                          {
+                            name: 'kind',
+                            label: 'Kind',
+                            type: 'select',
+                            options: [
+                              'note',
+                              'technical_assumption',
+                              'scientific_assumption',
+                              'evidence',
+                              'limitation',
+                              'proposal',
+                            ],
+                          },
+                          {
+                            name: 'reference',
+                            label: 'Document URL or repository file reference',
+                          },
+                        ],
+                        '/notes',
+                      )
+                    }
+                  >
+                    ＋ New note
+                  </button>
+                </div>
+                <div className="toolbar">
+                  <label className="upload-label">
+                    Import text / Markdown{' '}
+                    <input
+                      aria-label="Import document"
+                      type="file"
+                      accept=".txt,.md"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        e.target.value = '';
+                        if (file.size > 2 * 1024 * 1024) {
+                          setError('Maximum upload size is 2 MiB.');
+                          return;
+                        }
+                        run(async () => {
+                          const formData = new FormData();
+                          formData.append('file', file);
+                          await api(`${base}/documents`, {
+                            method: 'POST',
+                            body: formData,
+                          });
+                        });
+                      }}
+                    />
+                  </label>
+                  <a
+                    className="button secondary"
+                    href={`/api${base}/export`}
+                    download={`${project.name}-knowledge.json`}
+                  >
+                    Export project JSON
+                  </a>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => setReport(await api(`${base}/audit`)))
+                    }
+                  >
+                    View audit history
+                  </button>
+                </div>
+                {!notes.length && <Empty>No knowledge notes yet.</Empty>}
+                {notes.map((n) => (
+                  <section className="card" key={n.id}>
+                    <div className="section-title">
+                      <h2>{n.title}</h2>
+                      <Badge value={n.kind} />
+                    </div>
+                    <Markdown>{n.content}</Markdown>
+                    {n.reference && (
+                      <p>
+                        <strong>Reference:</strong> <span>{n.reference}</span>
+                      </p>
+                    )}
+                    <button
+                      className="quiet"
+                      onClick={() =>
+                        edit(
+                          'Edit note',
+                          [
+                            titleField,
+                            {
+                              name: 'content',
+                              label: 'Markdown content',
+                              type: 'textarea',
+                            },
+                            { name: 'kind', label: 'Kind' },
+                            { name: 'reference', label: 'Reference' },
+                          ],
+                          `/notes/${n.id}`,
+                          n,
+                        )
+                      }
+                    >
+                      Edit note →
+                    </button>
+                  </section>
+                ))}
+              </>
+            )}
+            {view === 'Architecture' && (
+              <Architecture
+                source={project.architecture_mermaid || ''}
+                onSave={(source) =>
+                  run(() => patch(base, { architecture_mermaid: source }))
+                }
+              />
+            )}
+            {view === 'Codex' && (
+              <Codex
+                base={base}
+                decisions={accepted}
+                onError={setError}
+                onKnowledgeChanged={load}
+              />
+            )}
+            {view === 'Reviews' && (
+              <section className="card">
+                <p className="eyebrow">PROJECT HEALTH</p>
+                <h2>Review recorded knowledge</h2>
+                <p>
+                  Check unresolved questions, incomplete work, missing evidence,
+                  and validation gaps. Deterministic findings reflect stored
+                  records; they do not establish scientific validity.
+                </p>
+                <div className="actions left">
+                  <button
+                    disabled={busy}
+                    onClick={() =>
+                      run(async () => setReport(await api(`${base}/review`)))
+                    }
+                  >
+                    Run project review
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => setView('Codex')}
+                  >
+                    Request AI-assisted review →
+                  </button>
+                </div>
+              </section>
+            )}
+          </>
+        )}
+        {report !== null && (
+          <section className="card report">
+            <div className="section-title">
+              <h2>{view === 'Reviews' ? 'Review report' : 'Project report'}</h2>
+              <button className="quiet" onClick={() => setReport(null)}>
+                Close
+              </button>
+            </div>
+            <Report value={report} />
+          </section>
+        )}
+      </main>
+      {form && (
+        <Form
+          title={form.title}
+          fields={form.fields}
+          initial={form.initial}
+          onSave={form.save}
+          onClose={() => setForm(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function Report({ value }: { value: any }) {
+  if (typeof value === 'string') return <Markdown>{value}</Markdown>;
+  if (value?.markdown) return <Markdown>{value.markdown}</Markdown>;
+  if (value?.content && typeof value.content === 'string')
+    return (
+      <>
+        {value.version && <small>Context version: {value.version}</small>}
+        <Markdown>{value.content}</Markdown>
+      </>
+    );
+  if (Array.isArray(value?.findings))
+    return (
+      <>
+        <p className="muted">Deterministic review of stored records.</p>
+        {value.findings.map((finding: any, index: number) => (
+          <article className="compact-row" key={index}>
+            <Badge
+              value={finding.category ?? finding.severity ?? 'unverified'}
+            />
+            {finding.title && <h3>{finding.title}</h3>}
+            <p>{finding.message ?? finding.detail}</p>
+          </article>
+        ))}
+        {!value.findings.length && <Empty>No rule-based findings.</Empty>}
+        {value.limitations?.map((text: string) => (
+          <p key={text}>{text}</p>
+        ))}
+      </>
+    );
+  if (Array.isArray(value))
+    return (
+      <>
+        {value.map((item: any, index: number) => (
+          <article className="compact-row" key={item.id ?? index}>
+            <h3>{label(item.action ?? item.title ?? 'Record')}</h3>
+            <small>
+              {item.entity_type} #{item.entity_id} · {item.created_at}
+            </small>
+            <details>
+              <summary>Recorded history</summary>
+              <pre className="json-report">{JSON.stringify(item, null, 2)}</pre>
+            </details>
+          </article>
+        ))}
+        {!value.length && <Empty>No records.</Empty>}
+      </>
+    );
+  return <pre className="json-report">{JSON.stringify(value, null, 2)}</pre>;
+}
+
+function Architecture({
+  source,
+  onSave,
+}: {
+  source: string;
+  onSave: (source: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(source);
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let cancelled = false;
+    if (!source.trim()) {
+      setSvg('');
+      return;
+    }
+    import('mermaid')
+      .then(async ({ default: mermaid }) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          theme: 'neutral',
+          suppressErrorRendering: true,
+        });
+        const { svg } = await mermaid.render(`diagram-${Date.now()}`, source);
+        if (!cancelled) {
+          setSvg(svg);
+          setError('');
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSvg('');
+          setError(
+            'This Mermaid diagram could not be rendered. Check its syntax.',
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [source]);
+  return (
+    <section className="card">
+      <h2>Project architecture</h2>
+      <p className="muted">
+        Record verified components and dependencies in Mermaid syntax. No
+        dependencies are inferred automatically.
+      </p>
+      <ErrorBox error={error} />
+      {svg ? (
+        <iframe
+          title="Architecture diagram"
+          sandbox=""
+          className="diagram"
+          srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>body{margin:12px;font-family:sans-serif}svg{max-width:100%;height:auto}</style>${svg}`}
+        />
+      ) : (
+        <Empty>No rendered architecture diagram.</Empty>
+      )}
+      <label>
+        Mermaid source
+        <textarea
+          rows={10}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={
+            'flowchart LR\n  A[Recorded component] --> B[Verified dependency]'
+          }
+        />
+      </label>
+      <button onClick={() => onSave(draft)}>Save architecture</button>
+    </section>
+  );
+}
+
+type SavedTurn = {
+  id: string;
+  status: string;
+  messages: { role: 'user' | 'assistant'; text: string }[];
+};
+
+function SavedHistory({
+  prefix,
+  sessionId,
+}: {
+  prefix: string;
+  sessionId: string;
+}) {
+  const [turns, setTurns] = useState<SavedTurn[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const request = useRef(0);
+
+  const load = useCallback(
+    async (cursor?: string, append = false) => {
+      const requestId = ++request.current;
+      setLoading(true);
+      setError('');
+      try {
+        const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+        const page = await api<{
+          turns: SavedTurn[];
+          next_cursor: string | null;
+        }>(`${prefix}/sessions/${sessionId}/history${query}`);
+        if (request.current !== requestId) return;
+        setTurns((current) => {
+          if (!append) return page.turns;
+          const known = new Set(current.map((turn) => turn.id));
+          return [...current, ...page.turns.filter((turn) => !known.has(turn.id))];
+        });
+        setNextCursor(page.next_cursor);
+      } catch (e) {
+        if (request.current === requestId) setError((e as Error).message);
+      } finally {
+        if (request.current === requestId) setLoading(false);
+      }
+    },
+    [prefix, sessionId],
+  );
+
+  useEffect(() => {
+    load();
+    return () => {
+      request.current += 1;
+    };
+  }, [load]);
+
+  return (
+    <section className="card saved-history">
+      <div className="section-title">
+        <div>
+          <h2>Saved conversation history</h2>
+          <p className="muted">
+            Read from local Codex history without resuming the session or
+            sending a model request.
+          </p>
+        </div>
+        <button className="secondary" disabled={loading} onClick={() => load()}>
+          Refresh history
+        </button>
+      </div>
+      <ErrorBox error={error} />
+      {turns.map((turn) => (
+        <article className="history-turn" key={turn.id}>
+          <div className="section-title">
+            <h3>Turn {turn.id}</h3>
+            <Badge value={turn.status} />
+          </div>
+          {turn.messages.map((message, index) => (
+            <div className="history-message" key={`${turn.id}-${index}`}>
+              <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
+              <Markdown>{message.text}</Markdown>
+            </div>
+          ))}
+          {!turn.messages.length && (
+            <p className="muted">No user or assistant text in this turn.</p>
+          )}
+        </article>
+      ))}
+      {!turns.length && !loading && !error && (
+        <Empty>No saved conversation turns found.</Empty>
+      )}
+      {loading && !turns.length && <Empty>Loading saved history…</Empty>}
+      {nextCursor && (
+        <button
+          className="secondary"
+          disabled={loading}
+          onClick={() => load(nextCursor, true)}
+        >
+          Load older turns
+        </button>
+      )}
+    </section>
+  );
+}
+
+function Codex({
+  base,
+  decisions,
+  onError,
+  onKnowledgeChanged,
+}: {
+  base: string;
+  decisions: RecordData[];
+  onError: (message: string) => void;
+  onKnowledgeChanged: () => Promise<void>;
+}) {
+  const [status, setStatus] = useState<any>(null);
+  const [sessions, setSessions] = useState<RecordData[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [threadId, setThreadId] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [events, setEvents] = useState<any>(null);
+  const [eventsError, setEventsError] = useState('');
+  const [context, setContext] = useState<any>(null);
+  const [decisionId, setDecisionId] = useState('');
+  const [delivery, setDelivery] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const prefix = `${base}/codex`;
+  const mounted = useRef(true);
+  const available = Boolean(
+    status?.installed && status?.app_server && status?.authenticated,
+  );
+  const selectedSession = sessions.find((s) => String(s.id) === sessionId);
+  const readingOnly = selectedSession?.status === 'linked';
+  const canSend = Boolean(selectedSession && !readingOnly);
+  const refresh = useCallback(async () => {
+    const rows = await api<RecordData[]>(`${prefix}/sessions`);
+    if (mounted.current) {
+      setSessions(rows);
+      setSessionId((current) =>
+        rows.some((s) => String(s.id) === current)
+          ? current
+          : String(rows[0]?.id ?? ''),
+      );
+    }
+  }, [prefix]);
+  useEffect(() => {
+    mounted.current = true;
+    Promise.all([api(`${prefix}/status`), refresh()])
+      .then(([s]) => {
+        if (mounted.current) setStatus(s);
+      })
+      .catch((e) => {
+        if (mounted.current) onError(e.message);
+      });
+    return () => {
+      mounted.current = false;
+    };
+  }, [prefix, refresh]);
+  async function action(fn: () => Promise<unknown>) {
+    setBusy(true);
+    onError('');
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }
+  useEffect(() => {
+    setEvents(null);
+    setEventsError('');
+    setDelivery(null);
+  }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId) return;
+    let alive = true;
+    const poll = () =>
+      api(`${prefix}/sessions/${sessionId}/events`)
+        .then((result) => {
+          if (alive) {
+            setEvents(result);
+            setEventsError('');
+          }
+        })
+        .catch((e) => {
+          if (alive) {
+            setEventsError(e.message);
+          }
+        });
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [prefix, sessionId]);
+  return (
+    <>
+      <section className="card">
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">CODEX CONNECTION</p>
+            <h2>Review and discuss with project context</h2>
+          </div>
+          <Badge
+            value={
+              available ? 'available' : status ? 'unavailable' : 'checking'
+            }
+          />
+        </div>
+        <p>
+          Sessions use the official local Codex App Server and existing ChatGPT
+          authentication. Requests are sent to OpenAI and use your account
+          limits. This MVP permits read-only work; code modification approvals
+          are unavailable.
+        </p>
+        {status && (
+          <div className="compact-row">
+            <p>
+              Codex {status.version || 'version unknown'} ·{' '}
+              {status.installed ? 'Installed' : 'Not installed'} ·{' '}
+              {status.authenticated
+                ? 'ChatGPT authentication available'
+                : 'Authentication unavailable'}
+            </p>
+            {status.error && <ErrorBox error={status.error} />}
+          </div>
+        )}
+        <button
+          className="secondary"
+          disabled={busy}
+          onClick={() =>
+            action(async () => setStatus(await api(`${prefix}/status`)))
+          }
+        >
+          Check connection
+        </button>
+      </section>
+      <div className="two-column">
+        <section className="card">
+          <h2>Project sessions</h2>
+          <label>
+            Associated session
+            <select
+              aria-label="Associated session"
+              value={sessionId}
+              onChange={(e) => setSessionId(e.target.value)}
+            >
+              <option value="">Select a session</option>
+              {sessions.map((s) => (
+                <option key={s.id} value={s.id}>
+                  #{s.id} · {s.thread_id ?? s.codex_thread_id ?? s.status}
+                  {s.status === 'linked' ? ' · Reading only' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          {readingOnly && (
+            <p className="muted">
+              This session is linked for reading only. Resume selected explicitly
+              to enable sending tasks and decision updates.
+            </p>
+          )}
+          <div className="actions left">
+            <button
+              disabled={busy || !available}
+              onClick={() =>
+                action(async () => {
+                  const session = await post(`${prefix}/sessions`);
+                  if (mounted.current) setSessionId(String(session.id));
+                })
+              }
+            >
+              Start read-only session
+            </button>
+            <button
+              className="secondary"
+              disabled={busy || !sessionId}
+              onClick={() =>
+                action(() => post(`${prefix}/sessions/${sessionId}/resume`))
+              }
+            >
+              Resume selected
+            </button>
+          </div>
+          <label>
+            Existing thread ID (optional)
+            <input
+              value={threadId}
+              onChange={(e) => setThreadId(e.target.value)}
+              placeholder="Thread ID to read saved conversation history"
+            />
+          </label>
+          <button
+            className="secondary"
+            disabled={busy || !threadId.trim()}
+            onClick={() =>
+              action(async () => {
+                const session = await post(`${prefix}/sessions`, {
+                  thread_id: threadId.trim(),
+                });
+                if (mounted.current) setSessionId(String(session.id));
+              })
+            }
+          >
+            Add session for reading
+          </button>
+        </section>
+        <section className="card">
+          <h2>Context package</h2>
+          <p>
+            Review the structured project context before submitting a request.
+            Each submission records its supplied context version.
+          </p>
+          <button
+            className="secondary"
+            disabled={busy}
+            onClick={() =>
+              action(async () => setContext(await api(`${prefix}/context`)))
+            }
+          >
+            Preview project context
+          </button>
+          {context && <Report value={context} />}
+        </section>
+      </div>
+      {sessionId ? (
+        <SavedHistory key={`${prefix}/${sessionId}`} prefix={prefix} sessionId={sessionId} />
+      ) : (
+        <section className="card">
+          <h2>Saved conversation history</h2>
+          <Empty>Select a session to read its saved history.</Empty>
+        </section>
+      )}
+      <section className="card">
+        <h2>Submit a read-only task</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (busy || !canSend) return;
+            action(async () => {
+              await post(`${prefix}/sessions/${sessionId}/turns`, { prompt });
+              setPrompt('');
+            });
+          }}
+        >
+          <label>
+            Task or review request
+            <textarea
+              rows={4}
+              required
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="Review this project's accepted decisions and identify missing validation. Present findings as unverified suggestions."
+            />
+          </label>
+          <p className="muted">
+            AI output is a proposal requiring verification. It does not change
+            accepted decisions.
+          </p>
+          <button disabled={busy || !canSend || !prompt.trim()}>
+            Send task with context
+          </button>
+        </form>
+      </section>
+      <section className="card">
+        <h2>Send decision to Codex</h2>
+        <p>
+          Preview an accepted decision update, then explicitly approve sending
+          it to the selected session. Busy or unavailable sessions keep updates
+          queued locally.
+        </p>
+        <label>
+          Accepted decision
+          <select
+            value={decisionId}
+            onChange={(e) => {
+              setDecisionId(e.target.value);
+              setDelivery(null);
+            }}
+          >
+            <option value="">Select a decision</option>
+            {decisions.map((d) => (
+              <option key={d.id} value={d.id}>
+                #{d.id} · {d.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="secondary"
+          disabled={busy || !canSend || !decisionId}
+          onClick={() =>
+            action(async () =>
+              setDelivery(
+                await post(`${prefix}/deliveries`, {
+                  decision_id: Number(decisionId),
+                  session_id: Number(sessionId),
+                }),
+              ),
+            )
+          }
+        >
+          Prepare decision update
+        </button>
+        {delivery && (
+          <div className="delivery-preview">
+            <div className="section-title">
+              <h3>Review update</h3>
+              <Badge value={delivery.status} />
+            </div>
+            <Report value={delivery} />
+            {delivery.error && <ErrorBox error={delivery.error} />}
+            <button
+              disabled={
+                busy || !canSend || !['draft', 'queued', 'failed'].includes(delivery.status)
+              }
+              onClick={() =>
+                action(async () =>
+                  setDelivery(
+                    await post(`${prefix}/deliveries/${delivery.id}/send`, {
+                      confirmed: true,
+                    }),
+                  ),
+                )
+              }
+            >
+              Approve and send update
+            </button>
+          </div>
+        )}
+      </section>
+      <section className="card">
+        <div className="section-title">
+          <h2>Session events & responses</h2>
+          <span className="subtle-label">REFRESHES EVERY 3 SECONDS</span>
+        </div>
+        <ErrorBox error={eventsError} />
+        {events ? (
+          <>
+            {completedMessages(events.events ?? []).map((message) => (
+              <article className="answer" key={message.id}>
+                <div className="section-title">
+                  <h3>Codex response</h3>
+                  <Badge value="unverified" />
+                </div>
+                <Markdown>{message.text}</Markdown>
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() =>
+                    action(async () => {
+                      await post(`${base}/notes`, {
+                        title: `Codex proposal · session ${sessionId} · event ${message.id}`,
+                        content: message.text,
+                        kind: 'proposal',
+                        reference: `Codex session ${sessionId}, event ${message.id}`,
+                      });
+                      await onKnowledgeChanged();
+                    })
+                  }
+                >
+                  Save as proposed note
+                </button>
+              </article>
+            ))}
+            {(events.deliveries ?? []).map((item: any) => (
+              <article className="delivery-preview" key={item.id}>
+                <div className="section-title">
+                  <h3>Request #{item.id}</h3>
+                  <Badge value={item.status} />
+                </div>
+                <Markdown>{item.content}</Markdown>
+                {item.error && <ErrorBox error={item.error} />}
+                <small>
+                  Context version ID: {item.context_id ?? 'Decision update'}
+                </small>
+                {['draft', 'queued', 'failed'].includes(item.status) && (
+                  <div className="actions left">
+                    <button
+                      disabled={busy || !canSend}
+                      onClick={() =>
+                        action(async () => {
+                          await post(`${prefix}/deliveries/${item.id}/send`, {
+                            confirmed: true,
+                          });
+                          setEvents(
+                            await api(`${prefix}/sessions/${sessionId}/events`),
+                          );
+                        })
+                      }
+                    >
+                      Approve and retry this request
+                    </button>
+                  </div>
+                )}
+                {item.status === 'unverified' && (
+                  <p>
+                    Receipt is uncertain. Inspect session events before creating
+                    any replacement request.
+                  </p>
+                )}
+              </article>
+            ))}
+            <details>
+              <summary>Raw event log</summary>
+              <Report value={events} />
+            </details>
+          </>
+        ) : (
+          <Empty>
+            {sessionId
+              ? eventsError
+                ? 'Session events could not be loaded. Retrying automatically…'
+                : 'Loading session events…'
+              : 'Select a session to inspect its events.'}
+          </Empty>
+        )}
+      </section>
+    </>
+  );
+}
