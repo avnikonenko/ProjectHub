@@ -1,6 +1,6 @@
 # ProjectHub
 
-ProjectHub keeps research questions, alternative answers, accepted decisions, tasks and notes in a local SQLite database. The browser UI and API run as one loopback-only service. Core project management works without Codex or an API key.
+ProjectHub keeps research questions, alternative answers, accepted decisions and notes in a local SQLite database. The browser UI and API run as one loopback-only service. Core project management works without Codex or an API key.
 
 **Validation status:** implementation and test status are recorded in [docs/TEST_REPORT.md](docs/TEST_REPORT.md). Do not infer successful installation or real AI generation from mocked protocol tests.
 
@@ -33,7 +33,7 @@ For frontend development, start the backend using the startup script and, in a s
 
 Create a project with its objective and goals. An optional repository path must be the absolute root of an existing Git repository. Registration inspects the path and Git metadata without moving or changing repository files. Symlink paths and traversal components are rejected.
 
-Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision; it can optionally create a task. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review, diagram and export.
+Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision with an optional next step. You can also add or edit a next step in the decision register. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review, diagram and export.
 
 ## Data and backups
 

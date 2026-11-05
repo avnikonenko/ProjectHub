@@ -48,6 +48,24 @@ def test_accept_reopen_provenance_and_task(client):
     assert any(e['action']=='accepted_from_answer' for e in events)
 
 
+def test_decision_next_step_without_creating_task(client):
+    pid=project(client)['id'];qid=question(client,pid)['id']
+    aid=answer(client,pid,qid)['id']
+    url=f'/api/projects/{pid}'
+    accepted=client.post(f'{url}/questions/{qid}/accept',json={'answer_id':aid,'next_step':'Run the control'})
+    assert accepted.status_code==200,accepted.text
+    data=accepted.json()
+    assert data['task'] is None
+    assert data['decision']['next_step']=='Run the control'
+    did=data['decision']['id']
+    revised=client.patch(f'{url}/decisions/{did}',json={'next_step':'Repeat the control'})
+    assert revised.status_code==200,revised.text
+    assert client.get(f'{url}/overview').json()['decisions'][0]['next_step']=='Repeat the control'
+    events=client.get(f'{url}/audit').json()
+    assert any(e['action']=='revised' and e['before']['next_step']=='Run the control' for e in events)
+    assert client.get(f'{url}/tasks').json()==[]
+
+
 def test_wrong_answer_atomic_and_project_isolation(client):
     a=project(client,'A');b=project(client,'B');q=question(client,a['id']);other=question(client,b['id']);ans=answer(client,b['id'],other['id'])
     assert client.post(f"/api/projects/{a['id']}/questions/{q['id']}/accept",json={'answer_id':ans['id']}).status_code==404

@@ -10,6 +10,7 @@ type Field = {
   type?: 'text' | 'textarea' | 'select';
   options?: string[];
   required?: boolean;
+  maxLength?: number;
 };
 const priorities = ['low', 'medium', 'high', 'critical'];
 const questionStates = [
@@ -19,13 +20,17 @@ const questionStates = [
   'resolved',
   'reopened',
 ];
-const taskStates = ['backlog', 'ready', 'in_progress', 'blocked', 'completed'];
 const decisionStates = ['proposed', 'accepted', 'superseded', 'rejected'];
 const titleField: Field = { name: 'title', label: 'Title', required: true };
 const descriptionField: Field = {
   name: 'description',
   label: 'Description',
   type: 'textarea',
+};
+const nextStepField: Field = {
+  name: 'next_step',
+  label: 'Next step (optional)',
+  maxLength: 500,
 };
 const priorityField: Field = {
   name: 'priority',
@@ -159,6 +164,7 @@ function Form({
                 <input
                   value={values[f.name]}
                   required={f.required}
+                  maxLength={f.maxLength}
                   onChange={(e) =>
                     setValues({ ...values, [f.name]: e.target.value })
                   }
@@ -275,8 +281,7 @@ export default function App() {
               <p className="eyebrow">YOUR RESEARCH, CONNECTED</p>
               <h1>A clear place for project work.</h1>
               <p>
-                Keep questions, evidence, decisions, and development tasks
-                together.
+                Keep questions, evidence, decisions, and notes together.
               </p>
             </div>
             <button onClick={() => setAdding(true)}>
@@ -381,14 +386,13 @@ function ProjectWorkspace({
         </Empty>
       </main>
     );
-  const { project, questions, decisions, tasks, notes, activity } = overview;
+  const { project, questions, decisions, notes, activity } = overview;
   const accepted = decisions.filter((d) => d.status === 'accepted');
   const open = questions.filter((q) => q.status !== 'resolved');
   const tabs = [
     'Dashboard',
     'Questions',
     'Decisions',
-    'Tasks',
     'Notes',
     'Architecture',
     'Codex',
@@ -500,10 +504,6 @@ function ProjectWorkspace({
                   {[
                     [open.length, 'Open questions'],
                     [accepted.length, 'Accepted decisions'],
-                    [
-                      tasks.filter((t) => t.status !== 'completed').length,
-                      'Active tasks',
-                    ],
                     [notes.length, 'Notes'],
                   ].map(([value, name]) => (
                     <div className="metric" key={name}>
@@ -754,22 +754,13 @@ function ProjectWorkspace({
                                 onClick={() =>
                                   setForm({
                                     title: 'Accept proposed answer',
-                                    fields: [
-                                      {
-                                        name: 'create_task',
-                                        label:
-                                          'Also create implementation task?',
-                                        type: 'select',
-                                        options: ['no', 'yes'],
-                                      },
-                                    ],
+                                    fields: [nextStepField],
                                     save: async (data) => {
                                       await post(
                                         `${base}/questions/${q.id}/accept`,
                                         {
                                           answer_id: a.id,
-                                          create_task:
-                                            data.create_task === 'yes',
+                                          next_step: data.next_step.trim(),
                                         },
                                       );
                                       await load();
@@ -804,6 +795,7 @@ function ProjectWorkspace({
                         [
                           titleField,
                           descriptionField,
+                          nextStepField,
                           {
                             name: 'rationale',
                             label: 'Rationale',
@@ -846,6 +838,12 @@ function ProjectWorkspace({
                       <Badge value={d.status} />
                     </div>
                     <Markdown>{d.description}</Markdown>
+                    {d.next_step && (
+                      <div>
+                        <h4>Next step</h4>
+                        <p>{d.next_step}</p>
+                      </div>
+                    )}
                     {[
                       'rationale',
                       'alternatives',
@@ -869,6 +867,7 @@ function ProjectWorkspace({
                             [
                               titleField,
                               descriptionField,
+                              nextStepField,
                               {
                                 name: 'rationale',
                                 label: 'Rationale',
@@ -926,102 +925,16 @@ function ProjectWorkspace({
                         </button>
                       )}
                       {d.status === 'accepted' && (
-                        <>
-                          <button
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() =>
-                              run(() => post(`${base}/decisions/${d.id}/tasks`))
-                            }
-                          >
-                            Create implementation task
-                          </button>
-                          <button
-                            className="secondary"
-                            onClick={() => setView('Codex')}
-                          >
-                            Send decision to Codex →
-                          </button>
-                        </>
+                        <button
+                          className="secondary"
+                          onClick={() => setView('Codex')}
+                        >
+                          Send decision to Codex →
+                        </button>
                       )}
                     </div>
                   </section>
                 ))}
-              </>
-            )}
-            {view === 'Tasks' && (
-              <>
-                <div className="section-title">
-                  <h2>Development tasks</h2>
-                  <button
-                    onClick={() =>
-                      edit(
-                        'New task',
-                        [
-                          titleField,
-                          descriptionField,
-                          priorityField,
-                          {
-                            name: 'status',
-                            label: 'Status',
-                            type: 'select',
-                            options: taskStates,
-                          },
-                        ],
-                        '/tasks',
-                      )
-                    }
-                  >
-                    ＋ New task
-                  </button>
-                </div>
-                <div className="task-board">
-                  {taskStates.map((status) => (
-                    <section className="task-column" key={status}>
-                      <h3>
-                        {label(status)}{' '}
-                        <span>
-                          {tasks.filter((t) => t.status === status).length}
-                        </span>
-                      </h3>
-                      {tasks
-                        .filter((t) => t.status === status)
-                        .map((t) => (
-                          <article className="task" key={t.id}>
-                            <Badge value={t.priority} />
-                            <h3>{t.title}</h3>
-                            <p>{t.description}</p>
-                            {t.decision_id && (
-                              <small>Decision #{t.decision_id}</small>
-                            )}
-                            <button
-                              className="quiet"
-                              onClick={() =>
-                                edit(
-                                  'Edit task',
-                                  [
-                                    titleField,
-                                    descriptionField,
-                                    priorityField,
-                                    {
-                                      name: 'status',
-                                      label: 'Status',
-                                      type: 'select',
-                                      options: taskStates,
-                                    },
-                                  ],
-                                  `/tasks/${t.id}`,
-                                  t,
-                                )
-                              }
-                            >
-                              Edit task →
-                            </button>
-                          </article>
-                        ))}
-                    </section>
-                  ))}
-                </div>
               </>
             )}
             {view === 'Notes' && (

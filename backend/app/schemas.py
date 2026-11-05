@@ -43,11 +43,13 @@ class AnswerCreate(Input):
 class AcceptAnswer(Input):
     answer_id: int
     create_task: bool = False
+    next_step: str = Field(default='', max_length=500)
 
 
 class DecisionCreate(Input):
     title: str = Field(min_length=1, max_length=500)
     description: str = ''
+    next_step: str = Field(default='', max_length=500)
     rationale: str = ''
     alternatives: str = ''
     evidence: str = ''

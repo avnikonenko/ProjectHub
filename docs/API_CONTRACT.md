@@ -21,7 +21,7 @@ Project: `{id,name,description,goals,status,repository_path,git_remote,tags,arch
 - `POST /{pid}/questions`: `{title,description?,category?,priority?,status?}`; returns question with answers.
 - `PATCH /{pid}/questions/{qid}`: title, description, category, priority and compatible nonterminal statuses. Resolving/reopening uses explicit lifecycle endpoints.
 - `POST /{pid}/questions/{qid}/answers`: `{solution,explanation?,advantages?,limitations?,evidence?,source?}`; returns answer.
-- `POST /{pid}/questions/{qid}/accept`: `{answer_id,create_task:false}`; returns `{question,decision,task}` (`task` nullable). Transactional and idempotent for current answer.
+- `POST /{pid}/questions/{qid}/accept`: `{answer_id,next_step?,create_task:false}`; returns `{question,decision,task}` (`task` nullable). Transactional and idempotent for current answer; use the decision PATCH to edit its next step.
 - `POST /{pid}/questions/{qid}/reopen`: `{}`; returns question. Preserves and supersedes previous decision.
 
 Question: `{id,project_id,title,description,category,priority,status,accepted_answer_id,created_at,updated_at,answers}`.
@@ -30,13 +30,13 @@ Answer: `{id,project_id,question_id,solution,explanation,advantages,limitations,
 
 ## Decisions and tasks
 
-- `POST /{pid}/decisions`: `{title,description?,rationale?,alternatives?,evidence?,limitations?,status?}`; status defaults to proposed.
+- `POST /{pid}/decisions`: `{title,description?,next_step?,rationale?,alternatives?,evidence?,limitations?,status?}`; status defaults to proposed and the optional next step is at most 500 characters.
 - `PATCH /{pid}/decisions/{did}`: editable decision fields/status; always preserves before/after audit history.
 - `POST /{pid}/decisions/{did}/tasks`: `{title?,description?,priority?}`; requires accepted decision, returns linked task.
 - `POST /{pid}/tasks`: `{title,description?,priority?,status?,question_id?,decision_id?,session_id?}`.
 - `PATCH /{pid}/tasks/{tid}`: same editable fields.
 
-Decision: `{id,project_id,title,description,rationale,alternatives,evidence,limitations,status,question_id,answer_id,created_at,updated_at}`.
+Decision: `{id,project_id,title,description,next_step,rationale,alternatives,evidence,limitations,status,question_id,answer_id,created_at,updated_at}`.
 
 Task: `{id,project_id,title,description,priority,status,question_id,decision_id,session_id,created_at,updated_at}`.
 

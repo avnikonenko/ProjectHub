@@ -122,7 +122,7 @@ def create_app(data_dir=None):
         before=serialize(a);a.status='accepted';audit(db,project_id,a,'accepted',before)
         before=serialize(q);q.accepted_answer_id=a.id;q.status='resolved';audit(db,project_id,q,'resolved',before)
         alternatives='\n'.join(x.solution for x in db.scalars(select(Answer).where(Answer.project_id==project_id,Answer.question_id==q.id,Answer.id!=a.id).order_by(Answer.id)))
-        d=Decision(project_id=project_id,title=q.title,description=a.solution,rationale=a.explanation,alternatives=alternatives,evidence=a.evidence,limitations=a.limitations,status='accepted',question_id=q.id,answer_id=a.id)
+        d=Decision(project_id=project_id,title=q.title,description=a.solution,next_step=payload.next_step,rationale=a.explanation,alternatives=alternatives,evidence=a.evidence,limitations=a.limitations,status='accepted',question_id=q.id,answer_id=a.id)
         db.add(d);audit(db,project_id,d,'accepted_from_answer');task=make_task(db,project_id,d,{}) if payload.create_task else None
         db.commit();return {'question':question_dict(db,q),'decision':serialize(d),'task':serialize(task) if task else None}
 

@@ -61,6 +61,7 @@ class Decision(Scoped, Base):
     __tablename__ = 'decisions'
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default='')
+    next_step: Mapped[str] = mapped_column(Text, default='')
     rationale: Mapped[str] = mapped_column(Text, default='')
     alternatives: Mapped[str] = mapped_column(Text, default='')
     evidence: Mapped[str] = mapped_column(Text, default='')
