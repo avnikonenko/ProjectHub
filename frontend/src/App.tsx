@@ -255,7 +255,7 @@ export default function App() {
           <span className="local-dot" /> Local workspace
           <br />
           <small>
-            Knowledge stays on this computer.
+            Project data stays on this computer.
             <br />
             Codex requests go to OpenAI.
           </small>
@@ -273,7 +273,7 @@ export default function App() {
           <main>
             <div className="page-heading">
               <p className="eyebrow">YOUR RESEARCH, CONNECTED</p>
-              <h1>A clear place for project knowledge.</h1>
+              <h1>A clear place for project work.</h1>
               <p>
                 Keep questions, evidence, decisions, and development tasks
                 together.
@@ -377,7 +377,7 @@ function ProjectWorkspace({
         <Empty>
           {error
             ? 'Project could not be loaded.'
-            : 'Loading project knowledge…'}
+            : 'Loading project…'}
         </Empty>
       </main>
     );
@@ -389,7 +389,7 @@ function ProjectWorkspace({
     'Questions',
     'Decisions',
     'Tasks',
-    'Knowledge',
+    'Notes',
     'Architecture',
     'Codex',
     'Reviews',
@@ -459,8 +459,8 @@ function ProjectWorkspace({
         >
           <span aria-hidden="true">⌕</span>
           <input
-            aria-label="Search project knowledge"
-            placeholder="Search this project's knowledge…"
+            aria-label="Search project"
+            placeholder="Search this project…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -504,7 +504,7 @@ function ProjectWorkspace({
                       tasks.filter((t) => t.status !== 'completed').length,
                       'Active tasks',
                     ],
-                    [notes.length, 'Knowledge notes'],
+                    [notes.length, 'Notes'],
                   ].map(([value, name]) => (
                     <div className="metric" key={name}>
                       <strong>{value}</strong>
@@ -1024,11 +1024,11 @@ function ProjectWorkspace({
                 </div>
               </>
             )}
-            {view === 'Knowledge' && (
+            {view === 'Notes' && (
               <>
                 <div className="section-title">
                   <div>
-                    <h2>Project knowledge</h2>
+                    <h2>Notes</h2>
                     <p className="muted">
                       Notes, assumptions, references, and imported text.
                       Imported content is untrusted data.
@@ -1037,7 +1037,7 @@ function ProjectWorkspace({
                   <button
                     onClick={() =>
                       edit(
-                        'New knowledge note',
+                        'New note',
                         [
                           titleField,
                           {
@@ -1099,7 +1099,7 @@ function ProjectWorkspace({
                   <a
                     className="button secondary"
                     href={`/api${base}/export`}
-                    download={`${project.name}-knowledge.json`}
+                    download={`${project.name}-project.json`}
                   >
                     Export project JSON
                   </a>
@@ -1113,7 +1113,7 @@ function ProjectWorkspace({
                     View audit history
                   </button>
                 </div>
-                {!notes.length && <Empty>No knowledge notes yet.</Empty>}
+                {!notes.length && <Empty>No notes yet.</Empty>}
                 {notes.map((n) => (
                   <section className="card" key={n.id}>
                     <div className="section-title">
@@ -1165,13 +1165,13 @@ function ProjectWorkspace({
                 base={base}
                 decisions={accepted}
                 onError={setError}
-                onKnowledgeChanged={load}
+                onNotesChanged={load}
               />
             )}
             {view === 'Reviews' && (
               <section className="card">
                 <p className="eyebrow">PROJECT HEALTH</p>
-                <h2>Review recorded knowledge</h2>
+                <h2>Review project records</h2>
                 <p>
                   Check unresolved questions, incomplete work, missing evidence,
                   and validation gaps. Deterministic findings reflect stored
@@ -1454,12 +1454,12 @@ function Codex({
   base,
   decisions,
   onError,
-  onKnowledgeChanged,
+  onNotesChanged,
 }: {
   base: string;
   decisions: RecordData[];
   onError: (message: string) => void;
-  onKnowledgeChanged: () => Promise<void>;
+  onNotesChanged: () => Promise<void>;
 }) {
   const [status, setStatus] = useState<any>(null);
   const [sessions, setSessions] = useState<RecordData[]>([]);
@@ -1806,7 +1806,7 @@ function Codex({
                         kind: 'proposal',
                         reference: `Codex session ${sessionId}, event ${message.id}`,
                       });
-                      await onKnowledgeChanged();
+                      await onNotesChanged();
                     })
                   }
                 >

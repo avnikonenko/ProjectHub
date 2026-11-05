@@ -33,13 +33,13 @@ For frontend development, start the backend using the startup script and, in a s
 
 Create a project with its objective and goals. An optional repository path must be the absolute root of an existing Git repository. Registration inspects the path and Git metadata without moving or changing repository files. Symlink paths and traversal components are rejected.
 
-Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision; it can optionally create a task. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Knowledge for Markdown notes, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review, diagram and export.
+Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision; it can optionally create a task. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review, diagram and export.
 
 ## Data and backups
 
 Default mutable storage is `$XDG_DATA_HOME/projecthub`, or `~/.local/share/projecthub` if XDG_DATA_HOME is unset. The database is `projecthub.sqlite3`; imported documents and consistent backups live beneath the same application directory. Set `PROJECTHUB_DATA_DIR` to an absolute private directory to relocate all application data. No mutable database is stored in the checkout by default.
 
-Use the project JSON export for portable knowledge/provenance. `POST /api/backup` creates a consistent SQLite backup in the managed data directory. For disaster recovery, stop ProjectHub and copy the complete data directory to safe storage. Restore while the application is stopped; retain a copy of the previous directory first. JSON import/restore is deferred.
+Use the project JSON export for portable project records and provenance. `POST /api/backup` creates a consistent SQLite backup in the managed data directory. For disaster recovery, stop ProjectHub and copy the complete data directory to safe storage. Restore while the application is stopped; retain a copy of the previous directory first. JSON import/restore is deferred.
 
 ## Codex
 
