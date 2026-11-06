@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
+from .brief import BriefBusy, read_brief, refresh_brief
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 
@@ -86,6 +87,25 @@ def context(project_id: int, db: DB):
         return context_preview(db, project_id)
     except CodexError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.get('/brief')
+def get_brief(project_id: int, db: DB):
+    project(db, project_id)
+    return read_brief(db, project_id)
+
+
+@router.post('/brief')
+def generate_brief(project_id: int, body: Confirmation, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
+    try:
+        return refresh_brief(request.app.state.engine, project_id, manager_for(request.app))
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.get('/sessions')

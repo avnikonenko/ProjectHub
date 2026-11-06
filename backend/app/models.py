@@ -136,3 +136,12 @@ class CodexEvent(Base):
     method: Mapped[str] = mapped_column(String)
     payload: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[str] = mapped_column(String, default=utcnow)
+
+
+class ProjectBrief(Base):
+    __tablename__ = 'project_briefs'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), primary_key=True)
+    generated_at: Mapped[str] = mapped_column(String)
+    sections: Mapped[dict] = mapped_column(JSON)
+    sources: Mapped[list] = mapped_column(JSON)
+    coverage: Mapped[list] = mapped_column(JSON)

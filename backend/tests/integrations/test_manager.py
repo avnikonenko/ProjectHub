@@ -232,3 +232,48 @@ def test_history_uses_read_client_and_closes_it(env):
         'threadId': 'external-thread', 'itemsView': 'summary', 'limit': 5,
         'sortDirection': 'desc', 'cursor': 'cursor-1'})]
     assert clients[0].closed
+
+
+@pytest.mark.parametrize('status,ephemeral', [('completed', True), ('failed', True), ('completed', False)])
+def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, status, ephemeral):
+    clients = []
+
+    class BriefClient(FakeClient):
+        def __init__(self, **callbacks):
+            super().__init__(**callbacks)
+            clients.append(self)
+
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['thread']['ephemeral'] = ephemeral
+            if method == 'turn/start':
+                event = {'threadId': 'thread-1', 'turnId': 'turn-1'}
+                for scope, phase, text in [
+                    ({**event, 'threadId': 'other'}, 'final_answer', 'wrong thread'),
+                    (event, 'final_answer', '{"brief": "saved"}'),
+                    (event, 'commentary', 'ignore commentary'),
+                ]:
+                    self.on_event('item/completed', {
+                        **scope, 'item': {'type': 'agentMessage', 'phase': phase, 'text': text},
+                    })
+                self.on_event('turn/completed', {
+                    'threadId': 'thread-1', 'turn': {'id': 'turn-1', 'status': status},
+                })
+            return result
+
+    env.manager.client_factory = BriefClient
+    if status == 'completed' and ephemeral:
+        assert env.manager.generate_brief('Synthetic input', {'type': 'object'}) == '{"brief": "saved"}'
+    else:
+        with pytest.raises(CodexError, match='ephemeral|did not complete'):
+            env.manager.generate_brief('Synthetic input', {'type': 'object'})
+    assert clients[0].closed
+    assert [m for m, _ in clients[0].calls] == (
+        ['account/read', 'thread/start'] + (['turn/start'] if ephemeral else []))
+    start = clients[0].calls[1][1]
+    assert start['ephemeral'] is True and start['sandbox'] == 'read-only'
+    if ephemeral:
+        turn = clients[0].calls[2][1]
+        assert turn['outputSchema'] == {'type': 'object'}
+        assert turn['sandboxPolicy']['networkAccess'] is False

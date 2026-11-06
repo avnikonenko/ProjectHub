@@ -60,6 +60,10 @@ Integration router prefix: `/api/projects/{project_id}/codex`; global capability
 
 Required operations: capability/auth availability, list project associations, create a read-only discussion thread, link an existing thread without resuming it, read its saved history, explicitly resume it when sending is required, preview context/task, submit reviewed task, poll status/events, preview decision update, enqueue explicit delivery/retry, and save output as proposed knowledge. Never submit on answer acceptance. Busy/unavailable sessions preserve a local queue and show unverified delivery state. Session and delivery lookups are project scoped.
 
+- `GET /{pid}/codex/brief`: latest saved brief, or `null`. This never requests generation.
+- `POST /{pid}/codex/brief`: `{confirmed:true}`; sends bounded, project-scoped text excerpts to Codex in a separate ephemeral thread. Successful generation replaces the saved brief; errors keep the previous snapshot.
+- A brief contains `generated_at`, `sections` (overview, changes, open questions, and unconfirmed decision candidates), `sources`, and `coverage`. Each section entry has `text` and `source_ids`. Sources contain an excerpt and its original session/turn or accepted decision identifier. Generating a brief does not create decisions or resume source sessions.
+
 - `POST /{pid}/codex/sessions` without `thread_id`: starts an app-owned read-only discussion session.
 - `POST /{pid}/codex/sessions` with `thread_id`: validates the thread with `thread/read`, stores status `linked`, closes the temporary connection and does not resume or submit anything.
 - `GET /{pid}/codex/sessions/{sid}/history?cursor=...`: returns `{turns:[{id,status,messages:[{role,text}]}],next_cursor}` from bounded App Server history pages. Only user and assistant display text is returned; tool output is excluded.
