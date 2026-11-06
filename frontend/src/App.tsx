@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
+import { ProjectMap, type ProjectMapData } from './ProjectMap';
 import type { Overview, Project, RecordData } from './types';
 
 type Field = {
@@ -1069,12 +1070,15 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'Architecture' && (
-              <Architecture
-                source={project.architecture_mermaid || ''}
-                onSave={(source) =>
-                  run(() => patch(base, { architecture_mermaid: source }))
-                }
-              />
+              <>
+                <SavedProjectMap base={base} onOverview={() => setView('Dashboard')} />
+                <Architecture
+                  source={project.architecture_mermaid || ''}
+                  onSave={(source) =>
+                    run(() => patch(base, { architecture_mermaid: source }))
+                  }
+                />
+              </>
             )}
             {view === 'Codex' && (
               <Codex
@@ -1232,10 +1236,10 @@ function Architecture({
   }, [source]);
   return (
     <section className="card">
-      <h2>Manual architecture diagram</h2>
+      <h2>Documented architecture</h2>
       <p>
-        Write or paste a Mermaid diagram to show how your project fits together.
-        This view draws the diagram you save; it does not generate one from history.
+        Write or paste a Mermaid diagram. The diagram you save is included as a source
+        when you refresh the brief and project map.
       </p>
       <ErrorBox error={error} />
       {svg ? (
@@ -1278,12 +1282,100 @@ type Brief = {
   sections: {
     overview: BriefEntry[];
     changes: BriefEntry[];
+    architecture?: BriefEntry[];
     open_questions: BriefEntry[];
     decision_candidates: BriefEntry[];
   };
   sources: BriefSource[];
   coverage: string[];
+  project_map?: ProjectMapData | null;
 };
+
+function citedSources(sources: BriefSource[], ids: string[]) {
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  return [...new Set(ids)].flatMap((id) => {
+    const source = byId.get(id);
+    return source ? [source] : [];
+  });
+}
+
+function briefReferences(ids: string[], numbers: Map<string, number>, prefix: string) {
+  return [...new Set(ids)].map((id) => {
+    const number = numbers.get(id);
+    if (!number) return null;
+    const target = `${prefix}-source-${number}`;
+    return (
+      <a
+        className="brief-reference"
+        key={id}
+        href={`#${target}`}
+        aria-label={`Read source ${number}`}
+        onClick={() => document.getElementById(target)?.setAttribute('open', '')}
+      >
+        [{number}]
+      </a>
+    );
+  });
+}
+
+function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: string }) {
+  return (
+    <ol>
+      {sources.map((source, index) => (
+        <li key={source.id}>
+          <details id={`${prefix}-source-${index + 1}`}>
+            <summary>{source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…` : source.label}</summary>
+            {source.turn_id && <small>{source.label}</small>}
+            <pre className="json-report">{source.text}</pre>
+          </details>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function SavedProjectMap({ base, onOverview }: { base: string; onOverview: () => void }) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    api<Brief | null>(`${base}/codex/brief`)
+      .then((result) => { if (active) setBrief(result); })
+      .catch((e) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [base]);
+  const map = brief?.project_map;
+  const sources = map && brief ? citedSources(brief.sources, [
+    ...map.nodes.flatMap((node) => node.source_ids),
+    ...map.edges.flatMap((edge) => edge.source_ids),
+  ]) : [];
+  const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
+  return (
+    <section className="card project-map brief-sources" aria-busy={loading}>
+      <div className="section-title">
+        <div>
+          <h2>AI project map</h2>
+          {brief && !!map?.nodes.length && <small>Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+        </div>
+        <button className="secondary" onClick={onOverview}>Go to project brief</button>
+      </div>
+      <p>Proposed components and connections based on project history, accepted decisions, and saved architecture. Review the sources before relying on the map.</p>
+      <ErrorBox error={error} />
+      {loading && <Empty>Loading saved map…</Empty>}
+      {!loading && !error && !map?.nodes.length && (
+        <Empty>No saved map yet. Generate or refresh the brief on the Dashboard.</Empty>
+      )}
+      {!!map?.nodes.length && (
+        <>
+          <ProjectMap map={map} references={(ids) => briefReferences(ids, numbers, 'map')} />
+          {!!sources.length && <><h3>Map sources</h3><BriefSources sources={sources} prefix="map" /></>}
+        </>
+      )}
+    </section>
+  );
+}
 
 function ProjectBrief({ base }: { base: string }) {
   const [brief, setBrief] = useState<Brief | null>(null);
@@ -1324,18 +1416,15 @@ function ProjectBrief({ base }: { base: string }) {
   }
   const sections: [keyof Brief['sections'], string][] = [
     ['overview', 'Overview'],
+    ['architecture', 'Architecture'],
     ['changes', 'Recent changes'],
     ['open_questions', 'Open questions'],
     ['decision_candidates', 'Possible decisions to review'],
   ];
-  const sourcesById = new Map(brief?.sources.map((source) => [source.id, source]));
-  const citedSources = [...new Set(sections.flatMap(([key]) =>
-    brief?.sections[key].flatMap((entry) => entry.source_ids) ?? [],
-  ))].flatMap((id) => {
-    const source = sourcesById.get(id);
-    return source ? [source] : [];
-  });
-  const sourceNumbers = new Map(citedSources.map((source, index) => [source.id, index + 1]));
+  const sources = citedSources(brief?.sources ?? [], sections.flatMap(([key]) =>
+    brief?.sections[key]?.flatMap((entry) => entry.source_ids) ?? [],
+  ));
+  const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
       <section className="card project-brief" aria-busy={loading || generating}>
@@ -1349,42 +1438,28 @@ function ProjectBrief({ base }: { base: string }) {
           </button>
         </div>
         <p className="brief-note">
-          Generate or refresh to send excerpts from recent linked sessions and accepted decisions to OpenAI.
+          Generate or refresh to send saved conversation text from linked sessions, accepted decisions, and saved architecture to OpenAI.
         </p>
+        {generating && <p role="status">Generating the brief and project map. A first run over a long history may take a while.</p>}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved brief…</Empty>}
         {!loading && !brief && <Empty>No saved brief yet.</Empty>}
         {brief && (
           <>
-            {sections.filter(([key]) => brief.sections[key].length > 0).map(([key, title]) => (
+            {sections.filter(([key]) => brief.sections[key]?.length).map(([key, title]) => (
               <section className="brief-section" key={key}>
                 <h3>{title}</h3>
                 <ul className="brief-points">
-                  {brief.sections[key].map((entry, index) => (
+                  {brief.sections[key]?.map((entry, index) => (
                     <li key={index}>
                       {entry.text}
-                      {[...new Set(entry.source_ids)].map((sourceId) => {
-                        const number = sourceNumbers.get(sourceId);
-                        if (!number) return null;
-                        const target = `brief-source-${number}`;
-                        return (
-                          <a
-                            className="brief-reference"
-                            key={sourceId}
-                            href={`#${target}`}
-                            aria-label={`Read source ${number}`}
-                            onClick={() => document.getElementById(target)?.setAttribute('open', '')}
-                          >
-                            [{number}]
-                          </a>
-                        );
-                      })}
+                      {briefReferences(entry.source_ids, sourceNumbers, 'brief')}
                     </li>
                   ))}
                 </ul>
               </section>
             ))}
-            {sections.every(([key]) => !brief.sections[key].length) && (
+            {sections.every(([key]) => !brief.sections[key]?.length) && (
               <Empty>The available sources did not support a brief.</Empty>
             )}
           </>
@@ -1393,17 +1468,7 @@ function ProjectBrief({ base }: { base: string }) {
       {brief && (
         <section className="card brief-sources" aria-label="Brief sources">
           <h2>Sources</h2>
-          <ol>
-            {citedSources.map((source, index) => (
-              <li key={source.id}>
-                <details id={`brief-source-${index + 1}`}>
-                  <summary>{source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…` : source.label}</summary>
-                  {source.turn_id && <small>{source.label}</small>}
-                  <pre className="json-report">{source.text}</pre>
-                </details>
-              </li>
-            ))}
-          </ol>
+          <BriefSources sources={sources} prefix="brief" />
           <details>
             <summary>What the brief covers</summary>
             <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>

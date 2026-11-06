@@ -472,6 +472,23 @@ main {
 .brief-sources details:target {
   scroll-margin-top: 1rem;
 }
+.project-map .section-title {
+  flex-wrap: wrap;
+}
+.project-map-drawing {
+  overflow: auto;
+  margin: 1rem 0;
+  border: 1px solid #dce6df;
+  border-radius: 8px;
+  background: #fcfdfc;
+}
+.project-map-drawing svg {
+  display: block;
+  max-width: none;
+}
+.project-map > h3 {
+  margin-top: 1.15rem;
+}
 .compact-row {
   border-bottom: 1px solid #edf0ed;
   padding: 12px 0;
