@@ -740,6 +740,13 @@ a:focus-visible {
 .saved-history {
   padding-bottom: 4px;
 }
+.history-pagination {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
 .history-turn {
   border-top: 1px solid #e5e9e6;
   padding: 18px 0;

@@ -187,19 +187,19 @@ class CodexManager:
                 finally:
                     client.close()
 
-    def history(self, session, cursor=None, *, client=None, archive=False):
+    def history(self, session, cursor=None, *, client=None, archive=False, limit=5):
         params = {'threadId': session.thread_id, 'itemsView': 'full' if archive else 'summary',
-                  'limit': 5, 'sortDirection': 'asc' if archive else 'desc'}
+                  'limit': limit, 'sortDirection': 'asc' if archive else 'desc'}
         if cursor is not None:
             if not isinstance(cursor, str) or len(cursor) > 8000:
                 raise CodexError('History cursor exceeds the supported limit.')
             params['cursor'] = cursor
         if client is not None:
-            return history_page(client.request('thread/turns/list', params), clip_messages=not archive)
+            return history_page(client.request('thread/turns/list', params), clip_messages=not archive, limit=limit)
         client = self._new_read_client()
         try:
             result = client.request('thread/turns/list', params)
-            return history_page(result, clip_messages=not archive)
+            return history_page(result, clip_messages=not archive, limit=limit)
         finally:
             client.close()
 
@@ -426,14 +426,14 @@ def manager_for(app):
 _manager_lock = threading.Lock()
 
 
-def history_page(result, *, clip_messages=True):
+def history_page(result, *, clip_messages=True, limit=5):
     """Expose display text only; tool outputs and attachment paths stay private."""
     if not isinstance(result, dict) or not isinstance(result.get('data'), list):
         raise CodexError('Unsupported Codex history response.')
     cursor = result.get('nextCursor')
     if cursor is not None and (not isinstance(cursor, str) or len(cursor) > 8000):
         raise CodexError('Unsupported Codex history cursor.')
-    if len(result['data']) > 5:
+    if len(result['data']) > limit:
         raise CodexError('Codex history response exceeded the requested page size.')
     turns = []
     for turn in result['data']:

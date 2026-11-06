@@ -209,7 +209,8 @@ def test_history_is_bounded_and_omits_tool_output():
     }], 'next_cursor': 'older'}
 
 
-def test_history_uses_read_client_and_closes_it(env):
+@pytest.mark.parametrize('options,expected_limit', [({}, 5), ({'limit': 3}, 3)])
+def test_history_uses_read_client_and_closes_it(env, options, expected_limit):
     session = env.manager.associate(env.project, 'Existing', 'external-thread')
     clients = []
     original = env.manager.client_factory
@@ -227,9 +228,9 @@ def test_history_uses_read_client_and_closes_it(env):
     env.manager.client_factory = factory
     with Session(env.engine) as db:
         row = db.get(CodexSession, session['id'])
-        assert env.manager.history(row, 'cursor-1') == {'turns': [], 'next_cursor': None}
+        assert env.manager.history(row, 'cursor-1', **options) == {'turns': [], 'next_cursor': None}
     assert clients[0].calls == [('thread/turns/list', {
-        'threadId': 'external-thread', 'itemsView': 'summary', 'limit': 5,
+        'threadId': 'external-thread', 'itemsView': 'summary', 'limit': expected_limit,
         'sortDirection': 'desc', 'cursor': 'cursor-1'})]
     assert clients[0].closed
 

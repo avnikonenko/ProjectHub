@@ -1528,6 +1528,8 @@ type SavedTurn = {
   messages: { role: 'user' | 'assistant'; text: string }[];
 };
 
+const HISTORY_PAGE_SIZE = 3;
+
 function SavedHistory({
   prefix,
   sessionId,
@@ -1538,29 +1540,29 @@ function SavedHistory({
   searchable?: boolean;
 }) {
   const [turns, setTurns] = useState<SavedTurn[]>([]);
+  const [cursorTrail, setCursorTrail] = useState<(string | null)[]>([null]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
   const request = useRef(0);
 
   const load = useCallback(
-    async (cursor?: string, append = false) => {
+    async (trail: (string | null)[] = [null]) => {
       const requestId = ++request.current;
       setLoading(true);
       setError('');
       try {
-        const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : '';
+        const cursor = trail[trail.length - 1];
+        const query = new URLSearchParams({ limit: String(HISTORY_PAGE_SIZE) });
+        if (cursor) query.set('cursor', cursor);
         const page = await api<{
           turns: SavedTurn[];
           next_cursor: string | null;
-        }>(`${prefix}/sessions/${sessionId}/history${query}`);
+        }>(`${prefix}/sessions/${sessionId}/history?${query}`);
         if (request.current !== requestId) return;
-        setTurns((current) => {
-          if (!append) return page.turns;
-          const known = new Set(current.map((turn) => turn.id));
-          return [...current, ...page.turns.filter((turn) => !known.has(turn.id))];
-        });
+        setTurns(page.turns);
+        setCursorTrail(trail);
         setNextCursor(page.next_cursor);
       } catch (e) {
         if (request.current === requestId) setError((e as Error).message);
@@ -1599,14 +1601,33 @@ function SavedHistory({
         </button>
       </div>
       <ErrorBox error={error} />
+      {(nextCursor || cursorTrail.length > 1) && (
+        <nav className="history-pagination" aria-label="Saved conversation pages">
+          <button
+            className="secondary"
+            disabled={loading || cursorTrail.length === 1}
+            onClick={() => load(cursorTrail.slice(0, -1))}
+          >
+            Newer turns
+          </button>
+          <span role="status">{loading ? 'Loading page…' : `Page ${cursorTrail.length}`}</span>
+          <button
+            className="secondary"
+            disabled={loading || !nextCursor}
+            onClick={() => nextCursor && load([...cursorTrail, nextCursor])}
+          >
+            Older turns
+          </button>
+        </nav>
+      )}
       {searchable && turns.length > 0 && (
         <label>
-          Filter loaded turns
+          Filter this page
           <input type="search" value={filter} onChange={(event) => setFilter(event.target.value)} />
         </label>
       )}
       {query && !visibleTurns.length && turns.length > 0 && (
-        <Empty>No matching loaded turns. Load older turns to search more history.</Empty>
+        <Empty>No matching turns on this page.</Empty>
       )}
       {visibleTurns.map((turn) => (
         <article className="history-turn" key={turn.id}>
@@ -1629,15 +1650,6 @@ function SavedHistory({
         <Empty>No saved conversation turns found.</Empty>
       )}
       {loading && !turns.length && <Empty>Loading saved history…</Empty>}
-      {nextCursor && (
-        <button
-          className="secondary"
-          disabled={loading}
-          onClick={() => load(nextCursor, true)}
-        >
-          Load older turns
-        </button>
-      )}
     </section>
   );
 }

@@ -131,11 +131,12 @@ def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
 
 @router.get('/sessions/{session_id}/history')
 def history(project_id: int, session_id: int, request: Request, db: DB,
-            cursor: Annotated[str | None, Query(max_length=8000)] = None):
+            cursor: Annotated[str | None, Query(max_length=8000)] = None,
+            limit: Annotated[int, Query(ge=1, le=5)] = 5):
     project(db, project_id)
     row = scoped(db, CodexSession, project_id, session_id)
     try:
-        return manager_for(request.app).history(row, cursor)
+        return manager_for(request.app).history(row, cursor, limit=limit)
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
 
