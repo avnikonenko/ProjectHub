@@ -1232,10 +1232,10 @@ function Architecture({
   }, [source]);
   return (
     <section className="card">
-      <h2>Project architecture</h2>
-      <p className="muted">
-        Record verified components and dependencies in Mermaid syntax. No
-        dependencies are inferred automatically.
+      <h2>Manual architecture diagram</h2>
+      <p>
+        Write or paste a Mermaid diagram to show how your project fits together.
+        This view draws the diagram you save; it does not generate one from history.
       </p>
       <ErrorBox error={error} />
       {svg ? (
@@ -1326,64 +1326,91 @@ function ProjectBrief({ base }: { base: string }) {
     ['overview', 'Overview'],
     ['changes', 'Recent changes'],
     ['open_questions', 'Open questions'],
-    ['decision_candidates', 'Decision candidates — unconfirmed'],
+    ['decision_candidates', 'Possible decisions to review'],
   ];
+  const sourcesById = new Map(brief?.sources.map((source) => [source.id, source]));
+  const citedSources = [...new Set(sections.flatMap(([key]) =>
+    brief?.sections[key].flatMap((entry) => entry.source_ids) ?? [],
+  ))].flatMap((id) => {
+    const source = sourcesById.get(id);
+    return source ? [source] : [];
+  });
+  const sourceNumbers = new Map(citedSources.map((source, index) => [source.id, index + 1]));
   return (
-    <section className="card project-brief" aria-busy={loading || generating}>
-      <div className="section-title">
-        <div>
-          <h2>Project brief</h2>
-          {brief && <small>Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+    <>
+      <section className="card project-brief" aria-busy={loading || generating}>
+        <div className="section-title">
+          <div>
+            <h2>Project brief</h2>
+            {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+          </div>
+          <button disabled={loading || generating} onClick={generate}>
+            {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
+          </button>
         </div>
-        <button disabled={loading || generating} onClick={generate}>
-          {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
-        </button>
-      </div>
-      <p className="muted">
-        Generating or refreshing sends recent saved Codex text and accepted
-        decision excerpts to OpenAI. Loading this saved brief does not send a
-        model request. AI summaries and candidate decisions require your review;
-        no decisions are accepted automatically.
-      </p>
-      <ErrorBox error={error} />
-      {loading && <Empty>Loading saved brief…</Empty>}
-      {!loading && !brief && <Empty>No saved brief yet.</Empty>}
+        <p className="brief-note">
+          Generate or refresh to send excerpts from recent linked sessions and accepted decisions to OpenAI.
+        </p>
+        <ErrorBox error={error} />
+        {loading && <Empty>Loading saved brief…</Empty>}
+        {!loading && !brief && <Empty>No saved brief yet.</Empty>}
+        {brief && (
+          <>
+            {sections.filter(([key]) => brief.sections[key].length > 0).map(([key, title]) => (
+              <section className="brief-section" key={key}>
+                <h3>{title}</h3>
+                <ul className="brief-points">
+                  {brief.sections[key].map((entry, index) => (
+                    <li key={index}>
+                      {entry.text}
+                      {[...new Set(entry.source_ids)].map((sourceId) => {
+                        const number = sourceNumbers.get(sourceId);
+                        if (!number) return null;
+                        const target = `brief-source-${number}`;
+                        return (
+                          <a
+                            className="brief-reference"
+                            key={sourceId}
+                            href={`#${target}`}
+                            aria-label={`Read source ${number}`}
+                            onClick={() => document.getElementById(target)?.setAttribute('open', '')}
+                          >
+                            [{number}]
+                          </a>
+                        );
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+            {sections.every(([key]) => !brief.sections[key].length) && (
+              <Empty>The available sources did not support a brief.</Empty>
+            )}
+          </>
+        )}
+      </section>
       {brief && (
-        <>
-          {sections.map(([key, title]) => (
-            <section className="brief-section" key={key}>
-              <h3>{title}</h3>
-              {!brief.sections[key].length && <p className="muted">None reported in the available sources.</p>}
-              {brief.sections[key].map((entry, index) => (
-                <article className="compact-row" key={index}>
-                  <p>{entry.text}</p>
-                  {entry.source_ids.map((sourceId) => {
-                    const source = brief.sources.find((item) => item.id === sourceId);
-                    return source ? (
-                      <details className="brief-source" key={sourceId}>
-                        <summary>Source: {source.label}</summary>
-                        <p className="muted">
-                          {source.session_id !== undefined && `Session #${source.session_id} `}
-                          {source.turn_id !== undefined && `· Turn ${source.turn_id} `}
-                          {source.decision_id !== undefined && `· Decision #${source.decision_id}`}
-                        </p>
-                        <pre className="json-report">{source.text}</pre>
-                      </details>
-                    ) : <p className="muted" key={sourceId}>Source unavailable: {sourceId}</p>;
-                  })}
-                </article>
-              ))}
-            </section>
-          ))}
-          <details className="brief-section">
-            <summary>Source coverage</summary>
-            {brief.coverage.length
-              ? <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
-              : <p className="muted">No coverage details supplied.</p>}
+        <section className="card brief-sources" aria-label="Brief sources">
+          <h2>Sources</h2>
+          <ol>
+            {citedSources.map((source, index) => (
+              <li key={source.id}>
+                <details id={`brief-source-${index + 1}`}>
+                  <summary>{source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…` : source.label}</summary>
+                  {source.turn_id && <small>{source.label}</small>}
+                  <pre className="json-report">{source.text}</pre>
+                </details>
+              </li>
+            ))}
+          </ol>
+          <details>
+            <summary>What the brief covers</summary>
+            <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
           </details>
-        </>
+        </section>
       )}
-    </section>
+    </>
   );
 }
 

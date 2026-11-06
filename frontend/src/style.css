@@ -427,6 +427,51 @@ main {
   background: #f2ebee;
   color: #987d8a;
 }
+.project-brief .section-title {
+  flex-wrap: wrap;
+}
+.project-brief .brief-note,
+.brief-sources {
+  color: #3d4943;
+}
+.project-brief small,
+.brief-sources small {
+  color: #4b5b52;
+}
+.brief-section + .brief-section {
+  margin-top: 1rem;
+}
+.brief-section h3 {
+  margin-bottom: 0.3rem;
+}
+.brief-points,
+.brief-sources ol {
+  margin: 0;
+  padding-inline-start: 1.35rem;
+}
+.brief-points {
+  color: #24312a;
+  max-width: 85ch;
+}
+.brief-points li + li,
+.brief-sources li + li {
+  margin-top: 0.4rem;
+}
+.brief-reference {
+  margin-inline-start: 0.35em;
+  color: #245c4b;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.brief-sources summary {
+  cursor: pointer;
+}
+.brief-sources ol + details {
+  margin-top: 0.85rem;
+}
+.brief-sources details:target {
+  scroll-margin-top: 1rem;
+}
 .compact-row {
   border-bottom: 1px solid #edf0ed;
   padding: 12px 0;
