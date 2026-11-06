@@ -391,6 +391,7 @@ function ProjectWorkspace({
   const open = questions.filter((q) => q.status !== 'resolved');
   const tabs = [
     'Dashboard',
+    'History',
     'Questions',
     'Decisions',
     'Notes',
@@ -500,6 +501,7 @@ function ProjectWorkspace({
           <>
             {view === 'Dashboard' && (
               <>
+                <ProjectBrief base={base} />
                 <div className="metrics">
                   {[
                     [open.length, 'Open questions'],
@@ -595,6 +597,7 @@ function ProjectWorkspace({
                 </div>
               </>
             )}
+            {view === 'History' && <ProjectHistory base={base} />}
             {view === 'Questions' && (
               <>
                 <div className="section-title">
@@ -1261,6 +1264,172 @@ function Architecture({
   );
 }
 
+type BriefSource = {
+  id: string;
+  label: string;
+  text: string;
+  session_id?: number;
+  turn_id?: string;
+  decision_id?: number;
+};
+type BriefEntry = { text: string; source_ids: string[] };
+type Brief = {
+  generated_at: string;
+  sections: {
+    overview: BriefEntry[];
+    changes: BriefEntry[];
+    open_questions: BriefEntry[];
+    decision_candidates: BriefEntry[];
+  };
+  sources: BriefSource[];
+  coverage: string[];
+};
+
+function ProjectBrief({ base }: { base: string }) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+  const request = useRef(0);
+  const generatingRef = useRef(false);
+  useEffect(() => {
+    const id = ++request.current;
+    api<Brief | null>(`${base}/codex/brief`)
+      .then((result) => {
+        if (request.current === id) setBrief(result);
+      })
+      .catch((e) => {
+        if (request.current === id) setError(e.message);
+      })
+      .finally(() => {
+        if (request.current === id) setLoading(false);
+      });
+    return () => { request.current += 1; };
+  }, [base]);
+  async function generate() {
+    if (generatingRef.current || loading) return;
+    generatingRef.current = true;
+    const id = ++request.current;
+    setGenerating(true);
+    setError('');
+    try {
+      const result = await post(`${base}/codex/brief`, { confirmed: true });
+      if (request.current === id) setBrief(result);
+    } catch (e) {
+      if (request.current === id) setError((e as Error).message);
+    } finally {
+      generatingRef.current = false;
+      if (request.current === id) setGenerating(false);
+    }
+  }
+  const sections: [keyof Brief['sections'], string][] = [
+    ['overview', 'Overview'],
+    ['changes', 'Recent changes'],
+    ['open_questions', 'Open questions'],
+    ['decision_candidates', 'Decision candidates — unconfirmed'],
+  ];
+  return (
+    <section className="card project-brief" aria-busy={loading || generating}>
+      <div className="section-title">
+        <div>
+          <h2>Project brief</h2>
+          {brief && <small>Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+        </div>
+        <button disabled={loading || generating} onClick={generate}>
+          {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
+        </button>
+      </div>
+      <p className="muted">
+        Generating or refreshing sends recent saved Codex text and accepted
+        decision excerpts to OpenAI. Loading this saved brief does not send a
+        model request. AI summaries and candidate decisions require your review;
+        no decisions are accepted automatically.
+      </p>
+      <ErrorBox error={error} />
+      {loading && <Empty>Loading saved brief…</Empty>}
+      {!loading && !brief && <Empty>No saved brief yet.</Empty>}
+      {brief && (
+        <>
+          {sections.map(([key, title]) => (
+            <section className="brief-section" key={key}>
+              <h3>{title}</h3>
+              {!brief.sections[key].length && <p className="muted">None reported in the available sources.</p>}
+              {brief.sections[key].map((entry, index) => (
+                <article className="compact-row" key={index}>
+                  <p>{entry.text}</p>
+                  {entry.source_ids.map((sourceId) => {
+                    const source = brief.sources.find((item) => item.id === sourceId);
+                    return source ? (
+                      <details className="brief-source" key={sourceId}>
+                        <summary>Source: {source.label}</summary>
+                        <p className="muted">
+                          {source.session_id !== undefined && `Session #${source.session_id} `}
+                          {source.turn_id !== undefined && `· Turn ${source.turn_id} `}
+                          {source.decision_id !== undefined && `· Decision #${source.decision_id}`}
+                        </p>
+                        <pre className="json-report">{source.text}</pre>
+                      </details>
+                    ) : <p className="muted" key={sourceId}>Source unavailable: {sourceId}</p>;
+                  })}
+                </article>
+              ))}
+            </section>
+          ))}
+          <details className="brief-section">
+            <summary>Source coverage</summary>
+            {brief.coverage.length
+              ? <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
+              : <p className="muted">No coverage details supplied.</p>}
+          </details>
+        </>
+      )}
+    </section>
+  );
+}
+
+function ProjectHistory({ base }: { base: string }) {
+  const [sessions, setSessions] = useState<RecordData[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    api<RecordData[]>(`${base}/codex/sessions`)
+      .then((rows) => {
+        if (!active) return;
+        setSessions(rows);
+        setSessionId(String(rows[0]?.id ?? ''));
+      })
+      .catch((e) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [base]);
+  return (
+    <>
+      <section className="card">
+        <h2>Project conversation history</h2>
+        <p className="muted">Browse saved conversations associated with this project. Add sessions in Codex.</p>
+        <ErrorBox error={error} />
+        {loading ? <Empty>Loading project sessions…</Empty> : (
+          <label>
+            Project session
+            <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
+              <option value="">Select a session</option>
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  #{session.id} · {session.title || session.thread_id}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        {!loading && !error && !sessions.length && <Empty>No sessions associated with this project.</Empty>}
+      </section>
+      {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId} searchable />}
+    </>
+  );
+}
+
 type SavedTurn = {
   id: string;
   status: string;
@@ -1270,14 +1439,17 @@ type SavedTurn = {
 function SavedHistory({
   prefix,
   sessionId,
+  searchable = false,
 }: {
   prefix: string;
   sessionId: string;
+  searchable?: boolean;
 }) {
   const [turns, setTurns] = useState<SavedTurn[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [filter, setFilter] = useState('');
   const request = useRef(0);
 
   const load = useCallback(
@@ -1314,6 +1486,12 @@ function SavedHistory({
     };
   }, [load]);
 
+  const query = filter.trim().toLowerCase();
+  const visibleTurns = query
+    ? turns.filter((turn) => turn.id.toLowerCase().includes(query)
+        || turn.messages.some((message) => message.text.toLowerCase().includes(query)))
+    : turns;
+
   return (
     <section className="card saved-history">
       <div className="section-title">
@@ -1329,7 +1507,16 @@ function SavedHistory({
         </button>
       </div>
       <ErrorBox error={error} />
-      {turns.map((turn) => (
+      {searchable && turns.length > 0 && (
+        <label>
+          Filter loaded turns
+          <input type="search" value={filter} onChange={(event) => setFilter(event.target.value)} />
+        </label>
+      )}
+      {query && !visibleTurns.length && turns.length > 0 && (
+        <Empty>No matching loaded turns. Load older turns to search more history.</Empty>
+      )}
+      {visibleTurns.map((turn) => (
         <article className="history-turn" key={turn.id}>
           <div className="section-title">
             <h3>Turn {turn.id}</h3>

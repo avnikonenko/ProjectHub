@@ -43,6 +43,8 @@ Use the project JSON export for portable project records and provenance. `POST /
 
 ## Codex
 
+Use **History** to browse saved turns from any Codex session associated with the project. On the dashboard, **Generate brief** sends bounded excerpts of recent saved turns and accepted decisions to OpenAI using the existing Codex sign-in. The saved brief shows what was included, lets you inspect the excerpts behind individual claims, and separates possible decisions from accepted ones. Refreshing is manual; a failed refresh keeps the previous brief.
+
 ProjectHub uses the installed official `codex app-server` over a private stdio connection. It does not read authentication files, modify global Codex configuration, or edit internal conversation history. Check the CLI separately with:
 
 ```bash
