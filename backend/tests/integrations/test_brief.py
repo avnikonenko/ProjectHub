@@ -24,30 +24,41 @@ class FakeCodex:
     def close(self):
         self.closed = True
 
-    def history(self, session, cursor, *, client):
-        assert client is self
+    def history(self, session, cursor, *, client, archive):
+        assert client is self and archive
         self.reads.append((session.thread_id, cursor))
         if self.fail_read:
             raise CodexError('History unavailable')
         messages = [{'role': 'user', 'text': 'Question ' + 'x' * 5000},
                     {'role': 'assistant', 'text': 'Conclusion from saved history'}]
-        return {'turns': [{'id': 'older' if cursor else 'recent', 'messages': messages}],
+        return {'turns': [{'id': 'recent' if cursor else 'older', 'status': 'completed', 'messages': messages}],
                 'next_cursor': None if cursor else 'next'}
 
     def generate_brief(self, prompt, output_schema):
+        data = json.loads(prompt.split('\n', 1)[1])
+        if 'evidence' in output_schema['properties']:
+            refs = [source['id'] for source in data['sources'] if 'Conclusion from saved history' in source['text']]
+            return json.dumps({'evidence': [{'text': 'Conclusion from saved history', 'source_ids': refs}]})
         assert self.closed
-        self.input = json.loads(prompt.split('\n', 1)[1])
-        ref = 'foreign' if self.foreign_citation else self.input['sources'][-1]['id']
+        self.input = data
+        ref = 'foreign' if self.foreign_citation else data['sources'][-1]['id']
+        diagram = data['sources'][0]['id']
         sections = {name: [] for name in SECTION_NAMES}
         sections['decision_candidates'] = [{'text': 'Possible decision', 'source_ids': [ref]}]
-        return json.dumps({'sections': sections})
+        sections['architecture'] = [{'text': 'Service stores records in a database', 'source_ids': [diagram]}]
+        graph = {'nodes': [{'id': key, 'label': key.title(), 'source_ids': [diagram]}
+                           for key in ('service', 'database')],
+                 'edges': [{'from': 'service', 'to': 'database', 'label': 'stores records',
+                            'inferred': False, 'source_ids': [diagram]}]}
+        return json.dumps({'sections': sections, 'project_map': graph})
 
 
 @pytest.fixture
 def project_db(tmp_path):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
-        db.add_all([Project(name='Project A'), Project(name='Project B')])
+        db.add_all([Project(name='Project A', architecture_mermaid='flowchart LR\nService --> Database'),
+                    Project(name='Project B', architecture_mermaid='Foreign diagram')])
         db.flush()
         db.add_all([
             CodexSession(project_id=1, thread_id='a-first', status='linked'),
@@ -65,14 +76,18 @@ def project_db(tmp_path):
 def test_brief_collects_multiple_scoped_sessions_and_keeps_decision_candidates_separate(project_db):
     codex = FakeCodex()
     brief = refresh_brief(project_db, 1, codex)
-    assert codex.reads == [('a-second', None), ('a-second', 'next'),
-                          ('a-first', None), ('a-first', 'next')]
+    assert codex.reads == [('a-first', None), ('a-first', 'next'),
+                          ('a-second', None), ('a-second', 'next')]
     excerpts = [source['text'] for source in codex.input['sources']]
-    assert len(excerpts) == 5
-    assert all('Conclusion from saved history' in text for text in excerpts[1:])
-    assert 'Accepted evidence' in excerpts[0]
-    assert 'Tentative idea' not in excerpts[0] and 'Private decision' not in excerpts[0]
+    assert len(excerpts) == 4
+    assert all('Conclusion from saved history' in text for text in excerpts[2:])
+    assert 'Service --> Database' in excerpts[0] and 'Accepted evidence' in excerpts[1]
+    assert not any(value in '\n'.join(excerpts)
+                   for value in ('Foreign diagram', 'Tentative idea', 'Private decision'))
     assert brief['sections']['decision_candidates']
+    assert brief['project_map']['edges'][0]['source_ids'] == ['architecture:1']
+    assert brief['sections']['architecture'][0]['source_ids'] == ['architecture:1']
+    assert all(not ref.startswith('history:') for ref in brief['sections']['decision_candidates'][0]['source_ids'])
     with Session(project_db) as db:
         assert read_brief(db, 1) == brief
         assert read_brief(db, 2) is None

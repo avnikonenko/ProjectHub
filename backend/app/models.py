@@ -145,3 +145,11 @@ class ProjectBrief(Base):
     sections: Mapped[dict] = mapped_column(JSON)
     sources: Mapped[list] = mapped_column(JSON)
     coverage: Mapped[list] = mapped_column(JSON)
+    project_map: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class ProjectHistoryBatch(Base):
+    __tablename__ = 'project_history_batches'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), primary_key=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
+    evidence: Mapped[list] = mapped_column(JSON)

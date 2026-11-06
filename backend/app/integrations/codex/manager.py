@@ -187,19 +187,19 @@ class CodexManager:
                 finally:
                     client.close()
 
-    def history(self, session, cursor=None, *, client=None):
-        params = {'threadId': session.thread_id, 'itemsView': 'summary',
-                  'limit': 5, 'sortDirection': 'desc'}
+    def history(self, session, cursor=None, *, client=None, archive=False):
+        params = {'threadId': session.thread_id, 'itemsView': 'full' if archive else 'summary',
+                  'limit': 5, 'sortDirection': 'asc' if archive else 'desc'}
         if cursor is not None:
             if not isinstance(cursor, str) or len(cursor) > 8000:
                 raise CodexError('History cursor exceeds the supported limit.')
             params['cursor'] = cursor
         if client is not None:
-            return history_page(client.request('thread/turns/list', params))
+            return history_page(client.request('thread/turns/list', params), clip_messages=not archive)
         client = self._new_read_client()
         try:
             result = client.request('thread/turns/list', params)
-            return history_page(result)
+            return history_page(result, clip_messages=not archive)
         finally:
             client.close()
 
@@ -426,7 +426,7 @@ def manager_for(app):
 _manager_lock = threading.Lock()
 
 
-def history_page(result):
+def history_page(result, *, clip_messages=True):
     """Expose display text only; tool outputs and attachment paths stay private."""
     if not isinstance(result, dict) or not isinstance(result.get('data'), list):
         raise CodexError('Unsupported Codex history response.')
@@ -464,7 +464,7 @@ def history_page(result):
             if not isinstance(text, str):
                 raise CodexError('Unsupported Codex message text.')
             if text:
-                if len(text) > 20_000:
+                if clip_messages and len(text) > 20_000:
                     text = text[:20_000] + '\n[Message truncated after 20,000 characters.]'
                 messages.append({'role': role, 'text': text})
         turns.append({'id': turn['id'], 'status': turn['status'], 'messages': messages})
