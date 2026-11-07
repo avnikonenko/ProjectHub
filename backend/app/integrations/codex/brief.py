@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
 from .archive import archive_history, summarize_evidence
 from . import progress
+from .revisions import save_revision
 from .protocol import CodexError
 
 SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates')
@@ -228,6 +229,8 @@ def refresh_brief(engine, project_id, manager):
             row.generated_at, row.sections = utcnow(), sections
             row.sources, row.coverage, row.project_map = cited, coverage, graph
             row.generation = generation_metadata(manager)
+            db.flush()
+            save_revision(db, project_id, 'brief', read_brief(db, project_id))
             db.commit()
             progress.finish(project_id)
             return read_brief(db, project_id)

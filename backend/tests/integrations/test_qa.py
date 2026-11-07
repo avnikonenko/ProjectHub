@@ -7,7 +7,8 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import qa
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import Project, Note
+from backend.app.models import Project, Note, GenerationRevision
+from sqlalchemy import select
 
 
 def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path, monkeypatch):
@@ -36,6 +37,8 @@ def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert qa.read_qa(db, 2) is None
+        revisions = list(db.scalars(select(GenerationRevision)))
+        assert len(revisions) == 1 and revisions[0].snapshot == saved
     engine.dispose()
 
 

@@ -165,3 +165,12 @@ class ProjectQA(Base):
     items: Mapped[list] = mapped_column(JSON)
     sources: Mapped[list] = mapped_column(JSON)
     generation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class GenerationRevision(Base):
+    __tablename__ = 'generation_revisions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), index=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    generated_at: Mapped[str] = mapped_column(String)
+    snapshot: Mapped[dict] = mapped_column(JSON)

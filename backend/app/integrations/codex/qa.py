@@ -10,6 +10,7 @@ from .archive import archive_history
 from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, generation_metadata
 from . import progress
+from .revisions import save_revision
 from .protocol import CodexError
 
 _FIELDS = {'question': 180, 'answer': 800}
@@ -125,6 +126,8 @@ def refresh_qa(engine, project_id, manager):
                 db.add(row)
             row.generated_at, row.items, row.sources = utcnow(), items, list(sources.values())
             row.generation = generation_metadata(manager)
+            db.flush()
+            save_revision(db, project_id, 'qa', read_qa(db, project_id))
             db.commit()
             progress.finish(project_id)
             return read_qa(db, project_id)
