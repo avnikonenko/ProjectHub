@@ -11,7 +11,7 @@ import type { Overview, Project, RecordData } from './types';
 import { RepositoryOverview } from './RepositoryOverview';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
-import { Badge, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
+import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
 
 const isChatGPTShare = (note: RecordData) => note.kind === 'document'
@@ -281,17 +281,11 @@ function ProjectWorkspace({
         onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
           { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
           (data) => ({ title: String(data.title).trim(), description: data.description }))} />
-      <button type="button" className="icon-edit" aria-label={`Delete TODO: ${task.title}`}
-        title="Delete TODO" disabled={busy} onClick={() => {
+      <DeleteButton label={`Delete TODO: ${task.title}`} disabled={busy} onClick={() => {
           if (window.confirm(`Delete TODO “${task.title}”?`)) {
             void run(() => api(`${base}/tasks/${task.id}`, { method: 'DELETE' }));
           }
-        }}>
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />
-        </svg>
-      </button>
+        }} />
     </li>
   );
   const tabs = [
@@ -620,6 +614,11 @@ function ProjectWorkspace({
                             )
                           }
                         />
+                        <DeleteButton label={`Delete note: ${n.title}`} disabled={busy} onClick={() => {
+                          if (window.confirm(`Delete note “${n.title}”?`)) {
+                            void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));
+                          }
+                        }} />
                       </div>
                     </div>
                     {isChatGPTShare(n)

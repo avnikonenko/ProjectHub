@@ -228,6 +228,14 @@ def create_app(data_dir=None):
     def update_note(project_id:int,note_id:int,payload:NotePatch,db:Session=db_dep):
         n=scoped(db,Note,project_id,note_id);values=payload.model_dump(exclude_unset=True);before=serialize(n);apply_values(n,values);audit(db,project_id,n,'updated',before);db.commit();return serialize(n)
 
+    @app.delete('/api/projects/{project_id}/notes/{note_id}', status_code=204)
+    def delete_note(project_id: int, note_id: int, db: Session = db_dep):
+        note = scoped(db, Note, project_id, note_id)
+        audit(db, project_id, note, 'deleted', serialize(note))
+        db.delete(note)
+        db.commit()
+        return Response(status_code=204)
+
     @app.get('/api/projects/{project_id}/summary')
     def get_summary(project_id:int,db:Session=db_dep): return {**summary(db,project_id),'generated_at':utcnow()}
 

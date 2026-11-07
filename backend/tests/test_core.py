@@ -269,6 +269,30 @@ def test_delete_task_scoped_audited_and_removes_search_entry(client):
     assert client.delete(path).status_code == 404
 
 
+def test_delete_note_is_scoped_and_preserves_uploaded_file(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    base = f'/api/projects/{pid}'
+    content = b'Deletablenote content'
+    imported = client.post(f'{base}/documents', files={'file': ('example.txt', content, 'text/plain')})
+    assert imported.status_code == 201, imported.text
+    note = imported.json()
+    uploaded = client.app.state.data_dir / 'uploads' / note['reference']
+    path = f"{base}/notes/{note['id']}"
+    assert client.delete(f"/api/projects/{other}/notes/{note['id']}").status_code == 404
+    assert client.get(f'{base}/search', params={'q': 'Deletablenote'}).json()
+    deleted = client.delete(path)
+    assert deleted.status_code == 204 and deleted.content == b''
+    assert client.get(f'{base}/notes').json() == []
+    assert client.get(f'{base}/search', params={'q': 'Deletablenote'}).json() == []
+    assert uploaded.read_bytes() == content
+    events = client.get(f'{base}/audit').json()
+    history = [e for e in events if e['entity_type'] == 'notes' and e['entity_id'] == note['id']]
+    assert [e['action'] for e in history] == ['imported', 'deleted']
+    assert history[-1]['before'] == note
+    assert client.delete(path).status_code == 404
+
+
 def test_review_checks_todos_and_notes_without_structured_workflow_findings(client):
     pid = project(client)['id']
     other = project(client, 'Other')['id']
