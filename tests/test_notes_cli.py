@@ -38,3 +38,31 @@ def test_failed_post_is_not_retried(monkeypatch):
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['note', 'add', '--project-id', '1', '--title', 'Finding', '--content', 'Text']) == 1
     assert calls == ['GET', 'POST']
+
+
+@pytest.mark.parametrize('command,expected', [
+    (['note', 'list'], 'notes'), (['todo', 'list'], 'tasks'),
+    (['todo', 'list', '--all'], 'tasks'),
+])
+def test_read_notes_and_todos_does_not_write(monkeypatch, capsys, command, expected):
+    def request(method, path, payload=None):
+        assert method == 'GET'
+        if path == '/projects':
+            return [{'id': 2, 'name': 'Example'}]
+        assert path == f'/projects/2/{expected}'
+        return [{'id': 1, 'status': 'backlog'}, {'id': 2, 'status': 'completed'}]
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main([*command, '--project-id', '2']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert len(result[expected]) == (1 if command == ['todo', 'list'] else 2)
+
+
+def test_add_todo_is_scoped_and_does_not_create_note(monkeypatch, capsys):
+    def request(method, path, payload=None):
+        if method == 'GET':
+            return [{'id': 2, 'name': 'Example'}]
+        assert path == '/projects/2/tasks' and payload == {'title': 'Check backup'}
+        return {'id': 7, 'project_id': 2}
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['todo', 'add', '--project-id', '2', '--title', 'Check backup']) == 0
+    assert json.loads(capsys.readouterr().out)['todo_id'] == 7

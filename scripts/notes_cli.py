@@ -1,4 +1,4 @@
-"""Local terminal bridge for AI-authored ProjectHub notes."""
+"""Local terminal bridge for ProjectHub notes and TODOs."""
 import argparse
 import json
 import os
@@ -31,11 +31,11 @@ def request(method, path, payload=None):
             return json.load(response)
     except HTTPError as exc:
         if method == 'POST' and exc.code >= 500:
-            raise ValueError('ProjectHub returned a server error. Check Notes before retrying; the note may have been saved.') from exc
+            raise ValueError('ProjectHub returned a server error. Check Notes or TODO before retrying; the item may have been saved.') from exc
         raise ValueError(f'ProjectHub rejected the request (HTTP {exc.code}).') from exc
     except (URLError, TimeoutError, OSError, ValueError) as exc:
         raise ValueError('Could not confirm the ProjectHub response. Start ProjectHub if needed. '
-                         'For a note submission, check Notes before retrying to avoid a duplicate.') from exc
+                         'For a submission, check Notes or TODO before retrying to avoid a duplicate.') from exc
 
 
 def resolve_project(projects, args):
@@ -46,22 +46,35 @@ def resolve_project(projects, args):
     return matches[0]
 
 
+def project_arguments(command):
+    project = command.add_mutually_exclusive_group(required=True)
+    project.add_argument('--project', help='Exact project name')
+    project.add_argument('--project-id', type=int)
+
+
 def parser():
     root = argparse.ArgumentParser(description=__doc__)
     commands = root.add_subparsers(dest='command', required=True)
     commands.add_parser('projects', help='List project IDs and names')
-    notes = commands.add_parser('note', help='Add an AI-authored note')
+    notes = commands.add_parser('note', aliases=['notes'], help='Read notes or add an AI-authored note')
     actions = notes.add_subparsers(dest='action', required=True)
     add = actions.add_parser('add')
-    project = add.add_mutually_exclusive_group(required=True)
-    project.add_argument('--project', help='Exact project name')
-    project.add_argument('--project-id', type=int)
+    project_arguments(add)
+    project_arguments(actions.add_parser('list'))
     add.add_argument('--title', required=True)
     content = add.add_mutually_exclusive_group(required=True)
     content.add_argument('--content')
     content.add_argument('--file', type=Path, help='UTF-8 Markdown/text file')
     content.add_argument('--stdin', action='store_true', help='Read Markdown/text from standard input')
     add.add_argument('--session', help='Originating session ID (defaults to CODEX_THREAD_ID)')
+    todos = commands.add_parser('todo', help='Read or add checklist items')
+    todo_actions = todos.add_subparsers(dest='action', required=True)
+    listing = todo_actions.add_parser('list')
+    project_arguments(listing)
+    listing.add_argument('--all', action='store_true', help='Include completed TODOs')
+    todo_add = todo_actions.add_parser('add')
+    project_arguments(todo_add)
+    todo_add.add_argument('--title', required=True)
     return root
 
 
@@ -72,9 +85,25 @@ def main(argv=None):
             projects = request('GET', '/projects')
             print(json.dumps([{'id': p['id'], 'name': p['name']} for p in projects], ensure_ascii=False))
             return 0
+        if args.action == 'list':
+            project = resolve_project(request('GET', '/projects'), args)
+            collection = 'tasks' if args.command == 'todo' else 'notes'
+            items = request('GET', f"/projects/{project['id']}/{collection}")
+            if args.command == 'todo' and not args.all:
+                items = [item for item in items if item['status'] != 'completed']
+            print(json.dumps({'project_id': project['id'], collection: items}, ensure_ascii=False))
+            return 0
         title = args.title.strip()
         if not title or len(title) > 500:
             raise ValueError('Title must contain 1–500 characters.')
+        if args.command == 'todo':
+            project = resolve_project(request('GET', '/projects'), args)
+            result = request('POST', f"/projects/{project['id']}/tasks", {'title': title})
+            if (not isinstance(result, dict) or not isinstance(result.get('id'), int)
+                    or result.get('project_id') != project['id']):
+                raise ValueError('Unexpected TODO response. Check TODO before retrying; the item may have been saved.')
+            print(json.dumps({'todo_id': result['id'], 'project_id': project['id'], 'project': project['name']}, ensure_ascii=False))
+            return 0
         if args.file:
             with args.file.open(encoding='utf-8') as stream:
                 content = stream.read(MAX_CONTENT + 1)
