@@ -1,5 +1,7 @@
 # ProjectHub
 
+<img src="ProjectHub%20Stacked%20Layers%20Logo.png" alt="ProjectHub stacked-layers logo" width="480" />
+
 A local workspace for project history, decisions, notes, and TODOs. Import shared ChatGPT conversations, link Codex sessions, search saved history, and generate concise project briefs and Q&A with source references.
 
 ![ProjectHub dashboard in dark mode, showing an example project brief with numbered source references](docs/images/projecthub-dashboard.png)
