@@ -18,7 +18,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Sources supports renaming, searching, and filtering sessions, with the most recent local activity shown first.
 - Reviews keeps continuing Codex discussions collapsed by default. New review sessions take their names from the first question.
-- The stacked-layers logo appears in the README, browser tab, and sidebar.
+- The stacked-layers logo appears in the README, with a transparent icon in the browser tab and sidebar.
 - Removed structured decision acceptance prompts from the interface while preserving historical records and audit history.
 
 ### Maintenance
