@@ -2103,6 +2103,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const sessionStorageKey = `projecthub.review-session:${base}`;
   const [sessions, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
+  const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [prompt, setPrompt] = useState('');
   const [events, setEvents] = useState<any>(null);
   const [eventsError, setEventsError] = useState('');
@@ -2112,7 +2113,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [waiting, setWaiting] = useState<{ id: number; sessionId: string; generation: Generation } | null>(null);
   const autoRetried = useRef<number | null>(null);
   const [responsePage, setResponsePage] = useState(0);
-  const canSend = sessions?.some((session) => String(session.id) === sessionId && session.status !== 'linked');
+  const selectedSession = sessions?.find((session) => String(session.id) === sessionId);
+  const canSend = !!selectedSession && selectedSession.status !== 'linked';
   const completed = completedMessages(events?.events ?? []).reverse();
   const responsePageCount = Math.max(1, Math.ceil(completed.length / HISTORY_PAGE_SIZE));
   const currentResponsePage = Math.min(responsePage, responsePageCount - 1);
@@ -2160,7 +2162,9 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   async function ask(question: string, fresh = false) {
     let target = sessionId;
     if (fresh || !canSend) {
-      const session: RecordData = await post(`${prefix}/sessions`, { title: 'Project review' });
+      const name = Array.from(question.replace(/\s+/g, ' ').trim());
+      const title = name.length > 72 ? name.slice(0, 71).join('').trimEnd() + '…' : name.join('');
+      const session: RecordData = await post(`${prefix}/sessions`, { title });
       target = String(session.id);
       setSessions((rows) => [...(rows ?? []), session]);
       selectReviewSession(target);
@@ -2218,8 +2222,20 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
       <section className="card">
         <div className="section-title">
           <h2>Discussion session</h2>
-          <button className="secondary" onClick={onManageSessions}>Manage sources</button>
+          <div className="note-actions">
+            {selectedSession && <EditButton label="Rename selected session" disabled={busy}
+              onClick={() => setRenaming(selectedSession)} />}
+            <button className="secondary" onClick={onManageSessions}>Manage sources</button>
+          </div>
         </div>
+        {renaming && (
+          <Form title="Rename session" fields={[{ ...titleField, maxLength: 200 }]} initial={renaming}
+            onClose={() => setRenaming(null)}
+            onSave={async ({ title }) => {
+              const updated: RecordData = await patch(`${prefix}/sessions/${renaming.id}`, { title: String(title).trim() });
+              setSessions((rows) => rows?.map((row) => row.id === updated.id ? { ...row, title: updated.title } : row) ?? null);
+            }} />
+        )}
         <ErrorBox error={error} />
         {loading ? <p role="status">Loading sessions…</p> : sessions?.length ? (
           <label>
