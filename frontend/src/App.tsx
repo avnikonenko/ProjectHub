@@ -777,7 +777,8 @@ function ProjectWorkspace({
             )}
             {view === 'History' && (
               <ProjectHistory base={base} projectId={projectId} historyLink={historyLink}
-                notes={notes} onLeaveHistory={leaveHistory} />
+                notes={notes} onLeaveHistory={leaveHistory}
+                onNoteSaved={() => load().catch((e) => setError(e.message))} />
             )}
             {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
@@ -949,6 +950,8 @@ function ProjectWorkspace({
                         <strong>Reference:</strong>{' '}
                         {isChatGPTShare(n)
                           ? <a href={n.reference} target="_blank" rel="noreferrer">Open shared chat</a>
+                          : typeof n.reference === 'string' && readHistoryLink(n.reference)?.projectId === projectId
+                          ? <a href={n.reference}>Open source conversation</a>
                           : <span>{n.reference}</span>}
                       </p>
                     )}
@@ -1585,11 +1588,61 @@ function ProjectBrief({ base, generation }: GenerationProps) {
   );
 }
 
-function ChatGPTShares({ base, notes, onImported, showHistory = true }: {
+type PassageNoteContext = { base: string; projectId: number; onSaved: () => Promise<void> };
+
+function SaveablePassage({ context, reference, title, children }: {
+  context: PassageNoteContext;
+  reference: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const content = useRef<HTMLDivElement>(null);
+  const [selection, setSelection] = useState('');
+  const [excerpt, setExcerpt] = useState('');
+  const [saved, setSaved] = useState(false);
+  useEffect(() => {
+    function update() {
+      const selected = window.getSelection();
+      const inside = content.current?.contains(selected?.anchorNode ?? null)
+        && content.current?.contains(selected?.focusNode ?? null);
+      setSelection(inside ? selected?.toString().trim() ?? '' : '');
+    }
+    document.addEventListener('selectionchange', update);
+    return () => document.removeEventListener('selectionchange', update);
+  }, []);
+  return (
+    <>
+      <div ref={content}>{children}</div>
+      {selection && (
+        <button className="secondary" type="button" onMouseDown={(event) => event.preventDefault()}
+          onClick={() => { setExcerpt(selection); setSaved(false); }}>Save passage as note</button>
+      )}
+      {excerpt && (
+        <Form title="Save passage as note" fields={[
+          { ...titleField, maxLength: 500 },
+          { name: 'comment', label: 'Comment (optional)', type: 'textarea' },
+        ]} initial={{ title: title.slice(0, 500) }} onClose={() => setExcerpt('')}
+          onSave={async ({ title: noteTitle, comment }) => {
+            const quote = excerpt.split(/\r?\n/).map((line) => `> ${line}`).join('\n');
+            await post(`${context.base}/notes`, {
+              title: String(noteTitle).trim(), reference,
+              content: comment.trim() ? `${quote}\n\n${comment.trim()}` : quote,
+            });
+            setSaved(true);
+            await context.onSaved();
+          }} />
+      )}
+      {saved && <small role="status">Saved to Notes.</small>}
+    </>
+  );
+}
+
+function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNotes }: {
   base: string;
   notes: RecordData[];
   onImported?: () => Promise<void>;
   showHistory?: boolean;
+  passageNotes?: PassageNoteContext;
 }) {
   const [adding, setAdding] = useState(false);
   const [page, setPage] = useState(0);
@@ -1630,24 +1683,29 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true }: {
             onClick={() => setPage(currentPage + 1)}>Older chats</button>
         </nav>
       )}
-      {showHistory && shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
+      {showHistory && passageNotes && shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
         <details className="history-turn" key={share.id}>
           <summary>{share.title}</summary>
           <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
-          <div className="shared-transcript">{share.content}</div>
+          <SaveablePassage context={passageNotes} title={share.title ?? 'ChatGPT passage'}
+            reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id })}>
+            <div className="shared-transcript">{share.content}</div>
+          </SaveablePassage>
         </details>
       ))}
     </section>
   );
 }
 
-function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory }: {
+function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, onNoteSaved }: {
   base: string;
   projectId: number;
   historyLink: HistoryLink | null;
   notes: RecordData[];
   onLeaveHistory: () => void;
+  onNoteSaved: () => Promise<void>;
 }) {
+  const passageNotes = { base, projectId, onSaved: onNoteSaved };
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1672,17 +1730,17 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory }:
       {historyLink && 'noteId' in historyLink ? (
         <IndexedChatGPTTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
           note={notes.find((note) => note.id === historyLink.noteId && isChatGPTShare(note))}
-          query={historyLink.query} onClose={onLeaveHistory} />
+          query={historyLink.query} onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : historyLink ? (
         <IndexedHistoryTurn key={`${historyLink.sessionId}/${historyLink.turnId}`}
           prefix={`${base}/codex`} target={historyLink} indexVersion={indexVersion}
-          onClose={onLeaveHistory} />
+          onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : (
       <>
-      <ChatGPTShares base={base} notes={notes} />
+      <ChatGPTShares base={base} notes={notes} passageNotes={passageNotes} />
       <section className="card">
         <h2>Project conversation history</h2>
-        <p className="muted">Browse saved conversations associated with this project. Add sessions in Sources.</p>
+        <p className="muted">Select conversation text to save it as a note. Add sessions in Sources.</p>
         <ErrorBox error={error} />
         {loading ? <Empty>Loading project sessions…</Empty> : (
           <label>
@@ -1699,17 +1757,19 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory }:
         )}
         {!loading && !error && !sessions.length && <Empty>No sessions associated with this project.</Empty>}
       </section>
-      {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId} searchable />}
+      {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId} searchable
+        passageNotes={passageNotes} sessionTitle={sessions.find((row) => String(row.id) === sessionId)?.title} />}
       </>
       )}
     </>
   );
 }
 
-function IndexedChatGPTTranscript({ note, query, onClose }: {
+function IndexedChatGPTTranscript({ note, query, onClose, passageNotes }: {
   note?: RecordData;
   query?: string;
   onClose: () => void;
+  passageNotes: PassageNoteContext;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const mark = useRef<HTMLElement>(null);
@@ -1729,6 +1789,8 @@ function IndexedChatGPTTranscript({ note, query, onClose }: {
       {note ? (
         <>
           <p><a href={note.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
+          <SaveablePassage context={passageNotes} title={note.title ?? 'ChatGPT passage'}
+            reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: note.id })}>
           <div className="shared-transcript">
             {match ? (
               <>
@@ -1738,17 +1800,19 @@ function IndexedChatGPTTranscript({ note, query, onClose }: {
               </>
             ) : content}
           </div>
+          </SaveablePassage>
         </>
       ) : <ErrorBox error="This ChatGPT transcript is not available in this project." />}
     </section>
   );
 }
 
-function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
+function IndexedHistoryTurn({ prefix, target, indexVersion, onClose, passageNotes }: {
   prefix: string;
   target: HistoryTurnLink;
   indexVersion: number;
   onClose: () => void;
+  passageNotes: PassageNoteContext;
 }) {
   const [turn, setTurn] = useState<SavedTurn | null>(null);
   const [error, setError] = useState('');
@@ -1782,12 +1846,15 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
       {turn && (
         <>
           <Badge value={turn.status} />
+          <SaveablePassage context={passageNotes} title={`Passage from session #${target.sessionId}`}
+            reference={historyTurnHref(target)}>
           {turn.messages.map((message, index) => (
             <div className="history-message" key={index}>
               <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
               <Markdown>{message.text}</Markdown>
             </div>
           ))}
+          </SaveablePassage>
         </>
       )}
     </section>
@@ -1806,10 +1873,14 @@ function SavedHistory({
   prefix,
   sessionId,
   searchable = false,
+  passageNotes,
+  sessionTitle,
 }: {
   prefix: string;
   sessionId: string;
   searchable?: boolean;
+  passageNotes: PassageNoteContext;
+  sessionTitle?: string;
 }) {
   const [turns, setTurns] = useState<SavedTurn[]>([]);
   const [cursorTrail, setCursorTrail] = useState<(string | null)[]>([null]);
@@ -1907,12 +1978,15 @@ function SavedHistory({
             <h3>Turn {turn.id}</h3>
             <Badge value={turn.status} />
           </div>
+          <SaveablePassage context={passageNotes} title={sessionTitle ? `Passage from ${sessionTitle}` : `Passage from session #${sessionId}`}
+            reference={historyTurnHref({ projectId: passageNotes.projectId, sessionId: Number(sessionId), turnId: turn.id })}>
           {turn.messages.map((message, index) => (
             <div className="history-message" key={`${turn.id}-${index}`}>
               <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
               <Markdown>{message.text}</Markdown>
             </div>
           ))}
+          </SaveablePassage>
           {!turn.messages.length && (
             <p className="muted">No user or assistant text in this turn.</p>
           )}

@@ -32,7 +32,7 @@ Project data defaults to `~/.local/share/projecthub` and stays outside the check
 ## Use
 
 - **Sources:** import public ChatGPT share links and manage Codex sessions.
-- **History:** browse and search saved conversations.
+- **History:** browse and search saved conversations. Select text to save it as a note with a link back to the source.
 - **Dashboard / AI Q&A:** generate a compact overview and explanations of choices from conversations.
 - Link a Git repository in **Edit overview** to see its current branch, recent commits, and top-level working-tree status on the dashboard. This is a local read-only snapshot; it does not run tests or inspect changes inside submodules.
 - **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes.
