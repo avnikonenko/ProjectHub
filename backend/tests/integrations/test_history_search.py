@@ -192,3 +192,82 @@ def test_unified_history_search_and_pagination(env):
     assert [r['note_id'] for r in updated] == [shared]
     assert client.get('/api/projects/999/history/search', params=query).status_code == 404
     assert client.get(base + '/history/search', params={**query, 'offset': -1}).status_code == 422
+
+
+def test_incremental_index_reads_only_selected_sessions_and_keeps_other_rows(env):
+    from backend.app.integrations.codex.history_search import index_history
+
+    client, manager, engine = env
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='c', title='Other conversation'))
+        db.commit()
+    manager.turns['c'] = [turn('unchanged', 'stable evidence')]
+    original = index_history(engine, 1, manager)
+    with engine.connect() as db:
+        unchanged = db.execute(text('SELECT * FROM codex_history_turns WHERE session_id=3')).all()
+    manager.calls.clear()
+    manager.turns['a'] = [turn('replacement', 'replacement evidence'), turn('new', 'new evidence')]
+    refreshed = index_history(engine, 1, manager, session_ids={1})
+    assert refreshed['indexed_turns'] == 3
+    assert manager.calls == [('a', None)]
+    with engine.connect() as db:
+        assert db.execute(text('SELECT * FROM codex_history_turns WHERE session_id=3')).all() == unchanged
+    base = '/api/projects/1/codex/history/search'
+    assert client.get(base, params={'q': 'stable'}).json()['results'][0]['session_id'] == 3
+    assert client.get(base, params={'q': 'searchable'}).json()['results'] == []
+    assert client.get(base, params={'q': 'replacement'}).json()['results'][0]['session_id'] == 1
+    opens = manager.opens
+    assert index_history(engine, 1, manager, session_ids=set()) == refreshed
+    assert manager.opens == opens
+    assert original['indexed_turns'] == 2
+
+
+def test_incremental_index_rejects_foreign_sessions_before_reading(env):
+    from backend.app.integrations.codex.history_search import index_history
+
+    _, manager, engine = env
+    before = index_history(engine, 1, manager)
+    opens = manager.opens
+    with pytest.raises(CodexError, match='foreign'):
+        index_history(engine, 1, manager, session_ids={1, 2})
+    assert manager.opens == opens
+    assert index_history(engine, 1, manager, session_ids=set()) == before
+
+
+@pytest.mark.parametrize('failure', ['read', 'cancel'])
+def test_incremental_failure_preserves_complete_index(env, failure):
+    from backend.app.integrations.codex.history_search import index_history
+
+    _, manager, engine = env
+    before = index_history(engine, 1, manager)
+    with engine.connect() as db:
+        old = db.execute(text('SELECT * FROM codex_history_turns')).all()
+    cancelled = [False]
+    manager.turns['a'] = [turn(i, 'replacement') for i in range(8)]
+    if failure == 'read':
+        manager.fail_cursor = '5'
+    else:
+        manager.during_read = lambda: cancelled.__setitem__(0, True)
+    with pytest.raises(CodexError, match='unavailable|cancelled'):
+        index_history(engine, 1, manager, session_ids={1}, cancelled=lambda: cancelled[0])
+    with engine.connect() as db:
+        assert db.execute(text('SELECT * FROM codex_history_turns')).all() == old
+    assert index_history(engine, 1, manager, session_ids=set()) == before
+    assert manager.opens == manager.closes
+
+
+def test_changed_profile_during_incremental_read_preserves_index(env):
+    from backend.app.integrations.codex.history_search import index_history
+
+    _, manager, engine = env
+    before = index_history(engine, 1, manager)
+
+    def change_profile():
+        with Session(engine) as db:
+            db.get(CodexSession, 1).codex_account = 'profile:changed'
+            db.commit()
+
+    manager.during_read = change_profile
+    with pytest.raises(CodexError, match='associations changed'):
+        index_history(engine, 1, manager, session_ids={1})
+    assert index_history(engine, 1, manager, session_ids=set()) == before

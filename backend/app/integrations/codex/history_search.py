@@ -4,7 +4,7 @@ import re
 import tempfile
 import threading
 
-from sqlalchemy import select, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, CodexSession, utcnow
@@ -34,25 +34,43 @@ class HistoryIndexBusy(CodexError):
     pass
 
 
-def index_history(engine, project_id, manager):
+def index_history(engine, project_id, manager, *, session_ids=None, cancelled=None):
     if not _index_lock.acquire(blocking=False):
         raise HistoryIndexBusy('A history index refresh is already running. Retry after it finishes.')
     try:
+        def check_cancelled():
+            if cancelled is not None and cancelled():
+                raise CodexError('History indexing was cancelled. The previous index is preserved.')
+
+        check_cancelled()
         with Session(engine) as db:
             if db.get(Project, project_id) is None:
                 raise CodexError('Project not found.')
-            sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)
-                            .order_by(CodexSession.id)))
+            all_sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)
+                                .order_by(CodexSession.id)))
+            identities = {(session.id, session.thread_id, session.codex_account) for session in all_sessions}
+            if session_ids is not None:
+                selected = set(session_ids)
+                if not selected <= {session.id for session in all_sessions}:
+                    raise CodexError('History indexing requested a missing or foreign project session.')
+                if not selected:
+                    state = db.execute(text('SELECT indexed_at,indexed_turns FROM codex_history_index '
+                                            'WHERE project_id=:pid'), {'pid': project_id}).mappings().first()
+                    return dict(state) if state else {'indexed_at': None, 'indexed_turns': 0}
+                sessions = [session for session in all_sessions if session.id in selected]
+            else:
+                sessions = all_sessions
         # Spool text to disk before the write transaction. A slow or failed read
         # neither locks project writes nor replaces a previously usable index.
         with tempfile.TemporaryFile(mode='w+t', encoding='utf-8') as staged:
-            count = 0
             if sessions:
                 client = manager._new_read_client()
                 try:
                     for session in sessions:
+                        check_cancelled()
                         cursor, cursors, seen = None, set(), set()
                         while True:
+                            check_cancelled()
                             page = manager.history(session, cursor, client=client, archive=True)
                             for turn in page['turns']:
                                 if turn['id'] in seen or turn['status'] == 'inProgress':
@@ -66,7 +84,6 @@ def index_history(engine, project_id, manager):
                                     'session_title': session.title, 'turn_id': turn['id'], 'status': turn['status'],
                                     'messages': json.dumps(messages, ensure_ascii=False), 'content': content},
                                     ensure_ascii=False) + '\n')
-                                count += 1
                             cursor = page['next_cursor']
                             if cursor is None:
                                 break
@@ -80,20 +97,30 @@ def index_history(engine, project_id, manager):
             with engine.begin() as connection:
                 connection.exec_driver_sql('BEGIN IMMEDIATE')
                 # Recheck ownership immediately before replacing persisted data.
-                current = set(connection.execute(text('SELECT id FROM codex_sessions WHERE project_id=:pid'),
-                                                 {'pid': project_id}).scalars())
-                if {session.id for session in sessions} != current:
+                check_cancelled()
+                current = {tuple(row) for row in connection.execute(text(
+                    'SELECT id,thread_id,codex_account FROM codex_sessions WHERE project_id=:pid'),
+                    {'pid': project_id})}
+                if identities != current:
                     raise CodexError('Session associations changed during history indexing. Retry the refresh.')
-                connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid'), {'pid': project_id})
+                if session_ids is None:
+                    connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid'), {'pid': project_id})
+                else:
+                    connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid '
+                                            'AND session_id IN :sessions').bindparams(bindparam('sessions', expanding=True)),
+                                       {'pid': project_id, 'sessions': sorted(selected)})
                 insert = text('INSERT INTO codex_history_turns '
                               '(project_id,session_id,session_title,turn_id,status,messages,content) '
                               'VALUES (:project_id,:session_id,:session_title,:turn_id,:status,:messages,:content)')
                 for line in staged:
                     connection.execute(insert, json.loads(line))
+                count = connection.execute(text('SELECT count(*) FROM codex_history_turns WHERE project_id=:pid'),
+                                           {'pid': project_id}).scalar_one()
                 connection.execute(text('INSERT INTO codex_history_index(project_id,indexed_at,indexed_turns) '
                     'VALUES (:pid,:at,:count) ON CONFLICT(project_id) DO UPDATE SET '
                     'indexed_at=excluded.indexed_at,indexed_turns=excluded.indexed_turns'),
                     {'pid': project_id, 'at': indexed_at, 'count': count})
+                check_cancelled()
             return {'indexed_at': indexed_at, 'indexed_turns': count}
     finally:
         _index_lock.release()
