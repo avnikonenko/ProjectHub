@@ -17,6 +17,7 @@ from .integrations.codex.history_search import search_history
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
+from .services import repository_snapshot
 
 
 def db_dependency(request: Request):
@@ -240,6 +241,12 @@ def create_app(data_dir=None):
     @app.get('/api/projects/{project_id}/audit')
     def get_audit(project_id:int,db:Session=db_dep):
         require_project(db,project_id);return [serialize(a) for a in db.scalars(select(AuditEvent).where(AuditEvent.project_id==project_id).order_by(AuditEvent.id))]
+
+    @app.get('/api/projects/{project_id}/repository')
+    def get_repository_snapshot(project_id: int, db: Session = db_dep):
+        path = require_project(db, project_id).repository_path
+        db.rollback()
+        return repository_snapshot(path)
 
     @app.get('/api/projects/{project_id}/history/search')
     def search_conversations(project_id: int, q: str = Query('', max_length=2000),

@@ -38,7 +38,7 @@ def audit(db, project_id, obj, action, before=None):
     project.updated_at = utcnow()
 
 
-def validate_repository(value):
+def validate_repository(value, *, env=None):
     if value is None or value == '': return None
     path = Path(value).expanduser()
     if not path.is_absolute() or '..' in path.parts or any(ord(c) < 32 for c in str(path)):
@@ -48,11 +48,52 @@ def validate_repository(value):
         if component.is_symlink(): raise HTTPException(422, 'Symlinked repository paths are not supported')
     if not path.is_dir() or str(path) == '/': raise HTTPException(422, 'Repository directory does not exist or is unsafe')
     try:
-        result = subprocess.run(['git', '-C', str(path), 'rev-parse', '--show-toplevel'], capture_output=True, text=True, timeout=5, env={**os.environ, 'GIT_OPTIONAL_LOCKS':'0'})
+        result = subprocess.run(['git', '-C', str(path), 'rev-parse', '--show-toplevel'], capture_output=True, text=True, timeout=5, env=env if env is not None else {**os.environ, 'GIT_OPTIONAL_LOCKS':'0'})
     except (OSError, subprocess.TimeoutExpired): raise HTTPException(422, 'Unable to inspect repository')
     if result.returncode or Path(result.stdout.strip()).resolve() != path.resolve():
         raise HTTPException(422, 'Path must be the root of an existing Git repository')
     return str(path)
+
+
+def repository_snapshot(value):
+    if not value:
+        raise HTTPException(404, 'No repository is linked to this project')
+    env = {key: val for key, val in os.environ.items() if not key.startswith('GIT_')}
+    env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', GIT_NO_LAZY_FETCH='1', GIT_ALLOW_PROTOCOL='')
+    path = validate_repository(value, env=env)
+    command = ['git', '-C', path, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null']
+
+    def git(*args, allowed=(0,), overrides=()):
+        try:
+            result = subprocess.run([*command, *overrides, *args], capture_output=True,
+                                    text=True, encoding='utf-8', errors='replace', timeout=5, env=env)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise HTTPException(503, 'Unable to inspect repository') from exc
+        if result.returncode not in allowed:
+            raise HTTPException(503, 'Unable to inspect repository')
+        return result
+
+    branch = git('symbolic-ref', '--quiet', '--short', 'HEAD', allowed=(0, 1))
+    head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
+    commits = []
+    if head.returncode == 0:
+        for line in git('log', '-3', '--no-show-signature', '--format=%h%x09%s', 'HEAD', '--').stdout.split('\n'):
+            commit, separator, subject = line.partition('\t')
+            if separator:
+                commits.append({'hash': commit, 'subject': subject[:240]})
+    # Status may invoke configured clean/process filters when checking file contents.
+    # Disable each driver rather than executing repository-defined commands.
+    keys = git('config', '--null', '--name-only', '--get-regexp',
+               r'^filter\..*\.(clean|process|required)$', allowed=(0, 1)).stdout.split('\0')
+    drivers = sorted({key.rsplit('.', 1)[0] for key in keys if key})
+    if any('=' in driver for driver in drivers):
+        raise HTTPException(503, 'Unable to safely inspect configured Git filters')
+    overrides = [item for driver in drivers for option in ('clean=', 'process=', 'required=false')
+                 for item in ('-c', f'{driver}.{option}')]
+    status = git('status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty',
+                 overrides=overrides)
+    return {'branch': branch.stdout.strip() if branch.returncode == 0 else None,
+            'dirty': bool(status.stdout), 'commits': commits}
 
 
 def validate_links(db, project_id, values):

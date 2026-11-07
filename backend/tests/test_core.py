@@ -308,3 +308,40 @@ def test_review_checks_todos_and_notes_without_structured_workflow_findings(clie
     assert after['answers'][0]['id'] == historical_answer['id']
     assert len(after['decisions']) == 2
     assert 'Historical open question' in client.get(f'{base}/summary').json()['markdown']
+
+
+def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypatch):
+    repo = tmp_path / 'git-example'
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    repo.mkdir()
+    git('init', '-b', 'work')
+    p = project(client, repository_path=str(repo))
+    url = f"/api/projects/{p['id']}/repository"
+    assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': []}
+    assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
+    assert client.get('/api/projects/99999/repository').status_code == 404
+
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    (repo / '.gitattributes').write_text('file.txt filter=custom\n')
+    (repo / 'file.txt').write_text('original\n')
+    git('add', '.')
+    for i in range(4):
+        git('commit', '--allow-empty', '-m', f'Change {i}')
+    assert client.get(url).json()['dirty'] is False
+    git('checkout', '--detach', 'HEAD')
+    git('config', 'filter.custom.clean', 'touch ran-filter; cat')
+    git('config', 'core.fsmonitor', 'touch ran-monitor')
+    (repo / 'file.txt').write_text('modified\n')
+    index = (repo / '.git/index').read_bytes()
+    monkeypatch.setenv('GIT_DIR', str(tmp_path / 'not-a-repository'))
+    response = client.get(url)
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['branch'] is None and result['dirty'] is True
+    assert [commit['subject'] for commit in result['commits']] == ['Change 3', 'Change 2', 'Change 1']
+    assert not (repo / 'ran-filter').exists()
+    assert not (repo / 'ran-monitor').exists()
+    assert (repo / '.git/index').read_bytes() == index
