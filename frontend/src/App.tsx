@@ -2039,7 +2039,9 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                       <h3>Request #{item.id}</h3>
                       <Badge value={item.status} />
                     </div>
-                    <Markdown>{item.content}</Markdown>
+                    <Markdown>{item.decision_id == null
+                      ? String(item.content).replace(/^[\s\S]*?\nEND PROJECT REFERENCE DATA\nUSER REQUEST:\n/, '')
+                      : item.content}</Markdown>
                     {item.error && <ErrorBox error={item.error} />}
                     <small>
                       Context version ID: {item.context_id ?? 'Decision update'}
