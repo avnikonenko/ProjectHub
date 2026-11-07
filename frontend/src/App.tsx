@@ -1874,6 +1874,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   onManageSessions: () => void;
 }) {
   const prefix = `${base}/codex`;
+  const sessionStorageKey = `projecthub.review-session:${base}`;
   const [sessions, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
   const [prompt, setPrompt] = useState('');
@@ -1894,12 +1895,17 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
       .then((rows) => {
         if (abort.signal.aborted) return;
         setSessions(rows);
-        setSessionId(String((rows.find((row) => row.status !== 'linked') ?? rows[0])?.id ?? ''));
+        let savedId: string | null = null;
+        try { savedId = localStorage.getItem(sessionStorageKey); } catch { /* Storage is optional. */ }
+        const selected = rows.find((row) => String(row.id) === savedId)
+          ?? rows.filter((row) => row.status !== 'linked').at(-1)
+          ?? rows.at(-1);
+        setSessionId(String(selected?.id ?? ''));
       })
       .catch((e) => { if (!abort.signal.aborted) setError(e.message); })
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
-  }, [prefix]);
+  }, [prefix, sessionStorageKey]);
 
   async function action(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -1917,6 +1923,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     setEvents(null);
     setEventsError('');
     setSessionId(id);
+    try { localStorage.setItem(sessionStorageKey, id); } catch { /* Storage is optional. */ }
   }
 
   async function ask(question: string, fresh = false) {
@@ -1989,7 +1996,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             <select value={sessionId} disabled={busy} onChange={(e) => selectReviewSession(e.target.value)}>
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.title || `Session #${session.id}`}{session.status === 'linked' ? ' · Reading only' : ''}
+                  {session.title ? `${session.title} · #${session.id}` : `Session #${session.id}`}
+                  {session.status === 'linked' ? ' · Reading only' : ''}
                 </option>
               ))}
             </select>
