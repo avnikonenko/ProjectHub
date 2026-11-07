@@ -285,6 +285,16 @@ def search_saved_history(project_id: int, db: DB,
     return search_history(db, project_id, q, offset)
 
 
+@router.get('/history/sync')
+def history_sync_status(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    worker = getattr(request.app.state, 'history_sync', None)
+    state = search_history(db, project_id, '')
+    return {'enabled': worker is not None, 'indexed_at': state['indexed_at'],
+            'indexed_turns': state['indexed_turns'],
+            **(worker.read_status(project_id) if worker else {'error': None})}
+
+
 @router.post('/history/index')
 def refresh_history_index(project_id: int, request: Request, db: DB):
     project(db, project_id)

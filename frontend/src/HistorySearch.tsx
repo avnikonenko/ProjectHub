@@ -21,6 +21,27 @@ export function HistorySearch({
   const [index, setIndex] = useState<IndexStatus | null>(null);
   const [busy, setBusy] = useState<'status' | 'index' | 'search' | null>('status');
   const [error, setError] = useState('');
+  const [syncError, setSyncError] = useState('');
+  const [autoSync, setAutoSync] = useState(true);
+  useEffect(() => {
+    const abort = new AbortController();
+    const poll = async () => {
+      try {
+        const status = await api<IndexStatus & { enabled: boolean; error: string | null }>(
+          `${base}/codex/history/sync`, { signal: abort.signal });
+        if (!abort.signal.aborted) {
+          setAutoSync(status.enabled);
+          setSyncError(status.error ?? '');
+          setIndex(status);
+        }
+      } catch {
+        if (!abort.signal.aborted) setSyncError('Could not check automatic history sync. Manual refresh is still available.');
+      }
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 15000);
+    return () => { abort.abort(); window.clearInterval(timer); };
+  }, [base]);
   useEffect(() => {
     const abort = new AbortController();
     api<SearchPage>(`${base}/history/search?q=&offset=0`, { signal: abort.signal })
@@ -82,8 +103,10 @@ export function HistorySearch({
           busy === 'index' ? 'Reading linked sessions. Large histories may take a while.' :
           index?.indexed_at ?
             `${index.indexed_turns.toLocaleString()} indexed turns · Updated ${new Date(index.indexed_at).toLocaleString()}` :
-            'Imported chats are already searchable. Index Codex history to include saved turns.'}
+            autoSync ? 'Saved Codex history will sync automatically. Imported chats are already searchable.'
+              : 'Imported chats are already searchable. Index Codex history to include saved turns.'}
       </p>
+      {syncError && <div className="error" role="alert">{syncError}</div>}
       {error && <div className="error" role="alert">{error}</div>}
       <form className="search-bar" role="search" aria-label="Conversation history" onSubmit={(event) => {
         event.preventDefault();

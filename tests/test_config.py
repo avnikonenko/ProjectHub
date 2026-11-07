@@ -15,6 +15,18 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.port == 8766 and settings.generation_timeout == 600
     assert settings.data_dir == tmp_path / 'data/projecthub'
     assert settings.codex_home is None
+    assert settings.history_auto_sync is True and settings.history_sync_interval == 60
+
+
+def test_history_sync_config_and_overrides(tmp_path):
+    path = tmp_path / 'settings.toml'
+    path.write_text('[history]\nauto_sync = false\nsync_interval = 120\n')
+    env = {'PROJECTHUB_CONFIG': str(path)}
+    settings = load_settings(env)
+    assert not settings.history_auto_sync and settings.history_sync_interval == 120
+    settings = load_settings({**env, 'PROJECTHUB_HISTORY_AUTO_SYNC': 'true',
+                              'PROJECTHUB_HISTORY_SYNC_INTERVAL': '90'})
+    assert settings.history_auto_sync and settings.history_sync_interval == 90
 
 
 def test_file_settings_and_environment_precedence(tmp_path):
@@ -47,6 +59,7 @@ codex_home = "{tmp_path}/file-codex"
     '[ai]\ngeneration_timeout = 29', '[ai]\ngeneration_timeout = 3601',
     '[server]\npassword = "do-not-print-this"',
     '[credentials]\napi_key = "do-not-print-this"', '[server]\nport =',
+    '[history]\nauto_sync = "perhaps"', '[history]\nsync_interval = 0',
 ])
 def test_invalid_config_is_explicit_and_never_prints_values(tmp_path, content):
     path = tmp_path / 'config.toml'

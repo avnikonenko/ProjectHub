@@ -39,6 +39,8 @@ Edit [AGENTS_AI_agent.md](AGENTS_AI_agent.md) to adjust shared AI writing instru
 
 There is no separate question/answer acceptance workflow. Older structured records remain available in exports and as historical reference.
 
+Saved Codex history syncs locally in the background about once a minute while ProjectHub runs. Unchanged sessions are skipped, and previous search data remains usable if a read fails. Manual refresh is available in History. Sync never starts AI generation; imported ChatGPT share links remain snapshots. To disable sync or change the interval, add `[history]` with `auto_sync = false` or `sync_interval = 120` to the config.
+
 ## Development
 
 ```bash

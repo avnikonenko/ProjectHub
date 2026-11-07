@@ -304,10 +304,24 @@ def create_app(data_dir=None):
     try:
         from .integrations.codex.router import router as codex_router
         from .integrations.codex.manager import CodexManager
+        from .integrations.codex.history_sync import HistorySync
+        from .config import _boolean, _integer
         app.state.codex_manager = CodexManager(engine, directory)
+        sync_enabled = _boolean(os.environ.get('PROJECTHUB_HISTORY_AUTO_SYNC', True), 'history.auto_sync')
+        sync_interval = _integer(os.environ.get('PROJECTHUB_HISTORY_SYNC_INTERVAL', 60),
+                                 'history.sync_interval', 30, 3600)
+        app.state.history_sync = HistorySync(engine, lambda: app.state.codex_manager,
+                                            interval=sync_interval) if sync_enabled else None
         app.include_router(codex_router)
+        @app.on_event('startup')
+        def start_history_sync():
+            if app.state.history_sync is not None:
+                app.state.history_sync.start()
+
         @app.on_event('shutdown')
         def shutdown_codex():
+            if app.state.history_sync is not None:
+                app.state.history_sync.close()
             manager = getattr(app.state, 'codex_manager', None)
             if manager is not None: manager.close()
     except ModuleNotFoundError as exc:
