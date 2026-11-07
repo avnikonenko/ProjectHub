@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
+import { historyTurnHref, readHistoryTurnLink, type HistoryTurnLink } from './historyLinks';
+import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 
 type Field = {
@@ -213,6 +215,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [historyTurn, setHistoryTurn] = useState(() => readHistoryTurnLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
     const data = await api<Project[]>('/projects');
     setProjects(data);
@@ -227,6 +230,20 @@ export default function App() {
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [fetchProjects]);
+  useEffect(() => {
+    const update = () => setHistoryTurn(readHistoryTurnLink(window.location.hash));
+    window.addEventListener('hashchange', update);
+    return () => window.removeEventListener('hashchange', update);
+  }, []);
+  const linkedProjectExists = !!historyTurn && projects.some((p) => p.id === historyTurn.projectId);
+  const selectedProject = linkedProjectExists ? historyTurn.projectId : selected;
+  function selectProject(projectId: number) {
+    setSelected(projectId);
+    if (historyTurn) {
+      window.history.pushState(null, '', window.location.pathname + window.location.search);
+      setHistoryTurn(null);
+    }
+  }
   return (
     <div className="app">
       <aside className="sidebar">
@@ -241,8 +258,8 @@ export default function App() {
           {projects.map((p) => (
             <button
               key={p.id}
-              className={`project-option ${p.id === selected ? 'selected' : ''}`}
-              onClick={() => setSelected(p.id)}
+              className={`project-option ${p.id === selectedProject ? 'selected' : ''}`}
+              onClick={() => selectProject(p.id)}
             >
               <span className="project-dot" />
               {p.name}
@@ -268,9 +285,12 @@ export default function App() {
           <span className="local-label">● localhost</span>
         </header>
         <ErrorBox error={error} />
+        {!loading && historyTurn && !linkedProjectExists && (
+          <ErrorBox error="The project in this history link is not available." />
+        )}
         {loading ? (
           <Empty>Loading projects…</Empty>
-        ) : selected === null ? (
+        ) : selectedProject === null ? (
           <main>
             <div className="page-heading">
               <h1>A clear place for project work.</h1>
@@ -284,8 +304,10 @@ export default function App() {
           </main>
         ) : (
           <ProjectWorkspace
-            key={selected}
-            projectId={selected}
+            key={selectedProject}
+            projectId={selectedProject}
+            historyTurn={linkedProjectExists ? historyTurn : null}
+            onLeaveHistoryTurn={() => selectProject(selectedProject)}
             onProjectChanged={fetchProjects}
           />
         )}
@@ -299,7 +321,7 @@ export default function App() {
           onSave={async (data) => {
             const p = await post('/projects', projectBody(data));
             await fetchProjects();
-            setSelected(p.id);
+            selectProject(p.id);
           }}
         />
       )}
@@ -310,12 +332,17 @@ export default function App() {
 function ProjectWorkspace({
   projectId,
   onProjectChanged,
+  historyTurn,
+  onLeaveHistoryTurn,
 }: {
   projectId: number;
   onProjectChanged: () => Promise<void>;
+  historyTurn: HistoryTurnLink | null;
+  onLeaveHistoryTurn: () => void;
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [view, setView] = useState('Dashboard');
+  const [selectedView, setView] = useState('Dashboard');
+  const view = historyTurn ? 'History' : selectedView;
   const [generation, setGeneration] = useState(loadGenerationSettings);
   useEffect(() => {
     try { localStorage.setItem('projecthub.ai-settings', JSON.stringify(generation)); } catch { /* Storage is optional. */ }
@@ -334,6 +361,16 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
+  useEffect(() => {
+    if (historyTurn) {
+      setResults(null);
+      setReport(null);
+    }
+  }, [historyTurn]);
+  function leaveHistoryTurn() {
+    onLeaveHistoryTurn();
+    setView('History');
+  }
   const load = useCallback(async () => {
     const result = await api<Overview>(`${base}/overview`);
     if (alive.current) setOverview(result);
@@ -458,6 +495,7 @@ function ProjectWorkspace({
             key={t}
             className={view === t ? 'active' : ''}
             onClick={() => {
+              if (historyTurn) onLeaveHistoryTurn();
               setView(t);
               setReport(null);
               setResults(null);
@@ -574,7 +612,10 @@ function ProjectWorkspace({
                 </div>
               </>
             )}
-            {view === 'History' && <ProjectHistory base={base} />}
+            {view === 'History' && (
+              <ProjectHistory base={base} projectId={projectId} historyTurn={historyTurn}
+                onLeaveHistoryTurn={leaveHistoryTurn} />
+            )}
             {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
               <section className="card">
@@ -892,6 +933,7 @@ function briefReferences(ids: string[], numbers: Map<string, number>, prefix: st
 }
 
 function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: string }) {
+  const projectId = Number(prefix.split('-')[0]);
   return (
     <ol>
       {sources.map((source, index) => (
@@ -900,6 +942,11 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
             <summary>{source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…` : source.label}</summary>
             {source.turn_id && <small>{source.label}</small>}
             <pre className="json-report">{source.text}</pre>
+            {source.session_id !== undefined && source.turn_id && (
+              <a href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
+                Read full turn
+              </a>
+            )}
           </details>
         </li>
       ))}
@@ -1044,14 +1091,14 @@ function ProjectQA({ base, generation }: GenerationProps) {
         {items.map((item) => (
           <article className="brief-section" key={item.question}>
             <h3>{item.question}</h3>
-            <p>{item.answer}{briefReferences(item.source_ids, numbers, 'qa')}</p>
+            <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
           </article>
         ))}
       </section>
       {!!sources.length && (
         <section className="card brief-sources" aria-label="Q&A sources">
           <h2>Sources</h2>
-          <BriefSources sources={sources} prefix="qa" />
+          <BriefSources sources={sources} prefix={base.split('/')[2] + '-qa'} />
         </section>
       )}
     </>
@@ -1134,7 +1181,7 @@ function ProjectBrief({ base, generation }: GenerationProps) {
                   {brief.sections[key]?.map((entry, index) => (
                     <li key={index}>
                       {entry.text}
-                      {briefReferences(entry.source_ids, sourceNumbers, 'brief')}
+                      {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
                     </li>
                   ))}
                 </ul>
@@ -1149,7 +1196,7 @@ function ProjectBrief({ base, generation }: GenerationProps) {
       {brief && (
         <section className="card brief-sources" aria-label="Brief sources">
           <h2>Sources</h2>
-          <BriefSources sources={sources} prefix="brief" />
+          <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
           <details>
             <summary>What the brief covers</summary>
             <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
@@ -1160,11 +1207,17 @@ function ProjectBrief({ base, generation }: GenerationProps) {
   );
 }
 
-function ProjectHistory({ base }: { base: string }) {
+function ProjectHistory({ base, projectId, historyTurn, onLeaveHistoryTurn }: {
+  base: string;
+  projectId: number;
+  historyTurn: HistoryTurnLink | null;
+  onLeaveHistoryTurn: () => void;
+}) {
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [indexVersion, setIndexVersion] = useState(0);
   useEffect(() => {
     let active = true;
     api<RecordData[]>(`${base}/codex/sessions`)
@@ -1179,6 +1232,14 @@ function ProjectHistory({ base }: { base: string }) {
   }, [base]);
   return (
     <>
+      <HistorySearch prefix={`${base}/codex`} projectId={projectId}
+        onIndexed={() => setIndexVersion((value) => value + 1)} />
+      {historyTurn ? (
+        <IndexedHistoryTurn key={`${historyTurn.sessionId}/${historyTurn.turnId}`}
+          prefix={`${base}/codex`} target={historyTurn} indexVersion={indexVersion}
+          onClose={onLeaveHistoryTurn} />
+      ) : (
+      <>
       <section className="card">
         <h2>Project conversation history</h2>
         <p className="muted">Browse saved conversations associated with this project. Add sessions in Codex.</p>
@@ -1199,7 +1260,54 @@ function ProjectHistory({ base }: { base: string }) {
         {!loading && !error && !sessions.length && <Empty>No sessions associated with this project.</Empty>}
       </section>
       {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId} searchable />}
+      </>
+      )}
     </>
+  );
+}
+
+function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
+  prefix: string;
+  target: HistoryTurnLink;
+  indexVersion: number;
+  onClose: () => void;
+}) {
+  const [turn, setTurn] = useState<SavedTurn | null>(null);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  useEffect(() => {
+    const abort = new AbortController();
+    setLoading(true);
+    setTurn(null);
+    setError('');
+    api<SavedTurn>(`${prefix}/sessions/${target.sessionId}/history/turn?${new URLSearchParams({ turn_id: target.turnId })}`,
+      { signal: abort.signal })
+      .then((result) => { if (!abort.signal.aborted) setTurn(result); })
+      .catch((e) => { if (!abort.signal.aborted) setError(e.message); })
+      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
+    return () => abort.abort();
+  }, [prefix, target.sessionId, target.turnId, indexVersion]);
+  return (
+    <section className="card saved-history" aria-busy={loading}>
+      <div className="section-title">
+        <div><h2>Saved conversation turn</h2><small>Session #{target.sessionId} · Turn {target.turnId}</small></div>
+        <button className="secondary" onClick={onClose}>Browse recent turns</button>
+      </div>
+      <ErrorBox error={error} />
+      {error && <p>Use Index history or Refresh history index above to include newly saved turns, then this link will retry.</p>}
+      {loading && <Empty>Loading the requested turn…</Empty>}
+      {turn && (
+        <>
+          <Badge value={turn.status} />
+          {turn.messages.map((message, index) => (
+            <div className="history-message" key={index}>
+              <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
+              <Markdown>{message.text}</Markdown>
+            </div>
+          ))}
+        </>
+      )}
+    </section>
   );
 }
 
