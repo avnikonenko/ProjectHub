@@ -770,8 +770,34 @@ a:focus-visible {
   list-style: none;
   padding: 0;
 }
+.todo-list > li,
+.note-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.note-actions {
+  flex-shrink: 0;
+}
+.icon-edit {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  padding: 0;
+  width: 2rem;
+  height: 2rem;
+  color: #245c4b;
+  background: transparent;
+  border: 1px solid transparent;
+}
+.icon-edit:hover:not(:disabled) {
+  background: #edf5f0;
+  border-color: #dce6df;
+}
 .todo-list label {
   display: flex;
+  flex: 1;
+  min-width: 0;
   align-items: baseline;
   gap: 0.65rem;
   margin: 0;

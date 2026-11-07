@@ -22,6 +22,21 @@ const label = (value: string) => value.replaceAll('_', ' ');
 function Badge({ value = '' }: { value?: string }) {
   return <span className={`badge ${value}`}>{label(value)}</span>;
 }
+function EditButton({ label, onClick, disabled }: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button type="button" className="icon-edit" aria-label={label} title={label}
+      onClick={onClick} disabled={disabled}>
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+        strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="m14 6 4 4M4 20l4.5-1 11-11a2.8 2.8 0 0 0-4-4l-11 11L4 20Z" />
+      </svg>
+    </button>
+  );
+}
 function Markdown({ children }: { children?: string }) {
   return children ? (
     <div className="markdown">
@@ -425,6 +440,9 @@ function ProjectWorkspace({
         />
         <span>{task.title}</span>
       </label>
+      <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
+        onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 }], `/tasks/${task.id}`, task,
+          (data) => ({ title: String(data.title).trim() }))} />
     </li>
   );
   const tabs = [
@@ -772,7 +790,28 @@ function ProjectWorkspace({
                   <section className="card" key={n.id}>
                     <div className="section-title">
                       <h2>{n.title}</h2>
-                      <Badge value={n.kind} />
+                      <div className="note-actions">
+                        <Badge value={n.kind} />
+                        <EditButton label={`Edit note: ${n.title}`} disabled={busy}
+                          onClick={() =>
+                            edit(
+                              'Edit note',
+                              [
+                                titleField,
+                                {
+                                  name: 'content',
+                                  label: 'Markdown content',
+                                  type: 'textarea',
+                                },
+                                { name: 'kind', label: 'Kind' },
+                                { name: 'reference', label: 'Reference' },
+                              ],
+                              `/notes/${n.id}`,
+                              n,
+                            )
+                          }
+                        />
+                      </div>
                     </div>
                     <Markdown>{n.content}</Markdown>
                     {n.reference && (
@@ -780,28 +819,6 @@ function ProjectWorkspace({
                         <strong>Reference:</strong> <span>{n.reference}</span>
                       </p>
                     )}
-                    <button
-                      className="quiet"
-                      onClick={() =>
-                        edit(
-                          'Edit note',
-                          [
-                            titleField,
-                            {
-                              name: 'content',
-                              label: 'Markdown content',
-                              type: 'textarea',
-                            },
-                            { name: 'kind', label: 'Kind' },
-                            { name: 'reference', label: 'Reference' },
-                          ],
-                          `/notes/${n.id}`,
-                          n,
-                        )
-                      }
-                    >
-                      Edit note →
-                    </button>
                   </section>
                 ))}
               </>
