@@ -184,6 +184,27 @@ def test_inherited_connectors_fail_closed_before_generation(setup):
     assert not any(method == 'turn/start' for method, _ in client.calls)
 
 
+def test_explicit_review_requests_reconnect_disconnected_session(setup):
+    sid = create_session(setup)
+    base = '/api/projects/1/codex'
+    setup.manager.clients[sid].close()
+    response = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'review'})
+    assert response.status_code == 201 and response.json()['status'] == 'sent'
+    client = setup.manager.clients[sid]
+    assert [method for method, _ in client.calls].count('thread/resume') == 1
+    assert [method for method, _ in client.calls].count('turn/start') == 1
+
+    queued = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'another review'}).json()
+    assert queued['status'] == 'queued'
+    with Session(setup.engine) as db:
+        db.get(CodexSession, sid).status = 'idle'
+        db.commit()
+    setup.manager.clients.pop(sid).close()
+    result = setup.client.post(f"{base}/deliveries/{queued['id']}/send", json={'confirmed': True})
+    assert result.status_code == 200 and result.json()['status'] == 'sent'
+    assert [method for method, _ in setup.manager.clients[sid].calls].count('turn/start') == 1
+
+
 def test_discussion_disables_configured_connectors_before_sending(setup, monkeypatch):
     monkeypatch.setattr(FakeClient, 'configured', ('inherited',))
     sid = create_session(setup)

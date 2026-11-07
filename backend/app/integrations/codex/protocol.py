@@ -77,6 +77,10 @@ class AppServerClient:
             except (OSError, ValueError) as exc:
                 raise CodexError('Codex App Server connection was interrupted') from exc
 
+    @property
+    def connected(self):
+        return not self.closed and self.process.poll() is None and self.reader.is_alive()
+
     def request(self, method, params):
         response = queue.Queue(maxsize=1)
         with self.lock:

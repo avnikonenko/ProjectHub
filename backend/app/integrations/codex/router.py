@@ -316,7 +316,7 @@ def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db
     db.add(row); db.flush()
     audit(db, project_id, row, 'task_submission_requested')
     db.commit()
-    return manager.send(row.id, **options)
+    return manager.send(row.id, reconnect=True, **options)
 
 
 @router.get('/deliveries')
@@ -354,7 +354,7 @@ def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, requ
             raise HTTPException(409, 'Decision changed since preview. Create and review a fresh update.')
     try:
         manager = manager_for(request.app, project_id)
-        result = manager.send(row.id, **send_options(manager, body))
+        result = manager.send(row.id, reconnect=row.decision_id is None, **send_options(manager, body))
         db.expire_all()
         audit(db, project_id, db.get(Delivery, row.id), 'explicit_delivery_attempt')
         db.commit()

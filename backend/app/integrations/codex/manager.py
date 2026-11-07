@@ -480,9 +480,10 @@ class CodexManager:
                     'approvalPolicy': 'never', 'modelProvider': 'openai'})
                 if result['thread'].get('status', {}).get('type') == 'active':
                     raise CodexError('Thread is busy elsewhere; no input was sent.')
-                self.clients[session.id] = client
-                client.on_event = lambda method, params: self._event(session.id, method, params)
-                client.on_disconnect = lambda: self._disconnected(session.id)
+                session_id = session.id
+                self.clients[session_id] = client
+                client.on_event = lambda method, params: self._event(session_id, method, params)
+                client.on_disconnect = lambda: self._disconnected(session_id)
                 with Session(self.engine) as db:
                     row = db.get(CodexSession, session.id)
                     row.status, row.last_error = 'idle', ''
@@ -493,7 +494,7 @@ class CodexManager:
                 client.close()
                 raise
 
-    def send(self, delivery_id, *, model=None, effort=None):
+    def send(self, delivery_id, *, model=None, effort=None, reconnect=False):
         with self.lock:
             with Session(self.engine) as db:
                 delivery = db.get(Delivery, delivery_id)
@@ -503,9 +504,22 @@ class CodexManager:
                 if delivery.status in ('sending', 'unverified'):
                     raise CodexError('Delivery may already have reached Codex; inspect events before creating a new request.')
                 client = self.clients.get(session.id)
-                if session.status == 'running' or client is None:
+                disconnected = client is None or not getattr(client, 'connected', not getattr(client, 'closed', False))
+                if (reconnect and disconnected and session.status not in ('running', 'linked')
+                        and delivery.decision_id is None):
+                    try:
+                        self.resume(session, db.get(Project, session.project_id))
+                    except CodexError as exc:
+                        delivery.status, delivery.error = 'failed', str(exc)[:300]
+                        db.commit(); db.refresh(delivery)
+                        return record_dict(delivery)
+                    client = self.clients.get(session.id)
+                    disconnected = client is None
+                if session.status == 'running' or disconnected:
                     delivery.status = 'queued'
-                    delivery.error = 'Session busy or disconnected. Resume if needed, then explicitly retry.'
+                    delivery.error = ('Session is busy. Retry when the current turn finishes.'
+                                      if session.status == 'running' else
+                                      'Session disconnected. Resume it before retrying.')
                     db.commit(); db.refresh(delivery)
                     return record_dict(delivery)
                 delivery.status, delivery.error = 'sending', ''
