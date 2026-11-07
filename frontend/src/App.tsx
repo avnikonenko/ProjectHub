@@ -922,8 +922,11 @@ function ProjectWorkspace({
                   </div>
                 </section>
                 <AskProject base={base} projectId={projectId} generation={generation} />
-                <CodexReview base={base} generation={generation} onNotesChanged={load}
-                  onManageSessions={() => { setReport(null); setView('Sources'); }} />
+                <details>
+                  <summary className="card">Continue a Codex discussion</summary>
+                  <CodexReview base={base} generation={generation} onNotesChanged={load}
+                    onManageSessions={() => { setReport(null); setView('Sources'); }} />
+                </details>
               </>
             )}
           </>
@@ -2214,7 +2217,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     <>
       <section className="card">
         <div className="section-title">
-          <h2>Ask Codex about this project</h2>
+          <h2>Discussion session</h2>
           <button className="secondary" onClick={onManageSessions}>Manage sources</button>
         </div>
         <ErrorBox error={error} />
