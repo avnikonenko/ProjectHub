@@ -434,8 +434,7 @@ function ProjectWorkspace({
         </Empty>
       </main>
     );
-  const { project, decisions, tasks, notes, activity } = overview;
-  const accepted = decisions.filter((d) => d.status === 'accepted');
+  const { project, tasks, notes, activity } = overview;
   const activeTodos = tasks.filter((task) => task.status !== 'completed');
   const completedTodos = tasks.filter((task) => task.status === 'completed');
   const todoRow = (task: RecordData) => (
@@ -795,7 +794,6 @@ function ProjectWorkspace({
             {view === 'Codex' && (
               <Codex
                 base={base}
-                decisions={accepted}
                 generation={generation}
                 onError={setError}
                 onNotesChanged={load}
@@ -1684,13 +1682,11 @@ function SavedHistory({
 function Codex({
   base,
   generation,
-  decisions,
   onError,
   onNotesChanged,
 }: {
   base: string;
   generation: Generation;
-  decisions: RecordData[];
   onError: (message: string) => void;
   onNotesChanged: () => Promise<void>;
 }) {
@@ -1702,8 +1698,6 @@ function Codex({
   const [events, setEvents] = useState<any>(null);
   const [eventsError, setEventsError] = useState('');
   const [context, setContext] = useState<any>(null);
-  const [decisionId, setDecisionId] = useState('');
-  const [delivery, setDelivery] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
   const mounted = useRef(true);
@@ -1752,7 +1746,6 @@ function Codex({
   useEffect(() => {
     setEvents(null);
     setEventsError('');
-    setDelivery(null);
   }, [sessionId]);
   useEffect(() => {
     if (!sessionId) return;
@@ -1947,74 +1940,6 @@ function Codex({
         </form>
       </section>
       <section className="card">
-        <h2>Send decision to Codex</h2>
-        <p>
-          Preview an accepted decision update, then explicitly approve sending
-          it to the selected session. Busy or unavailable sessions keep updates
-          queued locally.
-        </p>
-        <label>
-          Accepted decision
-          <select
-            value={decisionId}
-            onChange={(e) => {
-              setDecisionId(e.target.value);
-              setDelivery(null);
-            }}
-          >
-            <option value="">Select a decision</option>
-            {decisions.map((d) => (
-              <option key={d.id} value={d.id}>
-                #{d.id} · {d.title}
-              </option>
-            ))}
-          </select>
-        </label>
-        <button
-          className="secondary"
-          disabled={busy || !canSend || !decisionId}
-          onClick={() =>
-            action(async () =>
-              setDelivery(
-                await post(`${prefix}/deliveries`, {
-                  decision_id: Number(decisionId),
-                  session_id: Number(sessionId),
-                }),
-              ),
-            )
-          }
-        >
-          Prepare decision update
-        </button>
-        {delivery && (
-          <div className="delivery-preview">
-            <div className="section-title">
-              <h3>Review update</h3>
-              <Badge value={delivery.status} />
-            </div>
-            <Report value={delivery} />
-            {delivery.error && <ErrorBox error={delivery.error} />}
-            <button
-              disabled={
-                busy || !canSend || !['draft', 'queued', 'failed'].includes(delivery.status)
-              }
-              onClick={() =>
-                action(async () =>
-                  setDelivery(
-                    await post(`${prefix}/deliveries/${delivery.id}/send`, {
-                      confirmed: true,
-                      ...generationBody(generation),
-                    }),
-                  ),
-                )
-              }
-            >
-              Approve and send update
-            </button>
-          </div>
-        )}
-      </section>
-      <section className="card">
         <div className="section-title">
           <h2>Session events & responses</h2>
           <span className="subtle-label">REFRESHES EVERY 3 SECONDS</span>
@@ -2059,7 +1984,7 @@ function Codex({
                 <small>
                   Context version ID: {item.context_id ?? 'Decision update'}
                 </small>
-                {['draft', 'queued', 'failed'].includes(item.status) && (
+                {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status) && (
                   <div className="actions left">
                     <button
                       disabled={busy || !canSend}
