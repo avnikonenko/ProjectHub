@@ -966,7 +966,8 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
 type SavedQA = {
   generated_at: string;
   generation?: GenerationProvenance | null;
-  items: { question: string; answer: string; source_ids: string[] }[];
+  items: { question: string; answer: string; source_ids: string[];
+    variants?: { answer: string; source_ids: string[] }[] }[];
   sources: BriefSource[];
 };
 
@@ -1084,6 +1085,7 @@ function ProjectQA({ base, generation }: GenerationProps) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(0);
+  const [filter, setFilter] = useState('');
   const path = `${base}/codex/qa`;
   useEffect(() => {
     let active = true;
@@ -1107,9 +1109,16 @@ function ProjectQA({ base, generation }: GenerationProps) {
     }
   }
   const pageSize = 5;
-  const totalPages = Math.ceil((saved?.items.length ?? 0) / pageSize);
-  const items = saved?.items.slice(page * pageSize, (page + 1) * pageSize) ?? [];
-  const sources = citedSources(saved?.sources ?? [], items.flatMap((item) => item.source_ids));
+  const terms = filter.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const filtered = (saved?.items ?? []).filter((item) => {
+    const text = [item.question, item.answer, ...(item.variants ?? []).map((answer) => answer.answer)].join(' ').toLocaleLowerCase();
+    return terms.every((term) => text.includes(term));
+  });
+  const totalPages = Math.ceil(filtered.length / pageSize);
+  const currentPage = Math.min(page, Math.max(0, totalPages - 1));
+  const items = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
+  const sources = citedSources(saved?.sources ?? [], items.flatMap((item) =>
+    [...item.source_ids, ...(item.variants ?? []).flatMap((answer) => answer.source_ids)]));
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
@@ -1127,19 +1136,36 @@ function ProjectQA({ base, generation }: GenerationProps) {
         <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
         {generating && <GenerationStatus base={base} kind="qa" />}
         <ErrorBox error={error} />
+        {!!saved?.items.length && (
+          <label>
+            Search all saved Q&A
+            <input type="search" value={filter} placeholder="Search questions and answers…"
+              onChange={(event) => { setFilter(event.target.value); setPage(0); }} />
+            {terms.length > 0 && <small>{filtered.length} of {saved.items.length} questions match</small>}
+          </label>
+        )}
         {loading && <Empty>Loading saved Q&A…</Empty>}
-        {!loading && !error && !items.length && <Empty>{saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{terms.length ? 'No matching saved Q&A.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
-            <button className="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
-            <span role="status">Page {page + 1} of {totalPages}</span>
-            <button className="secondary" disabled={page + 1 === totalPages} onClick={() => setPage(page + 1)}>Next</button>
+            <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
+            <span role="status">Page {currentPage + 1} of {totalPages}</span>
+            <button className="secondary" disabled={currentPage + 1 === totalPages} onClick={() => setPage(currentPage + 1)}>Next</button>
           </nav>
         )}
         {items.map((item) => (
           <article className="brief-section" key={item.question}>
             <h3>{item.question}</h3>
             <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
+            {!!item.variants?.length && (
+              <details>
+                <summary>Other recorded answers ({item.variants.length})</summary>
+                <p>These sources differ. Review them to determine which answer applies.</p>
+                {item.variants.map((answer, index) => (
+                  <p key={index}>{answer.answer}{briefReferences(answer.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
+                ))}
+              </details>
+            )}
           </article>
         ))}
       </section>

@@ -1,5 +1,7 @@
 """Generate a separate, source-backed project Q&A from linked conversations."""
 import json
+import re
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -70,6 +72,34 @@ def generate_items(manager, batch):
         yield {**item, 'source_ids': list(sources)}, sources
 
 
+def normalized_text(value):
+    text = ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
+    return re.sub(r'[?!。？！]+$', '', text).strip()
+
+
+def merge_items(items):
+    """Combine repeated questions without choosing between different answers."""
+    merged = {}
+    for item in items:
+        key = normalized_text(item['question'])
+        if not key:
+            key = item['question'].casefold().strip()
+        if key not in merged:
+            merged[key] = {**item, 'source_ids': list(dict.fromkeys(item['source_ids']))}
+            continue
+        existing = merged[key]
+        answers = [existing, *existing.get('variants', [])]
+        match = next((answer for answer in answers
+                      if normalized_text(answer['answer']) == normalized_text(item['answer'])), None)
+        if match is not None:
+            match['source_ids'] = list(dict.fromkeys([*match['source_ids'], *item['source_ids']]))
+        else:
+            existing.setdefault('variants', []).append({
+                'answer': item['answer'], 'source_ids': list(dict.fromkeys(item['source_ids'])),
+            })
+    return list(merged.values())
+
+
 def refresh_qa(engine, project_id, manager):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A brief or Q&A refresh is already running. Try again when it finishes.')
@@ -80,16 +110,14 @@ def refresh_qa(engine, project_id, manager):
             evidence.extend(note_evidence(db, project_id))
         if not evidence:
             raise CodexError('No saved conversation or project-note evidence is available for Q&A.')
-        items, sources, seen = [], {}, set()
+        items, sources = [], {}
         # Start with the latest batch in the archive order, without claiming cross-session chronology.
         for end in range(len(evidence), 0, -12):
             progress.update(project_id, stage=f'Generating Q&A batch {(len(evidence) - end) // 12 + 1} of {(len(evidence) + 11) // 12}')
             for item, cited in generate_items(manager, evidence[max(0, end - 12):end]):
-                key = ' '.join(item['question'].casefold().split()).rstrip('?')
-                if key not in seen:
-                    seen.add(key)
-                    items.append(item)
-                    sources.update(cited)
+                items.append(item)
+                sources.update(cited)
+        items = merge_items(items)
         with Session(engine) as db:
             row = db.get(ProjectQA, project_id)
             if row is None:

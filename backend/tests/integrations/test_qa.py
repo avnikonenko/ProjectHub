@@ -60,3 +60,19 @@ def test_qa_can_use_notes_without_conversations_and_saves_provenance(tmp_path, m
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
     engine.dispose()
+
+
+def test_duplicate_questions_merge_sources_and_preserve_differing_answers():
+    items = qa.merge_items([
+        {'question': 'Why use SQLite?', 'answer': 'It runs locally.', 'source_ids': ['a']},
+        {'question': ' WHY use SQLite?? ', 'answer': 'It runs locally.', 'source_ids': ['b']},
+        {'question': 'Why use SQLite?', 'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['c']},
+        {'question': 'Why use SQLite?', 'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['d']},
+        {'question': 'Why use C++?', 'answer': 'Fast.', 'source_ids': ['e']},
+        {'question': 'Why use C#?', 'answer': 'Managed.', 'source_ids': ['f']},
+    ])
+    assert len(items) == 3
+    assert items[0]['source_ids'] == ['a', 'b']
+    assert items[0]['variants'] == [{
+        'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['c', 'd'],
+    }]
