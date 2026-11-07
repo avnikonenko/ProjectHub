@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
+from .integrations import chatgpt_share
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
@@ -175,6 +176,28 @@ def create_app(data_dir=None):
     @app.post('/api/projects/{project_id}/notes',status_code=201)
     def create_note(project_id:int,payload:NoteCreate,db:Session=db_dep):
         require_project(db,project_id);n=Note(project_id=project_id,**payload.model_dump());db.add(n);audit(db,project_id,n,'created');db.commit();return serialize(n)
+
+    @app.post('/api/projects/{project_id}/notes/chatgpt-share', status_code=201)
+    def import_chatgpt_share(project_id: int, payload: ChatGPTShareImport, db: Session = db_dep):
+        require_project(db, project_id)
+        try:
+            url = chatgpt_share.canonical_url(payload.url)
+        except ValueError as exc:
+            raise HTTPException(422, 'Enter a public https://chatgpt.com/share/ conversation link.') from exc
+        existing = select(Note.id).where(
+            Note.project_id == project_id, Note.kind == 'document', Note.reference == url,
+        ).limit(1)
+        if db.scalar(existing) is not None:
+            raise HTTPException(409, 'This shared conversation is already saved in this project.')
+        try:
+            title, content = chatgpt_share.read_transcript(url)
+        except chatgpt_share.ShareReadError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        note = Note(project_id=project_id, title=title, content=content, kind='document', reference=url)
+        db.add(note)
+        audit(db, project_id, note, 'created')
+        db.commit()
+        return serialize(note)
 
     @app.patch('/api/projects/{project_id}/notes/{note_id}')
     def update_note(project_id:int,note_id:int,payload:NotePatch,db:Session=db_dep):

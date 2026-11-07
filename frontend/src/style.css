@@ -833,6 +833,10 @@ a:focus-visible {
 .history-turn h3 {
   overflow-wrap: anywhere;
 }
+.shared-transcript {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .history-message {
   border-top: 1px solid #eff1f0;
   padding: 12px 0;

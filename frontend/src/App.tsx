@@ -23,6 +23,10 @@ const descriptionField: Field = {
   type: 'textarea',
 };
 const label = (value: string) => value === 'ai_note' ? 'AI note' : value.replaceAll('_', ' ');
+const isChatGPTShare = (note: RecordData) => note.kind === 'document'
+  && typeof note.reference === 'string'
+  && /^https:\/\/chatgpt\.com\/share\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(note.reference);
+
 function Badge({ value = '' }: { value?: string }) {
   return <span className={`badge ${value}`}>{label(value)}</span>;
 }
@@ -73,12 +77,16 @@ function Form({
   initial = {},
   onSave,
   onClose,
+  saveLabel = 'Save',
+  savingLabel = 'Saving…',
 }: {
   title: string;
   fields: Field[];
   initial?: Record<string, any>;
   onSave: (data: Record<string, any>) => Promise<unknown>;
   onClose: () => void;
+  saveLabel?: string;
+  savingLabel?: string;
 }) {
   const [values, setValues] = useState<Record<string, any>>(() =>
     Object.fromEntries(
@@ -181,7 +189,7 @@ function Form({
             >
               Cancel
             </button>
-            <button disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button disabled={saving}>{saving ? savingLabel : saveLabel}</button>
           </div>
         </form>
       </section>
@@ -615,8 +623,11 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && (
-              <ProjectHistory base={base} projectId={projectId} historyTurn={historyTurn}
-                onLeaveHistoryTurn={leaveHistoryTurn} />
+              <>
+                {!historyTurn && <ChatGPTShares base={base} notes={notes} onImported={load} />}
+                <ProjectHistory base={base} projectId={projectId} historyTurn={historyTurn}
+                  onLeaveHistoryTurn={leaveHistoryTurn} />
+              </>
             )}
             {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
@@ -762,10 +773,20 @@ function ProjectWorkspace({
                         />
                       </div>
                     </div>
-                    <Markdown>{n.content}</Markdown>
+                    {isChatGPTShare(n)
+                      ? (
+                        <details>
+                          <summary>Read transcript</summary>
+                          <div className="shared-transcript">{n.content}</div>
+                        </details>
+                      )
+                      : <Markdown>{n.content}</Markdown>}
                     {n.reference && (
                       <p>
-                        <strong>Reference:</strong> <span>{n.reference}</span>
+                        <strong>Reference:</strong>{' '}
+                        {isChatGPTShare(n)
+                          ? <a href={n.reference} target="_blank" rel="noreferrer">Open shared chat</a>
+                          : <span>{n.reference}</span>}
                       </p>
                     )}
                   </section>
@@ -1318,6 +1339,58 @@ function ProjectBrief({ base, generation }: GenerationProps) {
         </section>
       )}
     </>
+  );
+}
+
+function ChatGPTShares({ base, notes, onImported }: {
+  base: string;
+  notes: RecordData[];
+  onImported: () => Promise<void>;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [page, setPage] = useState(0);
+  const shares = notes.filter(isChatGPTShare).sort((a, b) => b.id - a.id);
+  const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const start = currentPage * HISTORY_PAGE_SIZE;
+  return (
+    <section className="card">
+      <div className="section-title">
+        <div>
+          <h2>ChatGPT shared conversations</h2>
+          <p className="muted">Import a public share link to save its text and make it available to the brief and AI Q&amp;A.</p>
+        </div>
+        <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>
+      </div>
+      {adding && (
+        <Form title="Import shared chat"
+          fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
+          saveLabel="Import" savingLabel="Importing…" onClose={() => setAdding(false)}
+          onSave={async ({ url }) => {
+            await post(`${base}/notes/chatgpt-share`, { url: url.trim() });
+            await onImported();
+            setPage(0);
+          }}
+        />
+      )}
+      {!shares.length && <Empty>No shared chats imported.</Empty>}
+      {pageCount > 1 && (
+        <nav className="pagination" aria-label="Shared chat pages">
+          <button className="secondary" disabled={currentPage === 0}
+            onClick={() => setPage(currentPage - 1)}>Newer chats</button>
+          <span role="status">Page {currentPage + 1} of {pageCount}</span>
+          <button className="secondary" disabled={currentPage === pageCount - 1}
+            onClick={() => setPage(currentPage + 1)}>Older chats</button>
+        </nav>
+      )}
+      {shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
+        <details className="history-turn" key={share.id}>
+          <summary>{share.title}</summary>
+          <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
+          <div className="shared-transcript">{share.content}</div>
+        </details>
+      ))}
+    </section>
   );
 }
 

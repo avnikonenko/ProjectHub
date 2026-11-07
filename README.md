@@ -31,6 +31,8 @@ For frontend development, start the backend using the startup script and, in a s
 
 ## First project
 
+Under **History → Import shared chat**, paste a public `https://chatgpt.com/share/…` link. ProjectHub saves the visible conversation text and source link locally and uses the transcript as evidence when you generate a brief or AI Q&A. Imports are snapshots; they do not sync. Links that require sign-in and non-text attachments are not imported.
+
 Terminal agents can add notes through the running local app. Use `projecthub projects` to find a project ID, then `projecthub note add --project-id 1 --title 'Finding' --file /path/to/note.md`. `--content` and `--stdin` are also supported. These appear in Notes as **AI note** with the originating `CODEX_THREAD_ID` when available. This records a note without accepting a decision or calling a model. The reusable instructions are in [skills/projecthub-notes/SKILL.md](skills/projecthub-notes/SKILL.md).
 
 Agents can read notes with `projecthub note list --project-id 1`, read open TODOs with `projecthub todo list --project-id 1` (add `--all` for completed items), and add a checklist item with `projecthub todo add --project-id 1 --title 'Check the backup'`. These commands use the local API and do not invoke a model.

@@ -181,3 +181,37 @@ def test_question_patch_serializes_with_acceptance(client,monkeypatch):
     assert current['status']=='resolved'
     assert current['accepted_answer_id']==a['id']
     assert client.patch(url,json={'status':'open'}).status_code==422
+
+
+def test_import_chatgpt_share(client, monkeypatch):
+    from backend.app.integrations import chatgpt_share
+
+    url = 'https://chatgpt.com/share/01234567-89ab-cdef-0123-456789abcdef'
+    calls = []
+
+    def read(shared_url):
+        calls.append(shared_url)
+        return 'Database choice', 'User:\nWhich database?\n\nChatGPT:\nUse SQLite.'
+
+    monkeypatch.setattr(chatgpt_share, 'read_transcript', read)
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    path = f'/api/projects/{pid}/notes/chatgpt-share'
+    assert client.post('/api/projects/99999/notes/chatgpt-share', json={'url': url}).status_code == 404
+    assert client.post(path, json={'url': url.replace('/share/', '/c/')}).status_code == 422
+    imported = client.post(path, json={'url': f'{url}?utm_source=chatgpt'})
+    assert imported.status_code == 201, imported.text
+    note = imported.json()
+    assert (note['reference'], note['kind'], note['title']) == (url, 'document', 'Database choice')
+    assert 'Use SQLite.' in note['content']
+    assert client.post(path, json={'url': url}).status_code == 409
+    assert calls == [url]
+    assert client.get(f'/api/projects/{pid}/overview').json()['notes'] == [note]
+    assert client.get(f'/api/projects/{other}/notes').json() == []
+
+    def unavailable(_):
+        raise chatgpt_share.ShareReadError('No readable transcript')
+
+    monkeypatch.setattr(chatgpt_share, 'read_transcript', unavailable)
+    assert client.post(f'/api/projects/{other}/notes/chatgpt-share', json={'url': url}).status_code == 502
+    assert client.get(f'/api/projects/{other}/notes').json() == []

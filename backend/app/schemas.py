@@ -82,6 +82,10 @@ class NoteCreate(Input):
     reference: str = ''
 
 
+class ChatGPTShareImport(Input):
+    url: str = Field(min_length=1, max_length=2048)
+
+
 def patch_model(name, model):
     # Keep field validators while allowing omission; explicit null is checked at route level.
     fields = {}
