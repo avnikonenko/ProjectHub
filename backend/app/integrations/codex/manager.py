@@ -6,7 +6,9 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
@@ -203,7 +205,43 @@ class CodexManager:
         finally:
             client.close()
 
-    def generate_brief(self, prompt, output_schema):
+    def generation_models(self):
+        client = self._new_client()
+        try:
+            models, seen, cursor = {}, set(), None
+            while True:
+                params = {'limit': 50, 'includeHidden': False}
+                if cursor is not None:
+                    params['cursor'] = cursor
+                result = client.request('model/list', params)
+                data = result.get('data')
+                if not isinstance(data, list):
+                    raise CodexError('Codex returned an unsupported model list.')
+                for item in data:
+                    if not isinstance(item, dict) or item.get('hidden'):
+                        continue
+                    model = item.get('model')
+                    if isinstance(model, str) and model and len(model) <= 128:
+                        name = item.get('displayName')
+                        models[model] = {'id': model, 'label': name if isinstance(name, str) and name else model}
+                cursor = result.get('nextCursor')
+                if cursor is None:
+                    return list(models.values())
+                if not isinstance(cursor, str) or cursor in seen or len(seen) >= 19:
+                    raise CodexError('Codex returned an unsupported model-list cursor.')
+                seen.add(cursor)
+        finally:
+            client.close()
+
+    def for_generation(self, model):
+        if model is None:
+            return self
+        if not any(option['id'] == model for option in self.generation_models()):
+            raise CodexError('The selected model is unavailable. Choose another model or Codex default.')
+        return SimpleNamespace(history=self.history, _new_read_client=self._new_read_client,
+                               generation_model=model, generate_brief=partial(self.generate_brief, model=model))
+
+    def generate_brief(self, prompt, output_schema, *, model=None):
         """Generate in a separate ephemeral thread; never resume a source session."""
         done = threading.Event()
         state = {}
@@ -233,6 +271,7 @@ class CodexManager:
             client = self._new_client(on_event=event, on_disconnect=disconnected)
             try:
                 result = client.request('thread/start', {
+                    **({'model': model} if model else {}),
                     'ephemeral': True, 'cwd': cwd, 'sandbox': 'read-only',
                     'approvalPolicy': 'never', 'modelProvider': 'openai',
                     'config': {'mcp_servers': {}, 'web_search': 'disabled'},

@@ -35,6 +35,10 @@ class Confirmation(Input):
     confirmed: bool = False
 
 
+class GenerationInput(Confirmation):
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 def database(request: Request):
     with Session(request.app.state.engine) as db:
         yield db
@@ -96,13 +100,23 @@ def get_brief(project_id: int, db: DB):
     return read_brief(db, project_id)
 
 
+@router.get('/models')
+def generation_models(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    try:
+        return manager_for(request.app).generation_models()
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 @router.post('/brief')
-def generate_brief(project_id: int, body: Confirmation, request: Request, db: DB):
+def generate_brief(project_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
-        return refresh_brief(request.app.state.engine, project_id, manager_for(request.app))
+        manager = manager_for(request.app)
+        return refresh_brief(request.app.state.engine, project_id, manager.for_generation(body.model) if body.model else manager)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -116,12 +130,13 @@ def get_qa(project_id: int, db: DB):
 
 
 @router.post('/qa')
-def generate_qa(project_id: int, body: Confirmation, request: Request, db: DB):
+def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
     try:
-        return refresh_qa(request.app.state.engine, project_id, manager_for(request.app))
+        manager = manager_for(request.app)
+        return refresh_qa(request.app.state.engine, project_id, manager.for_generation(body.model) if body.model else manager)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

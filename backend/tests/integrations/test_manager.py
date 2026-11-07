@@ -235,8 +235,11 @@ def test_history_uses_read_client_and_closes_it(env, options, expected_limit):
     assert clients[0].closed
 
 
-@pytest.mark.parametrize('status,ephemeral', [('completed', True), ('failed', True), ('completed', False)])
-def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, status, ephemeral):
+@pytest.mark.parametrize('status,ephemeral,model', [
+    ('completed', True, None), ('completed', True, 'test-model'),
+    ('failed', True, None), ('completed', False, None),
+])
+def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, status, ephemeral, model):
     clients = []
 
     class BriefClient(FakeClient):
@@ -265,7 +268,7 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
 
     env.manager.client_factory = BriefClient
     if status == 'completed' and ephemeral:
-        assert env.manager.generate_brief('Synthetic input', {'type': 'object'}) == '{"brief": "saved"}'
+        assert env.manager.generate_brief('Synthetic input', {'type': 'object'}, model=model) == '{"brief": "saved"}'
     else:
         with pytest.raises(CodexError, match='ephemeral|did not complete'):
             env.manager.generate_brief('Synthetic input', {'type': 'object'})
@@ -274,6 +277,7 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
         ['account/read', 'thread/start'] + (['turn/start'] if ephemeral else []))
     start = clients[0].calls[1][1]
     assert start['ephemeral'] is True and start['sandbox'] == 'read-only'
+    assert start.get('model') == model
     if ephemeral:
         turn = clients[0].calls[2][1]
         assert turn['outputSchema'] == {'type': 'object'}
