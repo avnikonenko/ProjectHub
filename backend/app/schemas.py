@@ -75,6 +75,10 @@ class DecisionTask(Input):
     priority: Priority = 'medium'
 
 
+class TaskBulkCreate(Input):
+    items: list[TaskCreate] = Field(min_length=1, max_length=100)
+
+
 class NoteCreate(Input):
     title: str = Field(min_length=1, max_length=500)
     content: str = ''

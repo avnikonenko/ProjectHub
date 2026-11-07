@@ -215,3 +215,55 @@ def test_import_chatgpt_share(client, monkeypatch):
     monkeypatch.setattr(chatgpt_share, 'read_transcript', unavailable)
     assert client.post(f'/api/projects/{other}/notes/chatgpt-share', json={'url': url}).status_code == 502
     assert client.get(f'/api/projects/{other}/notes').json() == []
+
+
+def test_bulk_tasks_validate_atomically_and_preserve_order(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    foreign_question = question(client, other)['id']
+    path = f'/api/projects/{pid}/tasks/bulk'
+    before = client.get(f'/api/projects/{pid}/audit').json()
+    response = client.post(path, json={'items': [
+        {'title': 'Valid first'}, {'title': 'Foreign', 'question_id': foreign_question},
+    ]})
+    assert response.status_code == 404
+    assert client.get(f'/api/projects/{pid}/tasks').json() == []
+    assert client.get(f'/api/projects/{pid}/audit').json() == before
+    for items in ([], [{'title': 'A'}] * 101, [{'title': 'Valid'}, {'title': ' ' }]):
+        assert client.post(path, json={'items': items}).status_code == 422
+    assert client.get(f'/api/projects/{pid}/tasks').json() == []
+    content = 'Detailed follow-up\n' * 500
+    response = client.post(path, json={'items': [
+        {'title': 'First', 'description': content}, {'title': 'Second'},
+    ]})
+    assert response.status_code == 201
+    tasks = response.json()
+    assert [t['title'] for t in tasks] == ['First', 'Second']
+    assert tasks[0]['description'] == content.strip()
+    events = client.get(f'/api/projects/{pid}/audit').json()
+    assert sum(e['entity_type'] == 'tasks' and e['action'] == 'created' for e in events) == 2
+    assert client.post('/api/projects/99999/tasks/bulk', json={'items': [{'title': 'No'}]}).status_code == 404
+
+
+def test_delete_task_scoped_audited_and_removes_search_entry(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    decision = client.post(f'/api/projects/{pid}/decisions', json={
+        'title': 'Keep the reason', 'status': 'accepted', 'rationale': 'Durable choice',
+    }).json()
+    task = client.post(f'/api/projects/{pid}/tasks', json={
+        'title': 'Removableneedle', 'decision_id': decision['id'], 'description': 'Details',
+    }).json()
+    path = f"/api/projects/{pid}/tasks/{task['id']}"
+    assert client.delete(f"/api/projects/{other}/tasks/{task['id']}").status_code == 404
+    assert client.get(f'/api/projects/{pid}/search', params={'q': 'Removableneedle'}).json()
+    deleted = client.delete(path)
+    assert deleted.status_code == 204 and deleted.content == b''
+    assert client.get(f'/api/projects/{pid}/tasks').json() == []
+    assert client.get(f'/api/projects/{pid}/search', params={'q': 'Removableneedle'}).json() == []
+    assert client.get(f'/api/projects/{pid}/decisions').json()[0] == decision
+    events = client.get(f'/api/projects/{pid}/audit').json()
+    history = [e for e in events if e['entity_type'] == 'tasks' and e['entity_id'] == task['id']]
+    assert [e['action'] for e in history] == ['created', 'deleted']
+    assert history[-1]['before'] == task
+    assert client.delete(path).status_code == 404

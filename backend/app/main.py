@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -167,9 +167,32 @@ def create_app(data_dir=None):
     def create_task(project_id:int,payload:TaskCreate,db:Session=db_dep):
         require_project(db,project_id);values=payload.model_dump();validate_links(db,project_id,values);t=Task(project_id=project_id,**values);db.add(t);audit(db,project_id,t,'created');db.commit();return serialize(t)
 
+    @app.post('/api/projects/{project_id}/tasks/bulk', status_code=201)
+    def create_tasks(project_id: int, payload: TaskBulkCreate, db: Session = db_dep):
+        require_project(db, project_id)
+        values = [item.model_dump() for item in payload.items]
+        for item in values:
+            validate_links(db, project_id, item)
+        tasks = []
+        for item in values:
+            task = Task(project_id=project_id, **item)
+            db.add(task)
+            audit(db, project_id, task, 'created')
+            tasks.append(task)
+        db.commit()
+        return [serialize(task) for task in tasks]
+
     @app.patch('/api/projects/{project_id}/tasks/{task_id}')
     def update_task(project_id:int,task_id:int,payload:TaskPatch,db:Session=db_dep):
         t=scoped(db,Task,project_id,task_id);values=payload.model_dump(exclude_unset=True);validate_links(db,project_id,{**serialize(t),**values});before=serialize(t);apply_values(t,values);audit(db,project_id,t,'updated',before);db.commit();return serialize(t)
+
+    @app.delete('/api/projects/{project_id}/tasks/{task_id}', status_code=204)
+    def delete_task(project_id: int, task_id: int, db: Session = db_dep):
+        task = scoped(db, Task, project_id, task_id)
+        audit(db, project_id, task, 'deleted', serialize(task))
+        db.delete(task)
+        db.commit()
+        return Response(status_code=204)
 
     @app.get('/api/projects/{project_id}/notes')
     def get_notes(project_id:int,db:Session=db_dep):require_project(db,project_id);return [serialize(n) for n in records(db,Note,project_id)]
