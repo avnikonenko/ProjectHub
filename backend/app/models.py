@@ -153,3 +153,11 @@ class ProjectHistoryBatch(Base):
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), primary_key=True)
     fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)
     evidence: Mapped[list] = mapped_column(JSON)
+
+
+class ProjectQA(Base):
+    __tablename__ = 'project_qa'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), primary_key=True)
+    generated_at: Mapped[str] = mapped_column(String)
+    items: Mapped[list] = mapped_column(JSON)
+    sources: Mapped[list] = mapped_column(JSON)

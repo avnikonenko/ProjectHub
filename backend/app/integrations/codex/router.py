@@ -8,6 +8,7 @@ from ...models import Project, CodexSession, Decision, Delivery, ContextPackage,
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .brief import BriefBusy, read_brief, refresh_brief
+from .qa import read_qa, refresh_qa
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 
@@ -102,6 +103,25 @@ def generate_brief(project_id: int, body: Confirmation, request: Request, db: DB
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
         return refresh_brief(request.app.state.engine, project_id, manager_for(request.app))
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/qa')
+def get_qa(project_id: int, db: DB):
+    project(db, project_id)
+    return read_qa(db, project_id)
+
+
+@router.post('/qa')
+def generate_qa(project_id: int, body: Confirmation, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
+    try:
+        return refresh_qa(request.app.state.engine, project_id, manager_for(request.app))
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

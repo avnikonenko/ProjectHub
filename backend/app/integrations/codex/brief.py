@@ -13,7 +13,7 @@ from .protocol import CodexError
 SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates')
 SECTION_LIMITS = dict(zip(SECTION_NAMES, (2, 3, 4, 3, 3)))
 MAX_POINT_CHARS = 420
-_refresh_lock = threading.Lock()
+generation_lock = threading.Lock()
 
 OUTPUT_SCHEMA = {
     'type': 'object', 'additionalProperties': False, 'required': ['sections', 'project_map'],
@@ -146,7 +146,7 @@ def resolve_citations(sections, graph, source_groups):
 
 
 def refresh_brief(engine, project_id, manager):
-    if not _refresh_lock.acquire(blocking=False):
+    if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
     try:
         with Session(engine) as db:
@@ -203,4 +203,4 @@ def refresh_brief(engine, project_id, manager):
             db.commit()
             return read_brief(db, project_id)
     finally:
-        _refresh_lock.release()
+        generation_lock.release()

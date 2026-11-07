@@ -426,6 +426,7 @@ function ProjectWorkspace({
   const tabs = [
     'Dashboard',
     'History',
+    'AI Q&A',
     'TODO',
     'Notes',
     'Codex',
@@ -644,6 +645,7 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && <ProjectHistory base={base} />}
+            {view === 'AI Q&A' && <ProjectQA base={base} />}
             {view === 'TODO' && (
               <section className="card">
                 <h2>TODO</h2>
@@ -973,6 +975,86 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
         </li>
       ))}
     </ol>
+  );
+}
+
+type SavedQA = {
+  generated_at: string;
+  items: { question: string; answer: string; source_ids: string[] }[];
+  sources: BriefSource[];
+};
+
+function ProjectQA({ base }: { base: string }) {
+  const [saved, setSaved] = useState<SavedQA | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+  const [page, setPage] = useState(0);
+  const path = `${base}/codex/qa`;
+  useEffect(() => {
+    let active = true;
+    api<SavedQA | null>(path)
+      .then((result) => { if (active) setSaved(result); })
+      .catch((e) => { if (active) setError(e.message); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [path]);
+  async function generate() {
+    if (loading || generating) return;
+    setGenerating(true);
+    setError('');
+    try {
+      setSaved(await post(path, { confirmed: true }));
+      setPage(0);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setGenerating(false);
+    }
+  }
+  const pageSize = 5;
+  const totalPages = Math.ceil((saved?.items.length ?? 0) / pageSize);
+  const items = saved?.items.slice(page * pageSize, (page + 1) * pageSize) ?? [];
+  const sources = citedSources(saved?.sources ?? [], items.flatMap((item) => item.source_ids));
+  const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
+  return (
+    <>
+      <section className="card project-brief" aria-busy={loading || generating}>
+        <div className="section-title">
+          <div>
+            <h2>AI Q&A</h2>
+            {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
+          </div>
+          <button disabled={loading || generating} onClick={generate}>
+            {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
+          </button>
+        </div>
+        <p className="brief-note">Questions and answers drawn from your linked conversations. Generating sends conversation evidence to OpenAI.</p>
+        {generating && <p role="status">Generating Q&A. A long history may take several minutes.</p>}
+        <ErrorBox error={error} />
+        {loading && <Empty>Loading saved Q&A…</Empty>}
+        {!loading && !error && !items.length && <Empty>{saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
+        {totalPages > 1 && (
+          <nav className="pagination" aria-label="Q&A pages">
+            <button className="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>Previous</button>
+            <span role="status">Page {page + 1} of {totalPages}</span>
+            <button className="secondary" disabled={page + 1 === totalPages} onClick={() => setPage(page + 1)}>Next</button>
+          </nav>
+        )}
+        {items.map((item) => (
+          <article className="brief-section" key={item.question}>
+            <h3>{item.question}</h3>
+            <p>{item.answer}{briefReferences(item.source_ids, numbers, 'qa')}</p>
+          </article>
+        ))}
+      </section>
+      {!!sources.length && (
+        <section className="card brief-sources" aria-label="Q&A sources">
+          <h2>Sources</h2>
+          <BriefSources sources={sources} prefix="qa" />
+        </section>
+      )}
+    </>
   );
 }
 
