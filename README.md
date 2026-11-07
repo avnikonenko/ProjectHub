@@ -31,7 +31,7 @@ For frontend development, start the backend using the startup script and, in a s
 
 ## First project
 
-Under **History → Import shared chat**, paste a public `https://chatgpt.com/share/…` link. ProjectHub saves the visible conversation text and source link locally and uses the transcript as evidence when you generate a brief or AI Q&A. Imports are snapshots; they do not sync. Links that require sign-in and non-text attachments are not imported.
+Under **Sources → Import shared chat**, paste a public `https://chatgpt.com/share/…` link. Sources also manages linked Codex sessions. ProjectHub saves the visible conversation text and source link locally and uses the transcript as evidence when you generate a brief or AI Q&A. Browse and search saved conversations in **History**. Imports are snapshots; they do not sync. Links that require sign-in and non-text attachments are not imported.
 
 **Search conversation history** in History searches both imported ChatGPT chats and indexed Codex turns. Imported chats are searchable right away. Use **Index Codex history** to include linked Codex sessions, then open a result to read its source locally.
 

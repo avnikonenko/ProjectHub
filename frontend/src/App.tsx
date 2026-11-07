@@ -552,7 +552,7 @@ function ProjectWorkspace({
     'AI Q&A',
     'TODO',
     'Notes',
-    'Codex',
+    'Sources',
     'Reviews',
   ];
   return (
@@ -716,7 +716,7 @@ function ProjectWorkspace({
             )}
             {view === 'History' && (
               <ProjectHistory base={base} projectId={projectId} historyLink={historyLink}
-                notes={notes} onImported={load} onLeaveHistory={leaveHistory} />
+                notes={notes} onLeaveHistory={leaveHistory} />
             )}
             {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
@@ -896,8 +896,11 @@ function ProjectWorkspace({
                 </PagedItems>
               </>
             )}
-            {view === 'Codex' && (
-              <Codex base={base} onError={setError} />
+            {view === 'Sources' && (
+              <>
+                <ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} />
+                <Codex base={base} onError={setError} />
+              </>
             )}
             {view === 'Reviews' && (
               <>
@@ -921,7 +924,7 @@ function ProjectWorkspace({
                   </div>
                 </section>
                 <CodexReview base={base} generation={generation} onNotesChanged={load}
-                  onManageSessions={() => { setReport(null); setView('Codex'); }} />
+                  onManageSessions={() => { setReport(null); setView('Sources'); }} />
               </>
             )}
           </>
@@ -1439,10 +1442,11 @@ function ProjectBrief({ base, generation }: GenerationProps) {
   );
 }
 
-function ChatGPTShares({ base, notes, onImported }: {
+function ChatGPTShares({ base, notes, onImported, showHistory = true }: {
   base: string;
   notes: RecordData[];
-  onImported: () => Promise<void>;
+  onImported?: () => Promise<void>;
+  showHistory?: boolean;
 }) {
   const [adding, setAdding] = useState(false);
   const [page, setPage] = useState(0);
@@ -1455,11 +1459,13 @@ function ChatGPTShares({ base, notes, onImported }: {
       <div className="section-title">
         <div>
           <h2>ChatGPT shared conversations</h2>
-          <p className="muted">Import a public share link to save its text and make it available to the brief and AI Q&amp;A.</p>
+          <p className="muted">{onImported
+            ? 'Import a public share link to save its text for the brief and AI Q&A.'
+            : 'Saved transcripts. Add conversations in Sources.'}</p>
         </div>
-        <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>
+        {onImported && <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>}
       </div>
-      {adding && (
+      {adding && onImported && (
         <Form title="Import shared chat"
           fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
           saveLabel="Import" savingLabel="Importing…" onClose={() => setAdding(false)}
@@ -1471,7 +1477,8 @@ function ChatGPTShares({ base, notes, onImported }: {
         />
       )}
       {!shares.length && <Empty>No shared chats imported.</Empty>}
-      {pageCount > 1 && (
+      {!showHistory && !!shares.length && <p>{shares.length} saved · Browse in History</p>}
+      {showHistory && pageCount > 1 && (
         <nav className="pagination" aria-label="Shared chat pages">
           <button className="secondary" disabled={currentPage === 0}
             onClick={() => setPage(currentPage - 1)}>Newer chats</button>
@@ -1480,7 +1487,7 @@ function ChatGPTShares({ base, notes, onImported }: {
             onClick={() => setPage(currentPage + 1)}>Older chats</button>
         </nav>
       )}
-      {shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
+      {showHistory && shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
         <details className="history-turn" key={share.id}>
           <summary>{share.title}</summary>
           <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
@@ -1491,12 +1498,11 @@ function ChatGPTShares({ base, notes, onImported }: {
   );
 }
 
-function ProjectHistory({ base, projectId, historyLink, notes, onImported, onLeaveHistory }: {
+function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory }: {
   base: string;
   projectId: number;
   historyLink: HistoryLink | null;
   notes: RecordData[];
-  onImported: () => Promise<void>;
   onLeaveHistory: () => void;
 }) {
   const [sessions, setSessions] = useState<RecordData[]>([]);
@@ -1530,10 +1536,10 @@ function ProjectHistory({ base, projectId, historyLink, notes, onImported, onLea
           onClose={onLeaveHistory} />
       ) : (
       <>
-      <ChatGPTShares base={base} notes={notes} onImported={onImported} />
+      <ChatGPTShares base={base} notes={notes} />
       <section className="card">
         <h2>Project conversation history</h2>
-        <p className="muted">Browse saved conversations associated with this project. Add sessions in Codex.</p>
+        <p className="muted">Browse saved conversations associated with this project. Add sessions in Sources.</p>
         <ErrorBox error={error} />
         {loading ? <Empty>Loading project sessions…</Empty> : (
           <label>
@@ -1960,14 +1966,6 @@ function Codex({ base, onError }: {
           {context && <Report value={context} />}
         </section>
       </div>
-      {sessionId ? (
-        <SavedHistory key={`${prefix}/${sessionId}`} prefix={prefix} sessionId={sessionId} />
-      ) : (
-        <section className="card">
-          <h2>Saved conversation history</h2>
-          <Empty>Select a session to read its saved history.</Empty>
-        </section>
-      )}
     </>
   );
 }
@@ -2097,7 +2095,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
       <section className="card">
         <div className="section-title">
           <h2>Ask Codex about this project</h2>
-          <button className="secondary" onClick={onManageSessions}>Manage sessions</button>
+          <button className="secondary" onClick={onManageSessions}>Manage sources</button>
         </div>
         <ErrorBox error={error} />
         {loading ? <p role="status">Loading sessions…</p> : sessions?.length ? (
