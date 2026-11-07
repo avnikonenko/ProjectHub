@@ -3,7 +3,6 @@ set -euo pipefail
 
 script_path="$(readlink -f "${BASH_SOURCE[0]}")"
 project_root="$(cd "$(dirname "$script_path")/.." && pwd)"
-cd "$project_root"
 
 usage() {
   cat <<'EOF'
@@ -13,6 +12,8 @@ Commands:
   start    Start ProjectHub (default)
   check    Run the project checks
   setup    Install or refresh local dependencies
+  projects List local project IDs and names
+  note     Add an AI note (run "projecthub note add --help")
   help     Show this help
 
 Environment:
@@ -24,7 +25,15 @@ EOF
 command_name="${1:-start}"
 
 case "$command_name" in
+  projects|note)
+    if [[ ! -x "$project_root/.venv/bin/python" ]]; then
+      echo "projecthub: run 'projecthub setup' first" >&2
+      exit 1
+    fi
+    exec "$project_root/.venv/bin/python" "$project_root/scripts/notes_cli.py" "$@"
+    ;;
   start)
+    cd "$project_root"
     if [[ $# -gt 1 ]]; then
       echo "projecthub: start does not accept arguments" >&2
       exit 2
@@ -43,9 +52,11 @@ case "$command_name" in
     exec .venv/bin/python -m uvicorn backend.app.main:create_app --factory --host 127.0.0.1 --port "$port"
     ;;
   check)
+    cd "$project_root"
     exec bash scripts/check.sh
     ;;
   setup)
+    cd "$project_root"
     exec bash scripts/setup.sh
     ;;
   help|-h|--help)

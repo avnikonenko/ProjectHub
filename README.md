@@ -31,6 +31,8 @@ For frontend development, start the backend using the startup script and, in a s
 
 ## First project
 
+Terminal agents can add notes through the running local app. Use `projecthub projects` to find a project ID, then `projecthub note add --project-id 1 --title 'Finding' --file /path/to/note.md`. `--content` and `--stdin` are also supported. These appear in Notes as **AI note** with the originating `CODEX_THREAD_ID` when available. This records a note without accepting a decision or calling a model. The reusable instructions are in [skills/projecthub-notes/SKILL.md](skills/projecthub-notes/SKILL.md).
+
 Create a project with its objective and goals. An optional repository path must be the absolute root of an existing Git repository. Registration inspects the path and Git metadata without moving or changing repository files. Symlink paths and traversal components are rejected.
 
 Use TODO to add and check off follow-ups. Use AI Q&A to revisit decisions and the reasons behind them. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review and export.

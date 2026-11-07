@@ -20,7 +20,7 @@ const descriptionField: Field = {
   label: 'Description',
   type: 'textarea',
 };
-const label = (value: string) => value.replaceAll('_', ' ');
+const label = (value: string) => value === 'ai_note' ? 'AI note' : value.replaceAll('_', ' ');
 function Badge({ value = '' }: { value?: string }) {
   return <span className={`badge ${value}`}>{label(value)}</span>;
 }
