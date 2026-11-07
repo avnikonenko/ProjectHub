@@ -51,7 +51,7 @@ projecthub check
 # Or: bash scripts/check.sh
 ```
 
-[Validation](docs/TEST_REPORT.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_REVIEW.md)
+[Changelog](CHANGELOG.md) · [Validation](docs/TEST_REPORT.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_REVIEW.md)
 
 Single-user, local-only application. Do not expose it publicly without authentication and a security review. Installation is supported from a source checkout; standalone Python wheels are not currently a supported distribution.
 
