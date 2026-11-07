@@ -6,13 +6,14 @@ import sqlite3
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
-from fastapi import FastAPI, Depends, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
 from .integrations import chatgpt_share
+from .integrations.codex.history_search import search_history
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
@@ -216,6 +217,12 @@ def create_app(data_dir=None):
     @app.get('/api/projects/{project_id}/audit')
     def get_audit(project_id:int,db:Session=db_dep):
         require_project(db,project_id);return [serialize(a) for a in db.scalars(select(AuditEvent).where(AuditEvent.project_id==project_id).order_by(AuditEvent.id))]
+
+    @app.get('/api/projects/{project_id}/history/search')
+    def search_conversations(project_id: int, q: str = Query('', max_length=2000),
+                             offset: int = Query(0, ge=0, le=2_147_483_647), db: Session = db_dep):
+        require_project(db, project_id)
+        return search_history(db, project_id, q, offset, include_shared=True)
 
     @app.get('/api/projects/{project_id}/search')
     def search(project_id:int,q:str='',db:Session=db_dep):

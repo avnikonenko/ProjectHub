@@ -12,6 +12,22 @@ from .protocol import CodexError
 
 PAGE_SIZE = 20
 _index_lock = threading.Lock()
+_HEX = '[0-9a-f]'
+_SHARE_REFERENCE = 'https://chatgpt.com/share/' + '-'.join(_HEX * n for n in (8, 4, 4, 4, 12))
+_CODEX_MATCHES = (
+    'SELECT h.session_id,s.title AS session_title,h.turn_id, '
+    "snippet(codex_history_fts,0,'[',']','…',40) AS snippet, codex_history_fts.rank AS score "
+    'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
+    'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+    'WHERE codex_history_fts MATCH :query AND h.project_id=:pid'
+)
+_CHATGPT_MATCHES = (
+    "SELECT NULL,NULL,NULL,snippet(search_index,-1,'[',']','…',40),search_index.rank, "
+    "'chatgpt',n.id,n.title "
+    'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
+    "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
+    "AND n.kind='document' AND lower(n.reference) GLOB :reference"
+)
 
 
 class HistoryIndexBusy(CodexError):
@@ -83,7 +99,7 @@ def index_history(engine, project_id, manager):
         _index_lock.release()
 
 
-def search_history(db, project_id, query, offset=0):
+def search_history(db, project_id, query, offset=0, *, include_shared=False):
     state = db.execute(text('SELECT indexed_at,indexed_turns FROM codex_history_index WHERE project_id=:pid'),
                        {'pid': project_id}).mappings().first()
     result = {'results': [], 'next_offset': None, 'indexed_at': state['indexed_at'] if state else None,
@@ -92,14 +108,26 @@ def search_history(db, project_id, query, offset=0):
     if not terms:
         return result
     match = ' AND '.join('"' + term + '"' for term in terms)
-    rows = db.execute(text('SELECT h.session_id,s.title AS session_title,h.turn_id, '
-        "snippet(codex_history_fts,0,'[',']','…',40) AS snippet "
-        'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
-        'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
-        'WHERE codex_history_fts MATCH :query AND h.project_id=:pid '
-        'ORDER BY rank,h.session_id,h.turn_id LIMIT :limit OFFSET :offset'),
-        {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset}).mappings().all()
-    result['results'] = [dict(row) for row in rows[:PAGE_SIZE]]
+    params = {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset}
+    if include_shared:
+        # Apply the page limit after merging both sources so offsets never skip a match.
+        query_sql = (
+            "SELECT c.*, 'codex' AS kind, NULL AS note_id, NULL AS title "
+            f'FROM ({_CODEX_MATCHES}) c UNION ALL {_CHATGPT_MATCHES} '
+            'ORDER BY score,kind,session_id,turn_id,note_id'
+        )
+        params['reference'] = _SHARE_REFERENCE
+    else:
+        query_sql = _CODEX_MATCHES + ' ORDER BY score,session_id,turn_id'
+    rows = db.execute(text(query_sql + ' LIMIT :limit OFFSET :offset'), params).mappings().all()
+    for row in rows[:PAGE_SIZE]:
+        if include_shared and row['kind'] == 'chatgpt':
+            keys = ('kind', 'note_id', 'title', 'snippet')
+        else:
+            keys = ('session_id', 'session_title', 'turn_id', 'snippet')
+            if include_shared:
+                keys += ('kind',)
+        result['results'].append({key: row[key] for key in keys})
     if len(rows) > PAGE_SIZE:
         result['next_offset'] = offset + PAGE_SIZE
     return result

@@ -149,3 +149,46 @@ def test_write_failure_rolls_back_index_replacement(env):
         client.post(base + '/index')
     state = client.get(base + '/search', params={'q': 'searchable'}).json()
     assert state['indexed_at'] == original['indexed_at'] and len(state['results']) == 1
+
+
+def test_unified_history_search_and_pagination(env):
+    client, manager, _ = env
+    base = '/api/projects/1'
+    url = 'https://chatgpt.com/share/01234567-89ab-cdef-0123-456789abcdef'
+
+    def note(project, reference, kind='document'):
+        response = client.post(f'/api/projects/{project}/notes', json={
+            'title': 'Shared chat', 'content': 'User:\nWhere is the needle?',
+            'reference': reference, 'kind': kind,
+        })
+        assert response.status_code == 201
+        return response.json()['id']
+
+    shared = note(1, url)
+    note(2, url)
+    note(1, url, 'note')
+    note(1, url[:-1] + 'z')
+    query = {'q': 'needle'}
+    before = client.get(base + '/history/search', params=query).json()
+    assert before['indexed_at'] is None and before['next_offset'] is None
+    assert before['results'] == [{
+        'kind': 'chatgpt', 'note_id': shared, 'title': 'Shared chat',
+        'snippet': 'User:\nWhere is the [needle]?',
+    }]
+
+    manager.turns['a'] = [turn(i, 'needle') for i in range(25)]
+    assert client.post(base + '/codex/history/index').status_code == 200
+    first = client.get(base + '/history/search', params=query).json()
+    second = client.get(base + '/history/search', params={**query, 'offset': first['next_offset']}).json()
+    assert len(first['results']) == 20 and len(second['results']) == 6
+    assert second['next_offset'] is None and first['indexed_turns'] == 25
+    results = first['results'] + second['results']
+    assert [r['note_id'] for r in results if r['kind'] == 'chatgpt'] == [shared]
+    assert {r['turn_id'] for r in results if r['kind'] == 'codex'} == {str(i) for i in range(25)}
+
+    # Imported conversations update through the existing notes FTS triggers.
+    assert client.patch(f'{base}/notes/{shared}', json={'content': 'Fresh transcript'}).status_code == 200
+    updated = client.get(base + '/history/search', params={'q': 'fresh'}).json()['results']
+    assert [r['note_id'] for r in updated] == [shared]
+    assert client.get('/api/projects/999/history/search', params=query).status_code == 404
+    assert client.get(base + '/history/search', params={**query, 'offset': -1}).status_code == 422

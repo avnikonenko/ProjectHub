@@ -2,10 +2,28 @@ import { afterEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { api, patch, post } from '../src/api.ts';
 import { completedMessages } from '../src/codex.ts';
+import { chatGPTTranscriptHref, historyTurnHref, readHistoryLink, transcriptMatch } from '../src/historyLinks.ts';
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
+});
+
+test('history links preserve project scope and both source types', () => {
+  const turn = { projectId: 27, sessionId: 4, turnId: 'turn/1' };
+  const transcript = { projectId: 27, noteId: 8, query: 'cafe & tea' };
+  assert.deepEqual(readHistoryLink(historyTurnHref(turn)), turn);
+  assert.deepEqual(readHistoryLink(chatGPTTranscriptHref(transcript)), transcript);
+  assert.equal(readHistoryLink('#history?project=0&note=8'), null);
+  assert.equal(readHistoryLink('#history?project=27&note=1.5'), null);
+});
+
+test('transcript jump picks a whole matching word and preserves its accents', () => {
+  const body = 'A cafeteria serves Café. Tea is also available.';
+  const match = transcriptMatch(body, 'cafe tea');
+  assert.ok(match);
+  assert.equal(body.slice(match.start, match.start + match.length), 'Café');
+  assert.equal(transcriptMatch(body, 'missing term'), null);
 });
 
 test('project requests stay scoped and need no API key', async () => {

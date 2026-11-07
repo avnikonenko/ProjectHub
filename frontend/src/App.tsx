@@ -4,7 +4,9 @@ import { api, patch, post } from './api';
 import { completedMessages } from './codex';
 import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
-import { historyTurnHref, readHistoryTurnLink, type HistoryTurnLink } from './historyLinks';
+import {
+  historyTurnHref, readHistoryLink, transcriptMatch, type HistoryLink, type HistoryTurnLink,
+} from './historyLinks';
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 
@@ -225,7 +227,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [historyTurn, setHistoryTurn] = useState(() => readHistoryTurnLink(window.location.hash));
+  const [historyLink, setHistoryLink] = useState(() => readHistoryLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
     const data = await api<Project[]>('/projects');
     setProjects(data);
@@ -241,17 +243,17 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [fetchProjects]);
   useEffect(() => {
-    const update = () => setHistoryTurn(readHistoryTurnLink(window.location.hash));
+    const update = () => setHistoryLink(readHistoryLink(window.location.hash));
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
-  const linkedProjectExists = !!historyTurn && projects.some((p) => p.id === historyTurn.projectId);
-  const selectedProject = linkedProjectExists ? historyTurn.projectId : selected;
+  const linkedProjectExists = !!historyLink && projects.some((p) => p.id === historyLink.projectId);
+  const selectedProject = linkedProjectExists ? historyLink.projectId : selected;
   function selectProject(projectId: number) {
     setSelected(projectId);
-    if (historyTurn) {
+    if (historyLink) {
       window.history.pushState(null, '', window.location.pathname + window.location.search);
-      setHistoryTurn(null);
+      setHistoryLink(null);
     }
   }
   return (
@@ -295,7 +297,7 @@ export default function App() {
           <span className="local-label">● localhost</span>
         </header>
         <ErrorBox error={error} />
-        {!loading && historyTurn && !linkedProjectExists && (
+        {!loading && historyLink && !linkedProjectExists && (
           <ErrorBox error="The project in this history link is not available." />
         )}
         {loading ? (
@@ -316,8 +318,8 @@ export default function App() {
           <ProjectWorkspace
             key={selectedProject}
             projectId={selectedProject}
-            historyTurn={linkedProjectExists ? historyTurn : null}
-            onLeaveHistoryTurn={() => selectProject(selectedProject)}
+            historyLink={linkedProjectExists ? historyLink : null}
+            onLeaveHistory={() => selectProject(selectedProject)}
             onProjectChanged={fetchProjects}
           />
         )}
@@ -342,17 +344,17 @@ export default function App() {
 function ProjectWorkspace({
   projectId,
   onProjectChanged,
-  historyTurn,
-  onLeaveHistoryTurn,
+  historyLink,
+  onLeaveHistory,
 }: {
   projectId: number;
   onProjectChanged: () => Promise<void>;
-  historyTurn: HistoryTurnLink | null;
-  onLeaveHistoryTurn: () => void;
+  historyLink: HistoryLink | null;
+  onLeaveHistory: () => void;
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [selectedView, setView] = useState('Dashboard');
-  const view = historyTurn ? 'History' : selectedView;
+  const view = historyLink ? 'History' : selectedView;
   const [generation, setGeneration] = useState(loadGenerationSettings);
   useEffect(() => {
     try { localStorage.setItem('projecthub.ai-settings', JSON.stringify(generation)); } catch { /* Storage is optional. */ }
@@ -372,13 +374,13 @@ function ProjectWorkspace({
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
   useEffect(() => {
-    if (historyTurn) {
+    if (historyLink) {
       setResults(null);
       setReport(null);
     }
-  }, [historyTurn]);
-  function leaveHistoryTurn() {
-    onLeaveHistoryTurn();
+  }, [historyLink]);
+  function leaveHistory() {
+    onLeaveHistory();
     setView('History');
   }
   const load = useCallback(async () => {
@@ -505,7 +507,7 @@ function ProjectWorkspace({
             key={t}
             className={view === t ? 'active' : ''}
             onClick={() => {
-              if (historyTurn) onLeaveHistoryTurn();
+              if (historyLink) onLeaveHistory();
               setView(t);
               setReport(null);
               setResults(null);
@@ -623,11 +625,8 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && (
-              <>
-                {!historyTurn && <ChatGPTShares base={base} notes={notes} onImported={load} />}
-                <ProjectHistory base={base} projectId={projectId} historyTurn={historyTurn}
-                  onLeaveHistoryTurn={leaveHistoryTurn} />
-              </>
+              <ProjectHistory base={base} projectId={projectId} historyLink={historyLink}
+                notes={notes} onImported={load} onLeaveHistory={leaveHistory} />
             )}
             {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
@@ -1394,11 +1393,13 @@ function ChatGPTShares({ base, notes, onImported }: {
   );
 }
 
-function ProjectHistory({ base, projectId, historyTurn, onLeaveHistoryTurn }: {
+function ProjectHistory({ base, projectId, historyLink, notes, onImported, onLeaveHistory }: {
   base: string;
   projectId: number;
-  historyTurn: HistoryTurnLink | null;
-  onLeaveHistoryTurn: () => void;
+  historyLink: HistoryLink | null;
+  notes: RecordData[];
+  onImported: () => Promise<void>;
+  onLeaveHistory: () => void;
 }) {
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
@@ -1419,14 +1420,19 @@ function ProjectHistory({ base, projectId, historyTurn, onLeaveHistoryTurn }: {
   }, [base]);
   return (
     <>
-      <HistorySearch prefix={`${base}/codex`} projectId={projectId}
+      <HistorySearch base={base} projectId={projectId}
         onIndexed={() => setIndexVersion((value) => value + 1)} />
-      {historyTurn ? (
-        <IndexedHistoryTurn key={`${historyTurn.sessionId}/${historyTurn.turnId}`}
-          prefix={`${base}/codex`} target={historyTurn} indexVersion={indexVersion}
-          onClose={onLeaveHistoryTurn} />
+      {historyLink && 'noteId' in historyLink ? (
+        <IndexedChatGPTTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
+          note={notes.find((note) => note.id === historyLink.noteId && isChatGPTShare(note))}
+          query={historyLink.query} onClose={onLeaveHistory} />
+      ) : historyLink ? (
+        <IndexedHistoryTurn key={`${historyLink.sessionId}/${historyLink.turnId}`}
+          prefix={`${base}/codex`} target={historyLink} indexVersion={indexVersion}
+          onClose={onLeaveHistory} />
       ) : (
       <>
+      <ChatGPTShares base={base} notes={notes} onImported={onImported} />
       <section className="card">
         <h2>Project conversation history</h2>
         <p className="muted">Browse saved conversations associated with this project. Add sessions in Codex.</p>
@@ -1453,6 +1459,44 @@ function ProjectHistory({ base, projectId, historyTurn, onLeaveHistoryTurn }: {
   );
 }
 
+function IndexedChatGPTTranscript({ note, query, onClose }: {
+  note?: RecordData;
+  query?: string;
+  onClose: () => void;
+}) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  const mark = useRef<HTMLElement>(null);
+  const content = String(note?.content ?? '');
+  const match = transcriptMatch(content, query);
+  useEffect(() => {
+    const target = mark.current ?? heading.current;
+    target?.focus({ preventScroll: true });
+    target?.scrollIntoView({ block: 'center' });
+  }, []);
+  return (
+    <section className="card saved-history">
+      <div className="section-title">
+        <h2 ref={heading} tabIndex={-1}>{note?.title || 'Saved ChatGPT transcript'}</h2>
+        <button className="secondary" onClick={onClose}>Browse conversations</button>
+      </div>
+      {note ? (
+        <>
+          <p><a href={note.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
+          <div className="shared-transcript">
+            {match ? (
+              <>
+                {content.slice(0, match.start)}
+                <mark ref={mark} tabIndex={-1}>{content.slice(match.start, match.start + match.length)}</mark>
+                {content.slice(match.start + match.length)}
+              </>
+            ) : content}
+          </div>
+        </>
+      ) : <ErrorBox error="This ChatGPT transcript is not available in this project." />}
+    </section>
+  );
+}
+
 function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
   prefix: string;
   target: HistoryTurnLink;
@@ -1462,6 +1506,11 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
   const [turn, setTurn] = useState<SavedTurn | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+    heading.current?.scrollIntoView({ block: 'start' });
+  }, []);
   useEffect(() => {
     const abort = new AbortController();
     setLoading(true);
@@ -1477,11 +1526,11 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, onClose }: {
   return (
     <section className="card saved-history" aria-busy={loading}>
       <div className="section-title">
-        <div><h2>Saved conversation turn</h2><small>Session #{target.sessionId} · Turn {target.turnId}</small></div>
+        <div><h2 ref={heading} tabIndex={-1}>Saved conversation turn</h2><small>Session #{target.sessionId} · Turn {target.turnId}</small></div>
         <button className="secondary" onClick={onClose}>Browse recent turns</button>
       </div>
       <ErrorBox error={error} />
-      {error && <p>Use Index history or Refresh history index above to include newly saved turns, then this link will retry.</p>}
+      {error && <p>Use Index Codex history or Refresh Codex index above to include newly saved turns, then this link will retry.</p>}
       {loading && <Empty>Loading the requested turn…</Empty>}
       {turn && (
         <>
