@@ -1,0 +1,10 @@
+# ProjectHub settings. Environment variables override these values.
+# Keep credentials out of this file and out of the repository.
+[server]
+port = 8766
+# data_dir = "/absolute/path/to/projecthub-data"
+
+[ai]
+generation_timeout = 600
+# Select an existing Codex sign-in directory; ProjectHub never copies credentials.
+# codex_home = "/absolute/path/to/existing/codex-home"

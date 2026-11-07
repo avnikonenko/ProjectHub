@@ -66,3 +66,21 @@ def test_add_todo_is_scoped_and_does_not_create_note(monkeypatch, capsys):
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['todo', 'add', '--project-id', '2', '--title', 'Check backup']) == 0
     assert json.loads(capsys.readouterr().out)['todo_id'] == 7
+
+
+def test_request_uses_configured_port(tmp_path, monkeypatch):
+    import io
+    config = tmp_path / 'config.toml'
+    config.write_text('[server]\nport = 9876\n', encoding='utf-8')
+    monkeypatch.setenv('PROJECTHUB_CONFIG', str(config))
+    monkeypatch.delenv('PROJECTHUB_PORT', raising=False)
+    seen = []
+
+    class Opener:
+        def open(self, req, timeout):
+            seen.append(req.full_url)
+            return io.BytesIO(b'[]')
+
+    monkeypatch.setattr(notes_cli, 'build_opener', lambda *handlers: Opener())
+    assert notes_cli.request('GET', '/projects') == []
+    assert seen == ['http://127.0.0.1:9876/api/projects']

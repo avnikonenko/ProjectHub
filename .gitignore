@@ -10,3 +10,12 @@ frontend/coverage/
 *.sqlite3*
 .local-data/
 __codex_resume*.md
+
+# Private settings and credentials
+.env
+.env.*
+!.env.example
+config.toml
+*.pem
+*.key
+auth.json

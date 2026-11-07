@@ -12,15 +12,18 @@ Commands:
   start    Start ProjectHub (default)
   check    Run the project checks
   setup    Install or refresh local dependencies
+  config   Create the local config if missing and show its path
   projects List local project IDs and names
   note     List notes or add an AI note
   todo     List TODOs or add a checklist item
   help     Show this help
 
 Environment:
+  PROJECTHUB_CONFIG     Config file (default: XDG config directory/projecthub/config.toml)
   PROJECTHUB_PORT       Loopback port (default: 8766)
   PROJECTHUB_DATA_DIR   Absolute application data directory
   PROJECTHUB_GENERATION_TIMEOUT  Seconds per AI generation call (default: 600)
+  CODEX_HOME            Existing Codex profile home (credentials stay there)
 EOF
 }
 
@@ -32,7 +35,8 @@ case "$command_name" in
       echo "projecthub: run 'projecthub setup' first" >&2
       exit 1
     fi
-    exec "$project_root/.venv/bin/python" "$project_root/scripts/notes_cli.py" "$@"
+    cd "$project_root"
+    exec "$project_root/.venv/bin/python" -m scripts.notes_cli "$@"
     ;;
   start)
     cd "$project_root"
@@ -48,10 +52,19 @@ case "$command_name" in
       echo "projecthub: frontend build is missing; run 'projecthub setup'" >&2
       exit 1
     fi
-    port="${PROJECTHUB_PORT:-8766}"
-    echo "ProjectHub: http://127.0.0.1:${port}"
-    echo "Press Ctrl+C to stop."
-    exec .venv/bin/python -m uvicorn backend.app.main:create_app --factory --host 127.0.0.1 --port "$port"
+    exec .venv/bin/python -m backend.app.cli start
+    ;;
+  config)
+    cd "$project_root"
+    if [[ $# -gt 1 ]]; then
+      echo "projecthub: config does not accept arguments" >&2
+      exit 2
+    fi
+    if [[ ! -x .venv/bin/python ]]; then
+      echo "projecthub: run 'projecthub setup' first" >&2
+      exit 1
+    fi
+    exec .venv/bin/python -m backend.app.cli config
     ;;
   check)
     cd "$project_root"

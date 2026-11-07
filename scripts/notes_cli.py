@@ -17,8 +17,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 def request(method, path, payload=None):
+    from backend.app.config import load_settings
     try:
-        port = int(os.environ.get('PROJECTHUB_PORT', '8766'))
+        port = load_settings().port
         if not 1 <= port <= 65535:
             raise ValueError()
     except ValueError:
