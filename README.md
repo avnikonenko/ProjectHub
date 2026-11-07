@@ -1,6 +1,6 @@
 # ProjectHub
 
-ProjectHub keeps research questions, alternative answers, accepted decisions and notes in a local SQLite database. The browser UI and API run as one loopback-only service. Core project management works without Codex or an API key.
+ProjectHub helps you catch up on projects, revisit decisions, keep notes, and track next steps. It stores project records in a local SQLite database. The browser UI and API run as one loopback-only service. Core project management works without Codex or an API key.
 
 **Validation status:** implementation and test status are recorded in [docs/TEST_REPORT.md](docs/TEST_REPORT.md). Do not infer successful installation or real AI generation from mocked protocol tests.
 
@@ -71,5 +71,5 @@ See [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md), [API
 - If Codex is missing, unsigned-in, incompatible or interrupted, keep using core project management and inspect the error in Codex views. ProjectHub does not bypass sandbox restrictions.
 - If the default data directory is unwritable, set `PROJECTHUB_DATA_DIR` to a writable private directory before startup.
 - This is a single-user local application. Do not expose it through a network bind or reverse proxy without adding authentication and conducting a separate security review.
-- Rich PDF/Word import, semantic/vector search, automatic dependency discovery, code-editing permissions, multi-user collaboration and AI-generated truth/automatic decisions are deferred. Rule-based reviews cannot establish scientific correctness or reliably detect semantic contradictions.
+- Rich PDF/Word import, semantic/vector search, automatic dependency discovery, code-editing permissions, multi-user collaboration and automatic decisions are deferred. Rule-based reviews flag gaps in records and cannot verify claims.
 - Python requirements use bounded version ranges; installation should be validated in the target environment. The frontend lockfile, when present, pins its dependency graph.

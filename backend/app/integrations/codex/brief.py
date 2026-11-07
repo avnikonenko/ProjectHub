@@ -177,6 +177,7 @@ def refresh_brief(engine, project_id, manager):
                   'skip setup chatter, ports, and command lists unless essential to a current blocker. Open '
                   'questions: unresolved choices or blockers supported by the excerpts. Architecture: key '
                   'components and how they connect, prioritizing the saved diagram and accepted decisions. '
+                  'Include architecture only when relevant to this project; do not assume it is a software or research project. '
                   'Create a small project map with at most 12 nodes and 18 directional connections. Give nodes '
                   'short ASCII IDs and labels; edge endpoints must reference node IDs. Mark connections as '
                   'inferred unless explicitly documented; cite evidence even for inferences. Leave the map '

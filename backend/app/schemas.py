@@ -78,7 +78,7 @@ class DecisionTask(Input):
 class NoteCreate(Input):
     title: str = Field(min_length=1, max_length=500)
     content: str = ''
-    kind: Literal['note', 'technical_assumption', 'scientific_assumption', 'evidence', 'limitation', 'document', 'proposal'] = 'note'
+    kind: Literal['note', 'assumption', 'technical_assumption', 'scientific_assumption', 'evidence', 'limitation', 'document', 'proposal'] = 'note'
     reference: str = ''
 
 

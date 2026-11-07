@@ -233,7 +233,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-icon">P</span>
           <div>
-            ProjectHub<small>Research workspace</small>
+            ProjectHub<small>Project workspace</small>
           </div>
         </div>
         <div className="sidebar-label">YOUR PROJECTS</div>
@@ -273,10 +273,9 @@ export default function App() {
         ) : selected === null ? (
           <main>
             <div className="page-heading">
-              <p className="eyebrow">YOUR RESEARCH, CONNECTED</p>
               <h1>A clear place for project work.</h1>
               <p>
-                Keep questions, evidence, decisions, and notes together.
+                Keep conversations, decisions, notes, and next steps together.
               </p>
             </div>
             <button onClick={() => setAdding(true)}>
@@ -631,8 +630,7 @@ function ProjectWorkspace({
                             type: 'select',
                             options: [
                               'note',
-                              'technical_assumption',
-                              'scientific_assumption',
+                              'assumption',
                               'evidence',
                               'limitation',
                               'proposal',
@@ -747,7 +745,7 @@ function ProjectWorkspace({
                 <p>
                   Check unresolved questions, incomplete work, missing evidence,
                   and validation gaps. Deterministic findings reflect stored
-                  records; they do not establish scientific validity.
+                  records and can flag gaps for you to review.
                 </p>
                 <div className="actions left">
                   <button

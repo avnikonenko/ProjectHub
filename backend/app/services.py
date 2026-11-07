@@ -106,9 +106,8 @@ def review(db, project_id):
         if t['status']!='completed': finding('incomplete_task',f"Task #{t['id']} is {t['status']}: {t['title']}",t['id'])
     for n in data['notes']:
         if n['kind']=='limitation': finding('limitation',n['content'],n['id'])
-    if not data['project']['architecture_mermaid']: finding('missing_architecture','No architecture has been recorded.')
     accepted = [d for d in data['decisions'] if d['status']=='accepted']
     for d in accepted:
         if sum(x['title'].casefold()==d['title'].casefold() for x in accepted)>1:
             finding('possible_contradiction',f"Multiple accepted decisions share title: {d['title']}",d['id'])
-    return {'project_id':project_id,'source':'deterministic','findings':findings,'limitations':['Rule-based checks cannot determine scientific truth or detect semantic contradictions.']}
+    return {'project_id':project_id,'source':'deterministic','findings':findings,'limitations':['Rule-based checks flag gaps in recorded information; they do not verify claims or detect contradictions in meaning.']}
