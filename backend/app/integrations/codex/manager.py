@@ -1,5 +1,7 @@
 """Project-scoped persistence and lifecycle for read-only Codex discussions."""
 import hashlib
+import copy
+import os
 import json
 import logging
 import shutil
@@ -24,7 +26,7 @@ def record_dict(row):
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}
 
 
-def availability():
+def availability(codex_home=None):
     executable = shutil.which('codex')
     result = {'installed': bool(executable), 'version': '', 'authenticated': False,
               'auth_mode': None, 'app_server': False, 'error': '', 'read_only': True}
@@ -32,12 +34,15 @@ def availability():
         result['error'] = 'Codex is unavailable; project knowledge remains usable.'
         return result
     try:
+        environment = dict(os.environ)
+        if codex_home is not None:
+            environment['CODEX_HOME'] = codex_home
         version = subprocess.run([executable, '--version'], capture_output=True, text=True, timeout=5)
         result['version'] = version.stdout.strip()[:100]
         help_result = subprocess.run([executable, 'app-server', '--help'],
                                      capture_output=True, text=True, timeout=5)
         result['app_server'] = help_result.returncode == 0
-        auth = subprocess.run([executable, 'login', 'status'], capture_output=True, text=True, timeout=5)
+        auth = subprocess.run([executable, 'login', 'status'], env=environment, capture_output=True, text=True, timeout=5)
         # This app deliberately requires existing subscription authentication and
         # never falls back to a separately billed API key/provider.
         result['authenticated'] = auth.returncode == 0 and 'Logged in using ChatGPT' in (auth.stdout + auth.stderr)
@@ -80,6 +85,7 @@ class CodexManager:
         self.data_dir = Path(data_dir)
         self.client_factory = client_factory
         self.clients = {}
+        self.account_managers = {}
         self.lock = threading.RLock()
         # A restart cannot establish what an in-flight turn delivered. Never
         # silently retry, declare completion, or modify Codex history.
@@ -150,7 +156,8 @@ class CodexManager:
             log.exception('Could not record Codex disconnect for session %s', session_id)
 
     def _new_client(self, session_id=None, *, on_event=None, on_disconnect=None):
-        status = availability()
+        home = getattr(self, 'account_home', None)
+        status = availability(home) if home else availability()
         if not (status['installed'] and status['app_server'] and status['authenticated']):
             raise CodexError(status['error'] or 'Codex App Server unavailable')
         client = self.client_factory(
@@ -169,7 +176,7 @@ class CodexManager:
             raise CodexError('Codex App Server is unavailable for reading local history.')
         # Local history does not require an account or permission to generate.
         # No callbacks are installed: reading must not persist external events.
-        return self.client_factory()
+        return getattr(self, 'history_client_factory', self.client_factory)()
 
     def associate(self, project, title, thread_id):
         with self.lock:
@@ -190,6 +197,16 @@ class CodexManager:
                     client.close()
 
     def history(self, session, cursor=None, *, client=None, archive=False, limit=5):
+        account = getattr(session, 'codex_account', None)
+        if account:
+            from .accounts import account_home
+            with_client = partial(AppServerClient, codex_home=account_home(account))
+            if client is not None:
+                # A shared reader belongs to the launch account. Use a private
+                # connection for sessions created under a selected account.
+                client = None
+        else:
+            with_client = self._new_read_client
         # Full persisted items can include large tool outputs even though we
         # discard them below. Keep archive pages small enough for the transport.
         if archive:
@@ -202,7 +219,7 @@ class CodexManager:
             params['cursor'] = cursor
         if client is not None:
             return history_page(client.request('thread/turns/list', params), clip_messages=not archive, limit=limit)
-        client = self._new_read_client()
+        client = with_client()
         try:
             result = client.request('thread/turns/list', params)
             return history_page(result, clip_messages=not archive, limit=limit)
@@ -261,6 +278,7 @@ class CodexManager:
             return self
         return SimpleNamespace(history=self.history, _new_read_client=self._new_read_client,
                                generation_model=model, generation_effort=effort,
+                               generation_account=getattr(self, 'account_home', None),
                                generate_brief=partial(self.generate_brief, model=model, effort=effort))
 
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None):
@@ -355,7 +373,8 @@ class CodexManager:
                 with Session(self.engine) as db:
                     if db.scalar(select(CodexSession).where(CodexSession.thread_id == thread['id'])):
                         raise CodexError('Thread is already associated with a project.')
-                    session = CodexSession(project_id=project.id, thread_id=thread['id'], title=title)
+                    session = CodexSession(project_id=project.id, thread_id=thread['id'], title=title,
+                                           codex_account=getattr(self, 'account_key', None))
                     db.add(session)
                     db.commit()
                     db.refresh(session)
@@ -374,6 +393,8 @@ class CodexManager:
             raise CodexError('Thread is active elsewhere; no resume or input was sent.')
 
     def resume(self, session, project):
+        if getattr(session, 'codex_account', None) != getattr(self, 'account_key', None):
+            raise CodexError('This session belongs to another Codex profile. Select its original project account or start a new session.')
         with self.lock:
             if session.status == 'running':
                 raise CodexError('Session is busy; wait or interrupt it before resuming.')
@@ -469,6 +490,8 @@ class CodexManager:
             return {'status': 'interrupt_requested'}
 
     def close(self):
+        for child in self.account_managers.values():
+            child.close()
         with self.lock:
             for session_id, client in list(self.clients.items()):
                 client.close()
@@ -476,14 +499,34 @@ class CodexManager:
             self.clients.clear()
 
 
-def manager_for(app):
+def manager_for(app, project_id=None):
     # FastAPI sync handlers can race on the initial capability request. Root
     # installs an eager manager in lifespan where possible; this lock also makes
     # lazy construction safe in TestClient without lifespan.
     with _manager_lock:
         if not hasattr(app.state, 'codex_manager'):
             app.state.codex_manager = CodexManager(app.state.engine, app.state.data_dir)
-        return app.state.codex_manager
+        root = app.state.codex_manager
+        if project_id is None:
+            return root
+        with Session(app.state.engine) as db:
+            project = db.get(Project, project_id)
+            key = project.codex_account if project else None
+        if key is None:
+            return root
+        from .accounts import account_home
+        home = account_home(key)
+        cache_key = (project_id, home)
+        if cache_key not in root.account_managers:
+            child = copy.copy(root)
+            child.clients, child.account_managers = {}, {}
+            child.account_home = home
+            child.account_key = key
+            child.generation_account = home
+            child.history_client_factory = root.client_factory
+            child.client_factory = partial(AppServerClient, codex_home=home)
+            root.account_managers[cache_key] = child
+        return root.account_managers[cache_key]
 
 
 _manager_lock = threading.Lock()

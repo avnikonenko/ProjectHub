@@ -30,7 +30,7 @@ def server_command(executable):
 
 class AppServerClient:
     """One managed connection; unsolicited permission requests always fail closed."""
-    def __init__(self, on_event=None, on_disconnect=None, executable=None, timeout=20):
+    def __init__(self, on_event=None, on_disconnect=None, executable=None, timeout=20, codex_home=None):
         self.on_event = on_event or (lambda method, params: None)
         self.on_disconnect = on_disconnect or (lambda: None)
         self.timeout = timeout
@@ -43,6 +43,8 @@ class AppServerClient:
             raise CodexError('Codex is not installed or is not on PATH')
         try:
             environment = dict(os.environ)
+            if codex_home is not None:
+                environment['CODEX_HOME'] = codex_home
             for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_BASE'):
                 environment.pop(key, None)
             self.process = subprocess.Popen(server_command(executable), env=environment, stdin=subprocess.PIPE,

@@ -21,6 +21,7 @@ class Project(Stamp, Base):
     __tablename__ = 'projects'
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200))
+    codex_account: Mapped[str | None] = mapped_column(String(200), nullable=True)
     description: Mapped[str] = mapped_column(Text, default='')
     goals: Mapped[str] = mapped_column(Text, default='')
     status: Mapped[str] = mapped_column(String, default='planning')
@@ -104,6 +105,7 @@ class AuditEvent(Base):
 
 class CodexSession(Scoped, Base):
     __tablename__ = 'codex_sessions'
+    codex_account: Mapped[str | None] = mapped_column(String(200), nullable=True)
     thread_id: Mapped[str] = mapped_column(String, unique=True)
     title: Mapped[str] = mapped_column(Text, default='Codex discussion')
     status: Mapped[str] = mapped_column(String, default='idle')

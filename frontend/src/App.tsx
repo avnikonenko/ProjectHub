@@ -992,6 +992,33 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
 }) {
   const [models, setModels] = useState<{ id: string; label: string; efforts: string[] }[]>([]);
   const [status, setStatus] = useState('Loading Codex models…');
+  const [accounts, setAccounts] = useState<{ account: string | null; options: { id: string; label: string }[] } | null>(null);
+  const [savingAccount, setSavingAccount] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const [accountVersion, setAccountVersion] = useState(0);
+  useEffect(() => {
+    let active = true;
+    api<typeof accounts>(`${base}/codex/account`)
+      .then((result) => { if (active) setAccounts(result); })
+      .catch((e) => { if (active) setAccountError(e.message); });
+    return () => { active = false; };
+  }, [base]);
+  async function changeAccount(account: string) {
+    if (savingAccount) return;
+    setSavingAccount(true);
+    setAccountError('');
+    try {
+      const result = await patch(`${base}/codex/account`, { account: account || null });
+      setAccounts(result);
+      setModels([]);
+      onChange({ model: '', effort: '' });
+      setAccountVersion((value) => value + 1);
+    } catch (e) {
+      setAccountError((e as Error).message);
+    } finally {
+      setSavingAccount(false);
+    }
+  }
   useEffect(() => {
     let active = true;
     api<typeof models>(`${base}/codex/models`)
@@ -1002,15 +1029,25 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
       })
       .catch(() => { if (active) setStatus('Could not load Codex models.'); });
     return () => { active = false; };
-  }, [base]);
+  }, [base, accountVersion]);
   const model = models.find((option) => option.id === generation.model);
   const efforts = model?.efforts ?? [];
   return (
     <div className="generation-options">
       <strong>AI settings</strong>
       <label>
+        Account for this project
+        <select value={accounts?.account ?? ''} disabled={!accounts || savingAccount}
+          onChange={(e) => changeAccount(e.target.value)}>
+          <option value="">ProjectHub launch account</option>
+          {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+        </select>
+      </label>
+      <small>Uses an existing Codex sign-in. Saved locally per project. History is read from the launch profile.</small>
+      {accountError && <small role="alert">{accountError}</small>}
+      <label>
         Model
-        <select value={generation.model} onChange={(e) => onChange({ model: e.target.value, effort: '' })}>
+        <select value={generation.model} disabled={savingAccount} onChange={(e) => onChange({ model: e.target.value, effort: '' })}>
           <option value="">Codex default</option>
           {generation.model && !model && <option value={generation.model}>{generation.model}</option>}
           {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}

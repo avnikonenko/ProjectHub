@@ -43,6 +43,8 @@ Use the project JSON export for portable project records and provenance. `POST /
 
 ## Codex
 
+Use the gear menu to choose an existing Codex account/profile for each project. The choice is saved in ProjectHub and applies to model listing and future AI requests. Profiles are discovered from the default Codex home and local Codex Manager profile directories. ProjectHub launches the official client with that profile's home; it does not copy credentials or change your global sign-in. Existing history is read from its original profile. To continue an existing discussion, select its original profile or start a new session under the chosen profile.
+
 Use **History** to browse saved turns from any Codex session associated with the project. Build or refresh the search index to search finished turns across all linked sessions and open the exact matching turn. Indexing stores a searchable copy of saved user and assistant text in the local ProjectHub database and does not send it to a model. Refresh the index to include newer turns.
 
 On the dashboard, **Generate brief** processes saved user and assistant text from every linked session in batches, alongside accepted decisions and your saved architecture diagram. It uses OpenAI through the existing Codex sign-in, skips turns still in progress, and leaves out tool output and attachments. A large first refresh can take several minutes; later refreshes reuse unchanged batches.
