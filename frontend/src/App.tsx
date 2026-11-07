@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
@@ -314,6 +314,39 @@ export default function App() {
   );
 }
 
+function PagedRecords({
+  records,
+  name,
+  children,
+}: {
+  records: RecordData[];
+  name: string;
+  children: (record: RecordData) => ReactNode;
+}) {
+  const pageSize = 3;
+  const [requestedPage, setPage] = useState(0);
+  const totalPages = Math.ceil(records.length / pageSize);
+  const page = Math.min(requestedPage, Math.max(0, totalPages - 1));
+  const offset = page * pageSize;
+  const recent = [...records].sort((a, b) => b.id - a.id).slice(offset, offset + pageSize);
+  return (
+    <>
+      {totalPages > 1 && (
+        <nav className="pagination" aria-label={`${name} pages`}>
+          <button className="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>
+            Newer
+          </button>
+          <span role="status">Page {page + 1} of {totalPages}</span>
+          <button className="secondary" disabled={page + 1 === totalPages} onClick={() => setPage(page + 1)}>
+            Older
+          </button>
+        </nav>
+      )}
+      {recent.map(children)}
+    </>
+  );
+}
+
 function ProjectWorkspace({
   projectId,
   onProjectChanged,
@@ -393,8 +426,7 @@ function ProjectWorkspace({
   const tabs = [
     'Dashboard',
     'History',
-    'Questions',
-    'Decisions',
+    'Q&A + decisions',
     'Notes',
     'Architecture',
     'Codex',
@@ -544,30 +576,29 @@ function ProjectWorkspace({
                   </section>
                   <section className="card">
                     <div className="section-title">
-                      <h2>Open questions</h2>
+                      <h2>Q&A + decisions</h2>
                       <button
                         className="quiet"
-                        onClick={() => setView('Questions')}
+                        onClick={() => setView('Q&A + decisions')}
                       >
                         View all →
                       </button>
                     </div>
-                    {open.slice(0, 5).map((q) => (
+                    <h3>Open questions</h3>
+                    <PagedRecords records={open} name="Open questions">{(q) => (
                       <div className="compact-row" key={q.id}>
                         <h3>{q.title}</h3>
                         <Badge value={q.status} />
                       </div>
-                    ))}
+                    )}</PagedRecords>
                     {!open.length && <Empty>No open questions.</Empty>}
-                  </section>
-                  <section className="card">
-                    <h2>Accepted decisions</h2>
-                    {accepted.slice(0, 5).map((d) => (
+                    <h3 className="qa-subheading">Accepted decisions</h3>
+                    <PagedRecords records={accepted} name="Accepted decisions">{(d) => (
                       <div className="compact-row" key={d.id}>
                         <h3>{d.title}</h3>
                         <p>{d.description}</p>
                       </div>
-                    ))}
+                    )}</PagedRecords>
                     {!accepted.length && (
                       <Empty>
                         Accepted answers and decisions will appear here.
@@ -599,8 +630,8 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && <ProjectHistory base={base} />}
-            {view === 'Questions' && (
-              <>
+            {view === 'Q&A + decisions' && (
+              <section className="card qa-panel" aria-label="Questions, answers and decisions">
                 <div className="section-title">
                   <div>
                     <h2>Questions & answers</h2>
@@ -632,8 +663,8 @@ function ProjectWorkspace({
                     Create a question to start recording alternatives.
                   </Empty>
                 )}
-                {questions.map((q) => (
-                  <section className="card question" key={q.id}>
+                <PagedRecords records={questions} name="Questions">{(q) => (
+                  <section className="qa-record question" key={q.id}>
                     <div className="section-title">
                       <div>
                         <small>
@@ -780,12 +811,8 @@ function ProjectWorkspace({
                       ))}
                     </div>
                   </section>
-                ))}
-              </>
-            )}
-            {view === 'Decisions' && (
-              <>
-                <div className="section-title">
+                )}</PagedRecords>
+                <div className="section-title qa-divider">
                   <div>
                     <h2>Decision register</h2>
                     <p className="muted">
@@ -829,8 +856,8 @@ function ProjectWorkspace({
                   </button>
                 </div>
                 {!decisions.length && <Empty>No decisions recorded.</Empty>}
-                {decisions.map((d) => (
-                  <section className="card" key={d.id}>
+                <PagedRecords records={decisions} name="Decisions">{(d) => (
+                  <section className="qa-record" key={d.id}>
                     <div className="section-title">
                       <div>
                         <small>
@@ -938,8 +965,8 @@ function ProjectWorkspace({
                       )}
                     </div>
                   </section>
-                ))}
-              </>
+                )}</PagedRecords>
+              </section>
             )}
             {view === 'Notes' && (
               <>
@@ -1602,7 +1629,7 @@ function SavedHistory({
       </div>
       <ErrorBox error={error} />
       {(nextCursor || cursorTrail.length > 1) && (
-        <nav className="history-pagination" aria-label="Saved conversation pages">
+        <nav className="pagination" aria-label="Saved conversation pages">
           <button
             className="secondary"
             disabled={loading || cursorTrail.length === 1}
