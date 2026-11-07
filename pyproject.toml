@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "projecthub-local"
 version = "0.1.0"
-description = "Local research project knowledge and read-only Codex workspace"
+description = "Local project history, notes, TODOs, and read-only AI workspace"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115,<1",
