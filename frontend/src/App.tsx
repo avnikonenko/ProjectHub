@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Children, useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
@@ -113,6 +113,32 @@ function ThemeToggle() {
     </button>
   );
 }
+function PagedItems({ children, label, listClass }: {
+  children: React.ReactNode;
+  label: string;
+  listClass?: string;
+}) {
+  const [page, setPage] = useState(0);
+  const items = Children.toArray(children);
+  const count = Math.max(1, Math.ceil(items.length / 3));
+  const current = Math.min(page, count - 1);
+  const visible = items.slice(current * 3, current * 3 + 3);
+  return (
+    <>
+      {listClass ? <ul className={listClass}>{visible}</ul> : visible}
+      {count > 1 && (
+        <nav className="pagination" aria-label={label}>
+          <button type="button" className="secondary" disabled={current === 0}
+            onClick={() => setPage(current - 1)}>Previous</button>
+          <span role="status">Page {current + 1} of {count}</span>
+          <button type="button" className="secondary" disabled={current === count - 1}
+            onClick={() => setPage(current + 1)}>Next</button>
+        </nav>
+      )}
+    </>
+  );
+}
+
 function Empty({ children }: { children: React.ReactNode }) {
   return <div className="empty">{children}</div>;
 }
@@ -617,13 +643,13 @@ function ProjectWorkspace({
           <section className="card">
             <h2>Search results</h2>
             {results.length ? (
-              results.map((r, i) => (
+              <PagedItems key={search} label="Project search pages">{results.map((r, i) => (
                 <article className="list-item" key={i}>
                   <small>{r.entity_type ?? r.kind ?? r.type ?? 'Record'}</small>
                   <h3>{r.title}</h3>
                   <p>{r.snippet ?? r.content ?? r.description}</p>
                 </article>
-              ))
+              ))}</PagedItems>
             ) : (
               <Empty>No matching records in this project.</Empty>
             )}
@@ -664,7 +690,7 @@ function ProjectWorkspace({
                   )}
                   <section className="card">
                     <h2>Latest activity</h2>
-                    {activity.slice(0, 8).map((a) => (
+                    <PagedItems label="Activity pages">{activity.map((a) => (
                       <div className="activity" key={a.id}>
                         <span className="activity-dot" />
                         <div>
@@ -681,6 +707,7 @@ function ProjectWorkspace({
                         </div>
                       </div>
                     ))}
+                    </PagedItems>
                     {!activity.length && <Empty>No activity recorded.</Empty>}
                   </section>
                 </div>
@@ -721,12 +748,12 @@ function ProjectWorkspace({
                     }} />
                 )}
                 {activeTodos.length
-                  ? <ul className="todo-list">{[...activeTodos].reverse().map(todoRow)}</ul>
+                  ? <PagedItems label="Open TODO pages" listClass="todo-list">{[...activeTodos].reverse().map(todoRow)}</PagedItems>
                   : <Empty>No open TODOs.</Empty>}
                 {!!completedTodos.length && (
                   <details>
                     <summary>Completed ({completedTodos.length})</summary>
-                    <ul className="todo-list">{[...completedTodos].reverse().map(todoRow)}</ul>
+                    <PagedItems label="Completed TODO pages" listClass="todo-list">{[...completedTodos].reverse().map(todoRow)}</PagedItems>
                   </details>
                 )}
               </section>
@@ -820,7 +847,7 @@ function ProjectWorkspace({
                   </button>
                 </div>
                 {!notes.length && <Empty>No notes yet.</Empty>}
-                {notes.map((n) => (
+                <PagedItems label="Note pages">{[...notes].reverse().map((n) => (
                   <section className="card" key={n.id}>
                     <div className="section-title">
                       <h2>{n.title}</h2>
@@ -865,6 +892,7 @@ function ProjectWorkspace({
                     )}
                   </section>
                 ))}
+                </PagedItems>
               </>
             )}
             {view === 'Codex' && (
@@ -936,7 +964,7 @@ function Report({ value }: { value: any }) {
     return (
       <>
         <p className="muted">Deterministic review of stored records.</p>
-        {value.findings.map((finding: any, index: number) => (
+        <PagedItems label="Review finding pages">{value.findings.map((finding: any, index: number) => (
           <article className="compact-row" key={index}>
             <Badge
               value={finding.category ?? finding.severity ?? 'unverified'}
@@ -944,7 +972,7 @@ function Report({ value }: { value: any }) {
             {finding.title && <h3>{finding.title}</h3>}
             <p>{finding.message ?? finding.detail}</p>
           </article>
-        ))}
+        ))}</PagedItems>
         {!value.findings.length && <Empty>No rule-based findings.</Empty>}
         {value.limitations?.map((text: string) => (
           <p key={text}>{text}</p>
@@ -954,7 +982,7 @@ function Report({ value }: { value: any }) {
   if (Array.isArray(value))
     return (
       <>
-        {value.map((item: any, index: number) => (
+        <PagedItems label="Record pages">{value.map((item: any, index: number) => (
           <article className="compact-row" key={item.id ?? index}>
             <h3>{label(item.action ?? item.title ?? 'Record')}</h3>
             <small>
@@ -966,7 +994,7 @@ function Report({ value }: { value: any }) {
             </details>
           </article>
         ))}
-        {!value.length && <Empty>No records.</Empty>}
+        {!value.length && <Empty>No records.</Empty>}</PagedItems>
       </>
     );
   return <pre className="json-report">{JSON.stringify(value, null, 2)}</pre>;
@@ -2156,7 +2184,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
               {!completed.length && <Empty>No completed responses yet.</Empty>}
               <details>
                 <summary>Request history</summary>
-                {(events.deliveries ?? []).map((item: RecordData) => {
+                <PagedItems key={sessionId} label="Request history pages">{[...(events.deliveries ?? [])].reverse().map((item: RecordData) => {
                   const content = String(item.content);
                   const question = content.replace(/^[\s\S]*?\nEND PROJECT REFERENCE DATA\nUSER REQUEST:\n/, '');
                   return (
@@ -2201,7 +2229,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                       )}
                     </article>
                   );
-                })}
+                })}</PagedItems>
                 <details>
                   <summary>Raw event log</summary>
                   <Report value={events} />
