@@ -125,6 +125,25 @@ def test_session_rename_is_local_scoped_validated_and_audited(setup):
         assert event.after['title'] == 'Database design'
 
 
+def test_session_topic_can_be_set_and_cleared_without_renaming(setup):
+    sid = create_session(setup)
+    path = f'/api/projects/1/codex/sessions/{sid}'
+    for payload in ({}, {'topic': None}, {'topic': 'x' * 81}, {'codex_activity_at': '2026-01-01'}):
+        assert setup.client.patch(path, json=payload).status_code == 422
+    assert setup.client.patch(f'/api/projects/2/codex/sessions/{sid}', json={'topic': 'Private'}).status_code == 404
+    result = setup.client.patch(path, json={'topic': '  Database  '})
+    assert result.status_code == 200
+    assert result.json()['title'] == 'Review'
+    assert result.json()['topic'] == 'Database'
+    assert setup.client.get('/api/projects/1/codex/sessions').json()[0]['topic'] == 'Database'
+    result = setup.client.patch(path, json={'topic': '', 'title': 'Next review'})
+    assert result.status_code == 200
+    assert result.json()['topic'] == '' and result.json()['title'] == 'Next review'
+    with Session(setup.engine) as db:
+        event = db.scalar(select(AuditEvent).where(AuditEvent.action == 'session_details_updated').order_by(AuditEvent.id))
+        assert event.before['topic'] == '' and event.after['topic'] == 'Database'
+
+
 def test_session_activity_is_local_observed_scoped_and_stably_ordered(setup):
     with Session(setup.engine) as db:
         first = CodexSession(project_id=1, thread_id='first', created_at='2026-01-01T00:00:00+00:00')

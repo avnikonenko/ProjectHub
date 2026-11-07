@@ -106,6 +106,25 @@ def test_active_threads_wait_and_missing_timestamps_reconcile(env):
     assert search(env, 1, 'alpha') and search(env, 1, 'fresh')
 
 
+def test_codex_activity_uses_existing_metadata_without_touching_local_timestamps(env):
+    with Session(env.engine) as db:
+        original = db.get(CodexSession, 1).updated_at
+    env.state['a'].update(status='active', updated=2)
+    env.state['b']['updated'] = 10 ** 400
+    env.worker.sync_once()
+    assert not search(env, 1, 'alpha')  # Active threads still wait for indexing.
+    with Session(env.engine) as db:
+        session = db.get(CodexSession, 1)
+        assert session.codex_activity_at == '1970-01-01T00:00:02+00:00'
+        assert session.updated_at == original
+        assert db.get(CodexSession, 2).codex_activity_at is None
+    assert [method for _, method, params in env.calls if params['threadId'] == 'a'] == ['thread/read']
+    env.state['a']['updated'] = None
+    env.worker.sync_once()
+    with Session(env.engine) as db:
+        assert db.get(CodexSession, 1).codex_activity_at == '1970-01-01T00:00:02+00:00'
+
+
 def test_original_account_reader_is_used(env, tmp_path, monkeypatch):
     home = tmp_path / 'account'; home.mkdir()
     with Session(env.engine) as db:
@@ -242,4 +261,5 @@ def test_migration_enables_existing_sessions_without_changing_records(tmp_path):
         session = db.get(CodexSession, 1)
         assert session.auto_sync is True
         assert session.title == 'Saved session' and session.thread_id == 'thread'
+        assert session.topic == '' and session.codex_activity_at is None
     engine.dispose()

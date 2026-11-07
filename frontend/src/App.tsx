@@ -18,6 +18,14 @@ const isChatGPTShare = (note: RecordData) => note.kind === 'document'
   && typeof note.reference === 'string'
   && /^https:\/\/chatgpt\.com\/share\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(note.reference);
 
+function sessionCaption(session: RecordData) {
+  return [session.title || 'Untitled session', `#${session.id}`, session.topic].filter(Boolean).join(' · ');
+}
+
+function sessionActivity(session: RecordData) {
+  return session.codex_activity_at ?? session.last_activity_at ?? session.created_at;
+}
+
 const projectFields: Field[] = [
   { name: 'name', label: 'Project name', required: true },
   descriptionField,
@@ -1384,7 +1392,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
               <option value="">Select a session</option>
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  #{session.id} · {session.title || session.thread_id}
+                  {sessionCaption(session)}
                 </option>
               ))}
             </select>
@@ -1645,6 +1653,7 @@ function Codex({ base, onError }: {
   const [threadId, setThreadId] = useState('');
   const [sessionQuery, setSessionQuery] = useState('');
   const [sessionFilter, setSessionFilter] = useState('all');
+  const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [context, setContext] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -1656,11 +1665,14 @@ function Codex({ base, onError }: {
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
   const filteredSessions = [...sessions].filter((session) => {
-    const text = [session.title, session.thread_id, session.codex_account, session.status].join(' ').toLocaleLowerCase();
+    const text = [session.id, session.title, session.topic, session.thread_id, session.codex_account, session.status]
+      .join(' ').toLocaleLowerCase();
     return text.includes(sessionQuery.trim().toLocaleLowerCase())
       && (sessionFilter === 'all' || (sessionFilter === 'linked'
         ? session.status === 'linked' : session.status !== 'linked'));
-  }).sort((a, b) => String(b.last_activity_at ?? b.created_at).localeCompare(String(a.last_activity_at ?? a.created_at))
+  }).sort((a, b) => (sessionOrder === 'topic' ? (Number(!a.topic) - Number(!b.topic)
+    || String(a.topic ?? '').localeCompare(String(b.topic ?? ''), undefined, { sensitivity: 'base' })) : 0)
+    || String(sessionActivity(b)).localeCompare(String(sessionActivity(a)))
     || b.id - a.id);
   const refresh = useCallback(async () => {
     const rows = await api<RecordData[]>(`${prefix}/sessions`);
@@ -1745,7 +1757,7 @@ function Codex({ base, onError }: {
           <h2>Project sessions</h2>
           <label>
             Find a session
-            <input type="search" placeholder="Search title, thread, or account…" value={sessionQuery}
+            <input type="search" placeholder="Search name, topic, or ID…" value={sessionQuery}
               onChange={(e) => setSessionQuery(e.target.value)} />
           </label>
           <label>
@@ -1756,7 +1768,14 @@ function Codex({ base, onError }: {
               <option value="managed">Discussion sessions</option>
             </select>
           </label>
-          <PagedItems key={sessionQuery + sessionFilter} label="Project session pages">
+          <label>
+            Organize by
+            <select value={sessionOrder} onChange={(e) => setSessionOrder(e.target.value)}>
+              <option value="recent">Recent activity</option>
+              <option value="topic">Topic, then recent activity</option>
+            </select>
+          </label>
+          <PagedItems key={JSON.stringify([sessionQuery, sessionFilter, sessionOrder])} label="Project session pages">
             {filteredSessions.map((session) => (
               <article className="list-item" key={session.id}>
                 <div className="section-title">
@@ -1764,14 +1783,18 @@ function Codex({ base, onError }: {
                     <input type="radio" name="source-session" value={session.id} disabled={busy}
                       checked={String(session.id) === sessionId}
                       onChange={() => setSessionId(String(session.id))} />
-                    {session.title || `Session #${session.id}`}
+                    {sessionCaption(session)}
                   </label>
-                  <EditButton label={`Rename session: ${session.title}`} disabled={busy}
+                  <EditButton label={`Edit session: ${sessionCaption(session)}`} disabled={busy}
                     onClick={() => setRenaming(session)} />
                 </div>
-                <small>#{session.id} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
+                <small>{label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
                 <br />
-                <small>Last activity saved here: {new Date(session.last_activity_at ?? session.created_at).toLocaleString()}</small>
+                <small>Thread ID: <code>{session.thread_id}</code></small>
+                <br />
+                <small>{session.codex_activity_at ? 'Codex last updated' : 'Last activity recorded here'}: {
+                  sessionActivity(session) ? new Date(sessionActivity(session)).toLocaleString() : 'Unknown'
+                }</small>
                 <br />
                 <button className="quiet" disabled={busy} onClick={() => void action(() =>
                   patch(`${prefix}/sessions/${session.id}/sync`, { enabled: session.auto_sync === false }))}>
@@ -1788,10 +1811,11 @@ function Codex({ base, onError }: {
           </PagedItems>
           {!filteredSessions.length && <Empty>{sessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
           {renaming && (
-            <Form title="Rename session" fields={[{ ...titleField, maxLength: 200 }]} initial={renaming}
+            <Form title="Edit session" fields={[{ ...titleField, maxLength: 200 },
+              { name: 'topic', label: 'Topic (optional)', maxLength: 80 }]} initial={renaming}
               onClose={() => setRenaming(null)}
-              onSave={async ({ title }) => {
-                await patch(`${prefix}/sessions/${renaming.id}`, { title: String(title).trim() });
+              onSave={async ({ title, topic }) => {
+                await patch(`${prefix}/sessions/${renaming.id}`, { title: String(title).trim(), topic: String(topic).trim() });
                 await refresh();
               }} />
           )}
@@ -2019,7 +2043,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             <select value={sessionId} disabled={busy} onChange={(e) => selectReviewSession(e.target.value)}>
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.title ? `${session.title} · #${session.id}` : `Session #${session.id}`}
+                  {sessionCaption(session)}
                   {session.status === 'linked' ? ' · Reading only' : ''}
                 </option>
               ))}

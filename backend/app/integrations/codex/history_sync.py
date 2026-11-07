@@ -1,10 +1,10 @@
 """Conservative background synchronization of already-associated local threads."""
+from datetime import datetime, timezone
 import logging
-import math
 import threading
 import time
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from ...models import CodexSession
@@ -47,14 +47,14 @@ def _metadata(client, session):
     status = thread.get('status')
     if not isinstance(status, dict) or not isinstance(status.get('type'), str):
         raise CodexError('Unsupported saved thread status.')
-    if status['type'] == 'active':
-        return None
-    if status['type'] not in ('idle', 'notLoaded'):
+    if status['type'] not in ('active', 'idle', 'notLoaded'):
         raise CodexError('Saved thread status does not permit synchronization.')
     stamp = thread.get('updatedAt')
-    if type(stamp) not in (int, float) or not math.isfinite(stamp):
-        stamp = None
-    return (session.thread_id, session.codex_account, stamp, status['type'])
+    try:
+        activity = datetime.fromtimestamp(stamp, timezone.utc).isoformat() if type(stamp) in (int, float) else None
+    except (OverflowError, OSError, ValueError):
+        activity = None
+    return (session.thread_id, session.codex_account, activity, status['type'])
 
 
 class HistorySync:
@@ -109,15 +109,29 @@ class HistorySync:
             error = f'History sync could not read session {ids}{suffix}. Previously saved history remains available. Retry the history refresh or check Sources.'
         return {'error': error}
 
+    @staticmethod
+    def _enabled_identity(session):
+        return (
+            CodexSession.id == session.id, CodexSession.project_id == session.project_id,
+            CodexSession.auto_sync.is_(True),
+            CodexSession.is_linked.is_(True),
+            CodexSession.thread_id == session.thread_id,
+            CodexSession.codex_account == session.codex_account,
+        )
+
     def _session_enabled(self, session):
         with Session(self.engine) as db:
-            return db.scalar(select(CodexSession.id).where(
-                CodexSession.id == session.id, CodexSession.project_id == session.project_id,
-                CodexSession.auto_sync.is_(True),
-                CodexSession.is_linked.is_(True),
-                CodexSession.thread_id == session.thread_id,
-                CodexSession.codex_account == session.codex_account,
-            )) is not None
+            return db.scalar(select(CodexSession.id).where(*self._enabled_identity(session))) is not None
+
+    def _record_activity(self, session, activity):
+        if activity is None or activity == session.codex_activity_at:
+            return
+        with Session(self.engine) as db:
+            db.execute(update(CodexSession).where(
+                *self._enabled_identity(session),
+                CodexSession.codex_activity_at.is_distinct_from(activity),
+            ).values(codex_activity_at=activity, updated_at=CodexSession.updated_at))
+            db.commit()
 
     def _run(self):
         if self._stop.wait(5):
@@ -168,7 +182,10 @@ class HistorySync:
             if self._stop.is_set():
                 return
             fingerprint = _metadata(client, session)
-            if fingerprint is None:
+            if self._stop.is_set():
+                return
+            self._record_activity(session, fingerprint[2])
+            if fingerprint[3] == 'active':
                 return
             with self._lock:
                 previous = self._fingerprints.get(key)

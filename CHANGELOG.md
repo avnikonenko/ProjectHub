@@ -16,6 +16,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Sources shows session names, IDs, and Codex activity timestamps when available. Edit a session to assign a topic, then organize Sources by topic or recent activity.
+
 - Sources supports renaming, searching, and filtering sessions, with the most recent local activity shown first.
 - Reviews keeps continuing Codex discussions collapsed by default. New review sessions take their names from the first question.
 - The stacked-layers logo appears in the README, with a transparent icon in the browser tab and sidebar.

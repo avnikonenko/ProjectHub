@@ -1,7 +1,7 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision
@@ -27,8 +27,15 @@ class SessionInput(Input):
     thread_id: str | None = Field(default=None, min_length=1, max_length=200, pattern=r'^[A-Za-z0-9_-]+$')
 
 
-class SessionTitleInput(Input):
-    title: str = Field(min_length=1, max_length=200)
+class SessionDetailsInput(Input):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    topic: str | None = Field(default=None, max_length=80)
+
+    @model_validator(mode='after')
+    def validate_changes(self):
+        if not self.model_fields_set or any(getattr(self, key) is None for key in self.model_fields_set):
+            raise ValueError('Provide a title or topic to update; use an empty string to clear the topic.')
+        return self
 
 
 class SessionSyncInput(Input):
@@ -280,14 +287,18 @@ def sessions(project_id: int, db: DB):
 
 
 @router.patch('/sessions/{session_id}')
-def rename_session(project_id: int, session_id: int, body: SessionTitleInput, db: DB):
+def update_session_details(project_id: int, session_id: int, body: SessionDetailsInput, db: DB):
     row = scoped(db, CodexSession, project_id, session_id)
-    if row.title != body.title:
+    changes = {key: value for key, value in body.model_dump(exclude_unset=True).items()
+               if getattr(row, key) != value}
+    if changes:
         before = record_dict(row)
-        row.title = body.title
+        for key, value in changes.items():
+            setattr(row, key, value)
         db.flush()
+        action = 'session_renamed' if changes.keys() == {'title'} else 'session_details_updated'
         db.add(AuditEvent(project_id=project_id, entity_type='codex_sessions', entity_id=row.id,
-                          action='session_renamed', before=before, after=record_dict(row)))
+                          action=action, before=before, after=record_dict(row)))
         db.commit()
     return record_dict(row)
 

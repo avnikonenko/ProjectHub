@@ -112,6 +112,8 @@ class CodexSession(Scoped, Base):
     last_error: Mapped[str] = mapped_column(Text, default='')
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
     is_linked: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+    topic: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    codex_activity_at: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ContextPackage(Scoped, Base):
