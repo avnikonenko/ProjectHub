@@ -394,7 +394,7 @@ export default function App() {
     <div className="app">
       <aside className="sidebar">
         <div className="brand">
-          <span className="brand-icon">P</span>
+          <img className="brand-icon" src={new URL('./favicon.svg', import.meta.url).href} alt="" />
           <div>
             ProjectHub<small>Project workspace</small>
           </div>
