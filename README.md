@@ -55,6 +55,8 @@ On the dashboard, **Generate brief** processes saved user and assistant text fro
 
 Saved briefs and Q&A show the account profile, model and reasoning effort used for that snapshot. When Codex does not report an effective default, it is labeled as a default instead of guessing. Older saved results show that generation settings were not recorded.
 
+Each AI generation call can take up to 10 minutes by default, including history-summary batches. To allow longer calls, start with `PROJECTHUB_GENERATION_TIMEOUT=1200 projecthub` (30–3600 seconds supported). A timeout preserves the last saved result; you can retry with a lower reasoning effort or a longer timeout.
+
 Use **Previous versions** in the brief or AI Q&A to browse successful generation snapshots, including their original citations and settings. Viewing an older version does not replace the latest result or send a model request. **Return to latest** reloads the current snapshot. History starts with the saved result present when this feature was installed; earlier overwritten results cannot be recovered.
 
 The saved brief cites original source fragments and separates possible decisions from accepted ones. The Dashboard includes a short architecture section when the sources support it. Saved Mermaid diagrams remain available as brief sources. Refreshing is manual; a failed refresh keeps the previous brief.

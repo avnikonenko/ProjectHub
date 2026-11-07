@@ -40,6 +40,22 @@ class FakeClient:
         self.closed = True
 
 
+def test_generation_wait_is_configurable_and_timeout_is_explicit(monkeypatch):
+    monkeypatch.delenv('PROJECTHUB_GENERATION_TIMEOUT', raising=False)
+    assert module.generation_timeout() == 600
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TIMEOUT', '1200')
+    assert module.generation_timeout() == 1200
+    waited = []
+    event = SimpleNamespace(wait=lambda seconds: waited.append(seconds) or False)
+    with pytest.raises(CodexError, match='1200 seconds.*previous saved result'):
+        module.wait_for_generation(event, module.generation_timeout())
+    assert waited == [1200]
+    for value in ('0', '-1', 'garbage', '3601'):
+        monkeypatch.setenv('PROJECTHUB_GENERATION_TIMEOUT', value)
+        with pytest.raises(CodexError, match='PROJECTHUB_GENERATION_TIMEOUT'):
+            module.generation_timeout()
+
+
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     engine = create_engine('sqlite:///' + str(tmp_path / 'knowledge.sqlite3'))

@@ -20,6 +20,7 @@ Commands:
 Environment:
   PROJECTHUB_PORT       Loopback port (default: 8766)
   PROJECTHUB_DATA_DIR   Absolute application data directory
+  PROJECTHUB_GENERATION_TIMEOUT  Seconds per AI generation call (default: 600)
 EOF
 }
 

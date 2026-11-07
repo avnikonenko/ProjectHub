@@ -20,6 +20,22 @@ from .protocol import AppServerClient, CodexError
 
 log = logging.getLogger(__name__)
 
+def generation_timeout():
+    try:
+        seconds = int(os.environ.get('PROJECTHUB_GENERATION_TIMEOUT', '600'))
+    except ValueError as exc:
+        raise CodexError('PROJECTHUB_GENERATION_TIMEOUT must be an integer from 30 to 3600 seconds.') from exc
+    if not 30 <= seconds <= 3600:
+        raise CodexError('PROJECTHUB_GENERATION_TIMEOUT must be from 30 to 3600 seconds.')
+    return seconds
+
+
+def wait_for_generation(done, timeout):
+    if not done.wait(timeout):
+        raise CodexError(f'Codex did not finish generation within {timeout} seconds. '
+                         'The previous saved result is unchanged. Retry, use a lower reasoning effort, '
+                         'or increase PROJECTHUB_GENERATION_TIMEOUT before starting ProjectHub.')
+
 
 def record_dict(row):
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}
@@ -283,6 +299,7 @@ class CodexManager:
 
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None):
         """Generate in a separate ephemeral thread; never resume a source session."""
+        timeout = generation_timeout()
         done = threading.Event()
         state = {}
         thread_id = None
@@ -337,8 +354,7 @@ class CodexManager:
                 turn_id = (result.get('turn') or {}).get('id')
                 if not isinstance(turn_id, str) or not turn_id:
                     raise CodexError('Codex did not return a brief turn ID.')
-                if not done.wait(90):
-                    raise CodexError('Codex did not finish the brief within 90 seconds.')
+                wait_for_generation(done, timeout)
                 if 'error' in state:
                     raise CodexError(state['error'])
                 turn = state.get('turn') or {}
