@@ -734,8 +734,13 @@ a:focus-visible {
   gap: 0.5rem;
 }
 .todo-add input {
+  flex: 1;
   margin: 0;
   min-width: 0;
+}
+.todo-add button {
+  flex: none;
+  white-space: nowrap;
 }
 .todo-list {
   list-style: none;
