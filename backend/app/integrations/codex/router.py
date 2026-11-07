@@ -22,7 +22,12 @@ class SessionInput(Input):
     thread_id: str | None = Field(default=None, min_length=1, max_length=200, pattern=r'^[A-Za-z0-9_-]+$')
 
 
-class TurnInput(Input):
+class ModelInput(Input):
+    model: str | None = Field(default=None, min_length=1, max_length=128)
+    effort: str | None = Field(default=None, min_length=1, max_length=32)
+
+
+class TurnInput(ModelInput):
     prompt: str = Field(min_length=1, max_length=20000)
 
 
@@ -31,12 +36,15 @@ class DeliveryInput(Input):
     session_id: int = Field(gt=0)
 
 
-class Confirmation(Input):
+class GenerationInput(ModelInput):
     confirmed: bool = False
 
 
-class GenerationInput(Confirmation):
-    model: str | None = Field(default=None, min_length=1, max_length=128)
+def send_options(manager, body):
+    if body.model is None and body.effort is None:
+        return {}
+    manager.validate_generation(body.model, body.effort)
+    return {'model': body.model, 'effort': body.effort}
 
 
 def database(request: Request):
@@ -116,7 +124,8 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
         manager = manager_for(request.app)
-        return refresh_brief(request.app.state.engine, project_id, manager.for_generation(body.model) if body.model else manager)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        return refresh_brief(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -136,7 +145,8 @@ def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
     try:
         manager = manager_for(request.app)
-        return refresh_qa(request.app.state.engine, project_id, manager.for_generation(body.model) if body.model else manager)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        return refresh_qa(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -193,6 +203,7 @@ def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db
     # Initialize recovery before creating a sending row.
     manager = manager_for(request.app)
     try:
+        options = send_options(manager, body)
         preview = context_preview(db, project_id)
     except CodexError as exc:
         raise HTTPException(422, str(exc)) from exc
@@ -205,7 +216,7 @@ def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db
     db.add(row); db.flush()
     audit(db, project_id, row, 'task_submission_requested')
     db.commit()
-    return manager.send(row.id)
+    return manager.send(row.id, **options)
 
 
 @router.get('/deliveries')
@@ -231,7 +242,7 @@ def preview_delivery(project_id: int, body: DeliveryInput, db: DB):
 
 
 @router.post('/deliveries/{delivery_id}/send')
-def send_delivery(project_id: int, delivery_id: int, body: Confirmation, request: Request, db: DB):
+def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
     row = scoped(db, Delivery, project_id, delivery_id)
     managed_session(db, project_id, row.session_id)
@@ -243,7 +254,7 @@ def send_delivery(project_id: int, delivery_id: int, body: Confirmation, request
             raise HTTPException(409, 'Decision changed since preview. Create and review a fresh update.')
     try:
         manager = manager_for(request.app)
-        result = manager.send(row.id)
+        result = manager.send(row.id, **send_options(manager, body))
         db.expire_all()
         audit(db, project_id, db.get(Delivery, row.id), 'explicit_delivery_attempt')
         db.commit()

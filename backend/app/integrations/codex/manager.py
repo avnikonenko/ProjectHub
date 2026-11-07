@@ -223,7 +223,14 @@ class CodexManager:
                     model = item.get('model')
                     if isinstance(model, str) and model and len(model) <= 128:
                         name = item.get('displayName')
-                        models[model] = {'id': model, 'label': name if isinstance(name, str) and name else model}
+                        options = item.get('supportedReasoningEfforts')
+                        efforts = [option['reasoningEffort'] for option in options
+                                   if isinstance(option, dict) and isinstance(option.get('reasoningEffort'), str)
+                                   and 0 < len(option['reasoningEffort']) <= 32] if isinstance(options, list) else []
+                        models[model] = {
+                            'id': model, 'label': name if isinstance(name, str) and name else model,
+                            'efforts': list(dict.fromkeys(efforts)),
+                        }
                 cursor = result.get('nextCursor')
                 if cursor is None:
                     return list(models.values())
@@ -233,15 +240,26 @@ class CodexManager:
         finally:
             client.close()
 
-    def for_generation(self, model):
+    def validate_generation(self, model, effort):
+        if model is None:
+            if effort is not None:
+                raise CodexError('Choose a generation model before setting reasoning effort.')
+            return
+        option = next((option for option in self.generation_models() if option['id'] == model), None)
+        if option is None:
+            raise CodexError('The selected model is unavailable. Choose another model or Codex default.')
+        if effort is not None and effort not in option['efforts']:
+            raise CodexError('The selected model does not support that reasoning effort.')
+
+    def for_generation(self, model, effort=None):
+        self.validate_generation(model, effort)
         if model is None:
             return self
-        if not any(option['id'] == model for option in self.generation_models()):
-            raise CodexError('The selected model is unavailable. Choose another model or Codex default.')
         return SimpleNamespace(history=self.history, _new_read_client=self._new_read_client,
-                               generation_model=model, generate_brief=partial(self.generate_brief, model=model))
+                               generation_model=model, generation_effort=effort,
+                               generate_brief=partial(self.generate_brief, model=model, effort=effort))
 
-    def generate_brief(self, prompt, output_schema, *, model=None):
+    def generate_brief(self, prompt, output_schema, *, model=None, effort=None):
         """Generate in a separate ephemeral thread; never resume a source session."""
         done = threading.Event()
         state = {}
@@ -284,6 +302,7 @@ class CodexManager:
                     raise CodexError('Codex did not create an ephemeral brief thread.')
                 result = client.request('turn/start', {
                     'threadId': thread_id, 'input': [{'type': 'text', 'text': prompt}],
+                    **({'effort': effort} if effort is not None else {}),
                     'approvalPolicy': 'never',
                     'sandboxPolicy': {'type': 'readOnly', 'networkAccess': False},
                     'outputSchema': output_schema,
@@ -377,7 +396,7 @@ class CodexManager:
                 client.close()
                 raise
 
-    def send(self, delivery_id):
+    def send(self, delivery_id, *, model=None, effort=None):
         with self.lock:
             with Session(self.engine) as db:
                 delivery = db.get(Delivery, delivery_id)
@@ -405,7 +424,8 @@ class CodexManager:
                     raise CodexError('Inherited MCP connectors remain enabled; refusing to submit a discussion turn.')
                 submitted = True
                 result = client.request('turn/start', {'threadId': thread_id,
-                    'input': [{'type': 'text', 'text': content}], 'approvalPolicy': 'never', 'model': None,
+                    'input': [{'type': 'text', 'text': content}], 'approvalPolicy': 'never', 'model': model,
+                    **({'effort': effort} if effort is not None else {}),
                     'sandboxPolicy': {'type': 'readOnly', 'networkAccess': False}})
                 turn_id = result['turn']['id']
             except Exception as exc:

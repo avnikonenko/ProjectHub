@@ -268,7 +268,9 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
 
     env.manager.client_factory = BriefClient
     if status == 'completed' and ephemeral:
-        assert env.manager.generate_brief('Synthetic input', {'type': 'object'}, model=model) == '{"brief": "saved"}'
+        assert env.manager.generate_brief(
+            'Synthetic input', {'type': 'object'}, model=model, effort='high' if model else None,
+        ) == '{"brief": "saved"}'
     else:
         with pytest.raises(CodexError, match='ephemeral|did not complete'):
             env.manager.generate_brief('Synthetic input', {'type': 'object'})
@@ -281,4 +283,5 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
     if ephemeral:
         turn = clients[0].calls[2][1]
         assert turn['outputSchema'] == {'type': 'object'}
+        assert turn.get('effort') == ('high' if model else None)
         assert turn['sandboxPolicy']['networkAccess'] is False

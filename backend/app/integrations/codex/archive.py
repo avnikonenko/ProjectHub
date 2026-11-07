@@ -53,6 +53,7 @@ def _validated(raw, sources, limit):
 def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     serialized = json.dumps({'version': CACHE_VERSION, 'project_id': project_id, 'stage': stage,
                              **({'model': manager.generation_model} if getattr(manager, 'generation_model', None) else {}),
+                             **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
                              'limit': limit, 'payload': payload, 'sources': sources},
                             ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     fingerprint = hashlib.sha256(serialized.encode()).hexdigest()

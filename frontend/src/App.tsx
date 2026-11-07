@@ -335,7 +335,10 @@ function ProjectWorkspace({
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [view, setView] = useState('Dashboard');
-  const [generationModel, setGenerationModel] = useState('');
+  const [generation, setGeneration] = useState(loadGenerationSettings);
+  useEffect(() => {
+    try { localStorage.setItem('projecthub.ai-settings', JSON.stringify(generation)); } catch { /* Storage is optional. */ }
+  }, [generation]);
   const [error, setError] = useState('');
   const [form, setForm] = useState<{
     title: string;
@@ -465,6 +468,7 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
+          <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
         </div>
       </div>
       <nav className="tabs" aria-label="Project sections">
@@ -535,7 +539,7 @@ function ProjectWorkspace({
           <>
             {view === 'Dashboard' && (
               <>
-                <ProjectBrief base={base} model={generationModel} onModelChange={setGenerationModel} />
+                <ProjectBrief base={base} generation={generation} />
                 <div className="metrics">
                   {[
                     [open.length, 'Open questions'],
@@ -646,7 +650,7 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && <ProjectHistory base={base} />}
-            {view === 'AI Q&A' && <ProjectQA base={base} model={generationModel} onModelChange={setGenerationModel} />}
+            {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
               <section className="card">
                 <h2>TODO</h2>
@@ -806,6 +810,7 @@ function ProjectWorkspace({
               <Codex
                 base={base}
                 decisions={accepted}
+                generation={generation}
                 onError={setError}
                 onNotesChanged={load}
               />
@@ -985,32 +990,78 @@ type SavedQA = {
   sources: BriefSource[];
 };
 
-type GenerationProps = { base: string; model: string; onModelChange: (model: string) => void };
+type Generation = { model: string; effort: string };
+type GenerationProps = { base: string; generation: Generation };
 
-function GenerationModel({ base, model, onModelChange, busy }: GenerationProps & { busy: boolean }) {
-  const [models, setModels] = useState<{ id: string; label: string }[]>([]);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let active = true;
-    api<{ id: string; label: string }[]>(`${base}/codex/models`)
-      .then((result) => { if (active) setModels(result); })
-      .catch(() => { if (active) setError('Could not load Codex models.'); });
-    return () => { active = false; };
-  }, [base]);
+function loadGenerationSettings(): Generation {
+  try {
+    const saved = JSON.parse(localStorage.getItem('projecthub.ai-settings') ?? 'null');
+    if (typeof saved?.model === 'string' && typeof saved?.effort === 'string') return saved;
+  } catch { /* Storage is optional. */ }
+  return { model: '', effort: '' };
+}
+
+function generationBody({ model, effort }: Generation) {
+  return { model: model || null, effort: effort || null };
+}
+
+function GenerationSettings({ base, generation, onChange }: GenerationProps & {
+  onChange: (settings: Generation) => void;
+}) {
+  const [open, setOpen] = useState(false);
   return (
-    <label>
-      Generation model
-      <select value={model} disabled={busy} onChange={(e) => onModelChange(e.target.value)}>
-        <option value="">Codex default</option>
-        {model && !models.some((option) => option.id === model) && <option value={model}>{model}</option>}
-        {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-      </select>
-      {error && <small role="status">{error}</small>}
-    </label>
+    <details className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
+      {open && <GenerationOptions base={base} generation={generation} onChange={onChange} />}
+    </details>
   );
 }
 
-function ProjectQA({ base, model, onModelChange }: GenerationProps) {
+function GenerationOptions({ base, generation, onChange }: GenerationProps & {
+  onChange: (settings: Generation) => void;
+}) {
+  const [models, setModels] = useState<{ id: string; label: string; efforts: string[] }[]>([]);
+  const [status, setStatus] = useState('Loading Codex models…');
+  useEffect(() => {
+    let active = true;
+    api<typeof models>(`${base}/codex/models`)
+      .then((result) => {
+        if (!active) return;
+        setModels(result);
+        setStatus(result.length ? '' : 'No models reported by Codex.');
+      })
+      .catch(() => { if (active) setStatus('Could not load Codex models.'); });
+    return () => { active = false; };
+  }, [base]);
+  const model = models.find((option) => option.id === generation.model);
+  const efforts = model?.efforts ?? [];
+  return (
+    <div className="generation-options">
+      <strong>AI settings</strong>
+      <label>
+        Model
+        <select value={generation.model} onChange={(e) => onChange({ model: e.target.value, effort: '' })}>
+          <option value="">Codex default</option>
+          {generation.model && !model && <option value={generation.model}>{generation.model}</option>}
+          {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+        </select>
+      </label>
+      <label>
+        Reasoning effort
+        <select value={generation.effort} disabled={!efforts.length}
+          onChange={(e) => onChange({ ...generation, effort: e.target.value })}>
+          <option value="">Model default</option>
+          {generation.effort && !efforts.includes(generation.effort) && <option value={generation.effort}>{generation.effort}</option>}
+          {efforts.map((effort) => <option key={effort} value={effort}>{label(effort)}</option>)}
+        </select>
+      </label>
+      {status && <small role="status">{status}</small>}
+      {!generation.model && <small>Choose a model to set its reasoning effort.</small>}
+    </div>
+  );
+}
+
+function ProjectQA({ base, generation }: GenerationProps) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -1030,7 +1081,7 @@ function ProjectQA({ base, model, onModelChange }: GenerationProps) {
     setGenerating(true);
     setError('');
     try {
-      setSaved(await post(path, { confirmed: true, model: model || null }));
+      setSaved(await post(path, { confirmed: true, ...generationBody(generation) }));
       setPage(0);
     } catch (e) {
       setError((e as Error).message);
@@ -1056,7 +1107,6 @@ function ProjectQA({ base, model, onModelChange }: GenerationProps) {
           </button>
         </div>
         <p className="brief-note">Questions and answers drawn from your linked conversations. Generating sends conversation evidence to OpenAI.</p>
-        <GenerationModel base={base} model={model} onModelChange={onModelChange} busy={generating} />
         {generating && <p role="status">Generating Q&A. A long history may take several minutes.</p>}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved Q&A…</Empty>}
@@ -1085,7 +1135,7 @@ function ProjectQA({ base, model, onModelChange }: GenerationProps) {
   );
 }
 
-function ProjectBrief({ base, model, onModelChange }: GenerationProps) {
+function ProjectBrief({ base, generation }: GenerationProps) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -1113,7 +1163,7 @@ function ProjectBrief({ base, model, onModelChange }: GenerationProps) {
     setGenerating(true);
     setError('');
     try {
-      const result = await post(`${base}/codex/brief`, { confirmed: true, model: model || null });
+      const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
       if (request.current === id) setBrief(result);
     } catch (e) {
       if (request.current === id) setError((e as Error).message);
@@ -1148,7 +1198,6 @@ function ProjectBrief({ base, model, onModelChange }: GenerationProps) {
         <p className="brief-note">
           Generate or refresh to send saved conversation text from linked sessions, accepted decisions, and saved architecture to OpenAI.
         </p>
-        <GenerationModel base={base} model={model} onModelChange={onModelChange} busy={generating} />
         {generating && <p role="status">Generating the brief. A first run over a long history may take a while.</p>}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved brief…</Empty>}
@@ -1365,11 +1414,13 @@ function SavedHistory({
 
 function Codex({
   base,
+  generation,
   decisions,
   onError,
   onNotesChanged,
 }: {
   base: string;
+  generation: Generation;
   decisions: RecordData[];
   onError: (message: string) => void;
   onNotesChanged: () => Promise<void>;
@@ -1602,7 +1653,7 @@ function Codex({
             e.preventDefault();
             if (busy || !canSend) return;
             action(async () => {
-              await post(`${prefix}/sessions/${sessionId}/turns`, { prompt });
+              await post(`${prefix}/sessions/${sessionId}/turns`, { prompt, ...generationBody(generation) });
               setPrompt('');
             });
           }}
@@ -1683,6 +1734,7 @@ function Codex({
                   setDelivery(
                     await post(`${prefix}/deliveries/${delivery.id}/send`, {
                       confirmed: true,
+                      ...generationBody(generation),
                     }),
                   ),
                 )
@@ -1746,6 +1798,7 @@ function Codex({
                         action(async () => {
                           await post(`${prefix}/deliveries/${item.id}/send`, {
                             confirmed: true,
+                            ...generationBody(generation),
                           });
                           setEvents(
                             await api(`${prefix}/sessions/${sessionId}/events`),
