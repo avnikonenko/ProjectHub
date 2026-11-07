@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
 import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { RevisionHistory } from './RevisionHistory';
 import { historyTurnHref, readHistoryTurnLink, type HistoryTurnLink } from './historyLinks';
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
@@ -1081,6 +1082,9 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
 
 function ProjectQA({ base, generation }: GenerationProps) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [revisionId, setRevisionId] = useState<number | null>(null);
+  const [revisionLoading, setRevisionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -1090,17 +1094,25 @@ function ProjectQA({ base, generation }: GenerationProps) {
   useEffect(() => {
     let active = true;
     api<SavedQA | null>(path)
-      .then((result) => { if (active) setSaved(result); })
+      .then((result) => {
+        if (active) {
+          setSaved(result);
+          setLatestVersion(result?.generated_at ?? null);
+        }
+      })
       .catch((e) => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [path]);
   async function generate() {
-    if (loading || generating) return;
+    if (loading || generating || revisionLoading) return;
     setGenerating(true);
     setError('');
     try {
-      setSaved(await post(path, { confirmed: true, ...generationBody(generation) }));
+      const result = await post(path, { confirmed: true, ...generationBody(generation) });
+      setSaved(result);
+      setRevisionId(null);
+      setLatestVersion(result.generated_at);
       setPage(0);
     } catch (e) {
       setError((e as Error).message);
@@ -1129,12 +1141,21 @@ function ProjectQA({ base, generation }: GenerationProps) {
             {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
             {saved && <SavedGeneration generation={saved.generation} />}
           </div>
-          <button disabled={loading || generating} onClick={generate}>
+          <button disabled={loading || generating || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
           </button>
         </div>
         <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
         {generating && <GenerationStatus base={base} kind="qa" />}
+        <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
+          disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          onSelect={(snapshot, id) => {
+            setSaved(snapshot);
+            setRevisionId(id);
+            setPage(0);
+            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
+          }} />
+        {revisionLoading && <p role="status">Loading saved Q&A version…</p>}
         <ErrorBox error={error} />
         {!!saved?.items.length && (
           <label>
@@ -1181,6 +1202,9 @@ function ProjectQA({ base, generation }: GenerationProps) {
 
 function ProjectBrief({ base, generation }: GenerationProps) {
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [revisionId, setRevisionId] = useState<number | null>(null);
+  const [revisionLoading, setRevisionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState('');
@@ -1190,7 +1214,10 @@ function ProjectBrief({ base, generation }: GenerationProps) {
     const id = ++request.current;
     api<Brief | null>(`${base}/codex/brief`)
       .then((result) => {
-        if (request.current === id) setBrief(result);
+        if (request.current === id) {
+          setBrief(result);
+          setLatestVersion(result?.generated_at ?? null);
+        }
       })
       .catch((e) => {
         if (request.current === id) setError(e.message);
@@ -1201,14 +1228,18 @@ function ProjectBrief({ base, generation }: GenerationProps) {
     return () => { request.current += 1; };
   }, [base]);
   async function generate() {
-    if (generatingRef.current || loading) return;
+    if (generatingRef.current || loading || revisionLoading) return;
     generatingRef.current = true;
     const id = ++request.current;
     setGenerating(true);
     setError('');
     try {
       const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
-      if (request.current === id) setBrief(result);
+      if (request.current === id) {
+        setBrief(result);
+        setRevisionId(null);
+        setLatestVersion(result.generated_at);
+      }
     } catch (e) {
       if (request.current === id) setError((e as Error).message);
     } finally {
@@ -1236,7 +1267,7 @@ function ProjectBrief({ base, generation }: GenerationProps) {
             {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
             {brief && <SavedGeneration generation={brief.generation} />}
           </div>
-          <button disabled={loading || generating} onClick={generate}>
+          <button disabled={loading || generating || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
           </button>
         </div>
@@ -1244,6 +1275,14 @@ function ProjectBrief({ base, generation }: GenerationProps) {
           Generate or refresh to send saved conversation text from linked sessions, project notes, accepted decisions, and saved architecture to OpenAI.
         </p>
         {generating && <GenerationStatus base={base} kind="brief" />}
+        <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
+          disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          onSelect={(snapshot, id) => {
+            setBrief(snapshot);
+            setRevisionId(id);
+            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
+          }} />
+        {revisionLoading && <p role="status">Loading saved brief version…</p>}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved brief…</Empty>}
         {!loading && !brief && <Empty>No saved brief yet.</Empty>}

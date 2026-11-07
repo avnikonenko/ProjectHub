@@ -470,6 +470,18 @@ main {
   color: #32483c;
   padding: 8px 0;
 }
+.revision-history {
+  margin-bottom: 1rem;
+}
+.revision-history summary {
+  cursor: pointer;
+}
+.revision-history ul {
+  padding-left: 1.25rem;
+}
+.revision-history li + li {
+  margin-top: 0.6rem;
+}
 .brief-section + .brief-section {
   margin-top: 1rem;
 }
