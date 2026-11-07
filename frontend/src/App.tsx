@@ -386,9 +386,8 @@ function ProjectWorkspace({
         </Empty>
       </main>
     );
-  const { project, questions, decisions, tasks, notes, activity } = overview;
+  const { project, decisions, tasks, notes, activity } = overview;
   const accepted = decisions.filter((d) => d.status === 'accepted');
-  const open = questions.filter((q) => q.status !== 'resolved');
   const activeTodos = tasks.filter((task) => task.status !== 'completed');
   const completedTodos = tasks.filter((task) => task.status === 'completed');
   const todoRow = (task: RecordData) => (
@@ -524,16 +523,10 @@ function ProjectWorkspace({
               <>
                 <ProjectBrief base={base} generation={generation} />
                 <div className="metrics">
-                  {[
-                    [open.length, 'Open questions'],
-                    [accepted.length, 'Accepted decisions'],
-                    [notes.length, 'Notes'],
-                  ].map(([value, name]) => (
-                    <div className="metric" key={name}>
-                      <strong>{value}</strong>
-                      <span>{name}</span>
-                    </div>
-                  ))}
+                  <div className="metric">
+                    <strong>{notes.length}</strong>
+                    <span>Notes</span>
+                  </div>
                 </div>
                 <div className="two-column">
                   {(project.goals.trim() || project.repository_path || project.tags.length > 0) && (
