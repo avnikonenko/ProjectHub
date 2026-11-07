@@ -22,17 +22,21 @@ class FakeClient:
     connectors = False
     reject = False
     account_type = 'chatgpt'
+    configured = ()
 
-    def __init__(self, on_event=None, on_disconnect=None):
+    def __init__(self, on_event=None, on_disconnect=None, disabled_mcp=()):
         self.on_event = on_event or (lambda *a: None)
         self.on_disconnect = on_disconnect or (lambda: None)
         self.calls = []
         self.closed = False
+        self.disabled_mcp = disabled_mcp
 
     def request(self, method, params):
         self.calls.append((method, params))
         if method == 'account/read':
             return {'account': {'type': self.account_type}}
+        if method == 'config/read':
+            return {'config': {'mcp_servers': {name: {} for name in self.configured}}}
         if method == 'thread/start':
             FakeClient.next_id += 1
             return {'thread': {'id': f'thread-{FakeClient.next_id}', 'status': {'type': 'idle'}}}
@@ -46,7 +50,10 @@ class FakeClient:
                 ],
             }], 'nextCursor': None}
         if method == 'mcpServerStatus/list':
-            return {'data': [{'name': 'inherited'}] if self.connectors else [], 'nextCursor': None}
+            return {'data': [{'name': name, 'tools': {'run': {}} if self.connectors else {},
+                              'resources': [], 'resourceTemplates': [], 'serverCapabilities': None}
+                             for name in (self.configured or (('inherited',) if self.connectors else ()))],
+                    'nextCursor': None}
         if method == 'turn/start':
             if self.reject:
                 raise CodexError('Codex request timed out; delivery may be unverified')
@@ -73,6 +80,7 @@ def setup(tmp_path, monkeypatch):
     app.include_router(router)
     FakeClient.next_id, FakeClient.complete_early, FakeClient.connectors, FakeClient.reject = 0, False, False, False
     FakeClient.account_type = 'chatgpt'
+    FakeClient.configured = ()
     with Session(engine) as db:
         a, b = Project(name='A'), Project(name='B')
         db.add_all([a, b]); db.commit()
@@ -174,6 +182,25 @@ def test_inherited_connectors_fail_closed_before_generation(setup):
     response = setup.client.post(f'/api/projects/1/codex/sessions/{sid}/turns', json={'prompt': 'review'}).json()
     assert response['status'] == 'failed'
     assert not any(method == 'turn/start' for method, _ in client.calls)
+
+
+def test_discussion_disables_configured_connectors_before_sending(setup, monkeypatch):
+    monkeypatch.setattr(FakeClient, 'configured', ('inherited',))
+    sid = create_session(setup)
+    client = setup.manager.clients[sid]
+    assert client.disabled_mcp == ['inherited']
+    url = f'/api/projects/1/codex/sessions/{sid}/turns'
+    client.connectors = True
+    failed = setup.client.post(url, json={'prompt': 'review'}).json()
+    assert failed['status'] == 'failed'
+    assert not any(method == 'turn/start' for method, _ in client.calls)
+    resumed = setup.client.post(f'/api/projects/1/codex/sessions/{sid}/resume')
+    assert resumed.status_code == 200
+    replacement = setup.manager.clients[sid]
+    assert client.closed and replacement.disabled_mcp == ['inherited']
+    retried = setup.client.post(f"/api/projects/1/codex/deliveries/{failed['id']}/send",
+                                json={'confirmed': True}).json()
+    assert retried['status'] == 'sent'
 
 
 def test_restart_preserves_uncertainty(setup):

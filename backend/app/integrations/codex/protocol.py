@@ -18,19 +18,23 @@ DISABLED_FEATURES = ('apps', 'shell_tool', 'unified_exec', 'browser_use',
                      'multi_agent', 'hooks')
 
 
-def server_command(executable):
+def server_command(executable, disabled_mcp=()):
     args = [executable, 'app-server', '--listen', 'stdio://',
             '-c', 'mcp_servers={}', '-c', 'model_provider="openai"',
             '-c', 'web_search="disabled"',
             '-c', 'shell_environment_policy.inherit="none"']
     for feature in DISABLED_FEATURES:
         args += ['-c', f'features.{feature}=false']
+    for name in disabled_mcp:
+        args += ['-c', f'mcp_servers.{name}.enabled=false']
     return args
 
 
 class AppServerClient:
     """One managed connection; unsolicited permission requests always fail closed."""
-    def __init__(self, on_event=None, on_disconnect=None, executable=None, timeout=20, codex_home=None):
+    def __init__(self, on_event=None, on_disconnect=None, executable=None, timeout=20, codex_home=None,
+                 disabled_mcp=()):
+        self.disabled_mcp = frozenset(disabled_mcp)
         self.on_event = on_event or (lambda method, params: None)
         self.on_disconnect = on_disconnect or (lambda: None)
         self.timeout = timeout
@@ -47,7 +51,8 @@ class AppServerClient:
                 environment['CODEX_HOME'] = codex_home
             for key in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_BASE'):
                 environment.pop(key, None)
-            self.process = subprocess.Popen(server_command(executable), env=environment, stdin=subprocess.PIPE,
+            self.process = subprocess.Popen(server_command(executable, sorted(self.disabled_mcp)),
+                                            env=environment, stdin=subprocess.PIPE,
                                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                             text=True, encoding='utf-8', bufsize=1)
         except OSError as exc:

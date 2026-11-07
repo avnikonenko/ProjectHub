@@ -23,6 +23,8 @@ class FakeClient:
         self.calls.append((method, params))
         if method == 'account/read':
             return {'account': {'type': self.account_type}}
+        if method == 'config/read':
+            return {'config': {'mcp_servers': {}}}
         if method in ('thread/start', 'thread/resume', 'thread/read'):
             return {'thread': {'id': params.get('threadId', 'thread-1'), 'status': {'type': 'idle'}}}
         if method == 'mcpServerStatus/list':
