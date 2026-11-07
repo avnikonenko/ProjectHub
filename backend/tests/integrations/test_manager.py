@@ -297,6 +297,7 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
         ['account/read', 'thread/start'] + (['turn/start'] if ephemeral else []))
     start = clients[0].calls[1][1]
     assert start['ephemeral'] is True and start['sandbox'] == 'read-only'
+    assert 'Be compact by default' in start['developerInstructions']
     assert start.get('model') == model
     if ephemeral:
         turn = clients[0].calls[2][1]

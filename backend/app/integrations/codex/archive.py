@@ -52,7 +52,9 @@ def _validated(raw, sources, limit):
 
 
 def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
+    from .ai_instructions import ai_instructions
     serialized = json.dumps({'version': CACHE_VERSION, 'project_id': project_id, 'stage': stage,
+                             'ai_instructions': ai_instructions(),
                              **({'model': manager.generation_model} if getattr(manager, 'generation_model', None) else {}),
                              **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
                              **({'account': manager.generation_account} if getattr(manager, 'generation_account', None) else {}),

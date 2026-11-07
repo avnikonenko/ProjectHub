@@ -224,6 +224,8 @@ def test_explicit_review_requests_reconnect_disconnected_session(setup):
     client = setup.manager.clients[sid]
     assert [method for method, _ in client.calls].count('thread/resume') == 1
     assert [method for method, _ in client.calls].count('turn/start') == 1
+    sent = next(params for method, params in client.calls if method == 'turn/start')
+    assert 'Be compact by default' in sent['input'][0]['text']
 
     queued = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'another review'}).json()
     assert queued['status'] == 'queued'
