@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
@@ -308,39 +308,6 @@ export default function App() {
   );
 }
 
-function PagedRecords({
-  records,
-  name,
-  children,
-}: {
-  records: RecordData[];
-  name: string;
-  children: (record: RecordData) => ReactNode;
-}) {
-  const pageSize = 3;
-  const [requestedPage, setPage] = useState(0);
-  const totalPages = Math.ceil(records.length / pageSize);
-  const page = Math.min(requestedPage, Math.max(0, totalPages - 1));
-  const offset = page * pageSize;
-  const recent = [...records].sort((a, b) => b.id - a.id).slice(offset, offset + pageSize);
-  return (
-    <>
-      {totalPages > 1 && (
-        <nav className="pagination" aria-label={`${name} pages`}>
-          <button className="secondary" disabled={page === 0} onClick={() => setPage(page - 1)}>
-            Newer
-          </button>
-          <span role="status">Page {page + 1} of {totalPages}</span>
-          <button className="secondary" disabled={page + 1 === totalPages} onClick={() => setPage(page + 1)}>
-            Older
-          </button>
-        </nav>
-      )}
-      {recent.map(children)}
-    </>
-  );
-}
-
 function ProjectWorkspace({
   projectId,
   onProjectChanged,
@@ -424,8 +391,6 @@ function ProjectWorkspace({
   const open = questions.filter((q) => q.status !== 'resolved');
   const activeTodos = tasks.filter((task) => task.status !== 'completed');
   const completedTodos = tasks.filter((task) => task.status === 'completed');
-  const questionTodos = new Set(tasks.map((task) => task.question_id));
-  const decisionTodos = new Set(tasks.map((task) => task.decision_id));
   const todoRow = (task: RecordData) => (
     <li key={task.id}>
       <label>
@@ -571,78 +536,28 @@ function ProjectWorkspace({
                   ))}
                 </div>
                 <div className="two-column">
-                  <section className="card">
-                    <div className="section-title">
+                  {(project.goals.trim() || project.repository_path || project.tags.length > 0) && (
+                    <section className="card">
                       <h2>Project overview</h2>
-                      <span className="subtle-label">RECORDED FACTS</span>
-                    </div>
-                    <h4>Goals</h4>
-                    <Markdown>{project.goals}</Markdown>
-                    <h4>Repository</h4>
-                    <code className="repository">
-                      {project.repository_path ?? 'No repository registered'}
-                    </code>
-                    <div className="tags">
-                      {project.tags.map((t) => (
-                        <span key={t}>{t}</span>
-                      ))}
-                    </div>
-                    <button
-                      className="secondary"
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => setReport(await api(`${base}/summary`)))
-                      }
-                    >
-                      View structured summary
-                    </button>
-                  </section>
-                  <section className="card">
-                    <div className="section-title">
-                      <h2>Decisions & follow-ups</h2>
-                      <button
-                        className="quiet"
-                        onClick={() => setView('TODO')}
-                      >
-                        View TODO →
-                      </button>
-                    </div>
-                    <h3>Open questions</h3>
-                    <PagedRecords records={open} name="Open questions">{(q) => (
-                      <div className="compact-row" key={q.id}>
-                        <h3>{q.title}</h3>
-                        <Badge value={q.status} />
-                        <button className="quiet todo-source-action" disabled={busy || questionTodos.has(q.id)}
-                          onClick={() => run(() => post(`${base}/tasks`, { title: q.title, question_id: q.id }))}>
-                          {questionTodos.has(q.id) ? 'Added to TODO' : 'Add to TODO'}
-                        </button>
-                      </div>
-                    )}</PagedRecords>
-                    {!open.length && <Empty>No open questions.</Empty>}
-                    <h3 className="qa-subheading">Accepted decisions</h3>
-                    <PagedRecords records={accepted} name="Accepted decisions">{(d) => (
-                      <div className="compact-row" key={d.id}>
-                        <h3>{d.title}</h3>
-                        <p>{d.description}</p>
-                        {d.rationale && <Markdown>{d.rationale}</Markdown>}
-                        {d.evidence && <details><summary>Evidence</summary><Markdown>{d.evidence}</Markdown></details>}
-                        {d.next_step && (
-                          <>
-                            <p><strong>Next step:</strong> {d.next_step}</p>
-                            <button className="quiet" disabled={busy || decisionTodos.has(d.id)}
-                              onClick={() => run(() => post(`${base}/tasks`, { title: d.next_step, decision_id: d.id }))}>
-                              {decisionTodos.has(d.id) ? 'Added to TODO' : 'Add next step to TODO'}
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    )}</PagedRecords>
-                    {!accepted.length && (
-                      <Empty>
-                        Accepted answers and decisions will appear here.
-                      </Empty>
-                    )}
-                  </section>
+                      {project.goals.trim() && (
+                        <>
+                          <h4>Goals</h4>
+                          <Markdown>{project.goals}</Markdown>
+                        </>
+                      )}
+                      {project.repository_path && (
+                        <>
+                          <h4>Repository</h4>
+                          <code className="repository">{project.repository_path}</code>
+                        </>
+                      )}
+                      {project.tags.length > 0 && (
+                        <div className="tags">
+                          {project.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                        </div>
+                      )}
+                    </section>
+                  )}
                   <section className="card">
                     <h2>Latest activity</h2>
                     {activity.slice(0, 8).map((a) => (
