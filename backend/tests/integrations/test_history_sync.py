@@ -179,3 +179,67 @@ def test_metadata_change_during_index_requires_another_pass(env, monkeypatch):
     assert search(env, 1, 'alpha')
     env.worker.sync_once()
     assert not search(env, 1, 'alpha') and search(env, 1, 'version')
+
+
+def test_paused_session_is_persistent_and_keeps_history_without_warning(env):
+    env.worker.sync_once()
+    env.state['a']['fail'] = True
+    env.worker.sync_once()
+    assert '#1' in env.worker.read_status(1)['error']
+    with Session(env.engine) as db:
+        db.get(CodexSession, 1).auto_sync = False
+        db.commit()
+    # Status hides a stale in-memory warning immediately, before the next pass.
+    assert env.worker.read_status(1) == {'error': None}
+    env.calls.clear()
+    env.worker.sync_once()
+    assert all(params['threadId'] != 'a' for _, _, params in env.calls)
+    assert search(env, 1, 'alpha')
+    with Session(env.engine) as db:
+        assert db.get(CodexSession, 1).auto_sync is False
+        db.get(CodexSession, 1).auto_sync = True
+        db.commit()
+    env.worker.sync_once()
+    assert '#1' in env.worker.read_status(1)['error']
+
+
+def test_pause_during_failed_read_cannot_restore_warning(env, monkeypatch):
+    original = FakeClient.request
+
+    def request_then_pause(client, method, params):
+        if params['threadId'] == 'a':
+            with Session(env.engine) as db:
+                db.get(CodexSession, 1).auto_sync = False
+                db.commit()
+            raise CodexError('unavailable')
+        return original(client, method, params)
+
+    monkeypatch.setattr(FakeClient, 'request', request_then_pause)
+    env.worker.sync_once()
+    assert env.worker.read_status(1) == {'error': None}
+    assert (1, 1) not in env.worker._errors
+
+
+def test_migration_enables_existing_sessions_without_changing_records(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+
+    engine = create_engine('sqlite:///' + str(tmp_path / 'migration.sqlite3'))
+    cfg = Config()
+    cfg.set_main_option('script_location', 'migrations')
+    with engine.begin() as connection:
+        cfg.attributes['connection'] = connection
+        command.upgrade(cfg, '0009')
+        connection.exec_driver_sql(
+            "INSERT INTO projects(id,name,description,goals,status,git_remote,tags,architecture_mermaid,created_at,updated_at) "
+            "VALUES(1,'Example','','','planning','','[]','','now','now')")
+        connection.exec_driver_sql(
+            "INSERT INTO codex_sessions(id,project_id,codex_account,thread_id,title,status,last_error,created_at,updated_at) "
+            "VALUES(1,1,NULL,'thread','Saved session','linked','','now','now')")
+        command.upgrade(cfg, 'head')
+    with Session(engine) as db:
+        session = db.get(CodexSession, 1)
+        assert session.auto_sync is True
+        assert session.title == 'Saved session' and session.thread_id == 'thread'
+    engine.dispose()

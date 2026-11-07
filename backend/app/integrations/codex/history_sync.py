@@ -95,15 +95,27 @@ class HistorySync:
             pass
 
     def read_status(self, project_id):
+        with Session(self.engine) as db:
+            enabled = set(db.scalars(select(CodexSession.id).where(
+                CodexSession.project_id == project_id, CodexSession.auto_sync.is_(True))))
         with self._lock:
-            failed = sorted(sid for pid, sid in self._errors if pid == project_id)
-            pass_error = self._pass_error
+            failed = sorted(sid for pid, sid in self._errors if pid == project_id and sid in enabled)
+            pass_error = self._pass_error and bool(enabled)
         error = 'History sync is unavailable. Previously saved history remains available.' if pass_error else None
         if failed:
             ids = ', '.join(f'#{sid}' for sid in failed[:3])
             suffix = ' and others' if len(failed) > 3 else ''
             error = f'History sync could not read session {ids}{suffix}. Previously saved history remains available. Retry the history refresh or check Sources.'
         return {'error': error}
+
+    def _session_enabled(self, session):
+        with Session(self.engine) as db:
+            return db.scalar(select(CodexSession.id).where(
+                CodexSession.id == session.id, CodexSession.project_id == session.project_id,
+                CodexSession.auto_sync.is_(True),
+                CodexSession.thread_id == session.thread_id,
+                CodexSession.codex_account == session.codex_account,
+            )) is not None
 
     def _run(self):
         if self._stop.wait(5):
@@ -124,12 +136,13 @@ class HistorySync:
             return
         try:
             with Session(self.engine) as db:
-                sessions = list(db.scalars(select(CodexSession).order_by(CodexSession.project_id, CodexSession.id)))
+                sessions = list(db.scalars(select(CodexSession).where(
+                    CodexSession.auto_sync.is_(True)).order_by(CodexSession.project_id, CodexSession.id)))
             current = {(session.project_id, session.id) for session in sessions}
             with self._lock:
                 self._errors = {key: value for key, value in self._errors.items() if key in current}
                 self._pass_error = False
-            self._fingerprints = {key: value for key, value in self._fingerprints.items() if key in current}
+                self._fingerprints = {key: value for key, value in self._fingerprints.items() if key in current}
             for session in sessions:
                 if self._stop.is_set():
                     break
@@ -141,6 +154,8 @@ class HistorySync:
         key = (session.project_id, session.id)
         client = None
         try:
+            if not self._session_enabled(session):
+                return
             if session.codex_account is None:
                 client = self.manager_factory()._new_read_client()
             else:
@@ -152,7 +167,8 @@ class HistorySync:
             fingerprint = _metadata(client, session)
             if fingerprint is None:
                 return
-            previous = self._fingerprints.get(key)
+            with self._lock:
+                previous = self._fingerprints.get(key)
             # Reconcile occasionally even when a coarse timestamp did not
             # change. Missing timestamps conservatively refresh every pass.
             now = time.monotonic()
@@ -166,15 +182,16 @@ class HistorySync:
             # A thread can change while pages are being read. In that case the
             # next pass rereads it instead of treating a mixed snapshot as final.
             after = _metadata(client, session) if not self._stop.is_set() else None
-            if after == fingerprint:
-                self._fingerprints[key] = (fingerprint, now)
+            if after == fingerprint and self._session_enabled(session):
+                with self._lock:
+                    self._fingerprints[key] = (fingerprint, now)
             with self._lock:
                 self._errors.pop(key, None)
         except HistoryIndexBusy:
             # Manual indexing owns the lock. Retry next pass without claiming a failure.
             pass
         except Exception:
-            if not self._stop.is_set():
+            if not self._stop.is_set() and self._session_enabled(session):
                 with self._lock:
                     self._errors[key] = True
                 log.warning('Could not synchronize saved history for project %d session %d.', session.project_id, session.id)

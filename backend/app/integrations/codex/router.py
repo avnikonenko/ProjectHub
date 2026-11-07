@@ -30,6 +30,10 @@ class SessionTitleInput(Input):
     title: str = Field(min_length=1, max_length=200)
 
 
+class SessionSyncInput(Input):
+    enabled: bool = Field(strict=True)
+
+
 class ModelInput(Input):
     model: str | None = Field(default=None, min_length=1, max_length=128)
     effort: str | None = Field(default=None, min_length=1, max_length=32)
@@ -247,6 +251,20 @@ def rename_session(project_id: int, session_id: int, body: SessionTitleInput, db
         db.flush()
         db.add(AuditEvent(project_id=project_id, entity_type='codex_sessions', entity_id=row.id,
                           action='session_renamed', before=before, after=record_dict(row)))
+        db.commit()
+    return record_dict(row)
+
+
+@router.patch('/sessions/{session_id}/sync')
+def configure_session_sync(project_id: int, session_id: int, body: SessionSyncInput,
+                           db: DB):
+    row = scoped(db, CodexSession, project_id, session_id)
+    if row.auto_sync != body.enabled:
+        before = record_dict(row)
+        row.auto_sync = body.enabled
+        db.flush()
+        db.add(AuditEvent(project_id=project_id, entity_type='codex_sessions', entity_id=row.id,
+                          action='session_sync_changed', before=before, after=record_dict(row)))
         db.commit()
     return record_dict(row)
 

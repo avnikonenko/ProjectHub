@@ -359,3 +359,29 @@ def test_linked_session_history_is_read_only_and_project_scoped(setup):
     with Session(setup.engine) as db:
         assert not list(db.scalars(select(Delivery).where(Delivery.session_id == session['id'])))
         assert not list(db.scalars(select(ContextPackage).where(ContextPackage.session_id == session['id'])))
+
+
+def test_session_sync_pause_is_scoped_audited_and_preserves_records(setup):
+    from backend.app.models import AuditEvent
+    sid = create_session(setup)
+    prefix = '/api/projects/1/codex'
+    client = setup.manager.clients[sid]
+    created = setup.client.post(f'{prefix}/sessions/{sid}/turns', json={'prompt': 'Review later'}).json()
+    calls = list(client.calls)
+    url = f'{prefix}/sessions/{sid}/sync'
+    assert setup.client.patch(f'/api/projects/2/codex/sessions/{sid}/sync',
+                              json={'enabled': False}).status_code == 404
+    assert setup.client.patch(url, json={'enabled': 'false'}).status_code == 422
+    paused = setup.client.patch(url, json={'enabled': False})
+    assert paused.status_code == 200 and paused.json()['auto_sync'] is False
+    assert client.calls == calls
+    assert any(s['id'] == sid and s['auto_sync'] is False
+               for s in setup.client.get(prefix + '/sessions').json())
+    events = setup.client.get(f'{prefix}/sessions/{sid}/events').json()
+    assert any(d['id'] == created['id'] for d in events['deliveries'])
+    with Session(setup.engine) as db:
+        audit = db.scalar(select(AuditEvent).where(AuditEvent.action == 'session_sync_changed'))
+        assert audit.before['auto_sync'] is True and audit.after['auto_sync'] is False
+        row = db.get(CodexSession, sid)
+        assert row.auto_sync is False
+    assert setup.client.patch(url, json={'enabled': True}).json()['auto_sync'] is True

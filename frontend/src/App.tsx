@@ -1917,6 +1917,11 @@ function Codex({ base, onError }: {
                 <small>#{session.id} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
                 <br />
                 <small>Last activity saved here: {new Date(session.last_activity_at ?? session.created_at).toLocaleString()}</small>
+                <br />
+                <button className="quiet" disabled={busy} onClick={() => void action(() =>
+                  patch(`${prefix}/sessions/${session.id}/sync`, { enabled: session.auto_sync === false }))}>
+                  {session.auto_sync === false ? 'Resume automatic sync' : 'Pause automatic sync'}
+                </button>
               </article>
             ))}
           </PagedItems>

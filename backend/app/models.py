@@ -1,6 +1,6 @@
 """Persistent knowledge records. Provenance is retained in append-only audit events."""
 from datetime import datetime, timezone
-from sqlalchemy import ForeignKey, String, Text, JSON, Integer
+from sqlalchemy import Boolean, ForeignKey, String, Text, JSON, Integer
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -110,6 +110,7 @@ class CodexSession(Scoped, Base):
     title: Mapped[str] = mapped_column(Text, default='Codex discussion')
     status: Mapped[str] = mapped_column(String, default='idle')
     last_error: Mapped[str] = mapped_column(Text, default='')
+    auto_sync: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
 
 
 class ContextPackage(Scoped, Base):
