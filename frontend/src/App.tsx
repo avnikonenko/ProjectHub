@@ -792,39 +792,32 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'Codex' && (
-              <Codex
-                base={base}
-                generation={generation}
-                onError={setError}
-                onNotesChanged={load}
-              />
+              <Codex base={base} onError={setError} />
             )}
             {view === 'Reviews' && (
-              <section className="card">
-                <p className="eyebrow">PROJECT HEALTH</p>
-                <h2>Review project records</h2>
-                <p>
-                  Check unresolved questions, incomplete work, missing evidence,
-                  and validation gaps. Deterministic findings reflect stored
-                  records and can flag gaps for you to review.
-                </p>
-                <div className="actions left">
-                  <button
-                    disabled={busy}
-                    onClick={() =>
-                      run(async () => setReport(await api(`${base}/review`)))
-                    }
-                  >
-                    Run project review
-                  </button>
-                  <button
-                    className="secondary"
-                    onClick={() => setView('Codex')}
-                  >
-                    Request AI-assisted review →
-                  </button>
-                </div>
-              </section>
+              <>
+                <section className="card">
+                  <p className="eyebrow">PROJECT HEALTH</p>
+                  <h2>Review project records</h2>
+                  <p>
+                    Check unresolved questions, incomplete work, missing evidence,
+                    and validation gaps. Deterministic findings reflect stored
+                    records and can flag gaps for you to review.
+                  </p>
+                  <div className="actions left">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        run(async () => setReport(await api(`${base}/review`)))
+                      }
+                    >
+                      Run project review
+                    </button>
+                  </div>
+                </section>
+                <CodexReview base={base} generation={generation} onNotesChanged={load}
+                  onManageSessions={() => { setReport(null); setView('Codex'); }} />
+              </>
             )}
           </>
         )}
@@ -1679,24 +1672,14 @@ function SavedHistory({
   );
 }
 
-function Codex({
-  base,
-  generation,
-  onError,
-  onNotesChanged,
-}: {
+function Codex({ base, onError }: {
   base: string;
-  generation: Generation;
   onError: (message: string) => void;
-  onNotesChanged: () => Promise<void>;
 }) {
   const [status, setStatus] = useState<any>(null);
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [threadId, setThreadId] = useState('');
-  const [prompt, setPrompt] = useState('');
-  const [events, setEvents] = useState<any>(null);
-  const [eventsError, setEventsError] = useState('');
   const [context, setContext] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
@@ -1706,7 +1689,6 @@ function Codex({
   );
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
-  const canSend = Boolean(selectedSession && !readingOnly);
   const refresh = useCallback(async () => {
     const rows = await api<RecordData[]>(`${prefix}/sessions`);
     if (mounted.current) {
@@ -1743,40 +1725,13 @@ function Codex({
       if (mounted.current) setBusy(false);
     }
   }
-  useEffect(() => {
-    setEvents(null);
-    setEventsError('');
-  }, [sessionId]);
-  useEffect(() => {
-    if (!sessionId) return;
-    let alive = true;
-    const poll = () =>
-      api(`${prefix}/sessions/${sessionId}/events`)
-        .then((result) => {
-          if (alive) {
-            setEvents(result);
-            setEventsError('');
-          }
-        })
-        .catch((e) => {
-          if (alive) {
-            setEventsError(e.message);
-          }
-        });
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [prefix, sessionId]);
   return (
     <>
       <section className="card">
         <div className="section-title">
           <div>
             <p className="eyebrow">CODEX CONNECTION</p>
-            <h2>Review and discuss with project context</h2>
+            <h2>Manage Codex sessions</h2>
           </div>
           <Badge
             value={
@@ -1834,7 +1789,7 @@ function Codex({
           {readingOnly && (
             <p className="muted">
               This session is linked for reading only. Resume selected explicitly
-              to enable sending tasks and decision updates.
+              to ask it a question in Reviews.
             </p>
           )}
           <div className="actions left">
@@ -1908,125 +1863,214 @@ function Codex({
           <Empty>Select a session to read its saved history.</Empty>
         </section>
       )}
-      <section className="card">
-        <h2>Submit a read-only task</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (busy || !canSend) return;
-            action(async () => {
-              await post(`${prefix}/sessions/${sessionId}/turns`, { prompt, ...generationBody(generation) });
-              setPrompt('');
-            });
-          }}
-        >
-          <label>
-            Task or review request
-            <textarea
-              rows={4}
-              required
-              value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Review this project's accepted decisions and identify missing validation. Present findings as unverified suggestions."
-            />
-          </label>
-          <p className="muted">
-            AI output is a proposal requiring verification. It does not change
-            accepted decisions.
-          </p>
-          <button disabled={busy || !canSend || !prompt.trim()}>
-            Send task with context
-          </button>
-        </form>
-      </section>
+    </>
+  );
+}
+
+function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
+  base: string;
+  generation: Generation;
+  onNotesChanged: () => Promise<void>;
+  onManageSessions: () => void;
+}) {
+  const prefix = `${base}/codex`;
+  const [sessions, setSessions] = useState<RecordData[]>([]);
+  const [sessionId, setSessionId] = useState('');
+  const [prompt, setPrompt] = useState('');
+  const [events, setEvents] = useState<any>(null);
+  const [eventsError, setEventsError] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const canSend = sessions.some((session) => String(session.id) === sessionId && session.status !== 'linked');
+  const completed = completedMessages(events?.events ?? []).reverse();
+  const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    api<RecordData[]>(`${prefix}/sessions`, { signal: abort.signal })
+      .then((rows) => {
+        if (abort.signal.aborted) return;
+        setSessions(rows);
+        setSessionId(String((rows.find((row) => row.status !== 'linked') ?? rows[0])?.id ?? ''));
+      })
+      .catch((e) => { if (!abort.signal.aborted) setError(e.message); })
+      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
+    return () => abort.abort();
+  }, [prefix]);
+
+  async function action(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError('');
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  useEffect(() => {
+    if (!sessionId) return;
+    let alive = true;
+    const poll = () =>
+      api(`${prefix}/sessions/${sessionId}/events`)
+        .then((result) => {
+          if (alive) {
+            setEvents(result);
+            setEventsError('');
+          }
+        })
+        .catch((e) => {
+          if (alive) {
+            setEventsError(e.message);
+          }
+        });
+    poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, [prefix, sessionId]);
+  return (
+    <>
       <section className="card">
         <div className="section-title">
-          <h2>Session events & responses</h2>
-          <span className="subtle-label">REFRESHES EVERY 3 SECONDS</span>
+          <h2>Ask Codex about this project</h2>
+          <button className="secondary" onClick={onManageSessions}>Manage sessions</button>
         </div>
-        <ErrorBox error={eventsError} />
-        {events ? (
-          <>
-            {completedMessages(events.events ?? []).map((message) => (
-              <article className="answer" key={message.id}>
-                <div className="section-title">
-                  <h3>Codex response</h3>
-                  <Badge value="unverified" />
-                </div>
-                <Markdown>{message.text}</Markdown>
-                <button
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    action(async () => {
-                      await post(`${base}/notes`, {
-                        title: `Codex proposal · session ${sessionId} · event ${message.id}`,
-                        content: message.text,
-                        kind: 'proposal',
-                        reference: `Codex session ${sessionId}, event ${message.id}`,
-                      });
-                      await onNotesChanged();
-                    })
-                  }
-                >
-                  Save as proposed note
-                </button>
-              </article>
-            ))}
-            {(events.deliveries ?? []).map((item: any) => (
-              <article className="delivery-preview" key={item.id}>
-                <div className="section-title">
-                  <h3>Request #{item.id}</h3>
-                  <Badge value={item.status} />
-                </div>
-                <Markdown>{item.content}</Markdown>
-                {item.error && <ErrorBox error={item.error} />}
-                <small>
-                  Context version ID: {item.context_id ?? 'Decision update'}
-                </small>
-                {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status) && (
-                  <div className="actions left">
-                    <button
-                      disabled={busy || !canSend}
-                      onClick={() =>
-                        action(async () => {
-                          await post(`${prefix}/deliveries/${item.id}/send`, {
-                            confirmed: true,
-                            ...generationBody(generation),
-                          });
-                          setEvents(
-                            await api(`${prefix}/sessions/${sessionId}/events`),
-                          );
-                        })
-                      }
-                    >
-                      Approve and retry this request
-                    </button>
-                  </div>
-                )}
-                {item.status === 'unverified' && (
-                  <p>
-                    Receipt is uncertain. Inspect session events before creating
-                    any replacement request.
-                  </p>
-                )}
-              </article>
-            ))}
-            <details>
-              <summary>Raw event log</summary>
-              <Report value={events} />
-            </details>
-          </>
-        ) : (
-          <Empty>
-            {sessionId
-              ? eventsError
-                ? 'Session events could not be loaded. Retrying automatically…'
-                : 'Loading session events…'
-              : 'Select a session to inspect its events.'}
-          </Empty>
+        <ErrorBox error={error} />
+        {loading ? <p role="status">Loading sessions…</p> : sessions.length ? (
+          <label>
+            Review session
+            <select value={sessionId} disabled={busy} onChange={(e) => {
+              setEvents(null);
+              setEventsError('');
+              setSessionId(e.target.value);
+            }}>
+              {sessions.map((session) => (
+                <option key={session.id} value={session.id}>
+                  {session.title || `Session #${session.id}`}{session.status === 'linked' ? ' · Reading only' : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : !error && <p>Start a read-only session in Codex to ask a question.</p>}
+        {sessionId && !canSend && <p>Resume this session in Codex to ask a question.</p>}
+        {canSend && (
+          <details>
+            <summary>Ask a question</summary>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const question = prompt.trim();
+              if (busy || !question) return;
+              void action(async () => {
+                await post(`${prefix}/sessions/${sessionId}/turns`, {
+                  prompt: question, ...generationBody(generation),
+                });
+                setPrompt('');
+              });
+            }}>
+              <label>
+                Project question
+                <textarea rows={3} required maxLength={20000} value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="What decisions still need validation?" />
+              </label>
+              <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
+              <button disabled={busy || !prompt.trim()}>Ask Codex</button>
+            </form>
+          </details>
         )}
       </section>
+      {sessionId && (
+        <section className="card">
+          <div className="section-title">
+            <h2>Saved Codex responses</h2>
+            {latestRequest && latestRequest.status !== 'completed' && <Badge value={latestRequest.status} />}
+          </div>
+          <ErrorBox error={eventsError} />
+          {events ? (
+            <>
+              {completed.map((message) => (
+                <article className="answer" key={message.id}>
+                  <div className="section-title">
+                    <h3>Codex response</h3>
+                    <Badge value="unverified" />
+                  </div>
+                  <Markdown>{message.text}</Markdown>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      action(async () => {
+                        await post(`${base}/notes`, {
+                          title: `Codex proposal · session ${sessionId} · event ${message.id}`,
+                          content: message.text,
+                          kind: 'proposal',
+                          reference: `Codex session ${sessionId}, event ${message.id}`,
+                        });
+                        await onNotesChanged();
+                      })
+                    }
+                  >
+                    Save as proposed note
+                  </button>
+                </article>
+              ))}
+              {!completed.length && <Empty>No completed responses yet.</Empty>}
+              <details>
+                <summary>Request history</summary>
+                {(events.deliveries ?? []).map((item: any) => (
+                  <article className="delivery-preview" key={item.id}>
+                    <div className="section-title">
+                      <h3>Request #{item.id}</h3>
+                      <Badge value={item.status} />
+                    </div>
+                    <Markdown>{item.content}</Markdown>
+                    {item.error && <ErrorBox error={item.error} />}
+                    <small>
+                      Context version ID: {item.context_id ?? 'Decision update'}
+                    </small>
+                    {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status) && (
+                      <div className="actions left">
+                        <button
+                          disabled={busy || !canSend}
+                          onClick={() =>
+                            action(async () => {
+                              await post(`${prefix}/deliveries/${item.id}/send`, {
+                                confirmed: true,
+                                ...generationBody(generation),
+                              });
+                            })
+                          }
+                        >
+                          Approve and retry this request
+                        </button>
+                      </div>
+                    )}
+                    {item.status === 'unverified' && (
+                      <p>
+                        Receipt is uncertain. Inspect session events before creating
+                        any replacement request.
+                      </p>
+                    )}
+                  </article>
+                ))}
+                <details>
+                  <summary>Raw event log</summary>
+                  <Report value={events} />
+                </details>
+              </details>
+            </>
+          ) : (
+            <Empty>
+              {eventsError ? 'Retrying automatically…' : 'Loading saved responses…'}
+            </Empty>
+          )}
+        </section>
+      )}
     </>
   );
 }
