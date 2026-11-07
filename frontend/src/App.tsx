@@ -1919,9 +1919,9 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     setSessionId(id);
   }
 
-  async function ask(question: string) {
+  async function ask(question: string, fresh = false) {
     let target = sessionId;
-    if (!canSend) {
+    if (fresh || !canSend) {
       const session: RecordData = await post(`${prefix}/sessions`, { title: 'Project review' });
       target = String(session.id);
       setSessions((rows) => [...(rows ?? []), session]);
@@ -1933,7 +1933,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     if (request.status === 'queued') {
       setWaiting({ id: request.id, sessionId: target, generation });
     }
-    setPrompt('');
+    if (!fresh) setPrompt('');
   }
   useEffect(() => {
     if (busy || !waiting || waiting.sessionId !== sessionId ||
@@ -2057,44 +2057,52 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
               {!completed.length && <Empty>No completed responses yet.</Empty>}
               <details>
                 <summary>Request history</summary>
-                {(events.deliveries ?? []).map((item: any) => (
-                  <article className="delivery-preview" key={item.id}>
-                    <div className="section-title">
-                      <h3>Request #{item.id}</h3>
-                      <Badge value={item.status} />
-                    </div>
-                    <Markdown>{item.decision_id == null
-                      ? String(item.content).replace(/^[\s\S]*?\nEND PROJECT REFERENCE DATA\nUSER REQUEST:\n/, '')
-                      : item.content}</Markdown>
-                    {item.error && <ErrorBox error={item.error} />}
-                    <small>
-                      Context version ID: {item.context_id ?? 'Decision update'}
-                    </small>
-                    {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status) && (
-                      <div className="actions left">
-                        <button
-                          disabled={busy || !canSend || waiting?.id === item.id}
-                          onClick={() =>
-                            action(async () => {
-                              await post(`${prefix}/deliveries/${item.id}/send`, {
-                                confirmed: true,
-                                ...generationBody(generation),
-                              });
-                            })
-                          }
-                        >
-                          Approve and retry this request
-                        </button>
+                {(events.deliveries ?? []).map((item: RecordData) => {
+                  const content = String(item.content);
+                  const question = content.replace(/^[\s\S]*?\nEND PROJECT REFERENCE DATA\nUSER REQUEST:\n/, '');
+                  return (
+                    <article className="delivery-preview" key={item.id}>
+                      <div className="section-title">
+                        <h3>Request #{item.id}</h3>
+                        <Badge value={item.status} />
                       </div>
-                    )}
-                    {item.status === 'unverified' && (
-                      <p>
-                        Receipt is uncertain. Inspect session events before creating
-                        any replacement request.
-                      </p>
-                    )}
-                  </article>
-                ))}
+                      <Markdown>{item.decision_id == null ? question : content}</Markdown>
+                      {item.error && <ErrorBox error={item.error} />}
+                      <small>
+                        Context version ID: {item.context_id ?? 'Decision update'}
+                      </small>
+                      {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status ?? '') && (
+                        <div className="actions left">
+                          <button
+                            disabled={busy || !canSend || waiting?.id === item.id}
+                            onClick={() =>
+                              action(async () => {
+                                await post(`${prefix}/deliveries/${item.id}/send`, {
+                                  confirmed: true,
+                                  ...generationBody(generation),
+                                });
+                              })
+                            }
+                          >
+                            Approve and retry this request
+                          </button>
+                          {question !== content && (
+                            <button className="secondary" disabled={busy || !!waiting}
+                              onClick={() => void action(() => ask(question, true))}>
+                              Ask in a new session
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {item.status === 'unverified' && (
+                        <p>
+                          Receipt is uncertain. Inspect session events before creating
+                          any replacement request.
+                        </p>
+                      )}
+                    </article>
+                  );
+                })}
                 <details>
                   <summary>Raw event log</summary>
                   <Report value={events} />
