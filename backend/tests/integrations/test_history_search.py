@@ -271,3 +271,54 @@ def test_changed_profile_during_incremental_read_preserves_index(env):
     with pytest.raises(CodexError, match='associations changed'):
         index_history(engine, 1, manager, session_ids={1})
     assert index_history(engine, 1, manager, session_ids=set()) == before
+
+
+def test_ask_project_retrieves_local_passages_and_validates_citations(env):
+    import json
+
+    client, manager, _ = env
+    base = '/api/projects/1'
+    manager.turns['a'] = [turn(1, 'The garden uses raised beds.')]
+    manager.turns['b'] = [turn(2, 'Private garden details.')]
+    for project in (1, 2):
+        assert client.post(f'/api/projects/{project}/codex/history/index').status_code == 200
+    for project, title, content, reference in [
+        (1, 'Watering notes', 'Garden volunteers water weekly.', ''),
+        (1, 'Garden chat', 'Garden beds need mulch.',
+         'https://chatgpt.com/share/12345678-1234-1234-1234-123456789012'),
+        (2, 'Private garden note', 'Private garden content.', ''),
+    ]:
+        assert client.post(f'/api/projects/{project}/notes', json={
+            'title': title, 'content': content, 'reference': reference, 'kind': 'document',
+        }).status_code == 201
+
+    calls = []
+    def generate(prompt, schema, *, verify_connectors):
+        assert verify_connectors
+        data = json.loads(prompt.split('\n', 1)[1])
+        assert data['question'] == 'How does the garden work?'
+        assert {p['label'] for p in data['passages']} == {'First session', 'Watering notes', 'Garden chat'}
+        assert 'Private' not in prompt
+        calls.append(data)
+        return json.dumps({'points': [{'text': 'The project uses raised beds.', 'source_ids': ['1']},
+                                      {'text': 'The beds need mulch.', 'source_ids': [
+                                          next(p['id'] for p in data['passages'] if p['label'] == 'Garden chat')]}]})
+
+    manager.generate_brief = generate
+    url = base + '/codex/ask'
+    assert client.post(url, json={'question': 'garden'}).status_code == 422
+    assert client.post('/api/projects/999/codex/ask', json={'question': 'garden', 'confirmed': True}).status_code == 404
+    empty = client.post(url, json={'question': 'submarines', 'confirmed': True})
+    assert empty.status_code == 200 and empty.json()['sources'] == [] and not calls
+    result = client.post(url, json={'question': 'How does the garden work?', 'confirmed': True})
+    assert result.status_code == 200, result.text
+    answer = result.json()
+    assert answer['answer'] == 'The project uses raised beds. [1]\n\nThe beds need mulch. [2]'
+    first, second = answer['sources']
+    assert first['session_id'] == 1 and first['turn_id'] == '1'
+    assert second['share'] is True and second['id'] == '2'
+
+    manager.generate_brief = lambda *a, **kw: '{"points":[{"text":"Unsupported","source_ids":["99"]}]}'
+    invalid = client.post(url, json={'question': 'garden', 'confirmed': True})
+    assert invalid.status_code == 503
+    assert 'invalid answer or citation' in invalid.json()['detail']

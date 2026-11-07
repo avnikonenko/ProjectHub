@@ -33,7 +33,7 @@ Project data defaults to `~/.local/share/projecthub` and stays outside the check
 - **History:** browse and search saved conversations.
 - **Dashboard / AI Q&A:** generate a compact overview and explanations of choices from conversations.
 - **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes.
-- **Reviews:** ask project questions; save useful answers as proposed notes.
+- **Reviews:** use Ask Project for cited answers from saved conversations and notes, or ask a Codex session and save useful responses as proposed notes.
 
 Edit [AGENTS_AI_agent.md](AGENTS_AI_agent.md) to adjust shared AI writing instructions.
 

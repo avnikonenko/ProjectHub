@@ -5,7 +5,7 @@ import { completedMessages } from './codex';
 import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import {
-  historyTurnHref, readHistoryLink, transcriptMatch, type HistoryLink, type HistoryTurnLink,
+  chatGPTTranscriptHref, historyTurnHref, readHistoryLink, transcriptMatch, type HistoryLink, type HistoryTurnLink,
 } from './historyLinks';
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
@@ -921,6 +921,7 @@ function ProjectWorkspace({
                     </button>
                   </div>
                 </section>
+                <AskProject base={base} projectId={projectId} generation={generation} />
                 <CodexReview base={base} generation={generation} onNotesChanged={load}
                   onManageSessions={() => { setReport(null); setView('Sources'); }} />
               </>
@@ -1010,6 +1011,7 @@ type BriefSource = {
   turn_id?: string;
   decision_id?: number;
   note_id?: number;
+  share?: boolean;
   kind?: string;
 };
 type BriefEntry = { text: string; source_ids: string[] };
@@ -1055,8 +1057,13 @@ function briefReferences(ids: string[], numbers: Map<string, number>, prefix: st
   });
 }
 
-function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: string }) {
+function BriefSources({ sources, prefix, openInNewTab = false }: {
+  sources: BriefSource[];
+  prefix: string;
+  openInNewTab?: boolean;
+}) {
   const projectId = Number(prefix.split('-')[0]);
+  const linkOptions = openInNewTab ? { target: '_blank', rel: 'noopener' } : {};
   return (
     <ol>
       {sources.map((source, index) => (
@@ -1071,9 +1078,12 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
             {source.turn_id && <small>{source.label}</small>}
             <pre className="json-report">{source.text}</pre>
             {source.session_id !== undefined && source.turn_id && (
-              <a href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
+              <a {...linkOptions} href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
                 Read full turn
               </a>
+            )}
+            {source.share && source.note_id !== undefined && (
+              <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id })}>Read full transcript</a>
             )}
           </details>
         </li>
@@ -1103,6 +1113,78 @@ function loadGenerationSettings(): Generation {
 
 function generationBody({ model, effort }: Generation) {
   return { model: model || null, effort: effort || null };
+}
+
+function AskProject({ base, projectId, generation }: GenerationProps & { projectId: number }) {
+  const [question, setQuestion] = useState('');
+  const [result, setResult] = useState<{ answer: string; sources: BriefSource[] } | null>(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+
+  async function ask() {
+    const query = question.trim();
+    if (!query || request.current) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setBusy(true);
+    setError('');
+    setResult(null);
+    try {
+      const response = await api<{ answer: string; sources: BriefSource[] }>(`${base}/codex/ask`, {
+        method: 'POST',
+        body: JSON.stringify({ question: query, confirmed: true, ...generationBody(generation) }),
+        signal: controller.signal,
+      });
+      if (!controller.signal.aborted) setResult(response);
+    } catch (e) {
+      if (!controller.signal.aborted) setError((e as Error).message);
+    } finally {
+      if (request.current === controller) request.current = null;
+      if (!controller.signal.aborted) setBusy(false);
+    }
+  }
+
+  const prefix = `${projectId}-ask`;
+  const numbers = new Map(result?.sources.map((source, index) => [source.id, index + 1]));
+  return (
+    <section className="card project-brief" aria-busy={busy}>
+      <h2>Ask Project</h2>
+      <p className="brief-note">
+        ProjectHub searches saved conversations and notes locally. Your question and matching passages
+        are sent to OpenAI to generate an answer. The answer is not saved.
+      </p>
+      <form onSubmit={(event) => { event.preventDefault(); void ask(); }}>
+        <label>
+          Project question
+          <textarea rows={3} required maxLength={2000} value={question} disabled={busy}
+            onChange={(event) => setQuestion(event.target.value)}
+            placeholder="What have we already tried?" />
+        </label>
+        <button disabled={busy || !question.trim()}>{busy ? 'Asking…' : 'Ask Project'}</button>
+      </form>
+      {busy && <p role="status">Looking for evidence and preparing an answer…</p>}
+      <ErrorBox error={error} />
+      {result && (
+        <section className="brief-section">
+          <h3>Answer</h3>
+          <p className="shared-transcript">{result.answer.split(/(\[\d+\])/g).map((part, index) => {
+            const id = /^\[(\d+)\]$/.exec(part)?.[1];
+            return id && numbers.has(id)
+              ? <span key={index}>{briefReferences([id], numbers, prefix)}</span>
+              : part;
+          })}</p>
+          {!!result.sources.length && (
+            <div className="brief-sources">
+              <h4>Sources</h4>
+              <BriefSources sources={result.sources} prefix={prefix} openInNewTab />
+            </div>
+          )}
+        </section>
+      )}
+    </section>
+  );
 }
 
 function GenerationSettings({ base, generation, onChange }: GenerationProps & {

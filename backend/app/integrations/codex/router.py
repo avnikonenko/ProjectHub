@@ -10,6 +10,7 @@ from .protocol import CodexError
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home
 from .qa import read_qa, refresh_qa
+from .ask import answer_project, retrieve_passages
 from . import progress
 from .revisions import list_revisions
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn
@@ -50,6 +51,10 @@ class DeliveryInput(Input):
 
 class GenerationInput(ModelInput):
     confirmed: bool = False
+
+
+class AskInput(GenerationInput):
+    question: str = Field(min_length=1, max_length=2000)
 
 
 def send_options(manager, body):
@@ -223,6 +228,27 @@ def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@router.post('/ask')
+def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Explicitly confirm sending matching passages to OpenAI.')
+    sources = retrieve_passages(db, project_id, body.question)
+    db.rollback()
+    if not sources:
+        return answer_project(None, body.question, sources)
+    if not generation_lock.acquire(blocking=False):
+        raise HTTPException(409, 'Another AI generation is running. Try again when it finishes.')
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        return answer_project(selected, body.question, sources)
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    finally:
+        generation_lock.release()
 
 
 @router.get('/sessions')

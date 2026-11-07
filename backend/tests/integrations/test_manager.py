@@ -304,3 +304,22 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
         assert turn['outputSchema'] == {'type': 'object'}
         assert turn.get('effort') == ('high' if model else None)
         assert turn['sandboxPolicy']['networkAccess'] is False
+
+
+def test_ask_generation_refuses_inherited_connectors_before_turn(env, monkeypatch):
+    client = FakeClient()
+    client.connectors = True
+    original = client.request
+
+    def request(method, params):
+        result = original(method, params)
+        if method == 'thread/start':
+            result['thread']['ephemeral'] = True
+        return result
+
+    monkeypatch.setattr(client, 'request', request)
+    monkeypatch.setattr(env.manager, '_discussion_client', lambda cwd: client)
+    with pytest.raises(CodexError, match='MCP'):
+        env.manager.generate_brief('Synthetic question', {'type': 'object'}, verify_connectors=True)
+    assert [method for method, _ in client.calls] == ['thread/start', 'mcpServerStatus/list']
+    assert client.closed
