@@ -113,16 +113,17 @@ function ThemeToggle() {
     </button>
   );
 }
-function PagedItems({ children, label, listClass }: {
+function PagedItems({ children, label, listClass, pageSize = 3 }: {
   children: React.ReactNode;
   label: string;
   listClass?: string;
+  pageSize?: number;
 }) {
   const [page, setPage] = useState(0);
   const items = Children.toArray(children);
-  const count = Math.max(1, Math.ceil(items.length / 3));
+  const count = Math.max(1, Math.ceil(items.length / pageSize));
   const current = Math.min(page, count - 1);
-  const visible = items.slice(current * 3, current * 3 + 3);
+  const visible = items.slice(current * pageSize, (current + 1) * pageSize);
   return (
     <>
       {listClass ? <ul className={listClass}>{visible}</ul> : visible}
@@ -748,12 +749,12 @@ function ProjectWorkspace({
                     }} />
                 )}
                 {activeTodos.length
-                  ? <PagedItems label="Open TODO pages" listClass="todo-list">{[...activeTodos].reverse().map(todoRow)}</PagedItems>
+                  ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{[...activeTodos].reverse().map(todoRow)}</PagedItems>
                   : <Empty>No open TODOs.</Empty>}
                 {!!completedTodos.length && (
                   <details>
                     <summary>Completed ({completedTodos.length})</summary>
-                    <PagedItems label="Completed TODO pages" listClass="todo-list">{[...completedTodos].reverse().map(todoRow)}</PagedItems>
+                    <PagedItems label="Completed TODO pages" listClass="todo-list" pageSize={10}>{[...completedTodos].reverse().map(todoRow)}</PagedItems>
                   </details>
                 )}
               </section>
