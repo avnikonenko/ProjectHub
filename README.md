@@ -2,6 +2,10 @@
 
 A local workspace for project history, decisions, notes, and TODOs. Import shared ChatGPT conversations, link Codex sessions, search saved history, and generate concise project briefs and Q&A with source references.
 
+![ProjectHub dashboard in dark mode, showing an example project brief with numbered source references](docs/images/projecthub-dashboard.png)
+
+*Example data; no personal conversations or credentials are shown.*
+
 ## Install and run
 
 Requires Linux, Python 3.11+ with venv support, Git, and Node.js 22.18+ with npm.
