@@ -1885,8 +1885,13 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [busy, setBusy] = useState(false);
   const [waiting, setWaiting] = useState<{ id: number; sessionId: string; generation: Generation } | null>(null);
   const autoRetried = useRef<number | null>(null);
+  const [responsePage, setResponsePage] = useState(0);
   const canSend = sessions?.some((session) => String(session.id) === sessionId && session.status !== 'linked');
   const completed = completedMessages(events?.events ?? []).reverse();
+  const responsePageCount = Math.max(1, Math.ceil(completed.length / HISTORY_PAGE_SIZE));
+  const currentResponsePage = Math.min(responsePage, responsePageCount - 1);
+  const newestResponseId = completed[0]?.id;
+  useEffect(() => { setResponsePage(0); }, [sessionId, newestResponseId]);
   const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
 
   useEffect(() => {
@@ -2036,7 +2041,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
           <ErrorBox error={eventsError} />
           {events ? (
             <>
-              {completed.map((message) => (
+              {completed.slice(currentResponsePage * HISTORY_PAGE_SIZE,
+                (currentResponsePage + 1) * HISTORY_PAGE_SIZE).map((message) => (
                 <article className="answer" key={message.id}>
                   <div className="section-title">
                     <h3>Codex response</h3>
@@ -2062,6 +2068,15 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                   </button>
                 </article>
               ))}
+              {responsePageCount > 1 && (
+                <nav className="pagination" aria-label="Saved review response pages">
+                  <button className="secondary" disabled={currentResponsePage === 0}
+                    onClick={() => setResponsePage(currentResponsePage - 1)}>Newer responses</button>
+                  <span role="status">Page {currentResponsePage + 1} of {responsePageCount}</span>
+                  <button className="secondary" disabled={currentResponsePage === responsePageCount - 1}
+                    onClick={() => setResponsePage(currentResponsePage + 1)}>Older responses</button>
+                </nav>
+              )}
               {!completed.length && <Empty>No completed responses yet.</Empty>}
               <details>
                 <summary>Request history</summary>
