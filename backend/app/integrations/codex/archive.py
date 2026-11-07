@@ -89,7 +89,8 @@ def archive_history(engine, project_id, manager):
     with Session(engine) as db:
         if db.get(Project, project_id) is None:
             raise CodexError('Project not found.')
-        sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)
+        sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id,
+                        CodexSession.is_linked.is_(True))
                         .order_by(CodexSession.id)))
     evidence, batch = [], []
     turns_seen = skipped = reused = generated = fragments = 0

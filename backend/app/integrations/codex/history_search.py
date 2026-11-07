@@ -19,7 +19,11 @@ _CODEX_MATCHES = (
     "snippet(codex_history_fts,0,'[',']','…',40) AS snippet, codex_history_fts.rank AS score "
     'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
     'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
-    'WHERE codex_history_fts MATCH :query AND h.project_id=:pid'
+    'WHERE codex_history_fts MATCH :query AND h.project_id=:pid AND s.is_linked=1'
+)
+_ACTIVE_COUNT = (
+    'SELECT count(*) FROM codex_history_turns h JOIN codex_sessions s '
+    'ON s.id=h.session_id AND s.project_id=h.project_id WHERE h.project_id=:pid AND s.is_linked=1'
 )
 _CHATGPT_MATCHES = (
     "SELECT NULL,NULL,NULL,snippet(search_index,-1,'[',']','…',40),search_index.rank, "
@@ -46,7 +50,8 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
         with Session(engine) as db:
             if db.get(Project, project_id) is None:
                 raise CodexError('Project not found.')
-            all_sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)
+            all_sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id,
+                                CodexSession.is_linked.is_(True))
                                 .order_by(CodexSession.id)))
             identities = {(session.id, session.thread_id, session.codex_account) for session in all_sessions}
             if session_ids is not None:
@@ -99,12 +104,14 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
                 # Recheck ownership immediately before replacing persisted data.
                 check_cancelled()
                 current = {tuple(row) for row in connection.execute(text(
-                    'SELECT id,thread_id,codex_account FROM codex_sessions WHERE project_id=:pid'),
+                    'SELECT id,thread_id,codex_account FROM codex_sessions WHERE project_id=:pid AND is_linked=1'),
                     {'pid': project_id})}
                 if identities != current:
                     raise CodexError('Session associations changed during history indexing. Retry the refresh.')
                 if session_ids is None:
-                    connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid'), {'pid': project_id})
+                    connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid AND session_id IN '
+                                            '(SELECT id FROM codex_sessions WHERE project_id=:pid AND is_linked=1)'),
+                                       {'pid': project_id})
                 else:
                     connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid '
                                             'AND session_id IN :sessions').bindparams(bindparam('sessions', expanding=True)),
@@ -114,7 +121,7 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
                               'VALUES (:project_id,:session_id,:session_title,:turn_id,:status,:messages,:content)')
                 for line in staged:
                     connection.execute(insert, json.loads(line))
-                count = connection.execute(text('SELECT count(*) FROM codex_history_turns WHERE project_id=:pid'),
+                count = connection.execute(text(_ACTIVE_COUNT),
                                            {'pid': project_id}).scalar_one()
                 connection.execute(text('INSERT INTO codex_history_index(project_id,indexed_at,indexed_turns) '
                     'VALUES (:pid,:at,:count) ON CONFLICT(project_id) DO UPDATE SET '
@@ -124,6 +131,11 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
             return {'indexed_at': indexed_at, 'indexed_turns': count}
     finally:
         _index_lock.release()
+
+
+def update_active_count(db, project_id):
+    db.execute(text(f'UPDATE codex_history_index SET indexed_turns=({_ACTIVE_COUNT}) WHERE project_id=:pid'),
+               {'pid': project_id})
 
 
 def search_history(db, project_id, query, offset=0, *, include_shared=False):

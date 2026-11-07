@@ -13,7 +13,7 @@ from .qa import read_qa, refresh_qa
 from .ask import answer_project, retrieve_passages
 from . import progress
 from .revisions import list_revisions
-from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn
+from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 
@@ -33,6 +33,10 @@ class SessionTitleInput(Input):
 
 class SessionSyncInput(Input):
     enabled: bool = Field(strict=True)
+
+
+class SessionLinkInput(Input):
+    linked: bool = Field(strict=True)
 
 
 class ModelInput(Input):
@@ -83,8 +87,15 @@ def project(db, project_id):
     return scoped(db, Project, project_id, project_id)
 
 
-def managed_session(db, project_id, session_id):
+def linked_session(db, project_id, session_id):
     row = scoped(db, CodexSession, project_id, session_id)
+    if not row.is_linked:
+        raise HTTPException(409, 'Link this session again before using it.')
+    return row
+
+
+def managed_session(db, project_id, session_id):
+    row = linked_session(db, project_id, session_id)
     if row.status == 'linked':
         raise HTTPException(409, 'This session is linked for reading only. Resume it explicitly before sending.')
     return row
@@ -264,7 +275,7 @@ def sessions(project_id: int, db: DB):
     rows = db.execute(select(CodexSession, activity.label('last_activity_at')).outerjoin(
         events, events.c.session_id == CodexSession.id).outerjoin(
         requests, requests.c.session_id == CodexSession.id).where(
-        CodexSession.project_id == project_id).order_by(CodexSession.id))
+        CodexSession.project_id == project_id, CodexSession.is_linked.is_(True)).order_by(CodexSession.id))
     return [{**record_dict(row), 'last_activity_at': last_activity_at} for row, last_activity_at in rows]
 
 
@@ -295,11 +306,40 @@ def configure_session_sync(project_id: int, session_id: int, body: SessionSyncIn
     return record_dict(row)
 
 
+def _set_session_linked(db, row, linked):
+    if row.is_linked != linked:
+        if not linked and row.status == 'running':
+            raise HTTPException(409, 'Wait for this session to finish before unlinking it.')
+        before = record_dict(row)
+        row.is_linked = linked
+        db.flush()
+        update_active_count(db, row.project_id)
+        db.add(AuditEvent(project_id=row.project_id, entity_type='codex_sessions', entity_id=row.id,
+                          action='session_relinked' if linked else 'session_unlinked',
+                          before=before, after=record_dict(row)))
+        db.commit()
+    return record_dict(row)
+
+
+@router.patch('/sessions/{session_id}/link')
+def configure_session_link(project_id: int, session_id: int, body: SessionLinkInput,
+                           request: Request, db: DB):
+    manager = manager_for(request.app)
+    with manager.lock:
+        row = scoped(db, CodexSession, project_id, session_id)
+        return _set_session_linked(db, row, body.linked)
+
+
 @router.post('/sessions', status_code=201)
 def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
     row = project(db, project_id)
-    if body.thread_id and db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id)):
-        raise HTTPException(409, 'Thread already associated; select its existing session.')
+    if body.thread_id:
+        with manager_for(request.app).lock:
+            existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
+            if existing:
+                if existing.project_id != project_id or existing.is_linked:
+                    raise HTTPException(409, 'Thread already associated; select its existing session.')
+                return _set_session_linked(db, existing, True)
     try:
         manager = manager_for(request.app, project_id)
         if body.thread_id:
@@ -314,7 +354,7 @@ def history(project_id: int, session_id: int, request: Request, db: DB,
             cursor: Annotated[str | None, Query(max_length=8000)] = None,
             limit: Annotated[int, Query(ge=1, le=5)] = 5):
     project(db, project_id)
-    row = scoped(db, CodexSession, project_id, session_id)
+    row = linked_session(db, project_id, session_id)
     try:
         return manager_for(request.app).history(row, cursor, limit=limit)
     except CodexError as exc:
@@ -364,7 +404,7 @@ def get_indexed_history_turn(project_id: int, session_id: int, db: DB,
 @router.post('/sessions/{session_id}/resume')
 def resume_session(project_id: int, session_id: int, request: Request, db: DB):
     p = project(db, project_id)
-    row = scoped(db, CodexSession, project_id, session_id)
+    row = linked_session(db, project_id, session_id)
     try:
         return manager_for(request.app, project_id, account=row.codex_account).resume(row, p)
     except (CodexError, KeyError) as exc:
@@ -391,7 +431,10 @@ def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db
     db.add(row); db.flush()
     audit(db, project_id, row, 'task_submission_requested')
     db.commit()
-    return manager.send(row.id, reconnect=True, **options)
+    try:
+        return manager.send(row.id, reconnect=True, **options)
+    except CodexError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get('/deliveries')
@@ -453,7 +496,7 @@ def events(project_id: int, session_id: int, db: DB):
 @router.post('/sessions/{session_id}/interrupt')
 def interrupt(project_id: int, session_id: int, request: Request, db: DB):
     project(db, project_id)
-    row = scoped(db, CodexSession, project_id, session_id)
+    row = linked_session(db, project_id, session_id)
     try:
         return manager_for(request.app, project_id, account=row.codex_account).interrupt(row)
     except CodexError as exc:

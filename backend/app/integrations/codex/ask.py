@@ -27,7 +27,7 @@ SELECT h.session_id, h.turn_id, s.title AS label,
 FROM codex_history_fts
 JOIN codex_history_turns h ON h.id=codex_history_fts.rowid
 JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id
-WHERE codex_history_fts MATCH :match AND h.project_id=:pid
+WHERE codex_history_fts MATCH :match AND h.project_id=:pid AND s.is_linked=1
 ORDER BY codex_history_fts.rank, h.session_id, h.turn_id LIMIT 4
 """)
 _NOTES = text("""

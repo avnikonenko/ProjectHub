@@ -474,6 +474,10 @@ class CodexManager:
         if getattr(session, 'codex_account', None) != getattr(self, 'account_key', None):
             raise CodexError('This session belongs to another Codex profile. Select its original project account or start a new session.')
         with self.lock:
+            with Session(self.engine) as db:
+                linked = db.scalar(select(CodexSession.is_linked).where(CodexSession.id == session.id))
+                if not linked:
+                    raise CodexError('Link this session again before using it.')
             if session.status == 'running':
                 raise CodexError('Session is busy; wait or interrupt it before resuming.')
             old = self.clients.pop(session.id, None)
@@ -507,6 +511,8 @@ class CodexManager:
             with Session(self.engine) as db:
                 delivery = db.get(Delivery, delivery_id)
                 session = db.get(CodexSession, delivery.session_id)
+                if not session.is_linked:
+                    raise CodexError('Link this session again before using it.')
                 if delivery.status in ('sent', 'completed'):
                     return record_dict(delivery)
                 if delivery.status in ('sending', 'unverified'):

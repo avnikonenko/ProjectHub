@@ -1777,6 +1777,12 @@ function Codex({ base, onError }: {
                   patch(`${prefix}/sessions/${session.id}/sync`, { enabled: session.auto_sync === false }))}>
                   {session.auto_sync === false ? 'Resume automatic sync' : 'Pause automatic sync'}
                 </button>
+                {' · '}
+                <button className="quiet" disabled={busy || session.status === 'running'} onClick={() => {
+                  if (window.confirm(`Unlink “${session.title || `Session #${session.id}`}”? The Codex thread and saved records will be kept.`)) {
+                    void action(() => patch(`${prefix}/sessions/${session.id}/link`, { linked: false }));
+                  }
+                }}>Unlink</button>
               </article>
             ))}
           </PagedItems>

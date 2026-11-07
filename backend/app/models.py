@@ -111,6 +111,7 @@ class CodexSession(Scoped, Base):
     status: Mapped[str] = mapped_column(String, default='idle')
     last_error: Mapped[str] = mapped_column(Text, default='')
     auto_sync: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
+    is_linked: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1')
 
 
 class ContextPackage(Scoped, Base):

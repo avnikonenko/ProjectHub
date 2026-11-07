@@ -97,7 +97,8 @@ class HistorySync:
     def read_status(self, project_id):
         with Session(self.engine) as db:
             enabled = set(db.scalars(select(CodexSession.id).where(
-                CodexSession.project_id == project_id, CodexSession.auto_sync.is_(True))))
+                CodexSession.project_id == project_id, CodexSession.auto_sync.is_(True),
+                CodexSession.is_linked.is_(True))))
         with self._lock:
             failed = sorted(sid for pid, sid in self._errors if pid == project_id and sid in enabled)
             pass_error = self._pass_error and bool(enabled)
@@ -113,6 +114,7 @@ class HistorySync:
             return db.scalar(select(CodexSession.id).where(
                 CodexSession.id == session.id, CodexSession.project_id == session.project_id,
                 CodexSession.auto_sync.is_(True),
+                CodexSession.is_linked.is_(True),
                 CodexSession.thread_id == session.thread_id,
                 CodexSession.codex_account == session.codex_account,
             )) is not None
@@ -137,7 +139,8 @@ class HistorySync:
         try:
             with Session(self.engine) as db:
                 sessions = list(db.scalars(select(CodexSession).where(
-                    CodexSession.auto_sync.is_(True)).order_by(CodexSession.project_id, CodexSession.id)))
+                    CodexSession.auto_sync.is_(True), CodexSession.is_linked.is_(True))
+                    .order_by(CodexSession.project_id, CodexSession.id)))
             current = {(session.project_id, session.id) for session in sessions}
             with self._lock:
                 self._errors = {key: value for key, value in self._errors.items() if key in current}
