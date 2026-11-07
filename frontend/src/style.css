@@ -1,4 +1,6 @@
 :root {
+  color-scheme: light;
+  color-scheme: light;
   font-family:
     Inter,
     ui-sans-serif,
@@ -1024,4 +1026,180 @@ a:focus-visible {
   .search-bar input {
     font-size: 12px;
   }
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.theme-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  border-color: transparent;
+}
+.theme-toggle:hover {
+  background: #e7eeea;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface: #1b2521;
+  --surface-subtle: #202e27;
+  --page: #121a16;
+  --text: #e1ebe4;
+  --muted: #a6b8ad;
+  --accent: #9bd4b6;
+  --border: #3b5044;
+  color: var(--text);
+  background: var(--page);
+}
+[data-theme='dark'] .sidebar,
+[data-theme='dark'] .workspace,
+[data-theme='dark'] .topbar {
+  background: var(--page);
+  color: var(--text);
+  border-color: var(--border);
+}
+[data-theme='dark'] .project-header,
+[data-theme='dark'] .tabs,
+[data-theme='dark'] .card,
+[data-theme='dark'] .modal,
+[data-theme='dark'] .generation-options,
+[data-theme='dark'] .secondary {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+[data-theme='dark'] .brand-icon,
+[data-theme='dark'] .project-option.selected,
+[data-theme='dark'] .theme-toggle:hover,
+[data-theme='dark'] .icon-edit:hover:not(:disabled) {
+  background: #2d493a;
+  color: var(--accent);
+}
+[data-theme='dark'] .project-option,
+[data-theme='dark'] .add-project,
+[data-theme='dark'] .quiet,
+[data-theme='dark'] .local-label,
+[data-theme='dark'] .tabs button,
+[data-theme='dark'] .icon-edit,
+[data-theme='dark'] .metric strong,
+[data-theme='dark'] .brief-reference,
+[data-theme='dark'] a,
+[data-theme='dark'] .markdown a {
+  color: var(--accent);
+}
+[data-theme='dark'] .tabs button.active {
+  color: #c0efd4;
+  border-bottom-color: var(--accent);
+}
+[data-theme='dark'] small,
+[data-theme='dark'] .muted,
+[data-theme='dark'] .brand small,
+[data-theme='dark'] .sidebar-label,
+[data-theme='dark'] .sidebar-footer,
+[data-theme='dark'] .sidebar-footer small,
+[data-theme='dark'] .topbar,
+[data-theme='dark'] .eyebrow,
+[data-theme='dark'] h4,
+[data-theme='dark'] .subtle-label,
+[data-theme='dark'] .metric span,
+[data-theme='dark'] .search-bar > span,
+[data-theme='dark'] .compact-row p,
+[data-theme='dark'] .activity p,
+[data-theme='dark'] .activity small,
+[data-theme='dark'] .empty,
+[data-theme='dark'] .history-message > small,
+[data-theme='dark'] label,
+[data-theme='dark'] .project-brief small,
+[data-theme='dark'] .brief-sources small {
+  color: var(--muted);
+}
+[data-theme='dark'] .brief-points,
+[data-theme='dark'] .project-brief .brief-note,
+[data-theme='dark'] .brief-sources,
+[data-theme='dark'] .generation-progress p {
+  color: var(--text);
+}
+[data-theme='dark'] input,
+[data-theme='dark'] textarea,
+[data-theme='dark'] select {
+  background: var(--page);
+  color: var(--text);
+  border-color: var(--border);
+}
+[data-theme='dark'] input::placeholder,
+[data-theme='dark'] textarea::placeholder {
+  color: #9aafa1;
+  opacity: 1;
+}
+[data-theme='dark'] .repository,
+[data-theme='dark'] .tags span,
+[data-theme='dark'] .badge,
+[data-theme='dark'] .answer,
+[data-theme='dark'] .json-report,
+[data-theme='dark'] .delivery-preview,
+[data-theme='dark'] .markdown pre,
+[data-theme='dark'] .markdown code {
+  background: var(--surface-subtle);
+  color: var(--text);
+  border-color: var(--border);
+}
+[data-theme='dark'] .accepted-answer,
+[data-theme='dark'] .badge.accepted,
+[data-theme='dark'] .badge.completed,
+[data-theme='dark'] .badge.resolved,
+[data-theme='dark'] .badge.available {
+  background: #234331;
+  color: #b4eac7;
+  border-color: #4d795b;
+}
+[data-theme='dark'] .badge.high,
+[data-theme='dark'] .badge.critical,
+[data-theme='dark'] .badge.blocked,
+[data-theme='dark'] .badge.unavailable {
+  background: #473423;
+  color: #f3c69d;
+}
+[data-theme='dark'] .badge.in_progress,
+[data-theme='dark'] .badge.under_discussion {
+  background: #253d4f;
+  color: #b6d8f0;
+}
+[data-theme='dark'] .badge.superseded,
+[data-theme='dark'] .badge.rejected {
+  background: #41313b;
+  color: #e4bdcf;
+}
+[data-theme='dark'] .error {
+  background: #422522;
+  color: #ffc5bd;
+  border-color: #82524a;
+}
+[data-theme='dark'] .sidebar-footer,
+[data-theme='dark'] .add-project,
+[data-theme='dark'] .metric,
+[data-theme='dark'] .compact-row,
+[data-theme='dark'] .activity,
+[data-theme='dark'] .upload-label,
+[data-theme='dark'] .markdown td,
+[data-theme='dark'] .markdown th,
+[data-theme='dark'] .history-turn,
+[data-theme='dark'] .history-message,
+[data-theme='dark'] .list-item,
+[data-theme='dark'] .icon-edit:hover:not(:disabled) {
+  border-color: var(--border);
+}
+[data-theme='dark'] .todo-list input {
+  accent-color: var(--accent);
+}
+[data-theme='dark'] mark {
+  background: #e8cd7b;
+  color: #211d10;
 }
