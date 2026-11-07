@@ -462,6 +462,14 @@ main {
 .brief-sources small {
   color: #4b5b52;
 }
+.generation-provenance {
+  display: block;
+  margin-top: 3px;
+}
+.generation-progress p {
+  color: #32483c;
+  padding: 8px 0;
+}
 .brief-section + .brief-section {
   margin-top: 1rem;
 }

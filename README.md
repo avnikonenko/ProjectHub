@@ -49,7 +49,9 @@ Use the gear menu to choose an existing Codex account/profile for each project. 
 
 Use **History** to browse saved turns from any Codex session associated with the project. Build or refresh the search index to search finished turns across all linked sessions and open the exact matching turn. Indexing stores a searchable copy of saved user and assistant text in the local ProjectHub database and does not send it to a model. Refresh the index to include newer turns.
 
-On the dashboard, **Generate brief** processes saved user and assistant text from every linked session in batches, alongside accepted decisions and your saved architecture diagram. It uses OpenAI through the existing Codex sign-in, skips turns still in progress, and leaves out tool output and attachments. A large first refresh can take several minutes; later refreshes reuse unchanged batches.
+On the dashboard, **Generate brief** processes saved user and assistant text from every linked session in batches, alongside project notes (including AI notes), accepted decisions and your saved architecture diagram. AI Q&A also uses project notes. AI-authored notes remain unverified reference material. Generation uses OpenAI through the selected Codex sign-in, skips turns still in progress, and leaves out tool output and attachments. A large first refresh can take several minutes; later refreshes reuse unchanged batches. During generation, stage and session/turn/batch counts show progress.
+
+Saved briefs and Q&A show the account profile, model and reasoning effort used for that snapshot. When Codex does not report an effective default, it is labeled as a default instead of guessing. Older saved results show that generation settings were not recorded.
 
 The saved brief cites original source fragments and separates possible decisions from accepted ones. The Dashboard includes a short architecture section when the sources support it. Saved Mermaid diagrams remain available as brief sources. Refreshing is manual; a failed refresh keeps the previous brief.
 

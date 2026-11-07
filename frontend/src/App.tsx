@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
+import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 import { historyTurnHref, readHistoryTurnLink, type HistoryTurnLink } from './historyLinks';
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
@@ -890,10 +891,13 @@ type BriefSource = {
   session_id?: number;
   turn_id?: string;
   decision_id?: number;
+  note_id?: number;
+  kind?: string;
 };
 type BriefEntry = { text: string; source_ids: string[] };
 type Brief = {
   generated_at: string;
+  generation?: GenerationProvenance | null;
   sections: {
     overview: BriefEntry[];
     changes: BriefEntry[];
@@ -939,7 +943,12 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
       {sources.map((source, index) => (
         <li key={source.id}>
           <details id={`${prefix}-source-${index + 1}`}>
-            <summary>{source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…` : source.label}</summary>
+            <summary>
+              {source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…`
+                : source.note_id !== undefined
+                  ? source.label || `${source.kind === 'ai_note' ? 'AI note' : 'Note'} #${source.note_id}`
+                  : source.label}
+            </summary>
             {source.turn_id && <small>{source.label}</small>}
             <pre className="json-report">{source.text}</pre>
             {source.session_id !== undefined && source.turn_id && (
@@ -956,6 +965,7 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
 
 type SavedQA = {
   generated_at: string;
+  generation?: GenerationProvenance | null;
   items: { question: string; answer: string; source_ids: string[] }[];
   sources: BriefSource[];
 };
@@ -1108,13 +1118,14 @@ function ProjectQA({ base, generation }: GenerationProps) {
           <div>
             <h2>AI Q&A</h2>
             {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
+            {saved && <SavedGeneration generation={saved.generation} />}
           </div>
           <button disabled={loading || generating} onClick={generate}>
             {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
           </button>
         </div>
-        <p className="brief-note">Questions and answers drawn from your linked conversations. Generating sends conversation evidence to OpenAI.</p>
-        {generating && <p role="status">Generating Q&A. A long history may take several minutes.</p>}
+        <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
+        {generating && <GenerationStatus base={base} kind="qa" />}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved Q&A…</Empty>}
         {!loading && !error && !items.length && <Empty>{saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
@@ -1197,15 +1208,16 @@ function ProjectBrief({ base, generation }: GenerationProps) {
           <div>
             <h2>Project brief</h2>
             {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+            {brief && <SavedGeneration generation={brief.generation} />}
           </div>
           <button disabled={loading || generating} onClick={generate}>
             {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
           </button>
         </div>
         <p className="brief-note">
-          Generate or refresh to send saved conversation text from linked sessions, accepted decisions, and saved architecture to OpenAI.
+          Generate or refresh to send saved conversation text from linked sessions, project notes, accepted decisions, and saved architecture to OpenAI.
         </p>
-        {generating && <p role="status">Generating the brief. A first run over a long history may take a while.</p>}
+        {generating && <GenerationStatus base={base} kind="brief" />}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved brief…</Empty>}
         {!loading && !brief && <Empty>No saved brief yet.</Empty>}
