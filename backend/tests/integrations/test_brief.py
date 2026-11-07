@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex.brief import SECTION_NAMES, read_brief, refresh_brief, note_evidence
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import CodexSession, Decision, Project, Note
+from backend.app.models import CodexSession, Decision, GenerationRevision, Project, Note
 
 
 class FakeCodex:
@@ -17,6 +17,7 @@ class FakeCodex:
         self.closed = False
         self.foreign_citation = False
         self.fail_read = False
+        self.reported_change = ''
 
     def _new_read_client(self):
         return self
@@ -46,6 +47,9 @@ class FakeCodex:
         sections = {name: [] for name in SECTION_NAMES}
         sections['decision_candidates'] = [{'text': 'Possible decision', 'source_ids': [ref]}]
         sections['architecture'] = [{'text': 'Service stores records in a database', 'source_ids': [diagram]}]
+        if self.reported_change:
+            sections['changes'] = [{'text': self.reported_change, 'source_ids': [ref]}]
+            sections['since_last_brief'] = [{'text': self.reported_change, 'source_ids': [ref]}]
         graph = {'nodes': [{'id': key, 'label': key.title(), 'source_ids': [diagram]}
                            for key in ('service', 'database')],
                  'edges': [{'from': 'service', 'to': 'database', 'label': 'stores records',
@@ -103,6 +107,34 @@ def test_failed_refresh_preserves_last_brief(project_db, failure):
         refresh_brief(project_db, 1, codex)
     with Session(project_db) as db:
         assert read_brief(db, 1) == old
+
+
+def test_brief_compares_latest_success_and_saves_cited_changes(project_db):
+    codex = FakeCodex()
+    codex.reported_change = 'The database migration started.'
+    first = refresh_brief(project_db, 1, codex)
+    assert codex.input['previous_brief'] is None
+    assert not first['sections']['since_last_brief']
+    assert first['sections']['changes'][0]['text'] == codex.reported_change
+
+    codex.reported_change = 'The database migration finished.'
+    second = refresh_brief(project_db, 1, codex)
+    baseline = codex.input['previous_brief']
+    assert baseline['generated_at'] == first['generated_at']
+    assert baseline['sections']['changes'] == ['The database migration started.']
+    delta, = second['sections']['since_last_brief']
+    assert delta['text'] == codex.reported_change
+    assert set(delta['source_ids']) <= {source['id'] for source in second['sources']}
+    assert not second['sections']['changes']
+
+    # Repeating the previous update with different punctuation/case is not a new change.
+    codex.reported_change = 'The DATABASE migration finished!'
+    third = refresh_brief(project_db, 1, codex)
+    assert not third['sections']['since_last_brief']
+    with Session(project_db) as db:
+        assert read_brief(db, 1) == third
+        snapshots = list(db.scalars(select(GenerationRevision.snapshot).order_by(GenerationRevision.id)))
+        assert snapshots == [first, second, third]
 
 
 def test_note_evidence_includes_all_parts_and_enforces_ownership(project_db):

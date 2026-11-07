@@ -920,6 +920,7 @@ type Brief = {
   generated_at: string;
   generation?: GenerationProvenance | null;
   sections: {
+    since_last_brief?: BriefEntry[];
     overview: BriefEntry[];
     changes: BriefEntry[];
     architecture?: BriefEntry[];
@@ -1268,6 +1269,7 @@ function ProjectBrief({ base, generation }: GenerationProps) {
     }
   }
   const sections: [keyof Brief['sections'], string][] = [
+    ['since_last_brief', 'Since your last brief'],
     ['overview', 'Overview'],
     ['architecture', 'Architecture'],
     ['changes', 'Recent changes'],
@@ -1292,7 +1294,7 @@ function ProjectBrief({ base, generation }: GenerationProps) {
           </button>
         </div>
         <p className="brief-note">
-          Generate or refresh to send saved conversation text from linked sessions, project notes, accepted decisions, and saved architecture to OpenAI.
+          Generate or refresh to send saved conversations, notes, decisions, architecture, and the previous brief if available to OpenAI.
         </p>
         {generating && <GenerationStatus base={base} kind="brief" />}
         <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
