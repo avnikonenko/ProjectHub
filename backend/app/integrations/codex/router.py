@@ -2,7 +2,7 @@
 from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision
 from .manager import availability, context_preview, manager_for, record_dict
@@ -24,6 +24,10 @@ class Input(BaseModel):
 class SessionInput(Input):
     title: str = Field(default='Codex discussion', min_length=1, max_length=200)
     thread_id: str | None = Field(default=None, min_length=1, max_length=200, pattern=r'^[A-Za-z0-9_-]+$')
+
+
+class SessionTitleInput(Input):
+    title: str = Field(min_length=1, max_length=200)
 
 
 class ModelInput(Input):
@@ -220,8 +224,31 @@ def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB
 @router.get('/sessions')
 def sessions(project_id: int, db: DB):
     project(db, project_id)
-    return [record_dict(row) for row in db.scalars(select(CodexSession).where(
-        CodexSession.project_id == project_id).order_by(CodexSession.id))]
+    events = select(CodexEvent.session_id, func.max(CodexEvent.created_at).label('latest')).where(
+        CodexEvent.project_id == project_id).group_by(CodexEvent.session_id).subquery()
+    requests = select(Delivery.session_id, func.max(Delivery.created_at).label('latest')).where(
+        Delivery.project_id == project_id).group_by(Delivery.session_id).subquery()
+    activity = func.max(CodexSession.created_at,
+                        func.coalesce(events.c.latest, CodexSession.created_at),
+                        func.coalesce(requests.c.latest, CodexSession.created_at))
+    rows = db.execute(select(CodexSession, activity.label('last_activity_at')).outerjoin(
+        events, events.c.session_id == CodexSession.id).outerjoin(
+        requests, requests.c.session_id == CodexSession.id).where(
+        CodexSession.project_id == project_id).order_by(CodexSession.id))
+    return [{**record_dict(row), 'last_activity_at': last_activity_at} for row, last_activity_at in rows]
+
+
+@router.patch('/sessions/{session_id}')
+def rename_session(project_id: int, session_id: int, body: SessionTitleInput, db: DB):
+    row = scoped(db, CodexSession, project_id, session_id)
+    if row.title != body.title:
+        before = record_dict(row)
+        row.title = body.title
+        db.flush()
+        db.add(AuditEvent(project_id=project_id, entity_type='codex_sessions', entity_id=row.id,
+                          action='session_renamed', before=before, after=record_dict(row)))
+        db.commit()
+    return record_dict(row)
 
 
 @router.post('/sessions', status_code=201)

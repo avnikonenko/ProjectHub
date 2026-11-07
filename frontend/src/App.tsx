@@ -1788,6 +1788,9 @@ function Codex({ base, onError }: {
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [threadId, setThreadId] = useState('');
+  const [sessionQuery, setSessionQuery] = useState('');
+  const [sessionFilter, setSessionFilter] = useState('all');
+  const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [context, setContext] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
@@ -1797,6 +1800,13 @@ function Codex({ base, onError }: {
   );
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
+  const filteredSessions = [...sessions].filter((session) => {
+    const text = [session.title, session.thread_id, session.codex_account, session.status].join(' ').toLocaleLowerCase();
+    return text.includes(sessionQuery.trim().toLocaleLowerCase())
+      && (sessionFilter === 'all' || (sessionFilter === 'linked'
+        ? session.status === 'linked' : session.status !== 'linked'));
+  }).sort((a, b) => String(b.last_activity_at ?? b.created_at).localeCompare(String(a.last_activity_at ?? a.created_at))
+    || b.id - a.id);
   const refresh = useCallback(async () => {
     const rows = await api<RecordData[]>(`${prefix}/sessions`);
     if (mounted.current) {
@@ -1879,21 +1889,47 @@ function Codex({ base, onError }: {
         <section className="card">
           <h2>Project sessions</h2>
           <label>
-            Associated session
-            <select
-              aria-label="Associated session"
-              value={sessionId}
-              onChange={(e) => setSessionId(e.target.value)}
-            >
-              <option value="">Select a session</option>
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  #{s.id} · {s.thread_id ?? s.codex_thread_id ?? s.status}
-                  {s.status === 'linked' ? ' · Reading only' : ''}
-                </option>
-              ))}
+            Find a session
+            <input type="search" placeholder="Search title, thread, or account…" value={sessionQuery}
+              onChange={(e) => setSessionQuery(e.target.value)} />
+          </label>
+          <label>
+            Sessions
+            <select value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)}>
+              <option value="all">All sessions</option>
+              <option value="linked">Linked for reading</option>
+              <option value="managed">Discussion sessions</option>
             </select>
           </label>
+          <PagedItems key={sessionQuery + sessionFilter} label="Project session pages">
+            {filteredSessions.map((session) => (
+              <article className="list-item" key={session.id}>
+                <div className="section-title">
+                  <label className="session-choice">
+                    <input type="radio" name="source-session" value={session.id} disabled={busy}
+                      checked={String(session.id) === sessionId}
+                      onChange={() => setSessionId(String(session.id))} />
+                    {session.title || `Session #${session.id}`}
+                  </label>
+                  <EditButton label={`Rename session: ${session.title}`} disabled={busy}
+                    onClick={() => setRenaming(session)} />
+                </div>
+                <small>#{session.id} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
+                <br />
+                <small>Last activity saved here: {new Date(session.last_activity_at ?? session.created_at).toLocaleString()}</small>
+              </article>
+            ))}
+          </PagedItems>
+          {!filteredSessions.length && <Empty>{sessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
+          {renaming && (
+            <Form title="Rename session" fields={[{ ...titleField, maxLength: 200 }]} initial={renaming}
+              onClose={() => setRenaming(null)}
+              onSave={async ({ title }) => {
+                await patch(`${prefix}/sessions/${renaming.id}`, { title: String(title).trim() });
+                await refresh();
+              }} />
+          )}
+          {selectedSession && <p>Selected: <strong>{selectedSession.title}</strong> · #{selectedSession.id}</p>}
           {readingOnly && (
             <p className="muted">
               This session is linked for reading only. Resume selected explicitly

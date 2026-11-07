@@ -807,6 +807,18 @@ a:focus-visible {
 .note-actions {
   flex-shrink: 0;
 }
+.session-choice {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.session-choice input {
+  width: auto;
+  margin: 0;
+  flex-shrink: 0;
+}
 .icon-edit {
   display: inline-grid;
   place-items: center;

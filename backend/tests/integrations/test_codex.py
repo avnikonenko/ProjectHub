@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
-from backend.app.models import Base, Project, Decision, CodexSession, Delivery, ContextPackage, CodexEvent
+from backend.app.models import Base, Project, Decision, CodexSession, Delivery, ContextPackage, CodexEvent, AuditEvent
 from backend.app.integrations.codex import manager as module
 from backend.app.integrations.codex.manager import CodexManager, context_preview
 from backend.app.integrations.codex.protocol import CodexError
@@ -98,6 +98,57 @@ def create_session(env):
     response = env.client.post('/api/projects/1/codex/sessions', json={'title': 'Review'})
     assert response.status_code == 201, response.text
     return response.json()['id']
+
+
+def test_session_rename_is_local_scoped_validated_and_audited(setup):
+    sid = create_session(setup)
+    client = setup.manager.clients[sid]
+    previous_calls = list(client.calls)
+    path = f'/api/projects/1/codex/sessions/{sid}'
+    original = setup.client.get('/api/projects/1/codex/sessions').json()[0]
+    for title in ('', '   ', 'x' * 201, None):
+        assert setup.client.patch(path, json={'title': title}).status_code == 422
+    assert setup.client.patch(path, json={'title': 'Title', 'thread_id': 'other'}).status_code == 422
+    assert setup.client.patch(f'/api/projects/2/codex/sessions/{sid}', json={'title': 'Foreign'}).status_code == 404
+    renamed = setup.client.patch(path, json={'title': '  Database design  '})
+    assert renamed.status_code == 200
+    assert renamed.json()['title'] == 'Database design'
+    current = setup.client.get('/api/projects/1/codex/sessions').json()[0]
+    assert current['title'] == 'Database design'
+    assert current['thread_id'] == original['thread_id']
+    assert current['last_activity_at'] == original['last_activity_at']
+    assert client.calls == previous_calls
+    with Session(setup.engine) as db:
+        event = db.scalar(select(AuditEvent).where(AuditEvent.action == 'session_renamed'))
+        assert event.project_id == 1 and event.entity_id == sid
+        assert event.before['title'] == original['title']
+        assert event.after['title'] == 'Database design'
+
+
+def test_session_activity_is_local_observed_scoped_and_stably_ordered(setup):
+    with Session(setup.engine) as db:
+        first = CodexSession(project_id=1, thread_id='first', created_at='2026-01-01T00:00:00+00:00')
+        second = CodexSession(project_id=1, thread_id='second', created_at='2026-01-02T00:00:00+00:00')
+        foreign = CodexSession(project_id=2, thread_id='foreign', created_at='2026-01-03T00:00:00+00:00')
+        db.add_all([first, second, foreign])
+        db.flush()
+        ids = first.id, second.id, foreign.id
+        db.add_all([
+            Delivery(project_id=1, session_id=first.id, content='Question', created_at='2026-02-01T00:00:00+00:00'),
+            CodexEvent(project_id=1, session_id=first.id, method='item/completed', payload={},
+                       created_at='2026-03-01T00:00:00+00:00'),
+            CodexEvent(project_id=2, session_id=foreign.id, method='item/completed', payload={},
+                       created_at='2026-04-01T00:00:00+00:00'),
+            # Even a malformed cross-project relation must not affect the visible activity.
+            Delivery(project_id=2, session_id=first.id, content='Foreign', created_at='2026-05-01T00:00:00+00:00'),
+        ])
+        db.commit()
+    rows = setup.client.get('/api/projects/1/codex/sessions').json()
+    assert [row['id'] for row in rows] == list(ids[:2])
+    assert [row['last_activity_at'] for row in rows] == [
+        '2026-03-01T00:00:00+00:00', '2026-01-02T00:00:00+00:00',
+    ]
+    assert setup.client.get('/api/projects/999/codex/sessions').status_code == 404
 
 
 def test_context_is_deterministic_scoped_and_has_version(setup):
