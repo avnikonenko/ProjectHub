@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
-import { ProjectMap, type ProjectMapData } from './ProjectMap';
 import type { Overview, Project, RecordData } from './types';
 
 type Field = {
@@ -428,7 +427,6 @@ function ProjectWorkspace({
     'History',
     'Q&A + decisions',
     'Notes',
-    'Architecture',
     'Codex',
     'Reviews',
   ];
@@ -1096,17 +1094,6 @@ function ProjectWorkspace({
                 ))}
               </>
             )}
-            {view === 'Architecture' && (
-              <>
-                <SavedProjectMap base={base} onOverview={() => setView('Dashboard')} />
-                <Architecture
-                  source={project.architecture_mermaid || ''}
-                  onSave={(source) =>
-                    run(() => patch(base, { architecture_mermaid: source }))
-                  }
-                />
-              </>
-            )}
             {view === 'Codex' && (
               <Codex
                 base={base}
@@ -1219,82 +1206,6 @@ function Report({ value }: { value: any }) {
   return <pre className="json-report">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-function Architecture({
-  source,
-  onSave,
-}: {
-  source: string;
-  onSave: (source: string) => Promise<void>;
-}) {
-  const [draft, setDraft] = useState(source);
-  const [svg, setSvg] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let cancelled = false;
-    if (!source.trim()) {
-      setSvg('');
-      return;
-    }
-    import('mermaid')
-      .then(async ({ default: mermaid }) => {
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: 'strict',
-          theme: 'neutral',
-          suppressErrorRendering: true,
-        });
-        const { svg } = await mermaid.render(`diagram-${Date.now()}`, source);
-        if (!cancelled) {
-          setSvg(svg);
-          setError('');
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setSvg('');
-          setError(
-            'This Mermaid diagram could not be rendered. Check its syntax.',
-          );
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [source]);
-  return (
-    <section className="card">
-      <h2>Documented architecture</h2>
-      <p>
-        Write or paste a Mermaid diagram. The diagram you save is included as a source
-        when you refresh the brief and project map.
-      </p>
-      <ErrorBox error={error} />
-      {svg ? (
-        <iframe
-          title="Architecture diagram"
-          sandbox=""
-          className="diagram"
-          srcDoc={`<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:"><style>body{margin:12px;font-family:sans-serif}svg{max-width:100%;height:auto}</style>${svg}`}
-        />
-      ) : (
-        <Empty>No rendered architecture diagram.</Empty>
-      )}
-      <label>
-        Mermaid source
-        <textarea
-          rows={10}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          placeholder={
-            'flowchart LR\n  A[Recorded component] --> B[Verified dependency]'
-          }
-        />
-      </label>
-      <button onClick={() => onSave(draft)}>Save architecture</button>
-    </section>
-  );
-}
-
 type BriefSource = {
   id: string;
   label: string;
@@ -1315,7 +1226,6 @@ type Brief = {
   };
   sources: BriefSource[];
   coverage: string[];
-  project_map?: ProjectMapData | null;
 };
 
 function citedSources(sources: BriefSource[], ids: string[]) {
@@ -1358,49 +1268,6 @@ function BriefSources({ sources, prefix }: { sources: BriefSource[]; prefix: str
         </li>
       ))}
     </ol>
-  );
-}
-
-function SavedProjectMap({ base, onOverview }: { base: string; onOverview: () => void }) {
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    let active = true;
-    api<Brief | null>(`${base}/codex/brief`)
-      .then((result) => { if (active) setBrief(result); })
-      .catch((e) => { if (active) setError(e.message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [base]);
-  const map = brief?.project_map;
-  const sources = map && brief ? citedSources(brief.sources, [
-    ...map.nodes.flatMap((node) => node.source_ids),
-    ...map.edges.flatMap((edge) => edge.source_ids),
-  ]) : [];
-  const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
-  return (
-    <section className="card project-map brief-sources" aria-busy={loading}>
-      <div className="section-title">
-        <div>
-          <h2>AI project map</h2>
-          {brief && !!map?.nodes.length && <small>Saved {new Date(brief.generated_at).toLocaleString()}</small>}
-        </div>
-        <button className="secondary" onClick={onOverview}>Go to project brief</button>
-      </div>
-      <p>Proposed components and connections based on project history, accepted decisions, and saved architecture. Review the sources before relying on the map.</p>
-      <ErrorBox error={error} />
-      {loading && <Empty>Loading saved map…</Empty>}
-      {!loading && !error && !map?.nodes.length && (
-        <Empty>No saved map yet. Generate or refresh the brief on the Dashboard.</Empty>
-      )}
-      {!!map?.nodes.length && (
-        <>
-          <ProjectMap map={map} references={(ids) => briefReferences(ids, numbers, 'map')} />
-          {!!sources.length && <><h3>Map sources</h3><BriefSources sources={sources} prefix="map" /></>}
-        </>
-      )}
-    </section>
   );
 }
 
@@ -1467,7 +1334,7 @@ function ProjectBrief({ base }: { base: string }) {
         <p className="brief-note">
           Generate or refresh to send saved conversation text from linked sessions, accepted decisions, and saved architecture to OpenAI.
         </p>
-        {generating && <p role="status">Generating the brief and project map. A first run over a long history may take a while.</p>}
+        {generating && <p role="status">Generating the brief. A first run over a long history may take a while.</p>}
         <ErrorBox error={error} />
         {loading && <Empty>Loading saved brief…</Empty>}
         {!loading && !brief && <Empty>No saved brief yet.</Empty>}

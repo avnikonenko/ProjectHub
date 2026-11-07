@@ -33,7 +33,7 @@ For frontend development, start the backend using the startup script and, in a s
 
 Create a project with its objective and goals. An optional repository path must be the absolute root of an existing Git repository. Registration inspects the path and Git metadata without moving or changing repository files. Symlink paths and traversal components are rejected.
 
-Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision with an optional next step. You can also add or edit a next step in the decision register. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review, diagram and export.
+Add a question, record multiple answers and evidence, then accept one answer. Acceptance preserves alternatives and creates an audited decision with an optional next step. You can also add or edit a next step in the decision register. Reopening the question supersedes its earlier decision and preserves history. A proposed hypothesis or AI suggestion remains proposed until explicitly accepted. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review and export.
 
 ## Data and backups
 
@@ -45,7 +45,7 @@ Use the project JSON export for portable project records and provenance. `POST /
 
 Use **History** to browse saved turns from any Codex session associated with the project. On the dashboard, **Generate brief** processes saved user and assistant text from every linked session in batches, alongside accepted decisions and your saved architecture diagram. It uses OpenAI through the existing Codex sign-in, skips turns still in progress, and leaves out tool output and attachments. A large first refresh can take several minutes; later refreshes reuse unchanged batches.
 
-The saved brief cites original source fragments and separates possible decisions from accepted ones. **Architecture** shows a proposed project map from the same evidence, labels inferred connections, and keeps your documented Mermaid diagram separate. The map does not inspect repository files. Refreshing is manual; a failed refresh keeps the previous brief and map.
+The saved brief cites original source fragments and separates possible decisions from accepted ones. The Dashboard includes a short architecture section when the sources support it. Saved Mermaid diagrams remain available as brief sources. Refreshing is manual; a failed refresh keeps the previous brief.
 
 ProjectHub uses the installed official `codex app-server` over a private stdio connection. It does not read authentication files, modify global Codex configuration, or edit internal conversation history. Check the CLI separately with:
 
@@ -60,7 +60,7 @@ Codex operations are read-only in this MVP. Create an app-owned discussion sessi
 
 ## Architecture
 
-React/TypeScript/Vite → same-origin FastAPI → SQLAlchemy/SQLite with Alembic migrations and FTS5. Question acceptance and reopening use audited transactions. A separate integration module manages the Codex subprocess, protocol responses, events and context snapshots. Mermaid renders manually recorded architecture in strict mode.
+React/TypeScript/Vite → same-origin FastAPI → SQLAlchemy/SQLite with Alembic migrations and FTS5. Question acceptance and reopening use audited transactions. A separate integration module manages the Codex subprocess, protocol responses, events and context snapshots.
 
 See [architecture](docs/ARCHITECTURE.md), [data model](docs/DATA_MODEL.md), [API contract](docs/API_CONTRACT.md), [implementation plan](docs/IMPLEMENTATION_PLAN.md), and [security review](docs/SECURITY_REVIEW.md).
 
