@@ -1882,6 +1882,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [waiting, setWaiting] = useState<{ id: number; sessionId: string; generation: Generation } | null>(null);
+  const autoRetried = useRef<number | null>(null);
   const canSend = sessions?.some((session) => String(session.id) === sessionId && session.status !== 'linked');
   const completed = completedMessages(events?.events ?? []).reverse();
   const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
@@ -1911,6 +1913,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     }
   }
   function selectReviewSession(id: string) {
+    setWaiting(null);
     setEvents(null);
     setEventsError('');
     setSessionId(id);
@@ -1924,11 +1927,31 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
       setSessions((rows) => [...(rows ?? []), session]);
       selectReviewSession(target);
     }
-    await post(`${prefix}/sessions/${target}/turns`, {
+    const request: RecordData = await post(`${prefix}/sessions/${target}/turns`, {
       prompt: question, ...generationBody(generation),
     });
+    if (request.status === 'queued') {
+      setWaiting({ id: request.id, sessionId: target, generation });
+    }
     setPrompt('');
   }
+  useEffect(() => {
+    if (busy || !waiting || waiting.sessionId !== sessionId ||
+        String(events?.session?.id) !== sessionId) return;
+    const request = events.deliveries?.find((item: RecordData) => item.id === waiting.id);
+    if (!request) return;
+    if (request.status !== 'queued') {
+      setWaiting(null);
+      return;
+    }
+    if (events.session.status === 'running' || events.session.status === 'linked' ||
+        autoRetried.current === waiting.id) return;
+    autoRetried.current = waiting.id;
+    setWaiting(null);
+    void action(() => post(`${prefix}/deliveries/${waiting.id}/send`, {
+      confirmed: true, ...generationBody(waiting.generation),
+    }));
+  }, [busy, events, prefix, sessionId, waiting]);
   useEffect(() => {
     if (!sessionId) return;
     let alive = true;
@@ -1978,7 +2001,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             <form onSubmit={(e) => {
               e.preventDefault();
               const question = prompt.trim();
-              if (busy || !question) return;
+              if (busy || waiting || !question) return;
               void action(() => ask(question));
             }}>
               <label>
@@ -1988,12 +2011,13 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                   placeholder="What decisions still need validation?" />
               </label>
               <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
-              <button disabled={busy || !prompt.trim()}>
+              <button disabled={busy || !!waiting || !prompt.trim()}>
                 {busy ? 'Working…' : canSend ? 'Ask Codex' : 'Ask in a new review session'}
               </button>
             </form>
           </details>
         )}
+        {waiting && <p role="status">Waiting for Codex to finish. Keep Reviews open to send this question automatically.</p>}
       </section>
       {sessionId && (
         <section className="card">
@@ -2049,7 +2073,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                     {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status) && (
                       <div className="actions left">
                         <button
-                          disabled={busy || !canSend}
+                          disabled={busy || !canSend || waiting?.id === item.id}
                           onClick={() =>
                             action(async () => {
                               await post(`${prefix}/deliveries/${item.id}/send`, {
