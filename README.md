@@ -41,7 +41,7 @@ Agents can read notes with `projecthub note list --project-id 1`, read open TODO
 
 Create a project with its objective and goals. An optional repository path must be the absolute root of an existing Git repository. Registration inspects the path and Git metadata without moving or changing repository files. Symlink paths and traversal components are rejected.
 
-Use TODO to add and check off follow-ups. Use AI Q&A to revisit decisions and the reasons behind them. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review and export.
+Use TODO to add and check off follow-ups. The pencil edits a TODO's title and longer Markdown notes; the trash icon deletes it after confirmation. **Add multiple TODOs** accepts one title per line, up to 100 at once. Notes stay collapsed under each TODO. Use AI Q&A to revisit decisions and the reasons behind them. Use Notes for Markdown text, assumptions, evidence, limitations and UTF-8 `.md`/`.txt` imports up to 2 MiB. Each project has its own search, summary, review and export.
 
 ## Data and backups
 

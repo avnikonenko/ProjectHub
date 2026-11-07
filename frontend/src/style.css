@@ -784,6 +784,14 @@ a:focus-visible {
   list-style: none;
   padding: 0;
 }
+.todo-content {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.todo-content details {
+  padding-bottom: 0.6rem;
+}
 .todo-list > li,
 .note-actions {
   display: flex;

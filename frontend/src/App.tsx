@@ -17,6 +17,7 @@ type Field = {
   options?: string[];
   required?: boolean;
   maxLength?: number;
+  rows?: number;
 };
 const titleField: Field = { name: 'title', label: 'Title', required: true };
 const descriptionField: Field = {
@@ -151,7 +152,7 @@ function Form({
                 <textarea
                   value={values[f.name]}
                   required={f.required}
-                  rows={4}
+                  rows={f.rows ?? 4}
                   onChange={(e) =>
                     setValues({ ...values, [f.name]: e.target.value })
                   }
@@ -368,6 +369,7 @@ function ProjectWorkspace({
   } | null>(null);
   const [report, setReport] = useState<any>(null);
   const [todoTitle, setTodoTitle] = useState('');
+  const [bulkTodos, setBulkTodos] = useState(false);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -439,21 +441,36 @@ function ProjectWorkspace({
   const completedTodos = tasks.filter((task) => task.status === 'completed');
   const todoRow = (task: RecordData) => (
     <li key={task.id}>
-      <label>
-        <input
-          type="checkbox"
-          checked={task.status === 'completed'}
-          disabled={busy}
-          onChange={(event) => {
-            const status = event.target.checked ? 'completed' : 'backlog';
-            void run(() => patch(`${base}/tasks/${task.id}`, { status }));
-          }}
-        />
-        <span>{task.title}</span>
-      </label>
+      <div className="todo-content">
+        <label>
+          <input
+            type="checkbox"
+            checked={task.status === 'completed'}
+            disabled={busy}
+            onChange={(event) => {
+              const status = event.target.checked ? 'completed' : 'backlog';
+              void run(() => patch(`${base}/tasks/${task.id}`, { status }));
+            }}
+          />
+          <span>{task.title}</span>
+        </label>
+        {task.description && <details><summary>Notes</summary><Markdown>{task.description}</Markdown></details>}
+      </div>
       <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
-        onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 }], `/tasks/${task.id}`, task,
-          (data) => ({ title: String(data.title).trim() }))} />
+        onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
+          { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
+          (data) => ({ title: String(data.title).trim(), description: data.description }))} />
+      <button type="button" className="icon-edit" aria-label={`Delete TODO: ${task.title}`}
+        title="Delete TODO" disabled={busy} onClick={() => {
+          if (window.confirm(`Delete TODO “${task.title}”?`)) {
+            void run(() => api(`${base}/tasks/${task.id}`, { method: 'DELETE' }));
+          }
+        }}>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" />
+        </svg>
+      </button>
     </li>
   );
   const tabs = [
@@ -644,6 +661,19 @@ function ProjectWorkspace({
                     value={todoTitle} onChange={(event) => setTodoTitle(event.target.value)} />
                   <button disabled={busy || !todoTitle.trim()}>Add</button>
                 </form>
+                <button className="quiet" onClick={() => setBulkTodos(true)}>Add multiple TODOs</button>
+                {bulkTodos && (
+                  <Form title="Add multiple TODOs"
+                    fields={[{ name: 'items', label: 'One TODO per line (up to 100)', type: 'textarea', rows: 8, required: true }]}
+                    onClose={() => setBulkTodos(false)}
+                    onSave={async ({ items }) => {
+                      const titles = String(items).split(/\r?\n/).map((title) => title.trim()).filter(Boolean);
+                      if (!titles.length || titles.length > 100) throw new Error('Enter between 1 and 100 TODOs.');
+                      if (titles.some((title) => title.length > 500)) throw new Error('Each TODO must be 500 characters or fewer.');
+                      await post(`${base}/tasks/bulk`, { items: titles.map((title) => ({ title })) });
+                      await load();
+                    }} />
+                )}
                 {activeTodos.length
                   ? <ul className="todo-list">{[...activeTodos].reverse().map(todoRow)}</ul>
                   : <Empty>No open TODOs.</Empty>}
