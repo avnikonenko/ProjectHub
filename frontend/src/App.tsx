@@ -12,31 +12,11 @@ type Field = {
   required?: boolean;
   maxLength?: number;
 };
-const priorities = ['low', 'medium', 'high', 'critical'];
-const questionStates = [
-  'open',
-  'under_discussion',
-  'awaiting_validation',
-  'resolved',
-  'reopened',
-];
-const decisionStates = ['proposed', 'accepted', 'superseded', 'rejected'];
 const titleField: Field = { name: 'title', label: 'Title', required: true };
 const descriptionField: Field = {
   name: 'description',
   label: 'Description',
   type: 'textarea',
-};
-const nextStepField: Field = {
-  name: 'next_step',
-  label: 'Next step (optional)',
-  maxLength: 500,
-};
-const priorityField: Field = {
-  name: 'priority',
-  label: 'Priority',
-  type: 'select',
-  options: priorities,
 };
 const label = (value: string) => value.replaceAll('_', ' ');
 function Badge({ value = '' }: { value?: string }) {
@@ -363,6 +343,7 @@ function ProjectWorkspace({
     save: (data: any) => Promise<unknown>;
   } | null>(null);
   const [report, setReport] = useState<any>(null);
+  const [todoTitle, setTodoTitle] = useState('');
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<any[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -419,13 +400,33 @@ function ProjectWorkspace({
         </Empty>
       </main>
     );
-  const { project, questions, decisions, notes, activity } = overview;
+  const { project, questions, decisions, tasks, notes, activity } = overview;
   const accepted = decisions.filter((d) => d.status === 'accepted');
   const open = questions.filter((q) => q.status !== 'resolved');
+  const activeTodos = tasks.filter((task) => task.status !== 'completed');
+  const completedTodos = tasks.filter((task) => task.status === 'completed');
+  const questionTodos = new Set(tasks.map((task) => task.question_id));
+  const decisionTodos = new Set(tasks.map((task) => task.decision_id));
+  const todoRow = (task: RecordData) => (
+    <li key={task.id}>
+      <label>
+        <input
+          type="checkbox"
+          checked={task.status === 'completed'}
+          disabled={busy}
+          onChange={(event) => {
+            const status = event.target.checked ? 'completed' : 'backlog';
+            void run(() => patch(`${base}/tasks/${task.id}`, { status }));
+          }}
+        />
+        <span>{task.title}</span>
+      </label>
+    </li>
+  );
   const tabs = [
     'Dashboard',
     'History',
-    'Q&A + decisions',
+    'TODO',
     'Notes',
     'Codex',
     'Reviews',
@@ -574,12 +575,12 @@ function ProjectWorkspace({
                   </section>
                   <section className="card">
                     <div className="section-title">
-                      <h2>Q&A + decisions</h2>
+                      <h2>Decisions & follow-ups</h2>
                       <button
                         className="quiet"
-                        onClick={() => setView('Q&A + decisions')}
+                        onClick={() => setView('TODO')}
                       >
-                        View all →
+                        View TODO →
                       </button>
                     </div>
                     <h3>Open questions</h3>
@@ -587,6 +588,10 @@ function ProjectWorkspace({
                       <div className="compact-row" key={q.id}>
                         <h3>{q.title}</h3>
                         <Badge value={q.status} />
+                        <button className="quiet todo-source-action" disabled={busy || questionTodos.has(q.id)}
+                          onClick={() => run(() => post(`${base}/tasks`, { title: q.title, question_id: q.id }))}>
+                          {questionTodos.has(q.id) ? 'Added to TODO' : 'Add to TODO'}
+                        </button>
                       </div>
                     )}</PagedRecords>
                     {!open.length && <Empty>No open questions.</Empty>}
@@ -595,6 +600,17 @@ function ProjectWorkspace({
                       <div className="compact-row" key={d.id}>
                         <h3>{d.title}</h3>
                         <p>{d.description}</p>
+                        {d.rationale && <Markdown>{d.rationale}</Markdown>}
+                        {d.evidence && <details><summary>Evidence</summary><Markdown>{d.evidence}</Markdown></details>}
+                        {d.next_step && (
+                          <>
+                            <p><strong>Next step:</strong> {d.next_step}</p>
+                            <button className="quiet" disabled={busy || decisionTodos.has(d.id)}
+                              onClick={() => run(() => post(`${base}/tasks`, { title: d.next_step, decision_id: d.id }))}>
+                              {decisionTodos.has(d.id) ? 'Added to TODO' : 'Add next step to TODO'}
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}</PagedRecords>
                     {!accepted.length && (
@@ -628,342 +644,31 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'History' && <ProjectHistory base={base} />}
-            {view === 'Q&A + decisions' && (
-              <section className="card qa-panel" aria-label="Questions, answers and decisions">
-                <div className="section-title">
-                  <div>
-                    <h2>Questions & answers</h2>
-                    <p className="muted">
-                      Explore alternatives, preserve evidence, and make
-                      decisions explicitly.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() =>
-                      edit(
-                        'New question',
-                        [
-                          titleField,
-                          descriptionField,
-                          { name: 'category', label: 'Category' },
-                          priorityField,
-                        ],
-                        '/questions',
-                        undefined,
-                      )
-                    }
-                  >
-                    ＋ New question
-                  </button>
-                </div>
-                {!questions.length && (
-                  <Empty>
-                    Create a question to start recording alternatives.
-                  </Empty>
+            {view === 'TODO' && (
+              <section className="card">
+                <h2>TODO</h2>
+                <form className="todo-add" onSubmit={(event) => {
+                  event.preventDefault();
+                  const title = todoTitle.trim();
+                  if (busy || !title) return;
+                  void run(async () => {
+                    await post(`${base}/tasks`, { title });
+                    setTodoTitle('');
+                  });
+                }}>
+                  <input aria-label="New TODO" placeholder="Add something to do…" maxLength={500}
+                    value={todoTitle} onChange={(event) => setTodoTitle(event.target.value)} />
+                  <button disabled={busy || !todoTitle.trim()}>Add</button>
+                </form>
+                {activeTodos.length
+                  ? <ul className="todo-list">{[...activeTodos].reverse().map(todoRow)}</ul>
+                  : <Empty>No open TODOs.</Empty>}
+                {!!completedTodos.length && (
+                  <details>
+                    <summary>Completed ({completedTodos.length})</summary>
+                    <ul className="todo-list">{[...completedTodos].reverse().map(todoRow)}</ul>
+                  </details>
                 )}
-                <PagedRecords records={questions} name="Questions">{(q) => (
-                  <section className="qa-record question" key={q.id}>
-                    <div className="section-title">
-                      <div>
-                        <small>
-                          QUESTION #{q.id} · {q.category || 'General'}
-                        </small>
-                        <h2>{q.title}</h2>
-                      </div>
-                      <div className="inline">
-                        <Badge value={q.priority} />
-                        <Badge value={q.status} />
-                      </div>
-                    </div>
-                    <Markdown>{q.description}</Markdown>
-                    <div className="actions left">
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          edit(
-                            'Edit question',
-                            [
-                              titleField,
-                              descriptionField,
-                              { name: 'category', label: 'Category' },
-                              priorityField,
-                              ...((q.status === 'resolved'
-                                ? []
-                                : [
-                                    {
-                                      name: 'status',
-                                      label: 'Status',
-                                      type: 'select',
-                                      options: questionStates.filter(
-                                        (s) => s !== 'resolved',
-                                      ),
-                                    },
-                                  ]) as Field[]),
-                            ],
-                            `/questions/${q.id}`,
-                            q,
-                          )
-                        }
-                      >
-                        Edit
-                      </button>
-                      {q.status === 'resolved' && (
-                        <button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            run(() => post(`${base}/questions/${q.id}/reopen`))
-                          }
-                        >
-                          Reopen question
-                        </button>
-                      )}
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          edit(
-                            'Propose answer',
-                            [
-                              {
-                                name: 'solution',
-                                label: 'Proposed solution',
-                                type: 'textarea',
-                                required: true,
-                              },
-                              {
-                                name: 'explanation',
-                                label: 'Explanation',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'advantages',
-                                label: 'Advantages',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'limitations',
-                                label: 'Limitations',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'evidence',
-                                label: 'Evidence / references',
-                                type: 'textarea',
-                              },
-                              { name: 'source', label: 'Author / source' },
-                            ],
-                            `/questions/${q.id}/answers`,
-                          )
-                        }
-                      >
-                        ＋ Propose answer
-                      </button>
-                    </div>
-                    <div className="answers">
-                      {q.answers?.map((a: RecordData) => (
-                        <article
-                          key={a.id}
-                          className={`answer ${a.status === 'accepted' ? 'accepted-answer' : ''}`}
-                        >
-                          <div className="section-title">
-                            <h3>{a.solution}</h3>
-                            <Badge value={a.status} />
-                          </div>
-                          <Markdown>{a.explanation}</Markdown>
-                          {['advantages', 'limitations', 'evidence'].map(
-                            (key) =>
-                              a[key] && (
-                                <div key={key}>
-                                  <h4>{label(key)}</h4>
-                                  <Markdown>{a[key]}</Markdown>
-                                </div>
-                              ),
-                          )}
-                          <small>Source: {a.source || 'Not recorded'}</small>
-                          {a.status !== 'accepted' && (
-                            <div className="actions left">
-                              <button
-                                disabled={busy}
-                                onClick={() =>
-                                  setForm({
-                                    title: 'Accept proposed answer',
-                                    fields: [nextStepField],
-                                    save: async (data) => {
-                                      await post(
-                                        `${base}/questions/${q.id}/accept`,
-                                        {
-                                          answer_id: a.id,
-                                          next_step: data.next_step.trim(),
-                                        },
-                                      );
-                                      await load();
-                                    },
-                                  })
-                                }
-                              >
-                                Accept answer
-                              </button>
-                            </div>
-                          )}
-                        </article>
-                      ))}
-                    </div>
-                  </section>
-                )}</PagedRecords>
-                <div className="section-title qa-divider">
-                  <div>
-                    <h2>Decision register</h2>
-                    <p className="muted">
-                      Every change is preserved in audit history.
-                    </p>
-                  </div>
-                  <button
-                    onClick={() =>
-                      edit(
-                        'Propose decision',
-                        [
-                          titleField,
-                          descriptionField,
-                          nextStepField,
-                          {
-                            name: 'rationale',
-                            label: 'Rationale',
-                            type: 'textarea',
-                          },
-                          {
-                            name: 'alternatives',
-                            label: 'Considered alternatives',
-                            type: 'textarea',
-                          },
-                          {
-                            name: 'evidence',
-                            label: 'Evidence / references',
-                            type: 'textarea',
-                          },
-                          {
-                            name: 'limitations',
-                            label: 'Limitations',
-                            type: 'textarea',
-                          },
-                        ],
-                        '/decisions',
-                      )
-                    }
-                  >
-                    ＋ Propose decision
-                  </button>
-                </div>
-                {!decisions.length && <Empty>No decisions recorded.</Empty>}
-                <PagedRecords records={decisions} name="Decisions">{(d) => (
-                  <section className="qa-record" key={d.id}>
-                    <div className="section-title">
-                      <div>
-                        <small>
-                          DECISION #{d.id}
-                          {d.question_id ? ` · QUESTION #${d.question_id}` : ''}
-                        </small>
-                        <h2>{d.title}</h2>
-                      </div>
-                      <Badge value={d.status} />
-                    </div>
-                    <Markdown>{d.description}</Markdown>
-                    {d.next_step && (
-                      <div>
-                        <h4>Next step</h4>
-                        <p>{d.next_step}</p>
-                      </div>
-                    )}
-                    {[
-                      'rationale',
-                      'alternatives',
-                      'evidence',
-                      'limitations',
-                    ].map(
-                      (key) =>
-                        d[key] && (
-                          <div key={key}>
-                            <h4>{label(key)}</h4>
-                            <Markdown>{d[key]}</Markdown>
-                          </div>
-                        ),
-                    )}
-                    <div className="actions left">
-                      <button
-                        className="secondary"
-                        onClick={() =>
-                          edit(
-                            'Revise decision',
-                            [
-                              titleField,
-                              descriptionField,
-                              nextStepField,
-                              {
-                                name: 'rationale',
-                                label: 'Rationale',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'alternatives',
-                                label: 'Alternatives',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'evidence',
-                                label: 'Evidence',
-                                type: 'textarea',
-                              },
-                              {
-                                name: 'limitations',
-                                label: 'Limitations',
-                                type: 'textarea',
-                              },
-                              ...((d.answer_id
-                                ? []
-                                : [
-                                    {
-                                      name: 'status',
-                                      label: 'Status',
-                                      type: 'select',
-                                      options:
-                                        d.status === 'superseded'
-                                          ? decisionStates.filter(
-                                              (s) => s !== 'accepted',
-                                            )
-                                          : decisionStates,
-                                    },
-                                  ]) as Field[]),
-                            ],
-                            `/decisions/${d.id}`,
-                            d,
-                          )
-                        }
-                      >
-                        Revise / change status
-                      </button>
-                      {d.answer_id && d.status === 'accepted' && (
-                        <button
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() =>
-                            run(() =>
-                              post(`${base}/questions/${d.question_id}/reopen`),
-                            )
-                          }
-                        >
-                          Reopen related question
-                        </button>
-                      )}
-                      {d.status === 'accepted' && (
-                        <button
-                          className="secondary"
-                          onClick={() => setView('Codex')}
-                        >
-                          Send decision to Codex →
-                        </button>
-                      )}
-                    </div>
-                  </section>
-                )}</PagedRecords>
               </section>
             )}
             {view === 'Notes' && (
