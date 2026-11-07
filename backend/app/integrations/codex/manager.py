@@ -190,6 +190,10 @@ class CodexManager:
                     client.close()
 
     def history(self, session, cursor=None, *, client=None, archive=False, limit=5):
+        # Full persisted items can include large tool outputs even though we
+        # discard them below. Keep archive pages small enough for the transport.
+        if archive:
+            limit = 1
         params = {'threadId': session.thread_id, 'itemsView': 'full' if archive else 'summary',
                   'limit': limit, 'sortDirection': 'asc' if archive else 'desc'}
         if cursor is not None:

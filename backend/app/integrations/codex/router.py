@@ -9,6 +9,7 @@ from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .brief import BriefBusy, read_brief, refresh_brief
 from .qa import read_qa, refresh_qa
+from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 
@@ -184,6 +185,36 @@ def history(project_id: int, session_id: int, request: Request, db: DB,
         return manager_for(request.app).history(row, cursor, limit=limit)
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/history/search')
+def search_saved_history(project_id: int, db: DB,
+                         q: Annotated[str, Query(max_length=2000)] = '',
+                         offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):
+    project(db, project_id)
+    return search_history(db, project_id, q, offset)
+
+
+@router.post('/history/index')
+def refresh_history_index(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    try:
+        return index_history(request.app.state.engine, project_id, manager_for(request.app))
+    except HistoryIndexBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/sessions/{session_id}/history/turn')
+def get_indexed_history_turn(project_id: int, session_id: int, db: DB,
+                             turn_id: Annotated[str, Query(min_length=1, max_length=200)]):
+    project(db, project_id)
+    scoped(db, CodexSession, project_id, session_id)
+    result = indexed_turn(db, project_id, session_id, turn_id)
+    if result is None:
+        raise HTTPException(404, 'Turn is not in the saved history index. Refresh the index first.')
+    return result
 
 
 @router.post('/sessions/{session_id}/resume')

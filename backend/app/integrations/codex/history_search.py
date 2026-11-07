@@ -1,0 +1,113 @@
+"""Explicit, atomic indexing of full saved user/assistant conversation text."""
+import json
+import re
+import tempfile
+import threading
+
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from ...models import Project, CodexSession, utcnow
+from .protocol import CodexError
+
+PAGE_SIZE = 20
+_index_lock = threading.Lock()
+
+
+class HistoryIndexBusy(CodexError):
+    pass
+
+
+def index_history(engine, project_id, manager):
+    if not _index_lock.acquire(blocking=False):
+        raise HistoryIndexBusy('A history index refresh is already running. Retry after it finishes.')
+    try:
+        with Session(engine) as db:
+            if db.get(Project, project_id) is None:
+                raise CodexError('Project not found.')
+            sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)
+                            .order_by(CodexSession.id)))
+        # Spool text to disk before the write transaction. A slow or failed read
+        # neither locks project writes nor replaces a previously usable index.
+        with tempfile.TemporaryFile(mode='w+t', encoding='utf-8') as staged:
+            count = 0
+            if sessions:
+                client = manager._new_read_client()
+                try:
+                    for session in sessions:
+                        cursor, cursors, seen = None, set(), set()
+                        while True:
+                            page = manager.history(session, cursor, client=client, archive=True)
+                            for turn in page['turns']:
+                                if turn['id'] in seen or turn['status'] == 'inProgress':
+                                    continue
+                                seen.add(turn['id'])
+                                messages = [m for m in turn['messages'] if m['role'] in ('user', 'assistant')]
+                                content = '\n\n'.join(m['text'] for m in messages)
+                                if not content.strip():
+                                    continue
+                                staged.write(json.dumps({'project_id': project_id, 'session_id': session.id,
+                                    'session_title': session.title, 'turn_id': turn['id'], 'status': turn['status'],
+                                    'messages': json.dumps(messages, ensure_ascii=False), 'content': content},
+                                    ensure_ascii=False) + '\n')
+                                count += 1
+                            cursor = page['next_cursor']
+                            if cursor is None:
+                                break
+                            if cursor in cursors:
+                                raise CodexError('Codex history returned a repeated pagination cursor.')
+                            cursors.add(cursor)
+                finally:
+                    client.close()
+            indexed_at = utcnow()
+            staged.seek(0)
+            with engine.begin() as connection:
+                connection.exec_driver_sql('BEGIN IMMEDIATE')
+                # Recheck ownership immediately before replacing persisted data.
+                current = set(connection.execute(text('SELECT id FROM codex_sessions WHERE project_id=:pid'),
+                                                 {'pid': project_id}).scalars())
+                if {session.id for session in sessions} != current:
+                    raise CodexError('Session associations changed during history indexing. Retry the refresh.')
+                connection.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid'), {'pid': project_id})
+                insert = text('INSERT INTO codex_history_turns '
+                              '(project_id,session_id,session_title,turn_id,status,messages,content) '
+                              'VALUES (:project_id,:session_id,:session_title,:turn_id,:status,:messages,:content)')
+                for line in staged:
+                    connection.execute(insert, json.loads(line))
+                connection.execute(text('INSERT INTO codex_history_index(project_id,indexed_at,indexed_turns) '
+                    'VALUES (:pid,:at,:count) ON CONFLICT(project_id) DO UPDATE SET '
+                    'indexed_at=excluded.indexed_at,indexed_turns=excluded.indexed_turns'),
+                    {'pid': project_id, 'at': indexed_at, 'count': count})
+            return {'indexed_at': indexed_at, 'indexed_turns': count}
+    finally:
+        _index_lock.release()
+
+
+def search_history(db, project_id, query, offset=0):
+    state = db.execute(text('SELECT indexed_at,indexed_turns FROM codex_history_index WHERE project_id=:pid'),
+                       {'pid': project_id}).mappings().first()
+    result = {'results': [], 'next_offset': None, 'indexed_at': state['indexed_at'] if state else None,
+              'indexed_turns': state['indexed_turns'] if state else 0}
+    terms = re.findall(r'\w+', query, flags=re.UNICODE)[:30]
+    if not terms:
+        return result
+    match = ' AND '.join('"' + term + '"' for term in terms)
+    rows = db.execute(text('SELECT h.session_id,s.title AS session_title,h.turn_id, '
+        "snippet(codex_history_fts,0,'[',']','…',40) AS snippet "
+        'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
+        'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+        'WHERE codex_history_fts MATCH :query AND h.project_id=:pid '
+        'ORDER BY rank,h.session_id,h.turn_id LIMIT :limit OFFSET :offset'),
+        {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset}).mappings().all()
+    result['results'] = [dict(row) for row in rows[:PAGE_SIZE]]
+    if len(rows) > PAGE_SIZE:
+        result['next_offset'] = offset + PAGE_SIZE
+    return result
+
+
+def indexed_turn(db, project_id, session_id, turn_id):
+    row = db.execute(text('SELECT h.turn_id,h.status,h.messages FROM codex_history_turns h '
+        'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+        'WHERE h.project_id=:pid AND h.session_id=:sid AND h.turn_id=:tid'),
+        {'pid': project_id, 'sid': session_id, 'tid': turn_id}).mappings().first()
+    return {'id': row['turn_id'], 'status': row['status'], 'messages': json.loads(row['messages'])} if row else None

@@ -69,6 +69,9 @@ Required operations: capability/auth availability, list project associations, cr
 - `POST /{pid}/codex/sessions` without `thread_id`: starts an app-owned read-only discussion session.
 - `POST /{pid}/codex/sessions` with `thread_id`: validates the thread with `thread/read`, stores status `linked`, closes the temporary connection and does not resume or submit anything.
 - `GET /{pid}/codex/sessions/{sid}/history?cursor=...&limit=3`: returns `{turns:[{id,status,messages:[{role,text}]}],next_cursor}` from bounded App Server history pages. The limit is 1–5 (API default 5; the UI uses 3). Only user and assistant display text is returned; tool output is excluded.
+- `POST /{pid}/codex/history/index`: refreshes the local text index of finished turns across linked sessions and returns `{indexed_at,indexed_turns}`. This does not request AI generation. A failed refresh preserves the previous index.
+- `GET /{pid}/codex/history/search?q=...&offset=0`: searches the index and returns `{results,next_offset,indexed_at,indexed_turns}`. Results have `session_id`, `session_title`, `turn_id`, and a plain-text `snippet`.
+- `GET /{pid}/codex/sessions/{sid}/history/turn?turn_id=...`: opens an exact indexed turn, returning `{id,status,messages:[{role,text}]}`. Returns 404 for turns absent from the project's index.
 - `POST /{pid}/codex/sessions/{sid}/resume`: explicitly attempts to take ownership for later read-only discussion. Linked sessions reject tasks and decision delivery until this succeeds.
 
 Protocol/API absence is reported as a limitation rather than emulated success. API responses must not include tokens, environment dumps, or raw global config.
