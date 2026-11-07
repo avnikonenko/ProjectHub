@@ -1874,7 +1874,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   onManageSessions: () => void;
 }) {
   const prefix = `${base}/codex`;
-  const [sessions, setSessions] = useState<RecordData[]>([]);
+  const [sessions, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
   const [prompt, setPrompt] = useState('');
   const [events, setEvents] = useState<any>(null);
@@ -1882,7 +1882,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const canSend = sessions.some((session) => String(session.id) === sessionId && session.status !== 'linked');
+  const canSend = sessions?.some((session) => String(session.id) === sessionId && session.status !== 'linked');
   const completed = completedMessages(events?.events ?? []).reverse();
   const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
 
@@ -1909,6 +1909,25 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     } finally {
       setBusy(false);
     }
+  }
+  function selectReviewSession(id: string) {
+    setEvents(null);
+    setEventsError('');
+    setSessionId(id);
+  }
+
+  async function ask(question: string) {
+    let target = sessionId;
+    if (!canSend) {
+      const session: RecordData = await post(`${prefix}/sessions`, { title: 'Project review' });
+      target = String(session.id);
+      setSessions((rows) => [...(rows ?? []), session]);
+      selectReviewSession(target);
+    }
+    await post(`${prefix}/sessions/${target}/turns`, {
+      prompt: question, ...generationBody(generation),
+    });
+    setPrompt('');
   }
   useEffect(() => {
     if (!sessionId) return;
@@ -1941,14 +1960,10 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
           <button className="secondary" onClick={onManageSessions}>Manage sessions</button>
         </div>
         <ErrorBox error={error} />
-        {loading ? <p role="status">Loading sessions…</p> : sessions.length ? (
+        {loading ? <p role="status">Loading sessions…</p> : sessions?.length ? (
           <label>
             Review session
-            <select value={sessionId} disabled={busy} onChange={(e) => {
-              setEvents(null);
-              setEventsError('');
-              setSessionId(e.target.value);
-            }}>
+            <select value={sessionId} disabled={busy} onChange={(e) => selectReviewSession(e.target.value)}>
               {sessions.map((session) => (
                 <option key={session.id} value={session.id}>
                   {session.title || `Session #${session.id}`}{session.status === 'linked' ? ' · Reading only' : ''}
@@ -1956,21 +1971,15 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
               ))}
             </select>
           </label>
-        ) : !error && <p>Start a read-only session in Codex to ask a question.</p>}
-        {sessionId && !canSend && <p>Resume this session in Codex to ask a question.</p>}
-        {canSend && (
+        ) : null}
+        {sessions && (
           <details>
             <summary>Ask a question</summary>
             <form onSubmit={(e) => {
               e.preventDefault();
               const question = prompt.trim();
               if (busy || !question) return;
-              void action(async () => {
-                await post(`${prefix}/sessions/${sessionId}/turns`, {
-                  prompt: question, ...generationBody(generation),
-                });
-                setPrompt('');
-              });
+              void action(() => ask(question));
             }}>
               <label>
                 Project question
@@ -1979,7 +1988,9 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                   placeholder="What decisions still need validation?" />
               </label>
               <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
-              <button disabled={busy || !prompt.trim()}>Ask Codex</button>
+              <button disabled={busy || !prompt.trim()}>
+                {busy ? 'Working…' : canSend ? 'Ask Codex' : 'Ask in a new review session'}
+              </button>
             </form>
           </details>
         )}
