@@ -583,7 +583,10 @@ class CodexManager:
             self.clients.clear()
 
 
-def manager_for(app, project_id=None):
+_PROJECT_ACCOUNT = object()
+
+
+def manager_for(app, project_id=None, *, account=_PROJECT_ACCOUNT):
     # FastAPI sync handlers can race on the initial capability request. Root
     # installs an eager manager in lifespan where possible; this lock also makes
     # lazy construction safe in TestClient without lifespan.
@@ -593,14 +596,16 @@ def manager_for(app, project_id=None):
         root = app.state.codex_manager
         if project_id is None:
             return root
-        with Session(app.state.engine) as db:
-            project = db.get(Project, project_id)
-            key = project.codex_account if project else None
+        key = account
+        if key is _PROJECT_ACCOUNT:
+            with Session(app.state.engine) as db:
+                project = db.get(Project, project_id)
+                key = project.codex_account if project else None
         if key is None:
             return root
         from .accounts import account_home
         home = account_home(key)
-        cache_key = (project_id, home)
+        cache_key = (project_id, key, home)
         if cache_key not in root.account_managers:
             child = copy.copy(root)
             child.clients, child.account_managers = {}, {}

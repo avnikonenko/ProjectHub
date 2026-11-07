@@ -1060,14 +1060,14 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
     <div className="generation-options">
       <strong>AI settings</strong>
       <label>
-        Account for this project
+        Default account for this project
         <select value={accounts?.account ?? ''} disabled={!accounts || savingAccount}
           onChange={(e) => changeAccount(e.target.value)}>
           <option value="">ProjectHub launch account</option>
           {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
-      <small>Uses an existing Codex sign-in. Saved locally per project. History is read from the launch profile.</small>
+      <small>Used for AI generation and new sessions. Existing sessions keep their original account.</small>
       {accountError && <small role="alert">{accountError}</small>}
       <label>
         Model

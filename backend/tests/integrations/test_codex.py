@@ -71,7 +71,7 @@ class FakeClient:
 def setup(tmp_path, monkeypatch):
     engine = create_engine('sqlite:///' + str(tmp_path / 'db.sqlite'), connect_args={'check_same_thread': False})
     Base.metadata.create_all(engine)
-    monkeypatch.setattr(module, 'availability', lambda: {
+    monkeypatch.setattr(module, 'availability', lambda *_: {
         'installed': True, 'app_server': True, 'authenticated': True, 'error': ''})
     app = FastAPI()
     app.state.engine, app.state.data_dir = engine, tmp_path
@@ -184,6 +184,37 @@ def test_inherited_connectors_fail_closed_before_generation(setup):
     assert not any(method == 'turn/start' for method, _ in client.calls)
 
 
+def test_existing_session_keeps_working_after_project_account_changes(setup, monkeypatch):
+    from backend.app.integrations.codex import accounts
+
+    first, second = setup.path / 'first', setup.path / 'second'
+    first.mkdir()
+    second.mkdir()
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {'profile:first': first, 'profile:second': second})
+
+    def client_factory(*, codex_home, **kwargs):
+        client = FakeClient(**kwargs)
+        client.home = codex_home
+        return client
+
+    monkeypatch.setattr(module, 'AppServerClient', client_factory)
+    base = '/api/projects/1/codex'
+    assert setup.client.patch(base + '/account', json={'account': 'profile:first'}).status_code == 200
+    sid = create_session(setup)
+    owner = next(iter(setup.manager.account_managers.values()))
+    assert owner.clients[sid].home == str(first)
+    assert setup.client.patch(base + '/account', json={'account': 'profile:second'}).status_code == 200
+    assert not owner.clients[sid].closed
+    assert setup.client.post(f'{base}/sessions/{sid}/resume').status_code == 200
+    assert owner.clients[sid].home == str(first)
+    assert setup.client.post(f'/api/projects/2/codex/sessions/{sid}/resume').status_code == 404
+    result = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'review'})
+    assert result.status_code == 201 and result.json()['status'] == 'sent'
+    new_id = create_session(setup)
+    assert any(child.clients.get(new_id) and child.clients[new_id].home == str(second)
+               for child in setup.manager.account_managers.values())
+
+
 def test_explicit_review_requests_reconnect_disconnected_session(setup):
     sid = create_session(setup)
     base = '/api/projects/1/codex'
@@ -238,7 +269,7 @@ def test_restart_preserves_uncertainty(setup):
 
 
 def test_unavailable_codex_reports_failure_without_losing_core(setup, monkeypatch):
-    monkeypatch.setattr(module, 'availability', lambda: {'installed': False, 'app_server': False,
+    monkeypatch.setattr(module, 'availability', lambda *_: {'installed': False, 'app_server': False,
                         'authenticated': False, 'error': 'Codex unavailable'})
     response = setup.client.post('/api/projects/1/codex/sessions', json={})
     assert response.status_code == 503

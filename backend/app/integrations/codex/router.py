@@ -126,12 +126,6 @@ def set_account(project_id: int, body: AccountInput, request: Request, db: DB):
             sessions = list(db.scalars(select(CodexSession).where(CodexSession.project_id == project_id)))
             if any(session.status == 'running' for session in sessions):
                 raise HTTPException(409, 'Wait for the active Codex turn to finish before changing the account.')
-            for manager in [root, *getattr(root, 'account_managers', {}).values()]:
-                with manager.lock:
-                    for session in sessions:
-                        client = manager.clients.pop(session.id, None)
-                        if client:
-                            client.close()
             row.codex_account = body.account
             db.commit()
             return get_account(project_id, db)
@@ -251,7 +245,7 @@ def history(project_id: int, session_id: int, request: Request, db: DB,
     project(db, project_id)
     row = scoped(db, CodexSession, project_id, session_id)
     try:
-        return manager_for(request.app, project_id).history(row, cursor, limit=limit)
+        return manager_for(request.app).history(row, cursor, limit=limit)
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
 
@@ -268,7 +262,7 @@ def search_saved_history(project_id: int, db: DB,
 def refresh_history_index(project_id: int, request: Request, db: DB):
     project(db, project_id)
     try:
-        return index_history(request.app.state.engine, project_id, manager_for(request.app, project_id))
+        return index_history(request.app.state.engine, project_id, manager_for(request.app))
     except HistoryIndexBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -291,7 +285,7 @@ def resume_session(project_id: int, session_id: int, request: Request, db: DB):
     p = project(db, project_id)
     row = scoped(db, CodexSession, project_id, session_id)
     try:
-        return manager_for(request.app, project_id).resume(row, p)
+        return manager_for(request.app, project_id, account=row.codex_account).resume(row, p)
     except (CodexError, KeyError) as exc:
         raise HTTPException(503, str(exc) if isinstance(exc, CodexError) else 'Unsupported Codex thread response') from exc
 
@@ -299,10 +293,10 @@ def resume_session(project_id: int, session_id: int, request: Request, db: DB):
 @router.post('/sessions/{session_id}/turns', status_code=201)
 def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db: DB):
     project(db, project_id)
-    managed_session(db, project_id, session_id)
+    session = managed_session(db, project_id, session_id)
     # Initialize recovery before creating a sending row.
-    manager = manager_for(request.app, project_id)
     try:
+        manager = manager_for(request.app, project_id, account=session.codex_account)
         options = send_options(manager, body)
         preview = context_preview(db, project_id)
     except CodexError as exc:
@@ -345,7 +339,7 @@ def preview_delivery(project_id: int, body: DeliveryInput, db: DB):
 def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
     row = scoped(db, Delivery, project_id, delivery_id)
-    managed_session(db, project_id, row.session_id)
+    session = managed_session(db, project_id, row.session_id)
     if not body.confirmed:
         raise HTTPException(422, 'Review the update and explicitly confirm before sending.')
     if row.decision_id:
@@ -353,7 +347,7 @@ def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, requ
         if decision.status != 'accepted' or decision_message(decision) != row.content:
             raise HTTPException(409, 'Decision changed since preview. Create and review a fresh update.')
     try:
-        manager = manager_for(request.app, project_id)
+        manager = manager_for(request.app, project_id, account=session.codex_account)
         result = manager.send(row.id, reconnect=row.decision_id is None, **send_options(manager, body))
         db.expire_all()
         audit(db, project_id, db.get(Delivery, row.id), 'explicit_delivery_attempt')
@@ -380,6 +374,6 @@ def interrupt(project_id: int, session_id: int, request: Request, db: DB):
     project(db, project_id)
     row = scoped(db, CodexSession, project_id, session_id)
     try:
-        return manager_for(request.app, project_id).interrupt(row)
+        return manager_for(request.app, project_id, account=row.codex_account).interrupt(row)
     except CodexError as exc:
         raise HTTPException(409, str(exc)) from exc
