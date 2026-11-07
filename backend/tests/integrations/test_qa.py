@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import qa
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import Project
+from backend.app.models import Project, Note
 
 
 def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path, monkeypatch):
@@ -36,4 +36,27 @@ def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert qa.read_qa(db, 2) is None
+    engine.dispose()
+
+
+def test_qa_can_use_notes_without_conversations_and_saves_provenance(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Notes only'))
+        db.flush()
+        db.add(Note(project_id=1, title='Agent finding', content='Use glass jars', kind='ai_note'))
+        db.commit()
+    monkeypatch.setattr(qa, 'archive_history', lambda *args: ([], []))
+    class Generator:
+        generation_metadata = {'account': 'test-profile', 'model': 'test-model', 'effort': 'high'}
+        def generate_brief(self, prompt, schema):
+            assert 'Use glass jars' in prompt
+            assert 'unverified proposals' in prompt
+            return json.dumps({'items': [{'question': 'What containers were suggested?',
+                                          'answer': 'Glass jars were suggested.', 'source_ids': ['1']}]})
+    saved = qa.refresh_qa(engine, 1, Generator())
+    assert saved['items'][0]['source_ids'] == ['note:1:1']
+    assert saved['generation'] == Generator.generation_metadata
+    with Session(engine) as db:
+        assert qa.read_qa(db, 1) == saved
     engine.dispose()

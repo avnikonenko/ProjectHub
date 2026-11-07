@@ -6,9 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex.brief import SECTION_NAMES, read_brief, refresh_brief
+from backend.app.integrations.codex.brief import SECTION_NAMES, read_brief, refresh_brief, note_evidence
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import CodexSession, Decision, Project
+from backend.app.models import CodexSession, Decision, Project, Note
 
 
 class FakeCodex:
@@ -103,3 +103,19 @@ def test_failed_refresh_preserves_last_brief(project_db, failure):
         refresh_brief(project_db, 1, codex)
     with Session(project_db) as db:
         assert read_brief(db, 1) == old
+
+
+def test_note_evidence_includes_all_parts_and_enforces_ownership(project_db):
+    with Session(project_db) as db:
+        content = 'Long note ' * 600
+        db.add_all([Note(project_id=1, title='Manual note', content=content),
+                    Note(project_id=1, title='Agent finding', content='Tentative result', kind='ai_note'),
+                    Note(project_id=2, title='Foreign note', content='Private')])
+        db.commit()
+        evidence = list(note_evidence(db, 1))
+    assert len(evidence) > 2
+    assert not any('Foreign' in item['text'] or 'Private' in item['text'] for item in evidence)
+    first = ''.join(item['text'] for item in evidence if item['sources'][0]['note_id'] == 1)
+    assert content in first
+    assert evidence[-1]['sources'][0]['kind'] == 'ai_note'
+    assert 'AI note' in evidence[-1]['sources'][0]['label']

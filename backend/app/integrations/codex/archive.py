@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from ...models import Project, CodexSession, ProjectHistoryBatch
 from .protocol import CodexError
+from . import progress
 
 CHUNK_CHARS = 4000
 BATCH_CHARS = 24_000
@@ -61,7 +62,9 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     with Session(engine) as db:
         saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
         if saved is not None:
+            progress.update(project_id, stage='Reusing cached evidence batch')
             return saved.evidence, True
+    progress.update(project_id, stage='Summarizing history batch' if stage == 'history' else 'Combining evidence')
     prompt = ('Summarize the supplied project discussion evidence into compact, concrete facts useful for '
               'a later project handoff. Preserve outcomes, unresolved questions, corrections, decisions, '
               'and uncertainty. Plans are not proof of completion. Do not infer chronology across sessions. '
@@ -80,6 +83,7 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
 
 def archive_history(engine, project_id, manager):
     """Read every page once; cache each bounded group before requesting another."""
+    progress.update(project_id, stage='Reading project sessions')
     with Session(engine) as db:
         if db.get(Project, project_id) is None:
             raise CodexError('Project not found.')
@@ -95,14 +99,16 @@ def archive_history(engine, project_id, manager):
             evidence.extend(summarized)
             reused += cached
             generated += not cached
+            progress.update(project_id, batches=generated + reused)
             batch = []
 
     if sessions:
         client = manager._new_read_client()
         try:
-            for session in sessions:
+            for index, session in enumerate(sessions, 1):
                 cursor, cursors, seen = None, set(), set()
                 while True:
+                    progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
                     page = manager.history(session, cursor, client=client, archive=True)
                     for turn in page['turns']:
                         if turn['id'] in seen:
@@ -116,6 +122,7 @@ def archive_history(engine, project_id, manager):
                         if not text:
                             continue
                         turns_seen += 1
+                        progress.update(project_id, turns=turns_seen)
                         for offset in range(0, len(text), CHUNK_CHARS):
                             part = offset // CHUNK_CHARS + 1
                             source = {'id': f"session:{session.id}:turn:{turn['id']}:part:{part}",
@@ -138,6 +145,7 @@ def archive_history(engine, project_id, manager):
                     cursor = next_cursor
                 # Boundaries stay stable when another session later gains new turns.
                 flush()
+                progress.update(project_id, sessions=index)
         finally:
             client.close()
     coverage = [f'Traversed all saved history pages for {len(sessions)} project sessions, oldest turns first within each session.',

@@ -148,6 +148,7 @@ class ProjectBrief(Base):
     sources: Mapped[list] = mapped_column(JSON)
     coverage: Mapped[list] = mapped_column(JSON)
     project_map: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    generation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ProjectHistoryBatch(Base):
@@ -163,3 +164,4 @@ class ProjectQA(Base):
     generated_at: Mapped[str] = mapped_column(String)
     items: Mapped[list] = mapped_column(JSON)
     sources: Mapped[list] = mapped_column(JSON)
+    generation: Mapped[dict | None] = mapped_column(JSON, nullable=True)

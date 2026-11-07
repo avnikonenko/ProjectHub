@@ -10,6 +10,7 @@ from .protocol import CodexError
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home
 from .qa import read_qa, refresh_qa
+from . import progress
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
@@ -150,6 +151,14 @@ def context(project_id: int, db: DB):
 def get_brief(project_id: int, db: DB):
     project(db, project_id)
     return read_brief(db, project_id)
+
+
+@router.get('/generation/status')
+def generation_status(project_id: int, db: DB, kind: str = 'brief'):
+    project(db, project_id)
+    if kind not in ('brief', 'qa'):
+        raise HTTPException(422, 'Unknown generation kind.')
+    return progress.read(project_id, kind)
 
 
 @router.get('/models')
