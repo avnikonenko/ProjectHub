@@ -97,17 +97,8 @@ def review(db, project_id):
     data = overview(db,project_id)
     findings = []
     def finding(category, message, entity_id=None): findings.append({'category':category, 'message':message, 'entity_id':entity_id, 'status':'unverified'})
-    for d in data['decisions']:
-        if d['status']=='accepted' and not d['evidence']: finding('missing_validation', f"Accepted decision #{d['id']} has no recorded evidence.",d['id'])
-        if d['status']=='accepted' and d['limitations']: finding('limitation', f"Decision #{d['id']}: {d['limitations']}",d['id'])
-    for q in data['questions']:
-        if q['status']!='resolved': finding('open_question',f"Question #{q['id']} remains {q['status']}: {q['title']}",q['id'])
     for t in data['tasks']:
         if t['status']!='completed': finding('incomplete_task',f"Task #{t['id']} is {t['status']}: {t['title']}",t['id'])
     for n in data['notes']:
         if n['kind']=='limitation': finding('limitation',n['content'],n['id'])
-    accepted = [d for d in data['decisions'] if d['status']=='accepted']
-    for d in accepted:
-        if sum(x['title'].casefold()==d['title'].casefold() for x in accepted)>1:
-            finding('possible_contradiction',f"Multiple accepted decisions share title: {d['title']}",d['id'])
     return {'project_id':project_id,'source':'deterministic','findings':findings,'limitations':['Rule-based checks flag gaps in recorded information; they do not verify claims or detect contradictions in meaning.']}

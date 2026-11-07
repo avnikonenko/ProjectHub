@@ -906,11 +906,9 @@ function ProjectWorkspace({
               <>
                 <section className="card">
                   <p className="eyebrow">PROJECT HEALTH</p>
-                  <h2>Review project records</h2>
+                  <h2>Review follow-ups</h2>
                   <p>
-                    Check unresolved questions, incomplete work, missing evidence,
-                    and validation gaps. Deterministic findings reflect stored
-                    records and can flag gaps for you to review.
+                    Review open TODOs and limitations recorded in your notes.
                   </p>
                   <div className="actions left">
                     <button
@@ -919,7 +917,7 @@ function ProjectWorkspace({
                         run(async () => setReport(await api(`${base}/review`)))
                       }
                     >
-                      Run project review
+                      Review follow-ups
                     </button>
                   </div>
                 </section>
@@ -1373,7 +1371,6 @@ function ProjectBrief({ base, generation }: GenerationProps) {
     ['architecture', 'Architecture'],
     ['changes', 'Recent changes'],
     ['open_questions', 'Open questions'],
-    ['decision_candidates', 'Possible decisions to review'],
   ];
   const sources = citedSources(brief?.sources ?? [], sections.flatMap(([key]) =>
     brief?.sections[key]?.flatMap((entry) => entry.source_ids) ?? [],
@@ -2124,7 +2121,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                 Project question
                 <textarea rows={3} required maxLength={20000} value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="What decisions still need validation?" />
+                  placeholder="What should we do next, based on this project's history?" />
               </label>
               <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
               <button disabled={busy || !!waiting || !prompt.trim()}>

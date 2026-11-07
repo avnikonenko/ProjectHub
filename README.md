@@ -31,11 +31,13 @@ Project data defaults to `~/.local/share/projecthub` and stays outside the check
 
 - **Sources:** import public ChatGPT share links and manage Codex sessions.
 - **History:** browse and search saved conversations.
-- **Dashboard / AI Q&A:** generate a compact overview or decision Q&A.
+- **Dashboard / AI Q&A:** generate a compact overview and explanations of choices from conversations.
 - **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes.
 - **Reviews:** ask project questions; save useful answers as proposed notes.
 
 Edit [AGENTS_AI_agent.md](AGENTS_AI_agent.md) to adjust shared AI writing instructions.
+
+There is no separate question/answer acceptance workflow. Older structured records remain available in exports and as historical reference.
 
 ## Development
 

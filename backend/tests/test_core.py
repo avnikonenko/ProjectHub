@@ -99,7 +99,7 @@ def test_persistence_summary_search_export_backup(tmp_path):
         assert c.get(f"/api/projects/{p['id']}/search",params={'q':'protonation'}).json()
         assert c.get(f"/api/projects/{p['id']}/search",params={'q':'\" OR * (x)'}).status_code==200
         summary=c.get(f"/api/projects/{p['id']}/summary").json();assert 'Reproducible ligand' in summary['markdown'];assert 'Validate protonation' in summary['markdown']
-        review=c.get(f"/api/projects/{p['id']}/review").json();assert review['source']=='deterministic';assert review['findings']
+        review=c.get(f"/api/projects/{p['id']}/review").json();assert review['source']=='deterministic';assert review['findings']==[]
         backup=c.post('/api/backup').json();assert Path(backup['path']).is_file()
         with sqlite3.connect(backup['path']) as db:assert db.execute('SELECT count(*) FROM projects').fetchone()[0]==1
     app.state.engine.dispose()
@@ -267,3 +267,44 @@ def test_delete_task_scoped_audited_and_removes_search_entry(client):
     assert [e['action'] for e in history] == ['created', 'deleted']
     assert history[-1]['before'] == task
     assert client.delete(path).status_code == 404
+
+
+def test_review_checks_todos_and_notes_without_structured_workflow_findings(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    base = f'/api/projects/{pid}'
+    legacy_question = question(client, pid, 'Historical open question')
+    historical_answer = answer(client, pid, legacy_question['id'], 'Historical answer')
+    for _ in range(2):
+        response = client.post(f'{base}/decisions', json={
+            'title': 'Historical choice', 'status': 'accepted',
+            'limitations': 'Historical decision limitation',
+        })
+        assert response.status_code == 201
+    task = client.post(f'{base}/tasks', json={'title': 'Check the draft'}).json()
+    client.post(f'{base}/tasks', json={'title': 'Finished work', 'status': 'completed'})
+    note = client.post(f'{base}/notes', json={
+        'title': 'Known limit', 'kind': 'limitation', 'content': 'The import handles text only.',
+    }).json()
+    client.post(f'/api/projects/{other}/tasks', json={'title': 'Private task'})
+    client.post(f'/api/projects/{other}/notes', json={
+        'title': 'Private limit', 'kind': 'limitation', 'content': 'Private limitation',
+    })
+    before = client.get(f'{base}/export').json()
+
+    response = client.get(f'{base}/review')
+    assert response.status_code == 200
+    report = response.json()
+    assert report['project_id'] == pid and report['source'] == 'deterministic'
+    assert [(finding['category'], finding['entity_id']) for finding in report['findings']] == [
+        ('incomplete_task', task['id']), ('limitation', note['id']),
+    ]
+    assert all(finding['status'] == 'unverified' for finding in report['findings'])
+    assert report['limitations']
+    after = client.get(f'{base}/export').json()
+    for field in ('questions', 'answers', 'decisions', 'audit'):
+        assert after[field] == before[field]
+    assert after['questions'][0]['id'] == legacy_question['id']
+    assert after['answers'][0]['id'] == historical_answer['id']
+    assert len(after['decisions']) == 2
+    assert 'Historical open question' in client.get(f'{base}/summary').json()['markdown']
