@@ -1,4 +1,5 @@
 """Generate a separate, source-backed project Q&A from linked conversations."""
+from contextlib import ExitStack
 import json
 import re
 import unicodedata
@@ -105,7 +106,11 @@ def refresh_qa(engine, project_id, manager):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A brief or Q&A refresh is already running. Try again when it finishes.')
     progress.begin(project_id, 'qa')
+    transport_scope = ExitStack()
     try:
+        session = getattr(manager, 'generation_session', None)
+        if callable(session):
+            transport_scope.enter_context(session())
         evidence, _ = archive_history(engine, project_id, manager)
         with Session(engine) as db:
             evidence.extend(note_evidence(db, project_id))
@@ -135,4 +140,7 @@ def refresh_qa(engine, project_id, manager):
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Q&A generation failed. The previous saved Q&A is preserved.')
         raise
     finally:
-        generation_lock.release()
+        try:
+            transport_scope.close()
+        finally:
+            generation_lock.release()

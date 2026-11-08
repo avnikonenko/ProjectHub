@@ -9,7 +9,8 @@ import shutil
 import subprocess
 import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from contextvars import ContextVar
 from functools import partial
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from .protocol import AppServerClient, CodexError
 from .ai_instructions import ai_instructions, read_project_instructions
 
 log = logging.getLogger(__name__)
+_generation_transport = ContextVar("projecthub_generation_transport", default=None)
 
 def generation_timeout():
     try:
@@ -403,6 +405,24 @@ class CodexManager:
         selected.generate_brief = partial(CodexManager.generate_brief, selected, model=model, effort=effort)
         return selected
 
+    @contextmanager
+    def generation_session(self):
+        """Reuse only this request's account transport; each call gets a new thread."""
+        current = _generation_transport.get()
+        if current is not None and current['owner'] is self:
+            yield self
+            return
+        scope = {'owner': self, 'client': None, 'failed': False, 'closed': False, 'lock': threading.Lock()}
+        token = _generation_transport.set(scope)
+        try:
+            yield self
+        finally:
+            _generation_transport.reset(token)
+            scope['closed'] = True
+            if scope['client'] is not None:
+                scope['client'].close()
+                scope['client'] = None
+
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None, verify_connectors=False):
         """Generate in a separate ephemeral thread; never resume a source session."""
         instructions = ai_instructions()
@@ -440,13 +460,36 @@ class CodexManager:
                 state['error'] = 'Codex disconnected before finishing the brief.'
                 done.set()
 
-        with tempfile.TemporaryDirectory(prefix='projecthub-brief-') as cwd:
+        scope = _generation_transport.get()
+        pooled = scope is not None and scope['owner'] is self and not verify_connectors
+        with ExitStack() as cleanup, tempfile.TemporaryDirectory(prefix='projecthub-brief-') as cwd:
+            if pooled:
+                if not scope['lock'].acquire(blocking=False):
+                    raise CodexError('Concurrent generation cannot share the same Codex transport.')
+                cleanup.callback(scope['lock'].release)
+                if scope['closed']:
+                    raise CodexError('The generation transport scope has ended.')
+                if scope['failed']:
+                    raise CodexError('The generation transport failed. Start a new generation request.')
             if verify_connectors:
                 client = self._discussion_client(cwd)
                 client.on_event, client.on_disconnect = event, disconnected
+            elif pooled:
+                reused_client = scope['client'] is not None
+                if not reused_client:
+                    try:
+                        scope['client'] = self._new_client(on_event=event, on_disconnect=disconnected)
+                    except Exception:
+                        scope['failed'] = True
+                        raise
+                client = scope['client']
+                client.on_event, client.on_disconnect = event, disconnected
             else:
                 client = self._new_client(on_event=event, on_disconnect=disconnected)
+            succeeded = False
             try:
+                if pooled and reused_client:
+                    self._assert_subscription(client)
                 result = client.request('thread/start', {
                     **({'model': model} if model else {}),
                     'ephemeral': True, 'cwd': cwd, 'sandbox': 'read-only',
@@ -492,9 +535,29 @@ class CodexManager:
                     raise CodexError(brief_turn_error(turn))
                 if not isinstance(message, str) or not message.strip():
                     raise CodexError('Codex completed the brief without a final response.')
+                succeeded = True
                 return message
             finally:
-                client.close()
+                if pooled:
+                    client.on_event = lambda *args: None
+                    client.on_disconnect = lambda: None
+                    if not succeeded:
+                        scope['failed'] = True
+                        client.close()
+                        scope['client'] = None
+                    else:
+                        try:
+                            released = client.request('thread/unsubscribe', {'threadId': thread_id})
+                            if released.get('status') not in ('unsubscribed', 'notLoaded', 'notSubscribed'):
+                                raise CodexError('Unsupported thread release acknowledgement.')
+                        except (CodexError, OSError, AttributeError):
+                            # Old servers can lack this optional cleanup method.
+                            # Keep the valid answer, but never retain its server.
+                            log.warning('Could not release an ephemeral generation thread; closing its transport.')
+                            client.close()
+                            scope['client'] = None
+                else:
+                    client.close()
 
     @staticmethod
     def _assert_subscription(client):

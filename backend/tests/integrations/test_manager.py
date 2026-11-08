@@ -393,3 +393,132 @@ def test_session_reader_closes_transport_on_failure(env, monkeypatch):
         with env.manager.session_reader(session):
             raise CodexError('Read failed')
     assert client.closed
+
+
+class ReusableBriefClient(FakeClient):
+    def __init__(self, **callbacks):
+        super().__init__(**callbacks)
+        self.thread_count = self.close_count = 0
+        self.fail = False
+        self.release_supported = True
+
+    def close(self):
+        self.close_count += 1
+        super().close()
+
+    def request(self, method, params):
+        result = super().request(method, params)
+        if method == 'thread/start':
+            self.thread_count += 1
+            return {'thread': {'id': f'generated-{self.thread_count}', 'ephemeral': True}}
+        if method == 'thread/unsubscribe':
+            return {'status': 'unsubscribed'} if self.release_supported else {}
+        if method == 'turn/start':
+            thread = params['threadId']
+            turn = f'turn-{self.thread_count}'
+            # An old thread's final response cannot become this call's answer.
+            self.on_event('item/completed', {
+                'threadId': 'old-thread', 'turnId': turn,
+                'item': {'type': 'agentMessage', 'text': 'wrong', 'phase': 'final_answer'},
+            })
+            self.on_event('item/completed', {
+                'threadId': thread, 'turnId': turn,
+                'item': {'type': 'agentMessage', 'text': f'answer-{self.thread_count}', 'phase': 'final_answer'},
+            })
+            self.on_event('turn/completed', {
+                'threadId': thread, 'turn': {'id': turn, 'status': 'failed' if self.fail else 'completed'},
+            })
+            return {'turn': {'id': turn}}
+        return result
+
+
+def test_generation_session_reuses_transport_with_fresh_threads_and_releases_each(env):
+    clients, probes = [], []
+    def factory(**callbacks):
+        clients.append(ReusableBriefClient(**callbacks))
+        return clients[-1]
+    original = env.manager._new_client
+    def create(**callbacks):
+        probes.append(True)
+        return original(**callbacks)
+    env.manager.client_factory = factory
+    env.manager._new_client = create
+    with env.manager.generation_session():
+        assert clients == []
+        assert env.manager.generate_brief('one', {}) == 'answer-1'
+        assert not clients[0].closed
+        assert env.manager.generate_brief('two', {}, model='chosen', effort='high') == 'answer-2'
+        assert not clients[0].closed
+        assert clients[0].on_event('item/completed', {}) is None
+    assert len(clients) == len(probes) == 1
+    assert clients[0].close_count == 1
+    starts = [p for m, p in clients[0].calls if m == 'thread/start']
+    assert len(starts) == 2 and all(p['ephemeral'] and p['sandbox'] == 'read-only' for p in starts)
+    assert starts[1]['model'] == 'chosen'
+    assert len([m for m, _ in clients[0].calls if m == 'account/read']) == 2
+    assert [p for m, p in clients[0].calls if m == 'thread/unsubscribe'] == [
+        {'threadId': 'generated-1'}, {'threadId': 'generated-2'},
+    ]
+
+
+def test_generation_session_failure_closes_and_does_not_retry(env):
+    client = ReusableBriefClient()
+    client.fail = True
+    env.manager.client_factory = lambda **callbacks: (
+        setattr(client, 'on_event', callbacks['on_event'])
+        or setattr(client, 'on_disconnect', callbacks['on_disconnect']) or client)
+    with env.manager.generation_session():
+        with pytest.raises(CodexError, match='did not complete'):
+            env.manager.generate_brief('failed', {})
+        assert client.closed and client.close_count == 1
+        with pytest.raises(CodexError, match='transport failed'):
+            env.manager.generate_brief('no retry', {})
+    assert len([m for m, _ in client.calls if m == 'turn/start']) == 1
+
+
+def test_generation_session_does_not_share_transport_across_manager_identity(env):
+    import copy
+    clients = []
+    def factory(**callbacks):
+        clients.append(ReusableBriefClient(**callbacks))
+        return clients[-1]
+    env.manager.client_factory = factory
+    other = copy.copy(env.manager)
+    with env.manager.generation_session():
+        assert env.manager.generate_brief('one', {}) == 'answer-1'
+        with other.generation_session():
+            assert other.generate_brief('other', {}) == 'answer-1'
+        assert clients[1].closed and not clients[0].closed
+        assert env.manager.generate_brief('two', {}) == 'answer-2'
+    assert len(clients) == 2 and all(c.closed for c in clients)
+
+
+def test_generation_session_closes_if_optional_thread_release_is_unsupported(env, caplog):
+    clients = []
+    def factory(**callbacks):
+        client = ReusableBriefClient(**callbacks)
+        client.release_supported = False
+        clients.append(client)
+        return client
+    env.manager.client_factory = factory
+    with env.manager.generation_session():
+        assert env.manager.generate_brief('one', {}) == 'answer-1'
+        assert clients[0].closed
+        assert env.manager.generate_brief('two', {}) == 'answer-1'
+    assert len(clients) == 2
+    assert all(len([m for m, _ in c.calls if m == 'turn/start']) == 1 for c in clients)
+    assert 'closing its transport' in caplog.text
+
+
+def test_generation_scope_cannot_be_reopened_from_a_copied_context_after_exit(env):
+    from contextvars import copy_context
+    clients = []
+    def factory(**callbacks):
+        clients.append(ReusableBriefClient(**callbacks))
+        return clients[-1]
+    env.manager.client_factory = factory
+    with env.manager.generation_session():
+        context = copy_context()
+    with pytest.raises(CodexError, match='scope has ended'):
+        context.run(env.manager.generate_brief, 'late request', {})
+    assert clients == []

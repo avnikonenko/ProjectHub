@@ -1,5 +1,6 @@
 """Bounded, explicitly requested synthesis of project-scoped reference data."""
 from copy import deepcopy
+from contextlib import ExitStack
 import json
 import re
 import threading
@@ -217,7 +218,11 @@ def refresh_brief(engine, project_id, manager):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
     progress.begin(project_id, 'brief')
+    transport_scope = ExitStack()
     try:
+        session = getattr(manager, 'generation_session', None)
+        if callable(session):
+            transport_scope.enter_context(session())
         from ...project_evidence import collect_project_evidence
         snapshot = collect_project_evidence(engine, project_id)
         with Session(engine) as db:
@@ -344,4 +349,7 @@ def refresh_brief(engine, project_id, manager):
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Brief generation failed. The previous saved brief is preserved.')
         raise
     finally:
-        generation_lock.release()
+        try:
+            transport_scope.close()
+        finally:
+            generation_lock.release()

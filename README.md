@@ -54,7 +54,7 @@ The dashboard checks brief freshness locally without calling AI. A successful re
 
 **Validation:** Test files and conversation claims do not establish that tests passed. Look for recorded test results.
 
-Project status and AI Q&A can reuse a session’s indexed text after checking current Codex metadata, avoiding another turn-by-turn history read. Old, missing, or incomplete indexes fall back to the history reader. A session reader stays connected to its own profile across history pages. The first uncached analysis of long history can still take time, and changing the model or instructions may require new AI summaries.
+Project status and AI Q&A can reuse a session’s indexed text after checking current Codex metadata, avoiding another turn-by-turn history read. Old, missing, or incomplete indexes fall back to the history reader. A session reader stays connected to its own profile across history pages. AI batches within one refresh share a connection while retaining separate ephemeral threads. Unchanged note chunks retain their cache after small edits. The first uncached analysis of long history can still take time, and changing the model or instructions may require new AI summaries.
 
 Saved Codex history syncs locally in the background about once a minute while ProjectHub runs. Unchanged sessions are skipped, and previous search data remains usable if a read fails. Use **Pause automatic sync** in Sources for an unavailable session; its saved history and requests remain intact. Manual refresh is available in History. Sync never starts AI generation; imported ChatGPT share links remain snapshots. To disable sync or change the interval, add `[history]` with `auto_sync = false` or `sync_interval = 120` to the config.
 

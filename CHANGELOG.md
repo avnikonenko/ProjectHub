@@ -61,6 +61,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Maintenance
 
+- Reuse one request-scoped Codex transport across overview and Q&A batches while keeping each call in an isolated ephemeral thread.
+- Small note edits preserve cached summaries of unchanged chunks and refresh their citation metadata.
+
 - Reuse per-session indexed conversation text after checking its freshness, avoiding repeated history-page reads during AI generation.
 
 - Extracted brief rendering and source-reference components while preserving the existing dashboard and revision history.
