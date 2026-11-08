@@ -455,6 +455,19 @@ main {
 .project-brief .section-title {
   flex-wrap: wrap;
 }
+.brief-refresh-note {
+  display: block;
+  margin-bottom: 1rem;
+}
+.brief-meta {
+  border-top: 1px solid var(--border, #d6dfdb);
+  margin-top: 1.25rem;
+  padding-top: 0.85rem;
+}
+.brief-meta summary,
+.brief-section > summary {
+  cursor: pointer;
+}
 .project-brief .brief-note,
 .brief-sources {
   color: #3d4943;
@@ -504,7 +517,8 @@ main {
 }
 .brief-points {
   color: #24312a;
-  max-width: 85ch;
+  max-width: 72ch;
+  line-height: 1.7;
 }
 .brief-points li + li,
 .brief-sources li + li {
