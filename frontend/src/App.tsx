@@ -1505,7 +1505,6 @@ function Codex({ base, onError }: {
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
-  const [context, setContext] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
   const mounted = useRef(true);
@@ -1602,7 +1601,7 @@ function Codex({ base, onError }: {
           Check connection
         </button>
       </section>
-      <div className="two-column">
+      <div>
         <section className="card">
           <h2>Project sessions</h2>
           <label>
@@ -1721,23 +1720,6 @@ function Codex({ base, onError }: {
             Add session for reading
           </button>
         </section>
-        <section className="card">
-          <h2>Context package</h2>
-          <p>
-            Review the structured project context before submitting a request.
-            Each submission records its supplied context version.
-          </p>
-          <button
-            className="secondary"
-            disabled={busy}
-            onClick={() =>
-              action(async () => setContext(await api(`${prefix}/context`)))
-            }
-          >
-            Preview project context
-          </button>
-          {context && <Report value={context} />}
-        </section>
       </div>
     </>
   );
@@ -1755,6 +1737,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [sessionId, setSessionId] = useState('');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [prompt, setPrompt] = useState('');
+  const [context, setContext] = useState<string | null>(null);
   const [events, setEvents] = useState<any>(null);
   const [eventsError, setEventsError] = useState('');
   const [error, setError] = useState('');
@@ -1916,9 +1899,22 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                   placeholder="What should we do next, based on this project's history?" />
               </label>
               <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
-              <button disabled={busy || !!waiting || !prompt.trim()}>
-                {busy ? 'Working…' : canSend ? 'Ask Codex' : 'Ask in a new review session'}
-              </button>
+              <div className="actions left">
+                <button disabled={busy || !!waiting || !prompt.trim()}>
+                  {busy ? 'Working…' : canSend ? 'Ask Codex' : 'Ask in a new review session'}
+                </button>
+                <button type="button" className="quiet" disabled={busy} aria-expanded={context !== null}
+                  onClick={() => {
+                    if (context !== null) setContext(null);
+                    else void action(async () => {
+                      const result = await api<{ content: string }>(`${prefix}/context`);
+                      setContext(result.content);
+                    });
+                  }}>
+                  {context === null ? 'Preview context' : 'Hide context'}
+                </button>
+              </div>
+              {context !== null && <pre className="json-report">{context}</pre>}
             </form>
           </details>
         )}
