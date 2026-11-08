@@ -21,6 +21,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- AI generation shows plain-language stages and elapsed time across project tabs.
+
 - Renamed the dashboard’s main summary to Project status; Dashboard remains the page name.
 
 - Sources shows session names, IDs, and Codex activity timestamps when available. Edit a session to assign a topic, then organize Sources by topic or recent activity.

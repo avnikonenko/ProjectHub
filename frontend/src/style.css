@@ -467,9 +467,17 @@ main {
   display: block;
   margin-top: 3px;
 }
+.generation-progress {
+  border-inline-start: 3px solid #55937e;
+  padding: 0.55rem 0.8rem;
+  margin-bottom: 0.75rem;
+}
 .generation-progress p {
   color: #32483c;
-  padding: 8px 0;
+  margin: 0;
+}
+.generation-progress p + p {
+  margin-top: 0.2rem;
 }
 .revision-history {
   margin-bottom: 1rem;
