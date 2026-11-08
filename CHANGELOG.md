@@ -32,6 +32,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Older project summaries show their overview first, and sources for discarded validation entries are no longer saved.
+
 - Project status freshness now detects Git staging and edits to historical accepted decisions. Deleted files no longer make freshness permanently unknown.
 - Editing project details or the linked repository rechecks dashboard freshness.
 - Project goals and description now reach the project-status generator instead of being omitted from its evidence.

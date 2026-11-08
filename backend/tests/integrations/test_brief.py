@@ -51,6 +51,12 @@ class FakeCodex:
         sections['validation'] = [{'text': validation['text'], 'source_ids': [validation['id']], 'classification': 'verified'}]
         sections['current_status'] = [{'text': 'Implementation is complete', 'source_ids': [diagram], 'classification': 'verified'}]
         sections['next_steps'] = [{'text': 'Check the migration', 'source_ids': [diagram], 'classification': 'inferred'}]
+        if getattr(self, 'extra_validation', False):
+            metadata = next(source for source in data['sources'] if 'Project objective and scope' in source['origins'])
+            sections['validation'] = [
+                {'text': 'A reported check', 'source_ids': [diagram], 'classification': 'reported'},
+                {'text': 'A second reported check', 'source_ids': [metadata['id']], 'classification': 'reported'},
+            ]
         if getattr(self, 'invalid_status', False):
             sections['next_steps'][0]['classification'] = 'guaranteed'
         if getattr(self, 'missing_status', False):
@@ -211,3 +217,12 @@ def test_structured_status_certifies_observations_and_preserves_last_success(pro
         refresh_brief(project_db, 1, codex)
     with Session(project_db) as db:
         assert read_brief(db, 1) == status
+
+
+def test_status_does_not_save_sources_for_discarded_validation_points(project_db):
+    codex = FakeCodex()
+    codex.extra_validation = True
+    status = refresh_brief(project_db, 1, codex)
+    assert [entry['text'] for entry in status['sections']['validation']][1:] == ['A reported check']
+    assert 'evidence:validation' in {source['id'] for source in status['sources']}
+    assert 'project:metadata' not in {source['id'] for source in status['sources']}

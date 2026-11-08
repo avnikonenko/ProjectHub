@@ -235,7 +235,6 @@ def refresh_brief(engine, project_id, manager):
         history, coverage = archive_history(engine, project_id, manager)
         progress.update(project_id, stage='Summarizing project notes and decisions')
         recorded = summarize_evidence(engine, project_id, manager, records)
-        recorded.append({'text': validation_source['text'], 'sources': [validation_source]})
         history = summarize_evidence(engine, project_id, manager, history)
         coverage.append('Project notes (including AI notes), saved architecture and accepted decisions are included when available. Notes are unverified reference material.')
         coverage.append(snapshot['validation'])
@@ -257,6 +256,11 @@ def refresh_brief(engine, project_id, manager):
                     'origin_classifications': sorted({source.get('classification', 'reported')
                                                       for source in item['sources']}),
                 })
+        validation_id = 'evidence:validation'
+        source_groups[validation_id] = [validation_source]
+        sources.insert(len(recorded), {'id': validation_id, 'text': validation_source['text'], 'kind': 'recorded',
+                        'origins': [validation_source['label']], 'classification': 'verified',
+                        'origin_classifications': ['verified']})
         prompt = ('Write a compact current project-state handoff for someone returning to this project. '
                   'Use plain text, one concrete point per entry, without repetition across sections. '
                   'current_status: one short conclusion about the present development state; state when available evidence is insufficient. '
@@ -306,15 +310,13 @@ def refresh_brief(engine, project_id, manager):
         progress.update(project_id, stage='Generating project brief')
         sections, graph = validate_sections(manager.generate_brief(prompt, OUTPUT_SCHEMA), sources)
         deduplicate_brief_changes(sections, previous)
-        cited = resolve_citations(sections, graph, source_groups)
         # Always show the known coverage gap, even if synthesis omits it.
-        validation_entry = {'text': validation_source['text'], 'source_ids': [validation_source['id']],
+        validation_entry = {'text': validation_source['text'], 'source_ids': [validation_id],
                             'classification': 'verified'}
         sections['validation'] = [validation_entry, *(
             entry for entry in sections['validation'] if entry['text'] != validation_entry['text']
         )][:SECTION_LIMITS['validation']]
-        if not any(source['id'] == validation_source['id'] for source in cited):
-            cited.append(validation_source)
+        cited = resolve_citations(sections, graph, source_groups)
         with Session(engine) as db:
             row = db.get(ProjectBrief, project_id)
             if row is None:

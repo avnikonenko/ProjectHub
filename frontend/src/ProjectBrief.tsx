@@ -106,12 +106,13 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
       if (request.current === id) setGenerating(false);
     }
   }
+  const hasCurrentStatus = !!brief?.sections.current_status?.length;
   const sections: [keyof Brief['sections'], string, boolean][] = [
     ['current_status', 'Current status', false],
+    ['overview', hasCurrentStatus ? 'Project objective' : 'Overview', hasCurrentStatus],
     ['unresolved_problems', 'Unresolved problems', false],
     ['open_questions', 'Open questions', false],
     ['next_steps', 'Recommended next steps', false],
-    ['overview', brief?.sections.current_status?.length ? 'Project objective' : 'Overview', !!brief?.sections.current_status?.length],
     ['since_last_brief', 'Since your last update', true],
     ['changes', 'Recent changes', true],
     ['implemented', 'Implemented work', true],
