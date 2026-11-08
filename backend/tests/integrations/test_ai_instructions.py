@@ -5,7 +5,7 @@ from backend.app.integrations.codex.protocol import CodexError
 
 
 def test_policy_reloads_and_missing_or_empty_files_fail_explicitly(tmp_path, monkeypatch):
-    path = tmp_path / 'AGENTS_AI_agent.md'
+    path = tmp_path / 'AI_RECOMMENDATIONS.md'
     monkeypatch.setattr(ai_instructions, 'INSTRUCTIONS_PATH', path)
     with pytest.raises(CodexError, match='Could not read'):
         ai_instructions.ai_instructions()
@@ -29,7 +29,7 @@ def test_legacy_instruction_rows_keep_shared_recommendations_after_upgrade(tmp_p
     from sqlalchemy.orm import Session
     from backend.app.models import ProjectAIInstructions
 
-    path = tmp_path / 'AGENTS_AI_agent.md'
+    path = tmp_path / 'AI_RECOMMENDATIONS.md'
     path.write_text('Shared recommendation')
     monkeypatch.setattr(ai_instructions, 'INSTRUCTIONS_PATH', path)
     engine = create_engine(f'sqlite:///{tmp_path / "project.sqlite"}')

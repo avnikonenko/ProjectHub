@@ -38,7 +38,7 @@ Project data defaults to `~/.local/share/projecthub` and stays outside the check
 - **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes. Use the trash icon to remove a note from ProjectHub.
 - **Reviews:** use Ask Project for cited answers from saved conversations and notes, or ask a Codex session and save useful responses as proposed notes.
 
-Edit [AGENTS_AI_agent.md](AGENTS_AI_agent.md) to adjust shared AI writing instructions.
+Edit [AI_RECOMMENDATIONS.md](AI_RECOMMENDATIONS.md) to adjust shared AI writing instructions.
 
 There is no separate question/answer acceptance workflow. Older structured records remain available in exports and as historical reference.
 

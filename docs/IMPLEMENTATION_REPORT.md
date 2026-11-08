@@ -4,7 +4,7 @@ ProjectHub is a local FastAPI/SQLite and React application installed from a sour
 
 Implemented workflows include project metadata, notes, TODO editing/deletion and atomic bulk capture, imported ChatGPT share snapshots, linked Codex history, local indexed search, cited AI briefs and decision Q&A, saved generation versions, and read-only project discussions.
 
-AI writing instructions live in `AGENTS_AI_agent.md`. Generated responses and imported text remain untrusted reference material. Useful review responses can be explicitly saved as proposed notes. Existing decisions and audit snapshots are preserved.
+AI writing instructions live in `AI_RECOMMENDATIONS.md`. Generated responses and imported text remain untrusted reference material. Useful review responses can be explicitly saved as proposed notes. Existing decisions and audit snapshots are preserved.
 
 Setup installs Python dependencies into `.venv` and builds the frontend. The user-local launcher links to the checkout. Configuration and mutable project data belong in XDG directories, outside source control. Codex credentials remain managed by Codex.
 

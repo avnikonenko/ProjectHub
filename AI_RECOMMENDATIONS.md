@@ -1,4 +1,4 @@
-# ProjectHub AI response instructions
+# ProjectHub AI response recommendations
 
 Apply these instructions to ProjectHub briefs, project maps, Q&A, reviews, summaries, and AI-authored notes.
 
