@@ -20,10 +20,7 @@ export interface RecordData {
 }
 export interface Overview {
   project: Project;
-  questions: RecordData[];
-  decisions: RecordData[];
   tasks: RecordData[];
   notes: RecordData[];
-  sessions: RecordData[];
   activity: RecordData[];
 }

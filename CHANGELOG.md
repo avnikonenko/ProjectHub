@@ -25,6 +25,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Load project workspaces only when opened, and cancel browser requests for history pages when leaving the view.
+
 - Latest activity includes the linked repository’s three most recent Git commits in date order with project activity.
 
 - AI generation shows plain-language stages and elapsed time across project tabs.

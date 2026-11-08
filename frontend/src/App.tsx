@@ -51,19 +51,19 @@ const projectBody = (data: Record<string, any>) => ({
 });
 
 export default function App() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Pick<Project, 'id' | 'name'>[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [historyLink, setHistoryLink] = useState(() => readHistoryLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
-    const data = await api<Project[]>('/projects');
+    const data = await api<Pick<Project, 'id' | 'name'>[]>('/projects?compact=true');
     setProjects(data);
     setSelected((current) =>
       current !== null && data.some((p) => p.id === current)
         ? current
-        : (data[0]?.id ?? null),
+        : null,
     );
   }, []);
   useEffect(() => {
@@ -137,14 +137,12 @@ export default function App() {
         ) : selectedProject === null ? (
           <main>
             <div className="page-heading">
-              <h1>A clear place for project work.</h1>
-              <p>
-                Keep conversations, decisions, notes, and next steps together.
-              </p>
+              <h1>{projects.length ? 'Choose a project' : 'A clear place for project work.'}</h1>
+              {!projects.length && <p>Keep conversations, decisions, notes, and next steps together.</p>}
             </div>
-            <button onClick={() => setAdding(true)}>
+            {!projects.length && <button onClick={() => setAdding(true)}>
               Register your first project
-            </button>
+            </button>}
           </main>
         ) : (
           <ProjectWorkspace
@@ -222,15 +220,19 @@ function ProjectWorkspace({
     onLeaveHistory();
     setView('History');
   }
-  const load = useCallback(async () => {
-    const result = await api<Overview>(`${base}/overview`);
-    if (alive.current) setOverview(result);
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const result = await api<Overview>(`${base}/overview?compact=true`, { signal });
+    if (alive.current && !signal?.aborted) setOverview(result);
   }, [base]);
   useEffect(() => {
+    const controller = new AbortController();
     alive.current = true;
-    load().catch((e) => setError(e.message));
+    load(controller.signal).catch((e) => {
+      if (!controller.signal.aborted) setError(e.message);
+    });
     return () => {
       alive.current = false;
+      controller.abort();
     };
   }, [load]);
   async function run(action: () => Promise<unknown>) {
@@ -1391,11 +1393,13 @@ function SavedHistory({
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
-  const request = useRef(0);
+  const request = useRef<AbortController | null>(null);
 
   const load = useCallback(
     async (trail: (string | null)[] = [null]) => {
-      const requestId = ++request.current;
+      request.current?.abort();
+      const controller = new AbortController();
+      request.current = controller;
       setLoading(true);
       setError('');
       try {
@@ -1405,15 +1409,15 @@ function SavedHistory({
         const page = await api<{
           turns: SavedTurn[];
           next_cursor: string | null;
-        }>(`${prefix}/sessions/${sessionId}/history?${query}`);
-        if (request.current !== requestId) return;
+        }>(`${prefix}/sessions/${sessionId}/history?${query}`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
         setTurns(page.turns);
         setCursorTrail(trail);
         setNextCursor(page.next_cursor);
       } catch (e) {
-        if (request.current === requestId) setError((e as Error).message);
+        if (!controller.signal.aborted) setError((e as Error).message);
       } finally {
-        if (request.current === requestId) setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     },
     [prefix, sessionId],
@@ -1422,7 +1426,7 @@ function SavedHistory({
   useEffect(() => {
     load();
     return () => {
-      request.current += 1;
+      request.current?.abort();
     };
   }, [load]);
 

@@ -31,6 +31,8 @@ Project data defaults to `~/.local/share/projecthub` and stays outside the check
 
 ## Use
 
+Startup loads only project names and IDs. Open a project to load its workspace. Saved Codex history shows three turns per page; page navigation replaces the previous page in the browser. Background history sync indexes linked sessions on disk without sending a model request.
+
 - **Sources:** import public ChatGPT share links and manage Codex sessions. Unlink removes a session from active history and sync while keeping its records. Add the same thread ID again to relink it.
 - **History:** browse and search saved conversations. Select text to save it as a note with a link back to the source.
 - **Dashboard / AI Q&A:** generate a compact overview and explanations of choices from conversations.
