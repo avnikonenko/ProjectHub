@@ -152,3 +152,18 @@ def test_reduction_packs_long_recorded_evidence_by_serialized_size(env, count):
     assert len(reduced) < count
     assert all('source_labels' in item for payload in manager.inputs for item in payload['evidence'])
     assert all(s['label'].startswith('Accepted decision') for e in reduced for s in e['sources'])
+
+
+def test_archive_cache_respects_project_ai_instructions(env):
+    from backend.app.integrations.codex.ai_instructions import use_project_instructions
+
+    engine, manager = env
+    archive_history(engine, 1, manager)
+    assert len(manager.inputs) == 1
+    with use_project_instructions('Summarize in British English.'):
+        archive_history(engine, 1, manager)
+        assert len(manager.inputs) == 2
+        archive_history(engine, 1, manager)
+        assert len(manager.inputs) == 2
+    archive_history(engine, 1, manager)
+    assert len(manager.inputs) == 2

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from ...models import (Project, Question, Decision, Task, CodexSession,
                        ContextPackage, Delivery, CodexEvent)
 from .protocol import AppServerClient, CodexError
-from .ai_instructions import ai_instructions
+from .ai_instructions import ai_instructions, read_project_instructions
 
 log = logging.getLogger(__name__)
 
@@ -575,10 +575,11 @@ class CodexManager:
                 session.status, session.last_error = 'running', ''
                 content, thread_id = delivery.content, session.thread_id
                 session_id = session.id
+                instructions = read_project_instructions(db, session.project_id)
                 db.commit()
             submitted = False
             try:
-                content = 'PROJECTHUB RESPONSE INSTRUCTIONS:\n' + ai_instructions() + '\n\n' + content
+                content = 'PROJECTHUB RESPONSE INSTRUCTIONS:\n' + ai_instructions(instructions) + '\n\n' + content
                 self._assert_subscription(client)
                 self._assert_no_connectors(client, thread_id)
                 submitted = True

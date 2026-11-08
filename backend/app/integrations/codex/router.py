@@ -4,9 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision
+from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
+from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home
 from .qa import read_qa, refresh_qa
@@ -62,6 +63,10 @@ class DeliveryInput(Input):
 
 class GenerationInput(ModelInput):
     confirmed: bool = False
+
+
+class InstructionsInput(Input):
+    instructions: str = Field(max_length=MAX_PROJECT_INSTRUCTIONS)
 
 
 class AskInput(GenerationInput):
@@ -218,6 +223,20 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     return progress.read(project_id, kind)
 
 
+@router.get('/instructions')
+def get_instructions(project_id: int, db: DB):
+    project(db, project_id)
+    return {'instructions': read_project_instructions(db, project_id)}
+
+
+@router.patch('/instructions')
+def patch_instructions(project_id: int, body: InstructionsInput, db: DB):
+    project(db, project_id)
+    db.merge(ProjectAIInstructions(project_id=project_id, instructions=body.instructions))
+    db.commit()
+    return {'instructions': body.instructions}
+
+
 @router.get('/models')
 def generation_models(project_id: int, request: Request, db: DB):
     project(db, project_id)
@@ -235,7 +254,10 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
-        return refresh_brief(request.app.state.engine, project_id, selected)
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return refresh_brief(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -256,7 +278,10 @@ def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
-        return refresh_qa(request.app.state.engine, project_id, selected)
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return refresh_qa(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
@@ -277,7 +302,10 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
-        return answer_project(selected, body.question, sources)
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return answer_project(selected, body.question, sources)
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
     finally:

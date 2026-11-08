@@ -31,6 +31,12 @@ class Project(Stamp, Base):
     architecture_mermaid: Mapped[str] = mapped_column(Text, default='')
 
 
+class ProjectAIInstructions(Base):
+    __tablename__ = 'project_ai_instructions'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
+    instructions: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class Scoped(Stamp):
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), index=True)
