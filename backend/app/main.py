@@ -336,7 +336,7 @@ def create_app(data_dir=None):
 
     # Integration owns this optional router and its lifecycle; unavailable Codex never disables core.
     try:
-        from .integrations.codex.router import router as codex_router
+        from .integrations.codex.router import router as codex_router, settings_router
         from .integrations.codex.manager import CodexManager
         from .integrations.codex.history_sync import HistorySync
         from .config import _boolean, _integer
@@ -347,6 +347,7 @@ def create_app(data_dir=None):
         app.state.history_sync = HistorySync(engine, lambda: app.state.codex_manager,
                                             interval=sync_interval) if sync_enabled else None
         app.include_router(codex_router)
+        app.include_router(settings_router)
         @app.on_event('startup')
         def start_history_sync():
             if app.state.history_sync is not None:

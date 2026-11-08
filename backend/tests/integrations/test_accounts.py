@@ -44,3 +44,34 @@ def test_discovery_hides_missing_and_duplicate_directories_and_preserves_selecte
     assert accounts.account_options() == [{'id': 'profile:other', 'label': 'other'}]
     options = accounts.account_options(selected='profile:launch')
     assert options == [{'id': 'profile:launch', 'label': 'launch'}, {'id': 'profile:other', 'label': 'other'}]
+
+
+def test_global_profile_registration_works_without_a_project(tmp_path, monkeypatch):
+    from importlib import import_module
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+    from backend.app.main import create_app
+    from backend.app.models import CodexProfile
+
+    routes = import_module('backend.app.integrations.codex.router')
+    monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
+    monkeypatch.setattr(routes, 'availability', lambda *_: {
+        'authenticated': True, 'app_server': True, 'error': '',
+    })
+    directory = tmp_path / 'codex-directory'
+    directory.mkdir()
+    app = create_app(tmp_path / 'data')
+    with TestClient(app) as client:
+        assert client.get('/api/projects').json() == []
+        result = client.post('/api/settings/codex-profiles',
+                             json={'name': 'Work', 'directory': str(directory)})
+        assert result.status_code == 200, result.text
+        assert result.json()['added'] is True
+        assert result.json()['registered_id'].startswith('registered:')
+        duplicate = client.post('/api/settings/codex-profiles',
+                                json={'name': 'Alias', 'directory': str(directory)})
+        assert duplicate.json()['added'] is False
+        assert client.get('/api/projects').json() == []
+        with Session(app.state.engine) as db:
+            assert len(list(db.scalars(select(CodexProfile)))) == 1
+    app.state.engine.dispose()

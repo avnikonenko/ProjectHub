@@ -19,6 +19,7 @@ from .revisions import list_revisions
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
+settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
 
 
 class Input(BaseModel):
@@ -160,9 +161,7 @@ class AddAccountInput(Input):
     directory: str = Field(min_length=1, max_length=4096)
 
 
-@router.post('/accounts')
-def add_account(project_id: int, body: AddAccountInput, db: DB):
-    project(db, project_id)
+def register_profile(body: AddAccountInput, db: DB):
     try:
         directory = validate_profile_directory(body.directory)
     except (CodexError, OSError, RuntimeError) as exc:
@@ -172,16 +171,28 @@ def add_account(project_id: int, body: AddAccountInput, db: DB):
     if not capability['authenticated'] or not capability['app_server']:
         raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
     if Path(directory) == launch_home():
-        return {**get_account(project_id, db), 'registered_id': None, 'added': False}
+        return {'registered_id': None, 'added': False}
     for key, _, path in profile_entries(db.get_bind()):
         if path.is_dir() and path.resolve() == Path(directory):
-            return {**get_account(project_id, db), 'registered_id': key, 'added': False}
+            return {'registered_id': key, 'added': False}
     stmt = insert(CodexProfile).values(name=body.name, directory=directory)
     result = db.execute(stmt.on_conflict_do_nothing(index_elements=[CodexProfile.directory]))
     added = result.rowcount == 1
     db.commit()
     saved = db.scalar(select(CodexProfile).where(CodexProfile.directory == directory))
-    return {**get_account(project_id, db), 'registered_id': f'registered:{saved.id}', 'added': added}
+    return {'registered_id': f'registered:{saved.id}', 'added': added}
+
+
+@settings_router.post('/codex-profiles')
+def add_global_account(body: AddAccountInput, db: DB):
+    return register_profile(body, db)
+
+
+@router.post('/accounts')
+def add_account(project_id: int, body: AddAccountInput, db: DB):
+    project(db, project_id)
+    result = register_profile(body, db)
+    return {**get_account(project_id, db), **result}
 
 
 @router.patch('/account')
