@@ -411,7 +411,7 @@ function ProjectWorkspace({
           <>
             {view === 'Dashboard' && (
               <>
-                <ProjectBrief base={base} generation={generation} />
+                <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at} />
                 <div className="metrics">
                   <div className="metric">
                     <strong>{notes.length}</strong>

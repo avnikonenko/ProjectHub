@@ -142,7 +142,7 @@ def _repository_root(value, deadline):
 
 
 def _status_paths(data):
-    modified, untracked = [], []
+    modified, untracked, statuses = [], [], []
     entries = iter(data.split(b'\0'))
     for entry in entries:
         if not entry:
@@ -150,6 +150,7 @@ def _status_paths(data):
         if len(entry) < 4 or entry[2:3] != b' ':
             raise EvidenceReadError('Git returned unsupported working-tree status.')
         code, path = entry[:2], os.fsdecode(entry[3:])
+        statuses.append((path, code.decode('ascii')))
         if code == b'??':
             untracked.append(path)
         else:
@@ -158,8 +159,10 @@ def _status_paths(data):
             old = next(entries, None)
             if old is None:
                 raise EvidenceReadError('Git returned incomplete rename information.')
-            modified.append(os.fsdecode(old))
-    return sorted(set(modified)), sorted(set(untracked))
+            old_path = os.fsdecode(old)
+            modified.append(old_path)
+            statuses.append((old_path, code.decode('ascii')))
+    return sorted(set(modified)), sorted(set(untracked)), sorted(statuses)
 
 
 def _file_marker(root_fd, relative, budget):
@@ -193,6 +196,10 @@ def _file_marker(root_fd, relative, budget):
         marker['sha256'] = digest.hexdigest()
         marker['limited'] = count < metadata.st_size
         return marker, count
+    except FileNotFoundError:
+        # Deleted files and rename origins are complete observations, not read
+        # failures. A later reappearance changes both status and this marker.
+        return {'missing': True}, 0
     except OSError:
         return {'unreadable': True}, 0
     finally:
@@ -226,10 +233,22 @@ def _git_evidence(repository_path, patterns):
                 commits.append({'hash': commit.decode('ascii'), 'subject': subject.decode('utf-8', 'replace')[:240]})
     status, _ = git('status', '--porcelain=v1', '-z', '--untracked-files=all',
                      '--ignore-submodules=all', overrides=overrides)
-    all_modified, all_untracked = _status_paths(status)
+    all_modified, all_untracked, all_statuses = _status_paths(status)
+    visible_statuses = [item for item in all_statuses if not _excluded(item[0], patterns)]
     modified = [name for name in all_modified if not _excluded(name, patterns)]
     untracked = [name for name in all_untracked if not _excluded(name, patterns)]
     listed, _ = git('ls-files', '-z', '--cached', '--others', '--exclude-standard', overrides=overrides)
+    staged, _ = git('ls-files', '-z', '--stage', overrides=overrides)
+    index_entries = []
+    for entry in staged.split(b'\0'):
+        if not entry:
+            continue
+        metadata, separator, name = entry.partition(b'\t')
+        if not separator:
+            raise EvidenceReadError('Git returned unsupported index information.')
+        relative = os.fsdecode(name)
+        if not _excluded(relative, patterns):
+            index_entries.append((relative, metadata.decode('ascii')))
     files = sorted({os.fsdecode(name) for name in listed.split(b'\0')
                     if name and not _excluded(os.fsdecode(name), patterns)})
     docs = [name for name in files if PurePosixPath(name).name.lower() in _DOC_NAMES
@@ -269,6 +288,7 @@ def _git_evidence(repository_path, patterns):
                     'Ignored files, private-file patterns, configured exclusions, and submodule contents are omitted.',
     }
     fingerprint = _digest({'git': result, 'paths': {'modified': modified, 'untracked': untracked, 'files': files},
+                           'statuses': visible_statuses, 'index': index_entries,
                            'changed_file_markers': markers, 'exclusions': patterns})
     return result, fingerprint
 
@@ -378,6 +398,14 @@ def collect_project_evidence(engine, project_id):
             for row in db.execute(text(f'SELECT {fields} FROM {table} WHERE project_id=:pid ORDER BY id'), {'pid': project_id}):
                 content_digest.update(_digest(list(row)).encode())
                 _blob_digest(db, table, 'content' if table == 'notes' else 'description', row.id, content_digest)
+                content_digest.update(b'\0')
+        # Legacy accepted decisions still feed brief generation. Hash all of
+        # their text without loading long fields, but never foreign records.
+        for row in db.execute(text("SELECT id,updated_at FROM decisions WHERE project_id=:pid "
+                                   "AND status='accepted' ORDER BY id"), {'pid': project_id}):
+            content_digest.update(_digest(['decision', row.id, row.updated_at]).encode())
+            for field in ('title', 'description', 'rationale', 'evidence', 'limitations', 'next_step'):
+                _blob_digest(db, 'decisions', field, row.id, content_digest)
                 content_digest.update(b'\0')
         notes = db.execute(text('SELECT id,title,kind,reference,substr(content,1,1100) AS content '
                                'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 8'), {'pid': project_id}).mappings()

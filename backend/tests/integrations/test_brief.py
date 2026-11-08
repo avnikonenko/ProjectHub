@@ -78,13 +78,18 @@ def project_db(tmp_path):
 
 
 def test_brief_collects_multiple_scoped_sessions_and_keeps_decision_candidates_separate(project_db):
+    with Session(project_db) as db:
+        db.get(Project, 1).goals = 'Support reproducible local analysis'
+        db.commit()
     codex = FakeCodex()
     brief = refresh_brief(project_db, 1, codex)
     assert codex.reads == [('a-first', None), ('a-first', 'next'),
                           ('a-second', None), ('a-second', 'next')]
     excerpts = [source['text'] for source in codex.input['sources']]
-    assert len(excerpts) == 4
-    assert all('Conclusion from saved history' in text for text in excerpts[2:])
+    assert len(excerpts) == 5
+    assert 'Project A' in excerpts[2]
+    assert 'Support reproducible local analysis' in excerpts[2]
+    assert all('Conclusion from saved history' in text for text in excerpts[3:])
     assert 'Service --> Database' in excerpts[0] and 'Accepted evidence' in excerpts[1]
     assert not any(value in '\n'.join(excerpts)
                    for value in ('Foreign diagram', 'Tentative idea', 'Private decision'))

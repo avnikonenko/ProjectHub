@@ -28,6 +28,12 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - The stacked-layers logo appears in the README, with a transparent icon in the browser tab and sidebar.
 - Removed structured decision acceptance prompts from the interface while preserving historical records and audit history.
 
+### Fixed
+
+- Project status freshness now detects Git staging and edits to historical accepted decisions. Deleted files no longer make freshness permanently unknown.
+- Editing project details or the linked repository rechecks dashboard freshness.
+- Project goals and description now reach the project-status generator instead of being omitted from its evidence.
+
 ### Maintenance
 
 - Extracted brief rendering and source-reference components while preserving the existing dashboard and revision history.

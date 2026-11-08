@@ -213,7 +213,8 @@ def refresh_brief(engine, project_id, manager):
             name = project.name
             previous = comparison_baseline(read_brief(db, project_id))
         for source in snapshot['sources']:
-            if source.get('classification') == 'verified' or str(source['id']).startswith('task:'):
+            if (source.get('classification') == 'verified' or source['id'] == 'project:metadata'
+                    or str(source['id']).startswith('task:')):
                 records.append({'text': source['text'], 'sources': [source]})
         history, coverage = archive_history(engine, project_id, manager)
         if not records and not history:

@@ -5,7 +5,7 @@ import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
 
-type GenerationProps = { base: string; generation: { model: string; effort: string } };
+type GenerationProps = { base: string; generation: { model: string; effort: string }; evidenceVersion?: string };
 type EvidenceFreshness = {
   analysis_generated_at: string | null;
   stale: boolean | null;
@@ -36,7 +36,7 @@ type Brief = {
   coverage: string[];
 };
 
-export function ProjectBrief({ base, generation }: GenerationProps) {
+export function ProjectBrief({ base, generation, evidenceVersion }: GenerationProps) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -61,7 +61,7 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
         if (!abort.signal.aborted) setEvidenceError(`Could not check project status freshness: ${e.message}`);
       });
     return () => abort.abort();
-  }, [base, latestVersion, loading]);
+  }, [base, latestVersion, loading, evidenceVersion]);
   useEffect(() => {
     const id = ++request.current;
     api<Brief | null>(`${base}/codex/brief`)

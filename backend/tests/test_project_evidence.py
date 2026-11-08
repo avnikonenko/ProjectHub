@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.models import CodexSession, Note, Project, Task
+from backend.app.models import CodexSession, Decision, Note, Project, Task
 from backend.app import project_evidence as evidence
 
 
@@ -184,6 +184,61 @@ def test_change_detection_marks_skipped_content_as_incomplete(env, tmp_path, mon
     data = evidence.collect_project_evidence(env, 1)
     assert data['git_error'] is None
     assert data['git']['change_detection_limited'] is True
+
+
+def test_git_staging_deletions_and_renames_have_complete_distinct_fingerprints(env, tmp_path):
+    repo = repository(tmp_path)
+    link(env, repo)
+    (repo / 'source.py').write_text('modified\n')
+    unstaged = evidence.collect_project_evidence(env, 1)
+    git(repo, 'add', 'source.py')
+    staged = evidence.collect_project_evidence(env, 1)
+    assert staged['fingerprint'] != unstaged['fingerprint']
+    assert not staged['git']['change_detection_limited']
+    # Changing only the staged blob can leave both porcelain columns unchanged.
+    (repo / 'source.py').write_text('working copy\n')
+    partially_staged = evidence.collect_project_evidence(env, 1)
+    blob = subprocess.run(['git', '-C', str(repo), 'hash-object', '-w', '--stdin'],
+                          input='alternate index\n', check=True, capture_output=True, text=True).stdout.strip()
+    git(repo, 'update-index', '--cacheinfo', f'100644,{blob},source.py')
+    restaged = evidence.collect_project_evidence(env, 1)
+    assert restaged['fingerprint'] != partially_staged['fingerprint']
+    (repo / 'README.md').unlink()
+    deleted = evidence.collect_project_evidence(env, 1)
+    assert 'README.md' in deleted['git']['modified']
+    assert not deleted['git']['change_detection_limited']
+    assert evidence.collect_project_evidence(env, 1)['fingerprint'] == deleted['fingerprint']
+    git(repo, 'add', 'source.py')
+    git(repo, 'mv', 'source.py', 'renamed.py')
+    renamed = evidence.collect_project_evidence(env, 1)
+    assert {'source.py', 'renamed.py'} <= set(renamed['git']['modified'])
+    assert not renamed['git']['change_detection_limited']
+    assert renamed['fingerprint'] != deleted['fingerprint']
+
+
+def test_fingerprint_tracks_only_project_accepted_decision_content(env):
+    with Session(env) as db:
+        db.add_all([
+            Decision(id=1, project_id=1, title='Accepted', status='accepted', evidence='x' * 10000),
+            Decision(id=2, project_id=2, title='Foreign accepted', status='accepted'),
+            Decision(id=3, project_id=1, title='Proposal', status='proposed'),
+        ])
+        db.commit()
+    first = evidence.collect_project_evidence(env, 1)['fingerprint']
+    with Session(env) as db:
+        db.get(Decision, 2).evidence = 'Foreign edit'
+        db.get(Decision, 3).evidence = 'Proposal edit'
+        db.commit()
+    assert evidence.collect_project_evidence(env, 1)['fingerprint'] == first
+    with Session(env) as db:
+        db.get(Decision, 1).evidence += 'Changed beyond excerpt limit'
+        db.commit()
+    changed = evidence.collect_project_evidence(env, 1)['fingerprint']
+    assert changed != first
+    with Session(env) as db:
+        db.get(Decision, 1).status = 'proposed'
+        db.commit()
+    assert evidence.collect_project_evidence(env, 1)['fingerprint'] != changed
 
 
 def test_empty_detached_and_worktree_repositories(env, tmp_path):
