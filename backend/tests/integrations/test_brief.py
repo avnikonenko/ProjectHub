@@ -48,6 +48,8 @@ class FakeCodex:
         ref = 'foreign' if self.foreign_citation else data['sources'][-1]['id']
         diagram = data['sources'][0]['id']
         sections = {name: [] for name in SECTION_NAMES}
+        metadata = next(source for source in data['sources'] if 'Project objective and scope' in source['origins'])
+        sections['overview'] = [{'text': 'Project A provides local analysis.', 'source_ids': [metadata['id']], 'classification': 'reported'}]
         sections['decision_candidates'] = [{'text': 'Possible decision', 'source_ids': [ref], 'classification': 'reported'}]
         sections['architecture'] = [{'text': 'Service stores records in a database', 'source_ids': [diagram], 'classification': 'reported'}]
         validation = next(source for source in data['sources'] if 'Available validation evidence' in source['origins'])
@@ -60,6 +62,11 @@ class FakeCodex:
                 {'text': 'A reported check', 'source_ids': [diagram], 'classification': 'reported'},
                 {'text': 'A second reported check', 'source_ids': [metadata['id']], 'classification': 'reported'},
             ]
+        if getattr(self, 'specific_validation', False):
+            sections['validation'] = [{
+                'text': 'The discussion reports migration tests passed; no independent log is saved.',
+                'source_ids': [ref, validation['id']], 'classification': 'reported',
+            }]
         if getattr(self, 'invalid_status', False):
             sections['next_steps'][0]['classification'] = 'guaranteed'
         if getattr(self, 'missing_status', False):
@@ -230,4 +237,55 @@ def test_status_does_not_save_sources_for_discarded_validation_points(project_db
     status = refresh_brief(project_db, 1, codex)
     assert [entry['text'] for entry in status['sections']['validation']][1:] == ['A reported check']
     assert 'evidence:validation' in {source['id'] for source in status['sources']}
-    assert 'project:metadata' not in {source['id'] for source in status['sources']}
+    assert 'A second reported check' not in [entry['text'] for entry in status['sections']['validation']]
+
+
+def test_overview_requires_purpose_and_reported_architecture():
+    from backend.app.integrations.codex.brief import validate_sections
+
+    sections = {name: [] for name in SECTION_NAMES}
+    sections['current_status'] = [{'text': 'Current work', 'source_ids': ['source'],
+                                   'classification': 'reported'}]
+    raw = json.dumps({'sections': sections, 'project_map': {'nodes': [], 'edges': []}})
+    with pytest.raises(CodexError, match='overview or reported architecture'):
+        validate_sections(raw, [{'id': 'source'}])
+
+
+def test_overview_keeps_recent_discussion_and_code_available_directly(project_db, monkeypatch):
+    from backend.app import project_evidence
+
+    original_collect = project_evidence.collect_project_evidence
+
+    def collect(engine, project_id):
+        result = original_collect(engine, project_id)
+        result['sources'].append({
+            'id': 'session:1:turn:latest', 'label': 'Latest project discussion',
+            'text': 'The ownership conflict was fixed; work is now on focused project overviews.',
+            'classification': 'reported', 'recent': True, 'session_id': 1, 'turn_id': 'latest',
+        })
+        return result
+
+    monkeypatch.setattr(project_evidence, 'collect_project_evidence', collect)
+    monkeypatch.setattr(project_evidence, 'collect_repository_code', lambda path: {
+        'sources': [{'id': 'repository:code:main.py', 'label': 'main.py', 'path': 'main.py',
+                     'text': 'app = FastAPI()', 'classification': 'verified'}],
+        'coverage': ['Inspected one source excerpt.'],
+    })
+    with Session(project_db) as db:
+        db.get(Project, 1).repository_path = '/unavailable-for-metadata'
+        db.commit()
+    codex = FakeCodex()
+    refresh_brief(project_db, 1, codex)
+    assert any(source['kind'] == 'repository_code' and 'FastAPI' in source['text']
+               for source in codex.input['sources'])
+    assert any(source['kind'] == 'recent_original_excerpt' and 'ownership conflict was fixed' in source['text']
+               for source in codex.input['sources'])
+    assert 'Inspected one source excerpt.' in codex.input['coverage']
+
+
+def test_specific_reported_validation_is_not_removed_with_generic_duplicates(project_db):
+    codex = FakeCodex()
+    codex.specific_validation = True
+    status = refresh_brief(project_db, 1, codex)
+    assert len(status['sections']['validation']) == 2
+    assert status['sections']['validation'][1]['text'].startswith('The discussion reports migration tests')

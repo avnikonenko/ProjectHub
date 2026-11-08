@@ -119,10 +119,12 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
       }
     }
   }
-  const hasCurrentStatus = !!brief?.sections.current_status?.length;
+  const overviewTexts = new Set((brief?.sections.overview ?? [])
+    .map((entry) => entry.text.trim().toLocaleLowerCase().replace(/\s+/g, ' ')));
   const sections: [keyof Brief['sections'], string, boolean][] = [
-    ['current_status', 'Current status', false],
-    ['overview', hasCurrentStatus ? 'Project objective' : 'Overview', hasCurrentStatus],
+    ['overview', 'Overview', false],
+    ['current_status', 'Current focus', false],
+    ['architecture', 'Reported architecture', false],
     ['unresolved_problems', 'Unresolved problems', false],
     ['open_questions', 'Open questions', false],
     ['next_steps', 'Recommended next steps', false],
@@ -131,10 +133,17 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
     ['implemented', 'Implemented work', true],
     ['work_in_progress', 'Work in progress', true],
     ['validation', 'Validation', true],
-    ['architecture', 'Architecture', true],
   ];
   const visibleSections = sections.flatMap(([key, title, collapsed]) => {
-    const entries = brief?.sections[key];
+    const entries = key === 'current_status'
+      ? brief?.sections.current_status?.filter((entry) =>
+        !overviewTexts.has(entry.text.trim().toLocaleLowerCase().replace(/\s+/g, ' ')))
+      : brief?.sections[key];
+    if (key === 'architecture' && !entries?.length) {
+      return [{ key, title, collapsed, entries: [
+        { text: 'Architecture not documented in this saved summary.', source_ids: [] },
+      ] }];
+    }
     return entries?.length ? [{ key, title, collapsed, entries }] : [];
   });
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
@@ -188,7 +197,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
           <summary>Summary details</summary>
           {brief?.generation && <SavedGeneration generation={brief.generation} />}
           <p className="brief-note">
-            Generating sends relevant saved conversations, notes, TODOs, Git metadata and file paths,
+            Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
             historical decisions, architecture, and the previous summary to OpenAI.
           </p>
           <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}

@@ -7,7 +7,7 @@ ProjectHub collects evidence locally when the dashboard checks brief freshness. 
 - User-supplied objective, project metadata, notes, and TODOs.
 - Saved, indexed turns from currently linked Codex sessions, plus imported conversation notes.
 - Git branch, HEAD, recent commit metadata, visible modified/untracked paths, and relevant filenames for documentation, tests, and dependency manifests.
-- Bounded hashes of visible changed files for detecting another edit to the same path. File contents are not included in repository evidence or sent as source code.
+- Bounded hashes of visible changed files for detecting another edit to the same path. File contents are not included in these automatic freshness checks.
 
 Git inspection uses argument arrays, read-only settings, output/time limits, and disables configured filters and hooks. It supports Git worktrees. Git-ignored paths, submodule contents, generated directories, and common private-file patterns are omitted. No remote fetch or project test command is run.
 
@@ -37,3 +37,5 @@ On the Dashboard, click **Refresh project status** to generate an updated summar
 New summaries distinguish verified observations, reported claims, inferences, and unresolved issues. Only exact observations collected by ProjectHub can retain a verified label. The validation section states when no independent test results are available; this does not imply that tests were never run.
 
 The generator reads linked history in bounded batches and reuses cached batch summaries when possible. Long histories can take longer and the final summary can omit details. Previous summaries are comparison context, not evidence. Existing versions remain readable in **Previous versions**. Failed generation keeps the last successful version.
+
+An explicit Project status refresh also supplies bounded source-code and documentation excerpts to Codex. Repository text is untrusted data and is never executed. Architecture can be reconstructed from those excerpts and session evidence; inferred connections remain labeled. Excerpt coverage is recorded with the saved summary.

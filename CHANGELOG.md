@@ -27,6 +27,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Project status leads with a concrete overview and reconstructs reported architecture from bounded repository excerpts and sessions. Recent original discussion can correct older compressed summaries; generic validation gaps are no longer duplicated.
+
 - Register Codex profiles from app-wide Settings; project AI settings retain only profile selection.
 
 - Load project workspaces only when opened, and cancel browser requests for history pages when leaving the view.
