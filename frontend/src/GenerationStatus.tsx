@@ -66,7 +66,7 @@ function describeProgress(stage: string, kind: 'brief' | 'qa') {
   if (batch) return `Waiting for Codex to write questions and answers (group ${batch[1]} of ${batch[2]})`;
   switch (stage) {
     case 'Reading project sessions': return 'Finding linked conversations';
-    case 'Summarizing history batch': return 'Waiting for Codex to summarize part of the conversation history';
+    case 'Summarizing history batch': return 'Summarizing conversations';
     case 'Reusing cached evidence batch': return 'Reusing a previously saved summary';
     case 'Combining evidence': return 'Waiting for Codex to combine the evidence';
     case 'Summarizing project notes and decisions': return 'Gathering project notes and decisions';

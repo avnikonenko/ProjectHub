@@ -893,12 +893,27 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
   );
 }
 
+function useSettingsDismiss() {
+  const panel = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function dismiss(event: PointerEvent) {
+      if (event.target instanceof Node && !panel.current?.contains(event.target)) {
+        panel.current?.removeAttribute('open');
+      }
+    }
+    document.addEventListener('pointerdown', dismiss);
+    return () => document.removeEventListener('pointerdown', dismiss);
+  }, []);
+  return panel;
+}
+
 function AppSettings() {
+  const panel = useSettingsDismiss();
   const [addingProfile, setAddingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   return (
     <>
-      <details className="generation-settings">
+      <details ref={panel} className="generation-settings">
         <summary className="button secondary" aria-label="App settings" title="App settings">⚙</summary>
         <div className="generation-options">
           <h3>Settings</h3>
@@ -932,6 +947,7 @@ function AppSettings() {
 function GenerationSettings({ base, generation, onChange }: GenerationProps & {
   onChange: (settings: Generation) => void;
 }) {
+  const panel = useSettingsDismiss();
   const [open, setOpen] = useState(false);
   const [instructions, setInstructions] = useState<string | null>(null);
   const [loadingInstructions, setLoadingInstructions] = useState(false);
@@ -955,7 +971,7 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
 
   return (
     <>
-      <details className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <details ref={panel} className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
         {open && <GenerationOptions base={base} generation={generation} onChange={onChange}>
           <button type="button" className="secondary" disabled={loadingInstructions} onClick={openInstructions}>
