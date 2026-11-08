@@ -56,19 +56,45 @@ def _validated(raw, sources, limit):
 
 def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     from .ai_instructions import ai_instructions
-    serialized = json.dumps({'version': CACHE_VERSION, 'project_id': project_id, 'stage': stage,
-                             'ai_instructions': ai_instructions(),
-                             **({'model': manager.generation_model} if getattr(manager, 'generation_model', None) else {}),
-                             **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
-                             **({'account': manager.generation_account} if getattr(manager, 'generation_account', None) else {}),
-                             'limit': limit, 'payload': payload, 'sources': sources},
-                            ensure_ascii=False, sort_keys=True, separators=(',', ':'))
-    fingerprint = hashlib.sha256(serialized.encode()).hexdigest()
+    cache_inputs = {'version': CACHE_VERSION, 'project_id': project_id, 'stage': stage,
+                    'ai_instructions': ai_instructions(),
+                    **({'model': manager.generation_model} if getattr(manager, 'generation_model', None) else {}),
+                    **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
+                    **({'account': manager.generation_account} if getattr(manager, 'generation_account', None) else {}),
+                    'limit': limit, 'payload': payload}
+    # Reduction prompts omit source.updated_at; it is citation metadata only.
+    # Keep the payload exact, including any timestamps actually seen by the model.
+    semantic_sources = [{key: value for key, value in source.items() if key != 'updated_at'}
+                        for source in sources]
+
+    def fingerprint_for(source_metadata):
+        serialized = json.dumps({**cache_inputs, 'sources': source_metadata}, ensure_ascii=False,
+                                sort_keys=True, separators=(',', ':'))
+        return hashlib.sha256(serialized.encode()).hexdigest()
+
+    fingerprint = fingerprint_for(semantic_sources)
     with Session(engine) as db:
         saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
+        legacy = False
+        if saved is None and semantic_sources != sources:
+            saved = db.get(ProjectHistoryBatch, (project_id, fingerprint_for(sources)))
+            legacy = saved is not None
         if saved is not None:
+            # Cached summaries keep their text, but citations must resolve to the
+            # current batch and carry current metadata, never old timestamps.
+            try:
+                raw = json.dumps({'evidence': [
+                    {'text': item['text'], 'source_ids': [source['id'] for source in item['sources']]}
+                    for item in saved.evidence
+                ]})
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CodexError('Saved history summary has invalid citation data.') from exc
+            result = _validated(raw, sources, limit)
+            if legacy:
+                db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=fingerprint, evidence=result))
+                db.commit()
             progress.update(project_id, stage='Reusing cached evidence batch')
-            return saved.evidence, True
+            return result, True
     progress.update(project_id, stage='Summarizing history batch' if stage == 'history' else 'Combining evidence')
     prompt = ('Summarize the supplied project discussion evidence into compact, concrete facts useful for '
               'a later project handoff. Preserve outcomes, unresolved questions, corrections, decisions, '

@@ -328,3 +328,97 @@ def test_retry_reuses_successful_batches_before_bad_citation(env):
     assert result
     assert manager.inputs.count(first_input) == 1
     assert any('1 reused from cache' in item for item in coverage)
+
+
+def test_small_long_note_edit_reuses_unchanged_chunks_and_refreshes_citations(env):
+    engine, manager = env
+    evidence = [{'text': 'x' * 1500, 'sources': [
+        {'id': f'note:1:{i}', 'label': 'Note', 'text': 'x' * 1500, 'updated_at': 'old'}
+    ]} for i in range(40)]
+    summarize_evidence(engine, 1, manager, evidence)
+    first_calls = len(manager.inputs)
+    assert first_calls > 1
+    for item in evidence:
+        item['sources'][0]['updated_at'] = 'new'
+    evidence[-1]['text'] += '!'
+    evidence[-1]['sources'][0]['text'] += '!'
+    result = summarize_evidence(engine, 1, manager, evidence)
+    assert len(manager.inputs) - first_calls == 1
+    assert all(source['updated_at'] == 'new' for item in result for source in item['sources'])
+
+
+@pytest.mark.parametrize('change', ['label', 'text', 'classification', 'model', 'effort', 'account'])
+def test_semantic_cache_invalidates_evidence_and_generation_settings(env, change):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    source = {'id': 'note:1', 'label': 'Note', 'text': 'Original',
+              'classification': 'reported', 'updated_at': 'old'}
+    payload = {'evidence': [{'text': 'Summary input', 'source_ids': ['note:1'],
+                             'source_labels': ['Note']}]}
+    _summarize(engine, 1, manager, payload, [source], 'reduction')
+    if change in ('label', 'text', 'classification'):
+        source[change] = 'Changed'
+        if change == 'label':
+            payload['evidence'][0]['source_labels'] = ['Changed']
+    else:
+        setattr(manager, 'generation_' + change, 'changed-setting')
+    _, cached = _summarize(engine, 1, manager, payload, [source], 'reduction')
+    assert not cached
+    assert len(manager.inputs) == 2
+
+
+def test_model_visible_timestamp_still_invalidates_cache(env):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    source = {'id': 'note:1', 'label': 'Note', 'text': 'Original', 'updated_at': 'old'}
+    _summarize(engine, 1, manager, {'sources': [source]}, [source], 'history')
+    source['updated_at'] = 'new'
+    _, cached = _summarize(engine, 1, manager, {'sources': [source]}, [source], 'history')
+    assert not cached
+    assert len(manager.inputs) == 2
+
+
+def test_semantic_cache_promotes_matching_legacy_entry_and_rebinds_metadata(env):
+    import hashlib
+    from backend.app.integrations.codex.ai_instructions import ai_instructions
+    from backend.app.integrations.codex.archive import CACHE_VERSION, _summarize
+
+    engine, manager = env
+    source = {'id': 'note:1', 'label': 'Note', 'text': 'Original', 'updated_at': 'old'}
+    payload = {'evidence': [{'text': 'Original', 'source_ids': ['note:1'], 'source_labels': ['Note']}]}
+    serialized = json.dumps({'version': CACHE_VERSION, 'project_id': 1, 'stage': 'reduction',
+                             'ai_instructions': ai_instructions(), 'limit': 8,
+                             'payload': payload, 'sources': [source]},
+                            ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    fingerprint = hashlib.sha256(serialized.encode()).hexdigest()
+    with Session(engine) as db:
+        db.add(ProjectHistoryBatch(project_id=1, fingerprint=fingerprint,
+                                   evidence=[{'text': 'Cached summary', 'sources': [source]}]))
+        db.commit()
+    first, cached = _summarize(engine, 1, manager, payload, [source], 'reduction')
+    assert cached and first[0]['text'] == 'Cached summary'
+    source['updated_at'] = 'new'
+    second, cached = _summarize(engine, 1, manager, payload, [source], 'reduction')
+    assert cached
+    assert second[0]['sources'][0]['updated_at'] == 'new'
+    assert manager.inputs == []
+
+
+def test_cached_citations_remain_project_and_batch_scoped(env):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    source = {'id': 'note:1', 'label': 'Note', 'text': 'Original'}
+    payload = {'sources': [source]}
+    _summarize(engine, 1, manager, payload, [source], 'history')
+    _, cached = _summarize(engine, 2, manager, payload, [source], 'history')
+    assert not cached and len(manager.inputs) == 2
+    with Session(engine) as db:
+        row = db.scalar(select(ProjectHistoryBatch).where(ProjectHistoryBatch.project_id == 1))
+        row.evidence = [{'text': 'Tampered summary', 'sources': [{'id': 'foreign'}]}]
+        db.commit()
+    with pytest.raises(CodexError, match='foreign'):
+        _summarize(engine, 1, manager, payload, [source], 'history')
+    assert len(manager.inputs) == 2
