@@ -409,19 +409,20 @@ def test_session_sync_pause_is_scoped_audited_and_preserves_records(setup):
 def test_project_ai_instructions_are_scoped_and_used_for_review(setup):
     base = '/api/projects/1/codex'
     route = base + '/instructions'
-    assert setup.client.get(route).json() == {'instructions': ''}
+    assert 'Be compact by default' in setup.client.get(route).json()['instructions']
     assert setup.client.patch(route, json={'instructions': 'x' * 8001}).status_code == 422
     assert setup.client.patch('/api/projects/999/codex/instructions', json={'instructions': 'Unknown'}).status_code == 404
     text = 'Use British English.\nStart with the answer.'
     assert setup.client.patch(route, json={'instructions': text}).json() == {'instructions': text}
     assert setup.client.get(route).json() == {'instructions': text}
-    assert setup.client.get('/api/projects/2/codex/instructions').json() == {'instructions': ''}
+    assert 'Be compact by default' in setup.client.get('/api/projects/2/codex/instructions').json()['instructions']
     sid = create_session(setup)
     response = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'Review the project'})
     assert response.status_code == 201
     params = next(params for method, params in setup.manager.clients[sid].calls if method == 'turn/start')
     assert text in params['input'][0]['text']
-    assert 'Be compact by default' in params['input'][0]['text']
+    assert 'Be compact by default' not in params['input'][0]['text']
+    assert 'Remain read-only' in params['input'][0]['text']
     assert params['sandboxPolicy']['type'] == 'readOnly'
     assert text not in response.json()['content']
     assert setup.client.patch(route, json={'instructions': ''}).json() == {'instructions': ''}

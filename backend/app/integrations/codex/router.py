@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
-from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, use_project_instructions
+from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home
 from .qa import read_qa, refresh_qa
@@ -226,7 +226,11 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
 @router.get('/instructions')
 def get_instructions(project_id: int, db: DB):
     project(db, project_id)
-    return {'instructions': read_project_instructions(db, project_id)}
+    saved = read_project_instructions(db, project_id)
+    try:
+        return {'instructions': shared_recommendations() if saved is None else saved}
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.patch('/instructions')

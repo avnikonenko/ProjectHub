@@ -917,7 +917,7 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
       </details>
       {instructions !== null && <Form
         title="Project AI instructions"
-        fields={[{ name: 'instructions', label: 'Guidance for AI responses in this project. Leave blank to use defaults.',
+        fields={[{ name: 'instructions', label: 'Edit or remove recommendations for this project. Leave blank for none.',
           type: 'textarea', rows: 10, maxLength: 8000 }]}
         initial={{ instructions }}
         onClose={() => setInstructions(null)}
