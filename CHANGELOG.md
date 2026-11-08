@@ -23,6 +23,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Latest activity includes the linked repository’s three most recent Git commits in date order with project activity.
+
 - AI generation shows plain-language stages and elapsed time across project tabs.
 
 - Renamed the dashboard’s main summary to Project status; Dashboard remains the page name.

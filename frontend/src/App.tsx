@@ -9,7 +9,7 @@ import {
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 import { ProjectBrief } from './ProjectBrief';
-import { RepositoryOverview } from './RepositoryOverview';
+import { RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
@@ -262,6 +262,8 @@ function ProjectWorkspace({
       },
     });
   }
+  const repository = useRepositoryOverview(base, view === 'Dashboard' && !results
+    ? overview?.project.repository_path ?? null : null);
   if (!overview)
     return (
       <main>
@@ -274,6 +276,20 @@ function ProjectWorkspace({
       </main>
     );
   const { project, tasks, notes, activity } = overview;
+  const latestActivity = [
+    ...activity.map((event) => ({
+      key: `event:${event.id}`,
+      title: label(event.action ?? event.event_type ?? 'Updated'),
+      detail: `${event.entity_type ?? ''}${event.entity_id ? ` #${event.entity_id}` : ''}`,
+      time: event.created_at,
+    })),
+    ...(repository.status?.commits ?? []).map((commit) => ({
+      key: `commit:${commit.hash}`,
+      title: commit.subject || '(no subject)',
+      detail: `Git commit · ${commit.hash.slice(0, 8)}`,
+      time: commit.committed_at,
+    })),
+  ].sort((a, b) => (Date.parse(b.time ?? '') || 0) - (Date.parse(a.time ?? '') || 0));
   const activeTodos = tasks.filter((task) => task.status !== 'completed');
   const completedTodos = tasks.filter((task) => task.status === 'completed');
   const todoRow = (task: RecordData) => (
@@ -450,8 +466,7 @@ function ProjectWorkspace({
                         </>
                       )}
                       {project.repository_path && (
-                        <RepositoryOverview key={`${base}:${project.repository_path}`}
-                          base={base} path={project.repository_path} />
+                        <RepositoryOverview path={project.repository_path} {...repository} />
                       )}
                       {project.tags.length > 0 && (
                         <div className="tags">
@@ -462,25 +477,18 @@ function ProjectWorkspace({
                   )}
                   <section className="card">
                     <h2>Latest activity</h2>
-                    <PagedItems label="Activity pages">{activity.map((a) => (
-                      <div className="activity" key={a.id}>
+                    <PagedItems label="Activity pages">{latestActivity.map((item) => (
+                      <div className="activity" key={item.key}>
                         <span className="activity-dot" />
                         <div>
-                          <strong>
-                            {label(a.action ?? a.event_type ?? 'Updated')}
-                          </strong>
-                          <p>
-                            {a.entity_type ?? ''}{' '}
-                            {a.entity_id ? `#${a.entity_id}` : ''}
-                          </p>
-                          <small>
-                            {new Date(a.created_at).toLocaleString()}
-                          </small>
+                          <strong>{item.title}</strong>
+                          <p>{item.detail}</p>
+                          {item.time && <small>{new Date(item.time).toLocaleString()}</small>}
                         </div>
                       </div>
                     ))}
                     </PagedItems>
-                    {!activity.length && <Empty>No activity recorded.</Empty>}
+                    {!latestActivity.length && <Empty>No activity recorded.</Empty>}
                   </section>
                 </div>
               </>

@@ -77,10 +77,11 @@ def repository_snapshot(value):
     head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
     commits = []
     if head.returncode == 0:
-        for line in git('log', '-3', '--no-show-signature', '--format=%h%x09%s', 'HEAD', '--').stdout.split('\n'):
-            commit, separator, subject = line.partition('\t')
-            if separator:
-                commits.append({'hash': commit, 'subject': subject[:240]})
+        for line in git('log', '-3', '--no-show-signature', '--format=%h%x09%cI%x09%s', 'HEAD', '--').stdout.split('\n'):
+            fields = line.split('\t', 2)
+            if len(fields) == 3:
+                commit, committed_at, subject = fields
+                commits.append({'hash': commit, 'subject': subject[:240], 'committed_at': committed_at})
     # Status may invoke configured clean/process filters when checking file contents.
     # Disable each driver rather than executing repository-defined commands.
     keys = git('config', '--null', '--name-only', '--get-regexp',

@@ -353,6 +353,7 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     (repo / 'file.txt').write_text('original\n')
     git('add', '.')
     for i in range(4):
+        monkeypatch.setenv('GIT_COMMITTER_DATE', f'2025-01-02T03:04:0{i}+05:30')
         git('commit', '--allow-empty', '-m', f'Change {i}')
     assert client.get(url).json()['dirty'] is False
     git('checkout', '--detach', 'HEAD')
@@ -366,6 +367,9 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     result = response.json()
     assert result['branch'] is None and result['dirty'] is True
     assert [commit['subject'] for commit in result['commits']] == ['Change 3', 'Change 2', 'Change 1']
+    assert [commit['committed_at'] for commit in result['commits']] == [
+        '2025-01-02T03:04:03+05:30', '2025-01-02T03:04:02+05:30', '2025-01-02T03:04:01+05:30',
+    ]
     assert not (repo / 'ran-filter').exists()
     assert not (repo / 'ran-monitor').exists()
     assert (repo / '.git/index').read_bytes() == index
