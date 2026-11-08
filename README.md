@@ -44,11 +44,15 @@ Edit [AI_RECOMMENDATIONS.md](AI_RECOMMENDATIONS.md) to adjust shared AI writing 
 
 There is no separate question/answer acceptance workflow. Older structured records remain available in exports and as historical reference.
 
+Refreshing the browser restores progress for an ongoing Project status or AI Q&A request after reopening its project. It does not start another generation. Progress recovery requires the same ProjectHub server process to remain running.
+
 The dashboard checks brief freshness locally without calling AI. A successful refresh saves an evidence baseline; later Git, history, note, or TODO changes can mark it outdated. See [project evidence](docs/PROJECT_EVIDENCE.md) for limits and exclusions.
 
 **Project AI instructions:** Open **AI settings → Project AI instructions** to set wording, language, or other response preferences for this project. These apply to future Project status, AI Q&A, Ask Project, and Codex review requests sent through ProjectHub. The editor starts with the shared recommendations. Edit or remove any of them, or save it blank to use none. Read-only and evidence rules still apply.
 
 **Validation:** Test files and conversation claims do not establish that tests passed. Look for recorded test results.
+
+Project status and AI Q&A can reuse a session’s indexed text after checking current Codex metadata, avoiding another turn-by-turn history read. Old, missing, or incomplete indexes fall back to the history reader. Sessions from a separately selected Codex profile currently use that fallback. The first uncached analysis of long history can still take time, and changing the model or instructions may require new AI summaries.
 
 Saved Codex history syncs locally in the background about once a minute while ProjectHub runs. Unchanged sessions are skipped, and previous search data remains usable if a read fails. Use **Pause automatic sync** in Sources for an unavailable session; its saved history and requests remain intact. Manual refresh is available in History. Sync never starts AI generation; imported ChatGPT share links remain snapshots. To disable sync or change the interval, add `[history]` with `auto_sync = false` or `sync_interval = 120` to the config.
 

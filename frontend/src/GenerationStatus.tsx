@@ -7,7 +7,57 @@ type Progress = {
   stage: string;
   sessions: number;
   error?: string;
+  started_at?: string;
 };
+
+export function useGenerationRecovery(base: string) {
+  const [checking, setChecking] = useState(true);
+  const [running, setRunning] = useState({ brief: false, qa: false });
+  const [version, setVersion] = useState({ brief: 0, qa: 0 });
+  const [errors, setErrors] = useState({ brief: '', qa: '' });
+  useEffect(() => {
+    const abort = new AbortController();
+    const timers: Partial<Record<'brief' | 'qa', ReturnType<typeof setTimeout>>> = {};
+    const checked = new Set<string>();
+    function poll(kind: 'brief' | 'qa', recovering = false) {
+      void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
+        .then((status) => {
+          if (abort.signal.aborted) return;
+          checked.add(kind);
+          if (checked.size === 2) setChecking(false);
+          setErrors((previous) => ({ ...previous, [kind]: '' }));
+          if (status.state === 'running') {
+            setRunning((previous) => ({ ...previous, [kind]: true }));
+            timers[kind] = setTimeout(() => poll(kind, true), 1500);
+          } else if (recovering || (status.state === 'failed' && status.started_at)) {
+            setRunning((previous) => ({ ...previous, [kind]: false }));
+            if (recovering) setVersion((previous) => ({ ...previous, [kind]: previous[kind] + 1 }));
+            const error = status.state === 'failed'
+              ? status.error || 'AI generation failed. The previous result is preserved.'
+              : status.state === 'idle'
+                ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
+                : '';
+            setErrors((previous) => ({ ...previous, [kind]: error }));
+          }
+        })
+        .catch((e: Error) => {
+          if (abort.signal.aborted) return;
+          setErrors((previous) => ({ ...previous, [kind]: `Could not recover AI progress: ${e.message}` }));
+          timers[kind] = setTimeout(() => poll(kind, recovering), 1500);
+        });
+    }
+    poll('brief');
+    poll('qa');
+    return () => {
+      abort.abort();
+      Object.values(timers).forEach(clearTimeout);
+    };
+  }, [base]);
+  return {
+    checking, running, version, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
+    clearError: () => setErrors({ brief: '', qa: '' }),
+  };
+}
 
 function describeProgress(stage: string, kind: 'brief' | 'qa') {
   const session = /^Reading session (\d+) of (\d+)$/.exec(stage);
@@ -48,10 +98,10 @@ export function GenerationStatus({
 }) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState('');
-  const [startedAt] = useState(Date.now);
+  const [startedAt, setStartedAt] = useState(Date.now);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    const timer = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000))), 1000);
     return () => clearInterval(timer);
   }, [startedAt]);
   useEffect(() => {
@@ -64,7 +114,14 @@ export function GenerationStatus({
         const status = await api<Progress>(`${base}/codex/generation/status?${query}`, { signal: abort.signal });
         if (abort.signal.aborted) return;
         // A fast first poll can return the previous request's terminal state.
-        if (status.state === 'running') sawRunning = true;
+        if (status.state === 'running') {
+          sawRunning = true;
+          const started = Date.parse(status.started_at ?? '');
+          if (Number.isFinite(started)) {
+            setStartedAt(started);
+            setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+          }
+        }
         if (sawRunning) setProgress(status);
         setError('');
       } catch (e) {

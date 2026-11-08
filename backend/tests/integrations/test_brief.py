@@ -122,8 +122,10 @@ def test_failed_refresh_preserves_last_brief(project_db, failure):
     codex = FakeCodex()
     old = refresh_brief(project_db, 1, codex)
     setattr(codex, failure, True)
-    with pytest.raises(CodexError, match='foreign sources|History unavailable'):
+    with pytest.raises(CodexError, match='foreign sources|History unavailable') as exc:
         refresh_brief(project_db, 1, codex)
+    from backend.app.integrations.codex import progress
+    assert progress.read(1, 'brief')['error'] == str(exc.value)
     with Session(project_db) as db:
         assert read_brief(db, 1) == old
 

@@ -1,6 +1,8 @@
 """Per-project snapshots for the active generation and each kind's last result."""
 import threading
 
+from ...models import utcnow
+
 _lock = threading.Lock()
 _active = {}
 _snapshots = {}
@@ -16,7 +18,7 @@ def begin(project_id, kind):
         if project_id in _active:
             raise RuntimeError('Generation progress is already active for this project.')
         _active[project_id] = kind
-        _snapshots[project_id, kind] = {**_idle(), 'state': 'running', 'stage': 'Starting generation'}
+        _snapshots[project_id, kind] = {**_idle(), 'state': 'running', 'stage': 'Starting generation', 'started_at': utcnow()}
 
 
 def update(project_id, **fields):

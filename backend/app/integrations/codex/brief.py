@@ -333,8 +333,8 @@ def refresh_brief(engine, project_id, manager):
             db.commit()
             progress.finish(project_id)
             return read_brief(db, project_id)
-    except Exception:
-        progress.finish(project_id, error='Brief generation failed. The previous saved brief is preserved.')
+    except Exception as exc:
+        progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Brief generation failed. The previous saved brief is preserved.')
         raise
     finally:
         generation_lock.release()

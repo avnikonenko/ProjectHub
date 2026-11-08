@@ -50,7 +50,7 @@ type Brief = {
   coverage: string[];
 };
 
-export function ProjectBrief({ base, generation, evidenceVersion, visible, onGenerating }: GenerationProps & { visible: boolean; onGenerating: (active: boolean) => void }) {
+export function ProjectBrief({ base, generation, evidenceVersion, visible, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { visible: boolean; onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -82,7 +82,9 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
       .then((result) => {
         if (request.current === id) {
           setBrief(result);
+          setError('');
           setLatestVersion(result?.generated_at ?? null);
+          setRevisionId(null);
         }
       })
       .catch((e) => {
@@ -92,9 +94,9 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
         if (request.current === id) setLoading(false);
       });
     return () => { request.current += 1; };
-  }, [base]);
+  }, [base, recoveryVersion]);
   async function generate() {
-    if (generatingRef.current || loading || revisionLoading) return;
+    if (generatingRef.current || loading || revisionLoading || recoveryBusy) return;
     generatingRef.current = true;
     const id = ++request.current;
     setGenerating(true);
@@ -141,13 +143,13 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
   const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating}>
+      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
         <div className="section-title">
           <div>
             <h2>Project status</h2>
             {brief && <small>{revisionId === null ? 'AI summary' : 'Previous version'} · {new Date(brief.generated_at).toLocaleString()}</small>}
           </div>
-          <button disabled={loading || generating || revisionLoading} onClick={generate}>
+          <button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : brief ? 'Refresh project status' : 'Generate project status'}
           </button>
         </div>
@@ -190,7 +192,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
             historical decisions, architecture, and the previous summary to OpenAI.
           </p>
           <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
-            disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+            disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
             onSelect={(snapshot, id) => {
               setBrief(snapshot);
               setRevisionId(id);

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
-import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import {
   chatGPTTranscriptHref, historyTurnHref, readHistoryLink, transcriptMatch, type HistoryLink, type HistoryTurnLink,
@@ -52,7 +52,12 @@ const projectBody = (data: Record<string, any>) => ({
 
 export default function App() {
   const [projects, setProjects] = useState<Pick<Project, 'id' | 'name'>[]>([]);
-  const [selected, setSelected] = useState<number | null>(null);
+  const [selected, setSelected] = useState<number | null>(() => {
+    try {
+      const value = Number(localStorage.getItem('projecthub.selected-project'));
+      return Number.isSafeInteger(value) && value > 0 ? value : null;
+    } catch { return null; }
+  });
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -80,6 +85,7 @@ export default function App() {
   const selectedProject = linkedProjectExists ? historyLink.projectId : selected;
   function selectProject(projectId: number) {
     setSelected(projectId);
+    try { localStorage.setItem('projecthub.selected-project', String(projectId)); } catch { /* Storage is optional. */ }
     if (historyLink) {
       window.history.pushState(null, '', window.location.pathname + window.location.search);
       setHistoryLink(null);
@@ -210,6 +216,7 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
+  const recovery = useGenerationRecovery(base);
   useEffect(() => {
     if (historyLink) {
       setResults(null);
@@ -417,20 +424,23 @@ function ProjectWorkspace({
             </button>
           )}
         </form>
-        {(['brief', 'qa'] as const).map((kind) => running[kind] && (
+        {(['brief', 'qa'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
           <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : 'AI Q&A'} />
         ))}
+        <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results}
-              onGenerating={(active) => setRunning((previous) => ({ ...previous, brief: active }))} />
+              recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
+              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, brief: active })); }} />
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (
           <div hidden={view !== 'AI Q&A' || !!results}>
             <ProjectQA base={base} generation={generation}
-              onGenerating={(active) => setRunning((previous) => ({ ...previous, qa: active }))} />
+              recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
+              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, qa: active })); }} />
           </div>
         )}
         {results ? (
@@ -1018,7 +1028,7 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
   );
 }
 
-function ProjectQA({ base, generation, onGenerating }: GenerationProps & { onGenerating: (active: boolean) => void }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -1036,15 +1046,17 @@ function ProjectQA({ base, generation, onGenerating }: GenerationProps & { onGen
       .then((result) => {
         if (active) {
           setSaved(result);
+          setError('');
           setLatestVersion(result?.generated_at ?? null);
+          setRevisionId(null);
         }
       })
       .catch((e) => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [path]);
+  }, [path, recoveryVersion]);
   async function generate() {
-    if (loading || generatingRef.current || revisionLoading) return;
+    if (loading || generatingRef.current || revisionLoading || recoveryBusy) return;
     generatingRef.current = true;
     setGenerating(true);
     onGenerating(true);
@@ -1077,20 +1089,20 @@ function ProjectQA({ base, generation, onGenerating }: GenerationProps & { onGen
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating}>
+      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
         <div className="section-title">
           <div>
             <h2>AI Q&A</h2>
             {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
             {saved && <SavedGeneration generation={saved.generation} />}
           </div>
-          <button disabled={loading || generating || revisionLoading} onClick={generate}>
+          <button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
           </button>
         </div>
         <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
-          disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {
             setSaved(snapshot);
             setRevisionId(id);

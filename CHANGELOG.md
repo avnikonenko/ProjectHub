@@ -42,6 +42,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Recover ongoing AI generation progress and results after a browser refresh, with the original elapsed time.
+
 - Project status and AI Q&A progress stay visible when switching tabs in the same project.
 - Brief generation reports supported Codex failure reasons and ignores completion events from other turns.
 
@@ -52,6 +54,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Project goals and description now reach the project-status generator instead of being omitted from its evidence.
 
 ### Maintenance
+
+- Reuse per-session indexed conversation text after checking its freshness, avoiding repeated history-page reads during AI generation.
 
 - Extracted brief rendering and source-reference components while preserving the existing dashboard and revision history.
 

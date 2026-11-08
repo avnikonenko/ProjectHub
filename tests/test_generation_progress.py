@@ -13,6 +13,8 @@ from backend.app.integrations.codex.archive import archive_history
 def test_progress_is_scoped_and_reads_are_snapshots():
     project_id = 91001
     progress.begin(project_id, 'brief')
+    started_at = progress.read(project_id, 'brief')['started_at']
+    assert started_at.endswith('+00:00')
     progress.update(project_id, stage='Collecting', sessions=2, turns=5)
     with ThreadPoolExecutor(max_workers=4) as threads:
         snapshots = list(threads.map(lambda _: progress.read(project_id, 'brief'), range(8)))
@@ -24,7 +26,8 @@ def test_progress_is_scoped_and_reads_are_snapshots():
     progress.finish(project_id, error='Transport failed')
     progress.update(project_id, turns=999)
     assert progress.read(project_id, 'brief') == {
-        'state': 'failed', 'stage': 'Failed', 'error': 'Transport failed', 'turns': 5, 'sessions': 2, 'batches': 0}
+        'state': 'failed', 'stage': 'Failed', 'error': 'Transport failed', 'turns': 5, 'sessions': 2, 'batches': 0,
+        'started_at': started_at}
     progress.begin(project_id, 'qa')
     progress.finish(project_id)
     assert progress.read(project_id, 'qa')['state'] == 'completed'

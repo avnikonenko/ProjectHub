@@ -131,8 +131,8 @@ def refresh_qa(engine, project_id, manager):
             db.commit()
             progress.finish(project_id)
             return read_qa(db, project_id)
-    except Exception:
-        progress.finish(project_id, error='Q&A generation failed. The previous saved Q&A is preserved.')
+    except Exception as exc:
+        progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Q&A generation failed. The previous saved Q&A is preserved.')
         raise
     finally:
         generation_lock.release()
