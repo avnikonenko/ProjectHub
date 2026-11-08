@@ -32,6 +32,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Project status and AI Q&A progress stay visible when switching tabs in the same project.
+- Brief generation reports supported Codex failure reasons and ignores completion events from other turns.
+
 - Older project summaries show their overview first, and sources for discarded validation entries are no longer saved.
 
 - Project status freshness now detects Git staging and edits to historical accepted decisions. Deleted files no longer make freshness permanently unknown.

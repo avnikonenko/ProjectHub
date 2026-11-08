@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
-import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
@@ -43,7 +43,7 @@ type Brief = {
   coverage: string[];
 };
 
-export function ProjectBrief({ base, generation, evidenceVersion }: GenerationProps) {
+export function ProjectBrief({ base, generation, evidenceVersion, visible, onGenerating }: GenerationProps & { visible: boolean; onGenerating: (active: boolean) => void }) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -56,7 +56,7 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
   const request = useRef(0);
   const generatingRef = useRef(false);
   useEffect(() => {
-    if (loading) return;
+    if (loading || !visible) return;
     const abort = new AbortController();
     setEvidence(null);
     setEvidenceError('');
@@ -68,7 +68,7 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
         if (!abort.signal.aborted) setEvidenceError(`Could not check project status freshness: ${e.message}`);
       });
     return () => abort.abort();
-  }, [base, latestVersion, loading, evidenceVersion]);
+  }, [base, latestVersion, loading, evidenceVersion, visible]);
   useEffect(() => {
     const id = ++request.current;
     api<Brief | null>(`${base}/codex/brief`)
@@ -91,6 +91,7 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
     generatingRef.current = true;
     const id = ++request.current;
     setGenerating(true);
+    onGenerating(true);
     setError('');
     try {
       const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
@@ -103,7 +104,10 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
       if (request.current === id) setError((e as Error).message);
     } finally {
       generatingRef.current = false;
-      if (request.current === id) setGenerating(false);
+      if (request.current === id) {
+        setGenerating(false);
+        onGenerating(false);
+      }
     }
   }
   const hasCurrentStatus = !!brief?.sections.current_status?.length;
@@ -145,7 +149,6 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
           Generate or refresh to send saved conversations, notes, TODOs, Git metadata and file paths,
           historical decisions, architecture, and the previous summary if available to OpenAI.
         </p>
-        {generating && <GenerationStatus base={base} kind="brief" />}
         <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
           disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {

@@ -187,6 +187,12 @@ function ProjectWorkspace({
   const [overview, setOverview] = useState<Overview | null>(null);
   const [selectedView, setView] = useState('Dashboard');
   const view = historyLink ? 'History' : selectedView;
+  const [visited, setVisited] = useState({ brief: false, qa: false });
+  const [running, setRunning] = useState({ brief: false, qa: false });
+  useEffect(() => {
+    if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
+    if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
+  }, [view]);
   const [generation, setGeneration] = useState(loadGenerationSettings);
   useEffect(() => {
     try { localStorage.setItem('projecthub.ai-settings', JSON.stringify(generation)); } catch { /* Storage is optional. */ }
@@ -392,6 +398,22 @@ function ProjectWorkspace({
             </button>
           )}
         </form>
+        {(['brief', 'qa'] as const).map((kind) => running[kind] && (
+          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : 'AI Q&A'} />
+        ))}
+        {(visited.brief || view === 'Dashboard') && (
+          <div hidden={view !== 'Dashboard' || !!results}>
+            <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at}
+              visible={view === 'Dashboard' && !results}
+              onGenerating={(active) => setRunning((previous) => ({ ...previous, brief: active }))} />
+          </div>
+        )}
+        {(visited.qa || view === 'AI Q&A') && (
+          <div hidden={view !== 'AI Q&A' || !!results}>
+            <ProjectQA base={base} generation={generation}
+              onGenerating={(active) => setRunning((previous) => ({ ...previous, qa: active }))} />
+          </div>
+        )}
         {results ? (
           <section className="card">
             <h2>Search results</h2>
@@ -411,7 +433,6 @@ function ProjectWorkspace({
           <>
             {view === 'Dashboard' && (
               <>
-                <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at} />
                 <div className="metrics">
                   <div className="metric">
                     <strong>{notes.length}</strong>
@@ -469,7 +490,6 @@ function ProjectWorkspace({
                 notes={notes} onLeaveHistory={leaveHistory}
                 onNoteSaved={() => load().catch((e) => setError(e.message))} />
             )}
-            {view === 'AI Q&A' && <ProjectQA base={base} generation={generation} />}
             {view === 'TODO' && (
               <section className="card">
                 <h2>TODO</h2>
@@ -952,13 +972,14 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
   );
 }
 
-function ProjectQA({ base, generation }: GenerationProps) {
+function ProjectQA({ base, generation, onGenerating }: GenerationProps & { onGenerating: (active: boolean) => void }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const generatingRef = useRef(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('');
@@ -977,8 +998,10 @@ function ProjectQA({ base, generation }: GenerationProps) {
     return () => { active = false; };
   }, [path]);
   async function generate() {
-    if (loading || generating || revisionLoading) return;
+    if (loading || generatingRef.current || revisionLoading) return;
+    generatingRef.current = true;
     setGenerating(true);
+    onGenerating(true);
     setError('');
     try {
       const result = await post(path, { confirmed: true, ...generationBody(generation) });
@@ -989,7 +1012,9 @@ function ProjectQA({ base, generation }: GenerationProps) {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      generatingRef.current = false;
       setGenerating(false);
+      onGenerating(false);
     }
   }
   const pageSize = 5;
@@ -1018,7 +1043,6 @@ function ProjectQA({ base, generation }: GenerationProps) {
           </button>
         </div>
         <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
-        {generating && <GenerationStatus base={base} kind="qa" />}
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
           disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {

@@ -22,10 +22,11 @@ export function SavedGeneration({ generation }: { generation?: GenerationProvena
 }
 
 export function GenerationStatus({
-  base, kind,
+  base, kind, label,
 }: {
   base: string;
   kind: 'brief' | 'qa';
+  label?: string;
 }) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState('');
@@ -60,9 +61,10 @@ export function GenerationStatus({
   return (
     <div className="generation-progress" role="status" aria-live="polite" aria-atomic="true">
       {error ? (
-        <p>Generation is still waiting for its result. Progress unavailable: {error}</p>
+        <p>{label && `${label}: `}Generation is still waiting for its result. Progress unavailable: {error}</p>
       ) : (
         <p>
+          {label && `${label}: `}
           {progress?.stage || 'Starting generation…'}
           {!!counts?.length && ` · ${counts.join(' · ')}`}
           {progress?.state === 'failed' && progress.error && ` · ${progress.error}`}
