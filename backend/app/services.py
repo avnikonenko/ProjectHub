@@ -131,9 +131,19 @@ def validate_links(db, project_id, values):
             raise HTTPException(422, 'Answer does not belong to the linked question')
 
 
-def overview(db, project_id):
-    p = require_project(db, project_id)
-    return {'project': serialize(p), 'questions': [question_dict(db,q) for q in records(db,Question,project_id)], 'decisions':[serialize(d) for d in records(db,Decision,project_id)], 'tasks':[serialize(t) for t in records(db,Task,project_id)], 'notes':[serialize(n) for n in records(db,Note,project_id)], 'sessions':[serialize(s) for s in records(db,CodexSession,project_id)], 'activity':[serialize(a) for a in db.scalars(select(AuditEvent).where(AuditEvent.project_id == project_id).order_by(AuditEvent.id.desc()).limit(50))]}
+def overview(db, project_id, *, compact=False):
+    data = {'project': serialize(require_project(db, project_id))}
+    if not compact:
+        data['questions'] = [question_dict(db, q) for q in records(db, Question, project_id)]
+        data['decisions'] = [serialize(d) for d in records(db, Decision, project_id)]
+    data['tasks'] = [serialize(t) for t in records(db, Task, project_id)]
+    data['notes'] = [serialize(n) for n in records(db, Note, project_id)]
+    if not compact:
+        data['sessions'] = [serialize(s) for s in records(db, CodexSession, project_id)]
+    data['activity'] = [serialize(a) for a in db.scalars(
+        select(AuditEvent).where(AuditEvent.project_id == project_id).order_by(AuditEvent.id.desc()).limit(50)
+    )]
+    return data
 
 
 def summary(db, project_id):

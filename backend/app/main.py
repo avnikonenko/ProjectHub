@@ -67,7 +67,11 @@ def create_app(data_dir=None):
     def health(): return {'status':'ok','version':'0.1.0'}
 
     @app.get('/api/projects')
-    def list_projects(db: Session=db_dep): return [serialize(p) for p in db.scalars(select(Project).order_by(Project.id))]
+    def list_projects(compact: bool = False, db: Session = db_dep):
+        if compact:
+            return [{'id': row.id, 'name': row.name} for row in
+                    db.execute(select(Project.id, Project.name).order_by(Project.id))]
+        return [serialize(p) for p in db.scalars(select(Project).order_by(Project.id))]
 
     @app.post('/api/projects',status_code=201)
     def create_project(payload: ProjectCreate,db: Session=db_dep):
@@ -84,7 +88,8 @@ def create_app(data_dir=None):
         apply_values(p,values);audit(db,project_id,p,'updated',before);db.commit();return serialize(p)
 
     @app.get('/api/projects/{project_id}/overview')
-    def get_overview(project_id:int,db:Session=db_dep):return overview(db,project_id)
+    def get_overview(project_id: int, compact: bool = False, db: Session = db_dep):
+        return overview(db, project_id, compact=compact)
 
     @app.get('/api/projects/{project_id}/questions')
     def get_questions(project_id:int,db:Session=db_dep):require_project(db,project_id);return [question_dict(db,q) for q in records(db,Question,project_id)]

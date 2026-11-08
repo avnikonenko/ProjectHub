@@ -29,6 +29,34 @@ def answer(c,pid,qid,solution='Method A',**kwargs):
     r=c.post(f'/api/projects/{pid}/questions/{qid}/answers',json={'solution':solution,**kwargs});assert r.status_code==201,r.text;return r.json()
 
 
+def test_compact_workspace_reads_preserve_full_api_and_project_scope(client):
+    first = project(client, 'First', description='Full project metadata')
+    second = project(client, 'Second')
+    project_id, other_id = first['id'], second['id']
+    question(client, project_id)
+    for pid in (project_id, other_id):
+        assert client.post(f'/api/projects/{pid}/notes', json={'title': f'Note {pid}'}).status_code == 201
+        assert client.post(f'/api/projects/{pid}/tasks', json={'title': f'Task {pid}'}).status_code == 201
+
+    full_projects = client.get('/api/projects').json()
+    assert [item['id'] for item in full_projects] == [project_id, other_id]
+    assert full_projects[0]['description'] == 'Full project metadata'
+    assert list(full_projects[0]) == list(first)
+    assert client.get('/api/projects?compact=true').json() == [
+        {'id': project_id, 'name': 'First'}, {'id': other_id, 'name': 'Second'},
+    ]
+    path = f'/api/projects/{project_id}/overview'
+    full = client.get(path).json()
+    assert list(full) == ['project', 'questions', 'decisions', 'tasks', 'notes', 'sessions', 'activity']
+    assert len(full['questions']) == 1
+    compact = client.get(f'{path}?compact=true').json()
+    assert compact == {key: full[key] for key in ('project', 'tasks', 'notes', 'activity')}
+    assert [note['title'] for note in compact['notes']] == [f'Note {project_id}']
+    assert [task['title'] for task in compact['tasks']] == [f'Task {project_id}']
+    assert all(event['project_id'] == project_id for event in compact['activity'])
+    assert client.get('/api/projects/99999/overview?compact=true').status_code == 404
+
+
 def test_accept_reopen_provenance_and_task(client):
     p=project(client);pid=p['id'];q=question(client,pid);qid=q['id']
     a=answer(client,pid,qid,evidence='Paper DOI:example',explanation='Validated experimentally')
