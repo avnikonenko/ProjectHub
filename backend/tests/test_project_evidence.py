@@ -285,3 +285,77 @@ def test_git_runner_limits_output_and_waits_for_no_project_commands(tmp_path, mo
     monkeypatch.setattr(evidence, '_GIT_TIMEOUT', 0.05)
     with pytest.raises(evidence.EvidenceReadError, match='timed out'):
         evidence._git(tmp_path, 'status')
+
+
+def test_explicit_code_collection_reads_representative_tracked_files_with_bounds(tmp_path):
+    repo = repository(tmp_path)
+    for folder in ('backend', 'frontend', 'docs', 'tests'):
+        (repo / folder).mkdir()
+    files = {
+        'backend/main.py': 'from fastapi import FastAPI\napp = FastAPI()\n' * 1000,
+        'frontend/App.tsx': 'export function App() { return <main /> }\n' * 1000,
+        'docs/architecture.md': 'React calls FastAPI, which stores data in SQLite.\n' * 100,
+        'tests/test_api.py': 'def test_api(): pass\n' * 100,
+        'backend/secrets.py': 'SECRET_DO_NOT_READ',
+        'backend/settings.py': 'PASSWORD_DO_NOT_READ',
+        'package-lock.json': '{"secret":"LOCK_DO_NOT_READ"}',
+        'untracked.py': 'UNTRACKED_DO_NOT_READ',
+    }
+    for path, content in files.items():
+        (repo / path).write_text(content)
+    git(repo, 'add', 'backend', 'frontend', 'docs', 'tests', 'package-lock.json')
+    git(repo, 'commit', '-m', 'Architecture evidence')
+    before = (repo / '.git/index').read_bytes()
+    result = evidence.collect_repository_code(str(repo))
+    paths = {source['path'] for source in result['sources']}
+    assert {'README.md', 'docs/architecture.md', 'backend/main.py', 'frontend/App.tsx', 'tests/test_api.py'} <= paths
+    assert len(result['sources']) <= 12
+    assert sum(len(source['text']) for source in result['sources']) <= 24000
+    assert all(len(source['text']) <= 3000 for source in result['sources'])
+    assert all(source['classification'] == 'verified' for source in result['sources'])
+    serialized = json.dumps(result)
+    assert not any(value in serialized for value in ('SECRET_DO_NOT_READ', 'PASSWORD_DO_NOT_READ',
+                                                    'LOCK_DO_NOT_READ', 'UNTRACKED_DO_NOT_READ'))
+    assert any('partial' in value for value in result['coverage'])
+    assert (repo / '.git/index').read_bytes() == before
+
+
+def test_explicit_code_collection_never_follows_links_and_respects_exclusions(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    private = tmp_path / 'private'
+    private.mkdir()
+    (private / 'outside.py').write_text('EXTERNAL_CODE_MUST_NOT_APPEAR')
+    (repo / 'linked.py').symlink_to(private / 'outside.py')
+    (repo / 'linked-dir').symlink_to(private, target_is_directory=True)
+    (repo / 'binary.py').write_bytes(b'\x00BINARY_CODE_MUST_NOT_APPEAR')
+    (repo / 'private.py').write_text('CUSTOM_EXCLUSION_MUST_NOT_APPEAR')
+    git(repo, 'add', 'linked.py', 'linked-dir', 'binary.py', 'private.py')
+    git(repo, 'commit', '-m', 'Unsafe candidates')
+    monkeypatch.setenv('PROJECTHUB_EVIDENCE_EXCLUDE', '["private.py","README.md"]')
+    result = evidence.collect_repository_code(str(repo))
+    serialized = json.dumps(result)
+    assert not any(value in serialized for value in ('EXTERNAL_CODE_MUST_NOT_APPEAR',
+                                                    'BINARY_CODE_MUST_NOT_APPEAR',
+                                                    'CUSTOM_EXCLUSION_MUST_NOT_APPEAR'))
+    assert 'README.md' not in {source['path'] for source in result['sources']}
+    assert any('Skipped' in value for value in result['coverage'])
+    assert evidence.collect_repository_code(str(tmp_path / 'missing'))['sources'] == []
+    assert evidence.collect_repository_code(None)['sources'] == []
+
+
+def test_code_collection_includes_deep_route_declarations_instead_of_only_imports(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'main.py').write_text(
+        'from fastapi import FastAPI\n' + '# import and setup details\n' * 200
+        + 'app = FastAPI()\n@app.get("/projects")\ndef list_projects():\n    return []\n')
+    (repo / 'App.tsx').write_text(
+        'import React from "react";\n' + '// types and state declarations\n' * 200
+        + 'const tabs = [\n  "Dashboard",\n  "History",\n  "Notes",\n];\n')
+    git(repo, 'add', 'main.py', 'App.tsx')
+    git(repo, 'commit', '-m', 'Deep public declarations')
+    result = evidence.collect_repository_code(str(repo))
+    indexed = {source['path']: source['text'] for source in result['sources']}
+    assert '@app.get("/projects")' in indexed['main.py']
+    assert 'def list_projects' in indexed['main.py']
+    assert '"Dashboard"' in indexed['App.tsx']
+    assert len(indexed['main.py']) <= 2000

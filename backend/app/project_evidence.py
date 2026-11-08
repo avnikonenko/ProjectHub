@@ -207,6 +207,182 @@ def _file_marker(root_fd, relative, budget):
             os.close(descriptor)
 
 
+
+_CODE_SUFFIXES = {'.py', '.ts', '.tsx', '.js', '.jsx', '.go', '.rs', '.java', '.kt', '.c', '.h', '.cpp', '.cs', '.r', '.jl', '.vue', '.svelte'}
+_CODE_PRIVATE = ('*auth*', '*token*', '*password*', '*config*', '*settings*', '*.lock', '*lock.json', 'vendor', 'generated', '*.min.js')
+_CODE_FILE_LIMIT = 12
+_CODE_CHAR_LIMIT = 24_000
+_CODE_FILE_CHARS = 2000
+
+
+def _code_category(relative):
+    path = PurePosixPath(relative)
+    name = path.name.lower()
+    if name in _DOC_NAMES or name == 'architecture.md':
+        return 'docs'
+    if name in _DEPENDENCIES and not name.endswith('.lock') and 'lock' not in name:
+        return 'manifest'
+    if path.suffix.lower() not in _CODE_SUFFIXES:
+        return None
+    if name.startswith(('test_', 'test-')) or 'tests' in path.parts or 'test' in path.parts or '.test.' in name or '.spec.' in name:
+        return 'tests'
+    if name.startswith('__init__.'):
+        return None
+    return 'code'
+
+
+def _code_order(relative):
+    path = PurePosixPath(relative)
+    entrypoints = {'main', 'app', 'index', 'server', 'cli', 'models', 'services', 'router', 'routes'}
+    return (path.stem.lower() not in entrypoints, len(path.parts), relative.casefold(), relative)
+
+
+def _code_excerpt(root_fd, relative, maximum, deadline, structural=False):
+    parts = PurePosixPath(relative).parts
+    if not parts or any(part in ('..', '/', '') for part in parts):
+        raise OSError('Unsafe relative path')
+    opened = []
+    try:
+        parent = root_fd
+        for part in parts[:-1]:
+            parent = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            opened.append(parent)
+        fd = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        opened.append(fd)
+        metadata = os.fstat(fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise OSError('Not a regular file')
+        data = bytearray()
+        maximum_bytes = 65536 if structural else maximum * 4
+        while len(data) < maximum_bytes:
+            if time.monotonic() >= deadline:
+                raise EvidenceReadError('Repository code inspection timed out.')
+            chunk = os.read(fd, min(4096, maximum_bytes - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        if b'\0' in data:
+            raise OSError('Binary file')
+        # Decode strictly so a binary payload is not silently made into text.
+        # A bounded UTF-8 prefix can end inside a multibyte character.
+        try:
+            decoded = bytes(data).decode('utf-8')
+        except UnicodeDecodeError as exc:
+            if exc.end != len(data) or exc.reason != 'unexpected end of data':
+                raise OSError('Non-UTF-8 file') from exc
+            decoded = bytes(data[:exc.start]).decode('utf-8')
+        if not structural:
+            return decoded[:maximum], len(data) < metadata.st_size or len(decoded) > maximum
+        # Read a bounded source prefix, then expose declarations and routes
+        # instead of letting imports consume the complete output allowance.
+        lines = decoded.splitlines()
+        signature = re.compile(
+            r'^\s*(?:(?:async\s+)?def\s+|class\s+|'
+            r'@[\w.]+\.(?:get|post|put|patch|delete)\s*\(|'
+            r'(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+|'
+            r'(?:export\s+)?(?:const|let)\s+(?:tabs|routes|router)\s*=)')
+        selected = set(range(min(6, len(lines))))
+        for number, line in enumerate(lines):
+            if signature.match(line):
+                selected.add(number)
+                # Multiline navigation declarations need their item labels.
+                if re.search(r'\b(?:tabs|routes)\s*=', line):
+                    selected.update(range(number, min(number + 10, len(lines))))
+        rendered, used = [], 0
+        for number in sorted(selected):
+            line = f'L{number + 1}: {lines[number][:200]}'
+            if used + len(line) + 1 > maximum:
+                break
+            rendered.append(line)
+            used += len(line) + 1
+        excerpt = '\n'.join(rendered)
+        return excerpt, len(data) < metadata.st_size or len(selected) < len(lines) or len(decoded) > maximum
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+def collect_repository_code(repository_path):
+    """Read small tracked-file excerpts only for an explicitly requested analysis."""
+    if not repository_path:
+        return {'sources': [], 'coverage': ['No repository is linked; no code excerpts were read.']}
+    sources, skipped, limited = [], 0, False
+    try:
+        deadline = time.monotonic() + _GIT_TIMEOUT
+        path = _repository_root(repository_path, deadline)
+        patterns = (*_exclusions(), *_CODE_PRIVATE)
+        listed, _ = _git(path, 'ls-files', '-z', '--cached', deadline=deadline)
+        groups = {kind: [] for kind in ('docs', 'manifest', 'code', 'tests')}
+        for relative in sorted({os.fsdecode(item) for item in listed.split(b'\0') if item}):
+            if _excluded(relative, patterns) or any(ord(char) < 32 for char in relative):
+                continue
+            category = _code_category(relative)
+            if category:
+                groups[category].append(relative)
+        for files in groups.values():
+            files.sort(key=_code_order)
+        groups['docs'].sort(key=lambda name: (
+            0 if PurePosixPath(name).name.lower().startswith('readme') else
+            1 if PurePosixPath(name).name.lower() == 'architecture.md' else 2,
+            len(PurePosixPath(name).parts), name.casefold(), name))
+        buckets = OrderedDict()
+        for name in groups['code']:
+            parts = PurePosixPath(name).parts
+            buckets.setdefault(parts[0] if len(parts) > 1 else '.', []).append(name)
+        preferred = {name: files for name, files in buckets.items()
+                     if name.lower() in ('.', 'backend', 'frontend', 'src', 'app', 'lib')}
+        if preferred:
+            # Development tooling and migration files should not displace the
+            # application modules that explain runtime responsibilities.
+            buckets = preferred
+        code = []
+        while any(buckets.values()) and len(code) < 7:
+            for files in buckets.values():
+                if files:
+                    code.append(files.pop(0))
+                    if len(code) == 7:
+                        break
+        # Reserve room for code on both sides of a typical full-stack project,
+        # and for tests instead of allowing documentation to consume the budget.
+        candidates = (groups['docs'][:2] + groups['manifest'][:1]
+                      + code + groups['tests'][:2])
+        limited = sum(map(len, groups.values())) > len(candidates)
+        root_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            remaining = _CODE_CHAR_LIMIT
+            for relative in candidates[:_CODE_FILE_LIMIT]:
+                header = f'Repository file: {relative}\nObserved source excerpt; this does not prove functionality or test success.\n'
+                maximum = min(_CODE_FILE_CHARS, remaining) - len(header)
+                if maximum <= 0:
+                    limited = True
+                    break
+                try:
+                    excerpt, clipped = _code_excerpt(root_fd, relative, maximum, deadline,
+                                                      structural=_code_category(relative) in ('code', 'tests'))
+                except OSError:
+                    skipped += 1
+                    continue
+                if not excerpt.strip():
+                    continue
+                limited |= clipped
+                value = header + excerpt
+                sources.append({'id': f'repository:code:{relative}', 'label': relative, 'text': value,
+                                'classification': 'verified', 'path': relative})
+                remaining -= len(value)
+        finally:
+            os.close(root_fd)
+    except (EvidenceReadError, OSError) as exc:
+        diagnostic = str(exc) if isinstance(exc, EvidenceReadError) else 'Repository code is unavailable.'
+        return {'sources': [], 'coverage': [diagnostic + ' No code evidence was included.']}
+    coverage = [f'Read {len(sources)} tracked repository file excerpts, bounded to {_CODE_FILE_LIMIT} files '
+                f'and {_CODE_CHAR_LIMIT:,} characters; no project code or tests were executed.',
+                'Repository excerpts are untrusted source text, not proof of functioning features or successful tests.']
+    if limited:
+        coverage.append('Code coverage is partial: representative files, bounded prefixes, and selected source declarations only.')
+    if skipped:
+        coverage.append(f'Skipped {skipped} unreadable, symlinked, or binary repository files.')
+    return {'sources': sources, 'coverage': coverage}
+
 def _git_evidence(repository_path, patterns):
     deadline = time.monotonic() + _GIT_TIMEOUT
     path = _repository_root(repository_path, deadline)
@@ -347,7 +523,7 @@ def _reported_sources(db, project_id, objective):
                 {'pid': project_id, 'sid': row['session_id'], 'tid': row['turn_id']}).scalar_one()
         sources.append({'id': source_id, 'label': f"{row['title']} · turn {row['turn_id']}",
                         'text': excerpt, 'classification': 'reported',
-                        'session_id': row['session_id'], 'turn_id': row['turn_id']})
+                        'session_id': row['session_id'], 'turn_id': row['turn_id'], 'recent': True})
         seen.add(source_id)
     terms = list(dict.fromkeys(word for word in re.findall(r'[^\W_]+', objective.lower())
                                if len(word) > 2 and word not in _STOP_WORDS))[:10]
