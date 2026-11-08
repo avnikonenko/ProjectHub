@@ -74,6 +74,8 @@ class FakeCodex:
         if self.reported_change:
             sections['changes'] = [{'text': self.reported_change, 'source_ids': [ref], 'classification': 'reported'}]
             sections['since_last_brief'] = [{'text': self.reported_change, 'source_ids': [ref], 'classification': 'reported'}]
+        if hasattr(self, 'overview_text'):
+            sections['overview'][0]['text'] = self.overview_text
         graph = {'nodes': [{'id': key, 'label': key.title(), 'source_ids': [diagram]}
                            for key in ('service', 'database')],
                  'edges': [{'from': 'service', 'to': 'database', 'label': 'stores records',
@@ -289,3 +291,22 @@ def test_specific_reported_validation_is_not_removed_with_generic_duplicates(pro
     status = refresh_brief(project_db, 1, codex)
     assert len(status['sections']['validation']) == 2
     assert status['sections']['validation'][1]['text'].startswith('The discussion reports migration tests')
+
+
+def test_overview_has_room_for_complete_sentences_and_rejects_cut_off_text(project_db):
+    codex = FakeCodex()
+    codex.overview_text = ('ProjectHub helps people return to long projects with a usable summary of conversations, '
+                          'notes, current work and the reasoning behind past choices. '
+                          'The workspace connects locally saved discussions and repository context, makes supporting '
+                          'passages searchable, and lets users request a focused overview before continuing their '
+                          'work with source references, relevant technical context and visible unresolved questions, '
+                          'without reading the entire conversation history again.')
+    codex.overview_text += ' '  # Whitespace must not affect validation.
+    assert len(codex.overview_text) > 420
+    saved = refresh_brief(project_db, 1, codex)
+    assert saved['sections']['overview'][0]['text'] == codex.overview_text
+    codex.overview_text = 'ProjectHub helps people continue their work and can, '
+    with pytest.raises(CodexError, match='incomplete sentence'):
+        refresh_brief(project_db, 1, codex)
+    with Session(project_db) as db:
+        assert read_brief(db, 1) == saved

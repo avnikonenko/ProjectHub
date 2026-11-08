@@ -16,9 +16,11 @@ from .protocol import CodexError
 
 SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates', 'since_last_brief',
                  'current_status', 'implemented', 'work_in_progress', 'unresolved_problems', 'validation', 'next_steps')
-SECTION_LIMITS = dict(zip(SECTION_NAMES, (2, 3, 3, 3, 3, 3, 1, 3, 2, 3, 2, 3)))
+SECTION_LIMITS = dict(zip(SECTION_NAMES, (1, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3)))
 CLASSIFICATIONS = ('verified', 'reported', 'inferred', 'unresolved')
 MAX_POINT_CHARS = 420
+SECTION_TEXT_LIMITS = {name: (1000 if name == 'overview' else 600 if name in ('architecture', 'current_status') else MAX_POINT_CHARS)
+                       for name in SECTION_NAMES}
 generation_lock = threading.Lock()
 
 OUTPUT_SCHEMA = {
@@ -31,7 +33,7 @@ OUTPUT_SCHEMA = {
             'items': {'type': 'object', 'additionalProperties': False,
                      'required': ['text', 'source_ids', 'classification'], 'properties': {
                          'classification': {'type': 'string', 'enum': list(CLASSIFICATIONS)},
-                         'text': {'type': 'string', 'minLength': 1, 'maxLength': MAX_POINT_CHARS},
+                         'text': {'type': 'string', 'minLength': 1, 'maxLength': SECTION_TEXT_LIMITS[name]},
                          'source_ids': {'type': 'array', 'minItems': 1, 'maxItems': 3,
                                         'items': {'type': 'string'}}}}
         } for name in SECTION_NAMES}
@@ -137,8 +139,10 @@ def validate_sections(raw, sources):
             if not isinstance(entry['classification'], str) or entry['classification'] not in CLASSIFICATIONS:
                 raise CodexError('Brief generation returned an invalid evidence classification.')
             value, references = entry['text'], entry['source_ids']
-            if not isinstance(value, str) or not value.strip() or len(value) > MAX_POINT_CHARS:
+            if not isinstance(value, str) or not value.strip() or len(value) > SECTION_TEXT_LIMITS[name]:
                 raise CodexError('Brief generation returned invalid entry text.')
+            if name == 'overview' and value.rstrip().rstrip('\"”’\'').endswith((',', ';', ':', '—', '-')):
+                raise CodexError('Brief overview ended with an incomplete sentence. The previous summary is preserved.')
             if (not isinstance(references, list) or not 1 <= len(references) <= 3
                     or any(not isinstance(ref, str) or ref not in allowed for ref in references)):
                 raise CodexError('Brief generation cited missing or foreign sources.')
@@ -294,14 +298,19 @@ def refresh_brief(engine, project_id, manager):
                   'Use plain text, one concrete point per entry, without repetition across sections. '
                   'Lead with a useful project description, not a verification audit. '
                   'overview: required; explain what THIS project does, for whom, and its main working capabilities '
-                  'from repository code and discussions. Use concrete project-specific terminology and examples. '
+                  'from repository code and discussions. Write exactly two short complete sentences in one entry: '
+                  'first the purpose and user benefit, then the main workflow. Do not enumerate every feature '
+                  'or include the technology stack here; architecture has its own section. Finish both sentences '
+                  'naturally; never cut text mid-sentence to meet a character limit. '
                   'Read the supplied code excerpts to explain responsibilities, data flow and implemented paths; '
                   'the existence of code is not proof of correct runtime behavior. Use code to check structure, '
                   'and original discussion excerpts to recover details, but resolve conflicts by supported chronology. '
                   'Saved indexed excerpts may predate newly read live summaries; do not treat them as newer '
                   'solely because they are original or labeled recent. '
                   'Explain the application rather than assessing whether the available evidence is sufficient. '
-                  'current_status: one short sentence about the latest substantive focus or recently delivered work. '
+                  'current_status: the single Current work section, with one or two distinct concrete points about '
+                  'active work or the latest delivered improvement. Leave work_in_progress empty; its legacy '
+                  'field must not duplicate Current work. Do not repeat these points in implemented or changes. '
                   'Never use a stale project status field such as planning as proof that development is unclear; '
                   'it is manually maintained metadata. Say reported implementation when only discussion supports it. '
                   'Do not replace useful explanation with generic statements that functionality is unverified. '
@@ -311,15 +320,17 @@ def refresh_brief(engine, project_id, manager):
                   'put them in recent changes if a later correction resolved them. '
                   'Do not promote stale backlog tasks over newer evidence reporting their completion. '
                   'implemented: functionality supported by evidence; '
-                  'conversation claims of completion must be reported, not verified. work_in_progress: '
-                  'current activities from TODOs and recent discussions; an uncommitted file alone does not '
+                  'conversation claims of completion must be reported, not verified. An uncommitted file alone does not '
                   'prove unfinished functionality. unresolved_problems: important known bugs, blockers, '
                   'contradictions explicitly still current, labeled unresolved unless a directly observed fact. '
                   'validation: actual available test and scientific-validation evidence and gaps. '
                   'Statements that tests passed in conversations are reported claims, not actual test results. '
                   'A validation coverage gap is not a project blocker by itself. Do not repeat the generic missing-results notice; the application adds it. '
                   'next_steps: at most three actionable prioritized recommendations, labeled inferred; '
-                  'Use project-specific next actions from current work; never default to run tests or refresh history merely because evidence is missing. Leave empty if no concrete next step is supported. Do not create or accept tasks. changes: meaningful recent outcomes supported by current evidence, '
+                  'Only use next actions explicitly requested or accepted by the user, or unfinished work clearly '
+                  'supported by current code/discussion. A suggestion from a previous AI response is NOT a '
+                  'user priority and must not become a recommended next step merely because it is recent. '
+                  'Never default to run tests or refresh history merely because evidence is missing. Leave empty if no concrete next step is supported. Do not create or accept tasks. changes: meaningful recent outcomes supported by current evidence, '
                   'excluding points already listed in since_last_brief. architecture: key components and their '
                   'connections. Architecture is required: construct the main components, responsibilities and data flow from code excerpts, then reconcile with sessions and the saved diagram. If no explicit architecture description exists, reconstruct it from the supplied code and session evidence and label inferred connections. Only state missing information when neither source supplies enough detail. Do not invent components or technologies. '
                   'Every entry requires classification: verified for an exact copied deterministic source '
