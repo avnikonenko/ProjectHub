@@ -9,7 +9,7 @@ import {
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 import { ProjectBrief } from './ProjectBrief';
-import { RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
+import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
@@ -276,6 +276,7 @@ function ProjectWorkspace({
       </main>
     );
   const { project, tasks, notes, activity } = overview;
+  const remoteIssuesUrl = repository.status?.github_issues_url ?? githubIssuesUrl(project.git_remote ?? '');
   const latestActivity = [
     ...activity.map((event) => ({
       key: `event:${event.id}`,
@@ -456,7 +457,7 @@ function ProjectWorkspace({
                   </div>
                 </div>
                 <div className="two-column">
-                  {(project.goals.trim() || project.repository_path || project.tags.length > 0) && (
+                  {(project.goals.trim() || project.repository_path || remoteIssuesUrl || project.tags.length > 0) && (
                     <section className="card">
                       <h2>Project overview</h2>
                       {project.goals.trim() && (
@@ -468,6 +469,7 @@ function ProjectWorkspace({
                       {project.repository_path && (
                         <RepositoryOverview path={project.repository_path} {...repository} />
                       )}
+                      {remoteIssuesUrl && <GitHubIssues key={remoteIssuesUrl} base={base} url={remoteIssuesUrl} />}
                       {project.tags.length > 0 && (
                         <div className="tags">
                           {project.tags.map((tag) => <span key={tag}>{tag}</span>)}
