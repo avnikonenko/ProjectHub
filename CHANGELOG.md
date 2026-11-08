@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Edit AI response instructions per project from AI settings.
+
 - Dashboard Project status now summarizes current work, blockers, and next steps, with expandable details, evidence labels, and numbered citations.
 
 - Local project-evidence snapshots and brief freshness checks, without automatic AI requests.

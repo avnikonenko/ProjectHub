@@ -183,6 +183,7 @@ export function Form({
                   value={values[f.name]}
                   required={f.required}
                   rows={f.rows ?? 4}
+                  maxLength={f.maxLength}
                   onChange={(e) =>
                     setValues({ ...values, [f.name]: e.target.value })
                   }

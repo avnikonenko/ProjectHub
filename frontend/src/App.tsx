@@ -883,16 +883,56 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
   onChange: (settings: Generation) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [instructions, setInstructions] = useState<string | null>(null);
+  const [loadingInstructions, setLoadingInstructions] = useState(false);
+  const [instructionsError, setInstructionsError] = useState('');
+  const [instructionsSaved, setInstructionsSaved] = useState(false);
+  const instructionsPath = `${base}/codex/instructions`;
+
+  async function openInstructions() {
+    setInstructionsError('');
+    setInstructionsSaved(false);
+    setLoadingInstructions(true);
+    try {
+      const result = await api<{ instructions: string }>(instructionsPath);
+      setInstructions(result.instructions);
+    } catch (e) {
+      setInstructionsError((e as Error).message);
+    } finally {
+      setLoadingInstructions(false);
+    }
+  }
+
   return (
-    <details className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
-      {open && <GenerationOptions base={base} generation={generation} onChange={onChange} />}
-    </details>
+    <>
+      <details className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
+        <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
+        {open && <GenerationOptions base={base} generation={generation} onChange={onChange}>
+          <button type="button" className="secondary" disabled={loadingInstructions} onClick={openInstructions}>
+            {loadingInstructions ? 'Loading instructions…' : 'Project AI instructions'}
+          </button>
+          {instructionsError && <small role="alert">{instructionsError}</small>}
+          {instructionsSaved && <small role="status">Instructions saved.</small>}
+        </GenerationOptions>}
+      </details>
+      {instructions !== null && <Form
+        title="Project AI instructions"
+        fields={[{ name: 'instructions', label: 'Guidance for AI responses in this project. Leave blank to use defaults.',
+          type: 'textarea', rows: 10, maxLength: 8000 }]}
+        initial={{ instructions }}
+        onClose={() => setInstructions(null)}
+        onSave={async (values) => {
+          await patch(instructionsPath, { instructions: values.instructions });
+          setInstructionsSaved(true);
+        }}
+      />}
+    </>
   );
 }
 
-function GenerationOptions({ base, generation, onChange }: GenerationProps & {
+function GenerationOptions({ base, generation, onChange, children }: GenerationProps & {
   onChange: (settings: Generation) => void;
+  children: React.ReactNode;
 }) {
   const [models, setModels] = useState<{ id: string; label: string; efforts: string[] }[]>([]);
   const [status, setStatus] = useState('Loading Codex models…');
@@ -968,6 +1008,7 @@ function GenerationOptions({ base, generation, onChange }: GenerationProps & {
       </label>
       {status && <small role="status">{status}</small>}
       {!generation.model && <small>Choose a model to set its reasoning effort.</small>}
+      <div>{children}</div>
     </div>
   );
 }
