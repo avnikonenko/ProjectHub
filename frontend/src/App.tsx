@@ -608,15 +608,6 @@ function ProjectWorkspace({
                   >
                     Export project JSON
                   </a>
-                  <button
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() =>
-                      run(async () => setReport(await api(`${base}/audit`)))
-                    }
-                  >
-                    View audit history
-                  </button>
                 </div>
                 {!notes.length && <Empty>No notes yet.</Empty>}
                 <PagedItems label="Note pages">{[...notes].reverse().map((n) => (
