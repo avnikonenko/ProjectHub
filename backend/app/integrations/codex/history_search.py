@@ -65,6 +65,7 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
                 sessions = [session for session in all_sessions if session.id in selected]
             else:
                 sessions = all_sessions
+        incomplete_sessions = set()
         # Spool text to disk before the write transaction. A slow or failed read
         # neither locks project writes nor replaces a previously usable index.
         with tempfile.TemporaryFile(mode='w+t', encoding='utf-8') as staged:
@@ -78,7 +79,10 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
                             check_cancelled()
                             page = manager.history(session, cursor, client=client, archive=True)
                             for turn in page['turns']:
-                                if turn['id'] in seen or turn['status'] == 'inProgress':
+                                if turn['status'] == 'inProgress':
+                                    incomplete_sessions.add(session.id)
+                                    continue
+                                if turn['id'] in seen:
                                     continue
                                 seen.add(turn['id'])
                                 messages = [m for m in turn['messages'] if m['role'] in ('user', 'assistant')]
@@ -121,6 +125,11 @@ def index_history(engine, project_id, manager, *, session_ids=None, cancelled=No
                               'VALUES (:project_id,:session_id,:session_title,:turn_id,:status,:messages,:content)')
                 for line in staged:
                     connection.execute(insert, json.loads(line))
+                for session in sessions:
+                    connection.execute(text('UPDATE codex_sessions SET history_indexed_at=:at, '
+                        'history_indexed_activity=:activity WHERE id=:sid AND project_id=:pid AND is_linked=1'),
+                        {'at': indexed_at, 'activity': None if session.id in incomplete_sessions else session.codex_activity_at,
+                         'sid': session.id, 'pid': project_id})
                 count = connection.execute(text(_ACTIVE_COUNT),
                                            {'pid': project_id}).scalar_one()
                 connection.execute(text('INSERT INTO codex_history_index(project_id,indexed_at,indexed_turns) '

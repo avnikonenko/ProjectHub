@@ -1,8 +1,9 @@
 """Incrementally summarize all saved discussion text with bounded model inputs."""
 import hashlib
 import json
+import tempfile
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, CodexSession, ProjectHistoryBatch
@@ -83,6 +84,58 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     return result, False
 
 
+def _live_pages(manager, session, client, stage):
+    cursor, cursors = None, set()
+    while True:
+        progress.update(session.project_id, stage=stage)
+        page = manager.history(session, cursor, client=client, archive=True)
+        yield page
+        cursor = page['next_cursor']
+        if cursor is None:
+            return
+        if cursor in cursors:
+            raise CodexError('Codex history returned a repeated pagination cursor.')
+        cursors.add(cursor)
+
+
+def _indexed_pages(staged):
+    for line in staged:
+        yield {'turns': [json.loads(line)]}
+
+
+def _indexed_turns(engine, project_id, session, client):
+    """Use a per-session saved index only after checking current thread metadata."""
+    if (session.codex_account is not None or not session.history_indexed_at
+            or not session.history_indexed_activity or not callable(getattr(client, 'request', None))):
+        return None
+    # Metadata comes from the official reader and includes no turn contents.
+    from .history_sync import _metadata
+    metadata = _metadata(client, session)
+    if metadata[3] == 'active' or metadata[2] != session.history_indexed_activity:
+        return None
+    staged = tempfile.TemporaryFile(mode='w+t', encoding='utf-8')
+    try:
+        with Session(engine) as db:
+            current = db.get(CodexSession, session.id)
+            if (current is None or current.project_id != project_id or not current.is_linked
+                    or current.thread_id != session.thread_id or current.codex_account != session.codex_account
+                    or current.history_indexed_at != session.history_indexed_at
+                    or current.history_indexed_activity != session.history_indexed_activity):
+                staged.close()
+                return None
+            rows = db.execute(text('SELECT turn_id,status,messages FROM codex_history_turns '
+                'WHERE project_id=:pid AND session_id=:sid ORDER BY id'),
+                {'pid': project_id, 'sid': session.id})
+            for row in rows:
+                staged.write(json.dumps({'id': row.turn_id, 'status': row.status,
+                                         'messages': json.loads(row.messages)}, ensure_ascii=False) + '\n')
+        staged.seek(0)
+        return staged
+    except Exception:
+        staged.close()
+        raise
+
+
 def archive_history(engine, project_id, manager):
     """Read every page once; cache each bounded group before requesting another."""
     progress.update(project_id, stage='Reading project sessions')
@@ -94,6 +147,8 @@ def archive_history(engine, project_id, manager):
                         .order_by(CodexSession.id)))
     evidence, batch = [], []
     turns_seen = skipped = reused = generated = fragments = 0
+    indexed_sessions = []
+    index_check_failures = 0
 
     def flush():
         nonlocal batch, reused, generated
@@ -109,49 +164,63 @@ def archive_history(engine, project_id, manager):
         client = manager._new_read_client()
         try:
             for index, session in enumerate(sessions, 1):
-                cursor, cursors, seen = None, set(), set()
-                while True:
-                    progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
-                    page = manager.history(session, cursor, client=client, archive=True)
-                    for turn in page['turns']:
-                        if turn['id'] in seen:
-                            continue
-                        seen.add(turn['id'])
-                        if turn['status'] == 'inProgress':
-                            skipped += 1
-                            continue
-                        text = '\n\n'.join(f"{message['role']}: {message['text']}"
-                                           for message in turn['messages'])
-                        if not text:
-                            continue
-                        turns_seen += 1
-                        progress.update(project_id, turns=turns_seen)
-                        for offset in range(0, len(text), CHUNK_CHARS):
-                            part = offset // CHUNK_CHARS + 1
-                            source = {'id': f"session:{session.id}:turn:{turn['id']}:part:{part}",
-                                      'label': f"Session #{session.id}, turn {turn['id']}, part {part}",
-                                      'text': text[offset:offset + CHUNK_CHARS], 'session_id': session.id,
-                                      'turn_id': turn['id'], 'turn_status': turn['status']}
-                            size = len(json.dumps({'sources': [*batch, source]}, ensure_ascii=False))
-                            if batch and size > BATCH_CHARS:
-                                flush()
-                            if len(json.dumps({'sources': [source]}, ensure_ascii=False)) > BATCH_CHARS:
-                                raise CodexError('History source metadata exceeds the batch size limit.')
-                            batch.append(source)
-                            fragments += 1
-                    next_cursor = page['next_cursor']
-                    if next_cursor is None:
-                        break
-                    if next_cursor in cursors:
-                        raise CodexError('Codex history returned a repeated pagination cursor.')
-                    cursors.add(next_cursor)
-                    cursor = next_cursor
+                seen = set()
+                progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
+                try:
+                    indexed = _indexed_turns(engine, project_id, session, client)
+                except CodexError:
+                    # Reuse is optional; metadata failures must not break
+                    # sessions supported by the existing history reader.
+                    index_check_failures += 1
+                    indexed = None
+                if indexed is not None:
+                    indexed_sessions.append((session.id, session.history_indexed_at))
+                try:
+                    pages = (_indexed_pages(indexed) if indexed is not None
+                             else _live_pages(manager, session, client, f'Reading session {index} of {len(sessions)}'))
+                    for page in pages:
+                        progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
+                        for turn in page['turns']:
+                            if turn['id'] in seen:
+                                continue
+                            seen.add(turn['id'])
+                            if turn['status'] == 'inProgress':
+                                skipped += 1
+                                continue
+                            text = '\n\n'.join(f"{message['role']}: {message['text']}"
+                                               for message in turn['messages'])
+                            if not text:
+                                continue
+                            turns_seen += 1
+                            progress.update(project_id, turns=turns_seen)
+                            for offset in range(0, len(text), CHUNK_CHARS):
+                                part = offset // CHUNK_CHARS + 1
+                                source = {'id': f"session:{session.id}:turn:{turn['id']}:part:{part}",
+                                          'label': f"Session #{session.id}, turn {turn['id']}, part {part}",
+                                          'text': text[offset:offset + CHUNK_CHARS], 'session_id': session.id,
+                                          'turn_id': turn['id'], 'turn_status': turn['status']}
+                                size = len(json.dumps({'sources': [*batch, source]}, ensure_ascii=False))
+                                if batch and size > BATCH_CHARS:
+                                    flush()
+                                if len(json.dumps({'sources': [source]}, ensure_ascii=False)) > BATCH_CHARS:
+                                    raise CodexError('History source metadata exceeds the batch size limit.')
+                                batch.append(source)
+                                fragments += 1
+                finally:
+                    if indexed is not None:
+                        indexed.close()
                 # Boundaries stay stable when another session later gains new turns.
                 flush()
                 progress.update(project_id, sessions=index)
         finally:
             client.close()
-    coverage = [f'Traversed all saved history pages for {len(sessions)} project sessions, oldest turns first within each session.',
+    coverage = [*([f'Index freshness could not be checked for {index_check_failures} sessions; read their history through Codex instead.']
+                  if index_check_failures else []),
+                f'Read saved history for {len(sessions)} project sessions, oldest turns first within each session.',
+                f'{len(indexed_sessions)} session indexes reused after current thread metadata checks; '
+                f'{len(sessions) - len(indexed_sessions)} sessions read through Codex history.',
+                *[f'Session #{sid} used its saved index from {stamp}; later updates require another refresh.'
+                  for sid, stamp in indexed_sessions],
                 f'Included user/assistant text from {turns_seen} finished turns in {fragments} bounded fragments; '
                 'tool output and attachment contents are excluded.',
                 f'Skipped {skipped} in-progress turns; refresh after they finish to include them.',

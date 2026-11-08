@@ -1,8 +1,9 @@
 """Archive traversal, bounded generation, and cache persistence on actual SQLite."""
 import json
+from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
@@ -167,3 +168,103 @@ def test_archive_cache_respects_project_ai_instructions(env):
         assert len(manager.inputs) == 2
     archive_history(engine, 1, manager)
     assert len(manager.inputs) == 2
+
+
+class IndexedCodex(FakeCodex):
+    def __init__(self):
+        super().__init__()
+        self.activity = 1_700_000_000
+        self.metadata_calls = []
+
+    def request(self, method, params):
+        assert method == 'thread/read' and params['includeTurns'] is False
+        self.metadata_calls.append(params['threadId'])
+        return {'thread': {'id': params['threadId'], 'status': {'type': 'idle'},
+                           'updatedAt': self.activity}}
+
+
+def index_session(engine, manager, project_id=1):
+    from backend.app.integrations.codex.history_search import index_history
+
+    with Session(engine) as db:
+        session = db.scalar(select(CodexSession).where(CodexSession.project_id == project_id))
+        session.codex_activity_at = datetime.fromtimestamp(manager.activity, timezone.utc).isoformat()
+        db.commit()
+    return index_history(engine, project_id, manager)
+
+
+def test_archive_reuses_fresh_session_index_without_rereading_turns(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    manager.turns['a'] = [turn(i, 'Latest saved result') for i in range(7)]
+    indexed = index_session(engine, manager)
+    manager.calls.clear()
+    evidence, coverage = archive_history(engine, 1, manager)
+    assert manager.calls == []
+    assert manager.metadata_calls == ['a']
+    assert all(source['session_id'] == 1 for item in evidence for source in item['sources'])
+    assert any('1 session indexes reused' in item for item in coverage)
+    assert any(indexed['indexed_at'] in item for item in coverage)
+    first_inputs = list(manager.inputs)
+    second, _ = archive_history(engine, 1, manager)
+    assert second == evidence
+    assert manager.inputs == first_inputs
+    assert manager.calls == []
+
+
+def test_archive_does_not_trust_project_index_timestamp_for_an_older_session(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    index_session(engine, manager)
+    manager.activity += 60
+    manager.turns['a'] = [turn(2, 'New live evidence')]
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE codex_history_index SET indexed_at='2099-01-01T00:00:00+00:00'"))
+    manager.calls.clear()
+    evidence, coverage = archive_history(engine, 1, manager)
+    assert manager.calls == [('a', None)]
+    assert any('New live evidence' in source['text'] for item in evidence for source in item['sources'])
+    assert any('0 session indexes reused' in item for item in coverage)
+
+
+def test_archive_missing_session_marker_falls_back_without_using_foreign_index(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    index_session(engine, manager, project_id=2)
+    manager.calls.clear()
+    evidence, coverage = archive_history(engine, 1, manager)
+    assert manager.calls == [('a', None)]
+    assert manager.metadata_calls == []
+    assert all(source['session_id'] == 1 for item in evidence for source in item['sources'])
+    assert any('0 session indexes reused' in item for item in coverage)
+
+
+def test_index_with_unfinished_turn_cannot_be_reused_as_complete_history(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    manager.turns['a'] = [turn(1), turn(2, status='inProgress')]
+    index_session(engine, manager)
+    with Session(engine) as db:
+        session = db.get(CodexSession, 1)
+        assert session.history_indexed_at
+        assert session.history_indexed_activity is None
+    manager.calls.clear()
+    archive_history(engine, 1, manager)
+    assert manager.calls == [('a', None)]
+    assert manager.metadata_calls == []
+
+
+def test_index_metadata_failure_falls_back_to_existing_reader(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    index_session(engine, manager)
+
+    def failed_metadata(*args):
+        raise CodexError('Metadata unsupported')
+
+    manager.request = failed_metadata
+    manager.calls.clear()
+    result, coverage = archive_history(engine, 1, manager)
+    assert result
+    assert manager.calls == [('a', None)]
+    assert any('Index freshness could not be checked' in item for item in coverage)
