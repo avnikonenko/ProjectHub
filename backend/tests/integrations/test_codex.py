@@ -410,7 +410,7 @@ def test_project_ai_instructions_are_scoped_and_used_for_review(setup):
     base = '/api/projects/1/codex'
     route = base + '/instructions'
     assert 'Be compact by default' in setup.client.get(route).json()['instructions']
-    assert setup.client.patch(route, json={'instructions': 'x' * 8001}).status_code == 422
+    assert setup.client.patch(route, json={'instructions': 'x' * 16003}).status_code == 422
     assert setup.client.patch('/api/projects/999/codex/instructions', json={'instructions': 'Unknown'}).status_code == 404
     text = 'Use British English.\nStart with the answer.'
     assert setup.client.patch(route, json={'instructions': text}).json() == {'instructions': text}

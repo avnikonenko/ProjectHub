@@ -918,12 +918,14 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
       {instructions !== null && <Form
         title="Project AI instructions"
         fields={[{ name: 'instructions', label: 'Edit or remove recommendations for this project. Leave blank for none.',
-          type: 'textarea', rows: 10, maxLength: 8000 }]}
+          type: 'textarea', rows: 10, maxLength: 16002 }]}
         initial={{ instructions }}
         onClose={() => setInstructions(null)}
         onSave={async (values) => {
-          await patch(instructionsPath, { instructions: values.instructions });
-          setInstructionsSaved(true);
+          if (values.instructions !== instructions) {
+            await patch(instructionsPath, { instructions: values.instructions });
+            setInstructionsSaved(true);
+          }
         }}
       />}
     </>

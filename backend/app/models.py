@@ -35,6 +35,7 @@ class ProjectAIInstructions(Base):
     __tablename__ = 'project_ai_instructions'
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
     instructions: Mapped[str] = mapped_column(Text, nullable=False)
+    replaces_shared: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class Scoped(Stamp):

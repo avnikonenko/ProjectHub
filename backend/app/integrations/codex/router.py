@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions
 from .manager import availability, context_preview, manager_for, record_dict
@@ -226,8 +227,8 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
 @router.get('/instructions')
 def get_instructions(project_id: int, db: DB):
     project(db, project_id)
-    saved = read_project_instructions(db, project_id)
     try:
+        saved = read_project_instructions(db, project_id)
         return {'instructions': shared_recommendations() if saved is None else saved}
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -236,7 +237,13 @@ def get_instructions(project_id: int, db: DB):
 @router.patch('/instructions')
 def patch_instructions(project_id: int, body: InstructionsInput, db: DB):
     project(db, project_id)
-    db.merge(ProjectAIInstructions(project_id=project_id, instructions=body.instructions))
+    stmt = insert(ProjectAIInstructions).values(
+        project_id=project_id, instructions=body.instructions, replaces_shared=True,
+    )
+    db.execute(stmt.on_conflict_do_update(
+        index_elements=[ProjectAIInstructions.project_id],
+        set_={'instructions': stmt.excluded.instructions, 'replaces_shared': True},
+    ))
     db.commit()
     return {'instructions': body.instructions}
 

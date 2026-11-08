@@ -575,10 +575,12 @@ class CodexManager:
                 session.status, session.last_error = 'running', ''
                 content, thread_id = delivery.content, session.thread_id
                 session_id = session.id
-                instructions = read_project_instructions(db, session.project_id)
+                project_id = session.project_id
                 db.commit()
             submitted = False
             try:
+                with Session(self.engine) as db:
+                    instructions = read_project_instructions(db, project_id)
                 content = 'PROJECTHUB RESPONSE INSTRUCTIONS:\n' + ai_instructions(instructions) + '\n\n' + content
                 self._assert_subscription(client)
                 self._assert_no_connectors(client, thread_id)
