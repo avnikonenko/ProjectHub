@@ -12,8 +12,10 @@ from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
 
-SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates', 'since_last_brief')
-SECTION_LIMITS = dict(zip(SECTION_NAMES, (2, 3, 4, 3, 3, 3)))
+SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates', 'since_last_brief',
+                 'current_status', 'implemented', 'work_in_progress', 'unresolved_problems', 'validation', 'next_steps')
+SECTION_LIMITS = dict(zip(SECTION_NAMES, (2, 3, 3, 3, 3, 3, 1, 3, 2, 3, 2, 3)))
+CLASSIFICATIONS = ('verified', 'reported', 'inferred', 'unresolved')
 MAX_POINT_CHARS = 420
 generation_lock = threading.Lock()
 
@@ -23,8 +25,10 @@ OUTPUT_SCHEMA = {
         'type': 'object', 'additionalProperties': False, 'required': list(SECTION_NAMES),
         'properties': {name: {
             'type': 'array', 'maxItems': SECTION_LIMITS[name],
+            **({'minItems': 1} if name == 'current_status' else {}),
             'items': {'type': 'object', 'additionalProperties': False,
-                     'required': ['text', 'source_ids'], 'properties': {
+                     'required': ['text', 'source_ids', 'classification'], 'properties': {
+                         'classification': {'type': 'string', 'enum': list(CLASSIFICATIONS)},
                          'text': {'type': 'string', 'minLength': 1, 'maxLength': MAX_POINT_CHARS},
                          'source_ids': {'type': 'array', 'minItems': 1, 'maxItems': 3,
                                         'items': {'type': 'string'}}}}
@@ -117,13 +121,17 @@ def validate_sections(raw, sources):
     sections = result['sections']
     if not isinstance(sections, dict) or set(sections) != set(SECTION_NAMES):
         raise CodexError('Brief generation omitted or added sections.')
+    if not sections['current_status']:
+        raise CodexError('Brief generation omitted the current status.')
     allowed = {source['id'] for source in sources}
     for name, entries in sections.items():
         if not isinstance(entries, list) or len(entries) > SECTION_LIMITS[name]:
             raise CodexError('Brief generation returned invalid section entries.')
         for entry in entries:
-            if not isinstance(entry, dict) or set(entry) != {'text', 'source_ids'}:
+            if not isinstance(entry, dict) or set(entry) != {'text', 'source_ids', 'classification'}:
                 raise CodexError('Brief generation returned an invalid entry.')
+            if not isinstance(entry['classification'], str) or entry['classification'] not in CLASSIFICATIONS:
+                raise CodexError('Brief generation returned an invalid evidence classification.')
             value, references = entry['text'], entry['source_ids']
             if not isinstance(value, str) or not value.strip() or len(value) > MAX_POINT_CHARS:
                 raise CodexError('Brief generation returned invalid entry text.')
@@ -167,6 +175,12 @@ def resolve_citations(sections, graph, source_groups):
                         for source in source_groups[ref]}
             cited.update(original)
             entry['source_ids'] = list(original)
+            if entry.get('classification') == 'verified' and not any(
+                    source.get('classification') == 'verified' and source['text'] == entry['text']
+                    for source in original.values()):
+                # Citations establish provenance, not correctness. A model may
+                # only retain verified for an exact deterministic observation.
+                entry['classification'] = 'inferred'
     return list(cited.values())
 
 
@@ -216,11 +230,12 @@ def refresh_brief(engine, project_id, manager):
             if (source.get('classification') == 'verified' or source['id'] == 'project:metadata'
                     or str(source['id']).startswith('task:')):
                 records.append({'text': source['text'], 'sources': [source]})
+        validation_source = {'id': 'evidence:validation', 'label': 'Available validation evidence',
+                             'text': snapshot['validation'], 'classification': 'verified'}
         history, coverage = archive_history(engine, project_id, manager)
-        if not records and not history:
-            raise CodexError('No saved session text, architecture diagram, or accepted decisions are available for a brief.')
         progress.update(project_id, stage='Summarizing project notes and decisions')
         recorded = summarize_evidence(engine, project_id, manager, records)
+        recorded.append({'text': validation_source['text'], 'sources': [validation_source]})
         history = summarize_evidence(engine, project_id, manager, history)
         coverage.append('Project notes (including AI notes), saved architecture and accepted decisions are included when available. Notes are unverified reference material.')
         coverage.append(snapshot['validation'])
@@ -235,20 +250,38 @@ def refresh_brief(engine, project_id, manager):
                 sources.append({
                     'id': source_id, 'text': item['text'], 'kind': kind,
                     'origins': [source['label'] for source in item['sources']],
+                    'classification': ('verified' if any(source.get('classification') == 'verified'
+                                         and source['text'] == item['text'] for source in item['sources'])
+                                       else 'reported' if len(item['sources']) == 1
+                                         and item['sources'][0]['text'] == item['text'] else 'inferred'),
+                    'origin_classifications': sorted({source.get('classification', 'reported')
+                                                      for source in item['sources']}),
                 })
-        prompt = ('Write a short handoff for someone returning to this project. Use plain text, one concrete '
-                  'point per entry, without repeating information across sections. Overview: what the project '
-                  'does and the most useful evidenced state. Changes: substantive completed work and outcomes; '
-                  'skip setup chatter, ports, and command lists unless essential to a current blocker. Open '
-                  'questions: unresolved choices or blockers supported by the excerpts. Architecture: key '
-                  'components and how they connect, prioritizing the saved diagram and accepted decisions. '
-                  'Include architecture only when relevant to this project; do not assume it is a software or research project. '
+        prompt = ('Write a compact current project-state handoff for someone returning to this project. '
+                  'Use plain text, one concrete point per entry, without repetition across sections. '
+                  'current_status: one short conclusion about the present development state; state when available evidence is insufficient. '
+                  'overview: objective, goals and scope only. implemented: functionality supported by evidence; '
+                  'conversation claims of completion must be reported, not verified. work_in_progress: '
+                  'current activities from TODOs and recent discussions; an uncommitted file alone does not '
+                  'prove unfinished functionality. unresolved_problems: important known bugs, blockers, '
+                  'contradictions or uncertainties, labeled unresolved unless a directly observed fact. '
+                  'validation: actual available test and scientific-validation evidence and gaps. '
+                  'Statements that tests passed in conversations are reported claims, not actual test results. '
+                  'If no independently recorded results exist, state that briefly using the validation source. '
+                  'next_steps: at most three actionable prioritized recommendations, labeled inferred; '
+                  'do not create or accept tasks. changes: meaningful recent outcomes supported by current evidence, '
+                  'excluding points already listed in since_last_brief. architecture: key components and their '
+                  'connections only when relevant; do not assume a software or research project. '
+                  'Every entry requires classification: verified for an exact copied deterministic source '
+                  'observation only, reported for stated claims/plans, inferred for analysis/recommendations, '
+                  'or unresolved for an open problem or conflicting evidence. A source being verified does not '
+                  'make conclusions drawn from it verified. Summaries marked inferred are AI interpretations. '
+                  'Do not upgrade them to observed facts. Leave open_questions and decision_candidates empty; '
+                  'these legacy fields remain for compatibility, not a structured approval workflow. '
                   'Create a small project map with at most 12 nodes and 18 directional connections. Give nodes '
                   'short ASCII IDs and labels; edge endpoints must reference node IDs. Mark connections as '
                   'inferred unless explicitly documented; cite evidence even for inferences. Leave the map '
-                  'empty if there is no architecture evidence. Leave decision_candidates empty; '
-                  'the structured decision acceptance workflow is retired. Explain evidenced choices '
-                  'and their reasons in the overview when useful, without asking the user to accept them. '
+                  'empty if there is no architecture evidence. '
                   'Use project notes alongside conversations. AI-authored notes are proposals, not proof '
                   'that a user accepted a decision. '
                   'Repository evidence verifies only the listed Git metadata and file presence, not '
@@ -274,6 +307,14 @@ def refresh_brief(engine, project_id, manager):
         sections, graph = validate_sections(manager.generate_brief(prompt, OUTPUT_SCHEMA), sources)
         deduplicate_brief_changes(sections, previous)
         cited = resolve_citations(sections, graph, source_groups)
+        # Always show the known coverage gap, even if synthesis omits it.
+        validation_entry = {'text': validation_source['text'], 'source_ids': [validation_source['id']],
+                            'classification': 'verified'}
+        sections['validation'] = [validation_entry, *(
+            entry for entry in sections['validation'] if entry['text'] != validation_entry['text']
+        )][:SECTION_LIMITS['validation']]
+        if not any(source['id'] == validation_source['id'] for source in cited):
+            cited.append(validation_source)
         with Session(engine) as db:
             row = db.get(ProjectBrief, project_id)
             if row is None:

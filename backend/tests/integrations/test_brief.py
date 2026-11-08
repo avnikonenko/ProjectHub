@@ -45,11 +45,19 @@ class FakeCodex:
         ref = 'foreign' if self.foreign_citation else data['sources'][-1]['id']
         diagram = data['sources'][0]['id']
         sections = {name: [] for name in SECTION_NAMES}
-        sections['decision_candidates'] = [{'text': 'Possible decision', 'source_ids': [ref]}]
-        sections['architecture'] = [{'text': 'Service stores records in a database', 'source_ids': [diagram]}]
+        sections['decision_candidates'] = [{'text': 'Possible decision', 'source_ids': [ref], 'classification': 'reported'}]
+        sections['architecture'] = [{'text': 'Service stores records in a database', 'source_ids': [diagram], 'classification': 'reported'}]
+        validation = next(source for source in data['sources'] if 'Available validation evidence' in source['origins'])
+        sections['validation'] = [{'text': validation['text'], 'source_ids': [validation['id']], 'classification': 'verified'}]
+        sections['current_status'] = [{'text': 'Implementation is complete', 'source_ids': [diagram], 'classification': 'verified'}]
+        sections['next_steps'] = [{'text': 'Check the migration', 'source_ids': [diagram], 'classification': 'inferred'}]
+        if getattr(self, 'invalid_status', False):
+            sections['next_steps'][0]['classification'] = 'guaranteed'
+        if getattr(self, 'missing_status', False):
+            sections['current_status'] = []
         if self.reported_change:
-            sections['changes'] = [{'text': self.reported_change, 'source_ids': [ref]}]
-            sections['since_last_brief'] = [{'text': self.reported_change, 'source_ids': [ref]}]
+            sections['changes'] = [{'text': self.reported_change, 'source_ids': [ref], 'classification': 'reported'}]
+            sections['since_last_brief'] = [{'text': self.reported_change, 'source_ids': [ref], 'classification': 'reported'}]
         graph = {'nodes': [{'id': key, 'label': key.title(), 'source_ids': [diagram]}
                            for key in ('service', 'database')],
                  'edges': [{'from': 'service', 'to': 'database', 'label': 'stores records',
@@ -86,10 +94,10 @@ def test_brief_collects_multiple_scoped_sessions_and_keeps_decision_candidates_s
     assert codex.reads == [('a-first', None), ('a-first', 'next'),
                           ('a-second', None), ('a-second', 'next')]
     excerpts = [source['text'] for source in codex.input['sources']]
-    assert len(excerpts) == 5
+    assert len(excerpts) == 6
     assert 'Project A' in excerpts[2]
     assert 'Support reproducible local analysis' in excerpts[2]
-    assert all('Conclusion from saved history' in text for text in excerpts[3:])
+    assert all('Conclusion from saved history' in text for text in excerpts[4:])
     assert 'Service --> Database' in excerpts[0] and 'Accepted evidence' in excerpts[1]
     assert not any(value in '\n'.join(excerpts)
                    for value in ('Foreign diagram', 'Tentative idea', 'Private decision'))
@@ -180,3 +188,26 @@ def test_successful_brief_saves_evidence_baseline_and_revision(project_db):
         refresh_brief(project_db, 1, codex)
     with Session(project_db) as db:
         assert read_brief(db, 1) == brief
+
+
+def test_structured_status_certifies_observations_and_preserves_last_success(project_db):
+    codex = FakeCodex()
+    status = refresh_brief(project_db, 1, codex)
+    assert status['sections']['current_status'][0]['classification'] == 'inferred'
+    assert status['sections']['next_steps'][0]['classification'] == 'inferred'
+    observation, = status['sections']['validation']
+    assert observation['classification'] == 'verified'
+    assert observation['source_ids'] == ['evidence:validation']
+    assert 'No independently recorded test execution' in observation['text']
+    codex.invalid_status = True
+    with pytest.raises(CodexError, match='invalid evidence classification'):
+        refresh_brief(project_db, 1, codex)
+    with Session(project_db) as db:
+        assert read_brief(db, 1) == status
+        assert list(db.scalars(select(GenerationRevision.snapshot))) == [status]
+    codex.invalid_status = False
+    codex.missing_status = True
+    with pytest.raises(CodexError, match='omitted the current status'):
+        refresh_brief(project_db, 1, codex)
+    with Session(project_db) as db:
+        assert read_brief(db, 1) == status
