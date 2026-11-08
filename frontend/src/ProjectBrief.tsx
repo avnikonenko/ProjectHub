@@ -5,6 +5,13 @@ import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
 
+function validationCopy(text: string) {
+  return text === 'No independently recorded test execution or scientific validation result is available. '
+    + 'Test files and statements in conversations are not evidence of a passing test run.'
+    ? 'No verified test or validation results.'
+    : text;
+}
+
 type GenerationProps = { base: string; generation: { model: string; effort: string }; evidenceVersion?: string };
 type EvidenceFreshness = {
   analysis_generated_at: string | null;
@@ -166,13 +173,10 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
               <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
               <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
               <p>AI analysis: {evidence.analysis_generated_at ? new Date(evidence.analysis_generated_at).toLocaleString() : 'Not generated'}</p>
-              <p>{evidence.validation}</p>
+              <p>{validationCopy(evidence.validation)}</p>
             </details>
             {evidence.stale === true && (
               <p role="status">Project changes detected since the last status update. Refresh to include them.</p>
-            )}
-            {evidence.stale === null && !evidence.git_error && !evidence.git?.change_detection_limited && (
-              <p role="status">Refresh project status to establish an evidence baseline.</p>
             )}
             {evidence.git?.change_detection_limited && (
               <p role="status">Project status freshness is unknown because repository change detection reached its safety limit.</p>
@@ -192,7 +196,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
                   {entries.map((entry, index) => (
                     <li key={index}>
                       {entry.classification && <><small>{evidenceLabels[entry.classification]}</small>{' · '}</>}
-                      {entry.text}
+                      {key === 'validation' ? validationCopy(entry.text) : entry.text}
                       {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
                     </li>
                   ))}
@@ -214,7 +218,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
           <details>
             <summary>What the summary covers</summary>
-            <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
+            <ul>{brief.coverage.map((item, index) => <li key={index}>{validationCopy(item)}</li>)}</ul>
           </details>
         </details>
       )}
