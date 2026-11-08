@@ -212,6 +212,13 @@ button:disabled {
 .generation-settings {
   position: relative;
 }
+.topbar .generation-options,
+.topbar .modal {
+  font-size: 1rem;
+  letter-spacing: normal;
+  font-weight: 400;
+  color: #26332e;
+}
 .generation-settings > summary {
   list-style: none;
   cursor: pointer;

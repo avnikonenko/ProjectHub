@@ -132,6 +132,7 @@ export default function App() {
           <div className="topbar-actions">
             <span className="local-label">● localhost</span>
             <ThemeToggle />
+            <AppSettings />
           </div>
         </header>
         <ErrorBox error={error} />
@@ -892,6 +893,42 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
   );
 }
 
+function AppSettings() {
+  const [addingProfile, setAddingProfile] = useState(false);
+  const [profileMessage, setProfileMessage] = useState('');
+  return (
+    <>
+      <details className="generation-settings">
+        <summary className="button secondary" aria-label="App settings" title="App settings">⚙</summary>
+        <div className="generation-options">
+          <h3>Settings</h3>
+          <button type="button" className="secondary"
+            onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
+            Add Codex profile
+          </button>
+          {profileMessage && <p role="status"><small>{profileMessage}</small></p>}
+        </div>
+      </details>
+      {addingProfile && <Form
+        title="Add Codex profile"
+        fields={[
+          { name: 'name', label: 'Profile name', required: true, maxLength: 80 },
+          { name: 'directory', label: 'Codex directory', required: true, maxLength: 4096 },
+        ]}
+        saveLabel="Add profile" savingLabel="Checking profile…"
+        onClose={() => setAddingProfile(false)}
+        onSave={async ({ name, directory }) => {
+          const result = await post('/settings/codex-profiles', { name, directory });
+          window.dispatchEvent(new Event('projecthub:profiles-changed'));
+          setProfileMessage(result.added === false
+            ? 'Profile already available.'
+            : 'Profile added. Choose it in project AI settings.');
+        }}
+      />}
+    </>
+  );
+}
+
 function GenerationSettings({ base, generation, onChange }: GenerationProps & {
   onChange: (settings: Generation) => void;
 }) {
@@ -953,16 +990,26 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
   const [status, setStatus] = useState('Loading Codex models…');
   const [accounts, setAccounts] = useState<{ account: string | null; options: { id: string; label: string }[]; include_launch?: boolean } | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
-  const [addingProfile, setAddingProfile] = useState(false);
-  const [profileMessage, setProfileMessage] = useState('');
   const [accountError, setAccountError] = useState('');
   const [accountVersion, setAccountVersion] = useState(0);
   useEffect(() => {
-    let active = true;
-    api<typeof accounts>(`${base}/codex/account`)
-      .then((result) => { if (active) setAccounts(result); })
-      .catch((e) => { if (active) setAccountError(e.message); });
-    return () => { active = false; };
+    let controller: AbortController;
+    function loadAccounts() {
+      controller?.abort();
+      controller = new AbortController();
+      const current = controller;
+      api<typeof accounts>(`${base}/codex/account`, { signal: current.signal })
+        .then((result) => {
+          if (!current.signal.aborted) { setAccounts(result); setAccountError(''); }
+        })
+        .catch((e) => { if (!current.signal.aborted) setAccountError(e.message); });
+    }
+    loadAccounts();
+    window.addEventListener('projecthub:profiles-changed', loadAccounts);
+    return () => {
+      controller.abort();
+      window.removeEventListener('projecthub:profiles-changed', loadAccounts);
+    };
   }, [base]);
   async function changeAccount(account: string) {
     if (savingAccount) return;
@@ -1004,26 +1051,6 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
           {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
-      <button type="button" className="quiet" disabled={!accounts || savingAccount}
-        onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
-        Add Codex profile
-      </button>
-      {profileMessage && <small role="status">{profileMessage}</small>}
-      {addingProfile && <Form
-        title="Add Codex profile"
-        fields={[
-          { name: 'name', label: 'Profile name', required: true, maxLength: 80 },
-          { name: 'directory', label: 'Codex directory', required: true, maxLength: 4096 },
-        ]}
-        saveLabel="Add profile" savingLabel="Checking profile…"
-        onClose={() => setAddingProfile(false)}
-        onSave={async ({ name, directory }) => {
-          const result = await post(`${base}/codex/accounts`, { name, directory });
-          setAccounts({ account: result.account, options: result.options, include_launch: result.include_launch });
-          setAccountError('');
-          setProfileMessage(result.added === false ? 'Profile already available.' : 'Profile added. Select it above to use it.');
-        }}
-      />}
       <small>Used for AI generation and new sessions. Existing sessions keep their original account.</small>
       {accountError && <small role="alert">{accountError}</small>}
       <label>

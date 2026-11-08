@@ -27,6 +27,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Register Codex profiles from app-wide Settings; project AI settings retain only profile selection.
+
 - Load project workspaces only when opened, and cancel browser requests for history pages when leaving the view.
 
 - Latest activity includes the linked repository’s three most recent Git commits in date order with project activity.

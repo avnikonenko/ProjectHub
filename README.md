@@ -48,7 +48,7 @@ Refreshing the browser restores progress for an ongoing Project status or AI Q&A
 
 The dashboard checks brief freshness locally without calling AI. A successful refresh saves an evidence baseline; later Git, history, note, or TODO changes can mark it outdated. See [project evidence](docs/PROJECT_EVIDENCE.md) for limits and exclusions.
 
-**Codex profiles:** In **AI settings → Add Codex profile**, enter a name and an existing Codex directory (for example, `~/.codex`). ProjectHub checks the existing ChatGPT login, saves only the name and path in its local database, and avoids duplicate directories. Select the profile afterward to use it for this project. Existing sessions keep their original profile.
+**Codex profiles:** In the top-bar **Settings → Add Codex profile**, enter a name and an existing Codex directory (for example, `~/.codex`). ProjectHub checks the existing ChatGPT login, saves only the name and path in its local database, and avoids duplicate directories. Select the profile afterward to use it for this project. Existing sessions keep their original profile.
 
 **Project AI instructions:** Open **AI settings → Project AI instructions** to set wording, language, or other response preferences for this project. These apply to future Project status, AI Q&A, Ask Project, and Codex review requests sent through ProjectHub. The editor starts with the shared recommendations. Edit or remove any of them, or save it blank to use none. Read-only and evidence rules still apply.
 
