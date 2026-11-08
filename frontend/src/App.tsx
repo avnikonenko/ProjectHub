@@ -8,7 +8,9 @@ import {
 } from './historyLinks';
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
+import { ProjectBrief } from './ProjectBrief';
 import { RepositoryOverview } from './RepositoryOverview';
+import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
@@ -762,95 +764,6 @@ function Report({ value }: { value: any }) {
   return <pre className="json-report">{JSON.stringify(value, null, 2)}</pre>;
 }
 
-type BriefSource = {
-  id: string;
-  label: string;
-  text: string;
-  session_id?: number;
-  turn_id?: string;
-  decision_id?: number;
-  note_id?: number;
-  share?: boolean;
-  kind?: string;
-};
-type BriefEntry = { text: string; source_ids: string[] };
-type Brief = {
-  generated_at: string;
-  generation?: GenerationProvenance | null;
-  sections: {
-    since_last_brief?: BriefEntry[];
-    overview: BriefEntry[];
-    changes: BriefEntry[];
-    architecture?: BriefEntry[];
-    open_questions: BriefEntry[];
-    decision_candidates: BriefEntry[];
-  };
-  sources: BriefSource[];
-  coverage: string[];
-};
-
-function citedSources(sources: BriefSource[], ids: string[]) {
-  const byId = new Map(sources.map((source) => [source.id, source]));
-  return [...new Set(ids)].flatMap((id) => {
-    const source = byId.get(id);
-    return source ? [source] : [];
-  });
-}
-
-function briefReferences(ids: string[], numbers: Map<string, number>, prefix: string) {
-  return [...new Set(ids)].map((id) => {
-    const number = numbers.get(id);
-    if (!number) return null;
-    const target = `${prefix}-source-${number}`;
-    return (
-      <a
-        className="brief-reference"
-        key={id}
-        href={`#${target}`}
-        aria-label={`Read source ${number}`}
-        onClick={() => document.getElementById(target)?.setAttribute('open', '')}
-      >
-        [{number}]
-      </a>
-    );
-  });
-}
-
-function BriefSources({ sources, prefix, openInNewTab = false }: {
-  sources: BriefSource[];
-  prefix: string;
-  openInNewTab?: boolean;
-}) {
-  const projectId = Number(prefix.split('-')[0]);
-  const linkOptions = openInNewTab ? { target: '_blank', rel: 'noopener' } : {};
-  return (
-    <ol>
-      {sources.map((source, index) => (
-        <li key={source.id}>
-          <details id={`${prefix}-source-${index + 1}`}>
-            <summary>
-              {source.turn_id ? `Session #${source.session_id} · Turn ${source.turn_id.slice(0, 8)}…`
-                : source.note_id !== undefined
-                  ? source.label || `${source.kind === 'ai_note' ? 'AI note' : 'Note'} #${source.note_id}`
-                  : source.label}
-            </summary>
-            {source.turn_id && <small>{source.label}</small>}
-            <pre className="json-report">{source.text}</pre>
-            {source.session_id !== undefined && source.turn_id && (
-              <a {...linkOptions} href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
-                Read full turn
-              </a>
-            )}
-            {source.share && source.note_id !== undefined && (
-              <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id })}>Read full transcript</a>
-            )}
-          </details>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 type SavedQA = {
   generated_at: string;
   generation?: GenerationProvenance | null;
@@ -1153,127 +1066,6 @@ function ProjectQA({ base, generation }: GenerationProps) {
         <section className="card brief-sources" aria-label="Q&A sources">
           <h2>Sources</h2>
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-qa'} />
-        </section>
-      )}
-    </>
-  );
-}
-
-function ProjectBrief({ base, generation }: GenerationProps) {
-  const [brief, setBrief] = useState<Brief | null>(null);
-  const [latestVersion, setLatestVersion] = useState<string | null>(null);
-  const [revisionId, setRevisionId] = useState<number | null>(null);
-  const [revisionLoading, setRevisionLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState('');
-  const request = useRef(0);
-  const generatingRef = useRef(false);
-  useEffect(() => {
-    const id = ++request.current;
-    api<Brief | null>(`${base}/codex/brief`)
-      .then((result) => {
-        if (request.current === id) {
-          setBrief(result);
-          setLatestVersion(result?.generated_at ?? null);
-        }
-      })
-      .catch((e) => {
-        if (request.current === id) setError(e.message);
-      })
-      .finally(() => {
-        if (request.current === id) setLoading(false);
-      });
-    return () => { request.current += 1; };
-  }, [base]);
-  async function generate() {
-    if (generatingRef.current || loading || revisionLoading) return;
-    generatingRef.current = true;
-    const id = ++request.current;
-    setGenerating(true);
-    setError('');
-    try {
-      const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
-      if (request.current === id) {
-        setBrief(result);
-        setRevisionId(null);
-        setLatestVersion(result.generated_at);
-      }
-    } catch (e) {
-      if (request.current === id) setError((e as Error).message);
-    } finally {
-      generatingRef.current = false;
-      if (request.current === id) setGenerating(false);
-    }
-  }
-  const sections: [keyof Brief['sections'], string][] = [
-    ['since_last_brief', 'Since your last brief'],
-    ['overview', 'Overview'],
-    ['architecture', 'Architecture'],
-    ['changes', 'Recent changes'],
-    ['open_questions', 'Open questions'],
-  ];
-  const sources = citedSources(brief?.sources ?? [], sections.flatMap(([key]) =>
-    brief?.sections[key]?.flatMap((entry) => entry.source_ids) ?? [],
-  ));
-  const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
-  return (
-    <>
-      <section className="card project-brief" aria-busy={loading || generating}>
-        <div className="section-title">
-          <div>
-            <h2>Project brief</h2>
-            {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
-            {brief && <SavedGeneration generation={brief.generation} />}
-          </div>
-          <button disabled={loading || generating || revisionLoading} onClick={generate}>
-            {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
-          </button>
-        </div>
-        <p className="brief-note">
-          Generate or refresh to send saved conversations, notes, decisions, architecture, and the previous brief if available to OpenAI.
-        </p>
-        {generating && <GenerationStatus base={base} kind="brief" />}
-        <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
-          disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
-          onSelect={(snapshot, id) => {
-            setBrief(snapshot);
-            setRevisionId(id);
-            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
-          }} />
-        {revisionLoading && <p role="status">Loading saved brief version…</p>}
-        <ErrorBox error={error} />
-        {loading && <Empty>Loading saved brief…</Empty>}
-        {!loading && !brief && <Empty>No saved brief yet.</Empty>}
-        {brief && (
-          <>
-            {sections.filter(([key]) => brief.sections[key]?.length).map(([key, title]) => (
-              <section className="brief-section" key={key}>
-                <h3>{title}</h3>
-                <ul className="brief-points">
-                  {brief.sections[key]?.map((entry, index) => (
-                    <li key={index}>
-                      {entry.text}
-                      {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-            {sections.every(([key]) => !brief.sections[key]?.length) && (
-              <Empty>The available sources did not support a brief.</Empty>
-            )}
-          </>
-        )}
-      </section>
-      {brief && (
-        <section className="card brief-sources" aria-label="Brief sources">
-          <h2>Sources</h2>
-          <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
-          <details>
-            <summary>What the brief covers</summary>
-            <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
-          </details>
         </section>
       )}
     </>

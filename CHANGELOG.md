@@ -6,6 +6,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Local project-evidence snapshots and brief freshness checks, without automatic AI requests.
+- Successful brief revisions now retain an evidence baseline; unreadable repository evidence is marked unknown rather than current.
+
 - Delete notes from the Notes tab without deleting original files or conversations.
 - Unlink Codex sessions from Sources without deleting their original threads or saved ProjectHub records.
 
@@ -24,5 +27,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Removed structured decision acceptance prompts from the interface while preserving historical records and audit history.
 
 ### Maintenance
+
+- Extracted brief rendering and source-reference components while preserving the existing dashboard and revision history.
 
 - Split self-contained frontend components out of the main application file without changing user-facing behavior.

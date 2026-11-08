@@ -1,0 +1,200 @@
+import { useEffect, useRef, useState } from 'react';
+import { api, post } from './api';
+import { GenerationStatus, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { RevisionHistory } from './RevisionHistory';
+import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
+import { Empty, ErrorBox } from './ui';
+
+type GenerationProps = { base: string; generation: { model: string; effort: string } };
+type EvidenceFreshness = {
+  analysis_generated_at: string | null;
+  stale: boolean | null;
+  git_error: string | null;
+  git_checked_at: string | null;
+  history_indexed_at: string | null;
+  validation: string;
+  git?: { change_detection_limited?: boolean } | null;
+};
+
+function generationBody({ model, effort }: GenerationProps['generation']) {
+  return { model: model || null, effort: effort || null };
+}
+
+type BriefEntry = { text: string; source_ids: string[] };
+type Brief = {
+  generated_at: string;
+  generation?: GenerationProvenance | null;
+  sections: {
+    since_last_brief?: BriefEntry[];
+    overview: BriefEntry[];
+    changes: BriefEntry[];
+    architecture?: BriefEntry[];
+    open_questions: BriefEntry[];
+    decision_candidates: BriefEntry[];
+  };
+  sources: BriefSource[];
+  coverage: string[];
+};
+
+export function ProjectBrief({ base, generation }: GenerationProps) {
+  const [brief, setBrief] = useState<Brief | null>(null);
+  const [latestVersion, setLatestVersion] = useState<string | null>(null);
+  const [revisionId, setRevisionId] = useState<number | null>(null);
+  const [revisionLoading, setRevisionLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
+  const [error, setError] = useState('');
+  const [evidence, setEvidence] = useState<EvidenceFreshness | null>(null);
+  const [evidenceError, setEvidenceError] = useState('');
+  const request = useRef(0);
+  const generatingRef = useRef(false);
+  useEffect(() => {
+    if (loading) return;
+    const abort = new AbortController();
+    setEvidence(null);
+    setEvidenceError('');
+    api<EvidenceFreshness>(`${base}/codex/evidence`, { signal: abort.signal })
+      .then((result) => {
+        if (!abort.signal.aborted) setEvidence(result);
+      })
+      .catch((e) => {
+        if (!abort.signal.aborted) setEvidenceError(`Could not check brief freshness: ${e.message}`);
+      });
+    return () => abort.abort();
+  }, [base, latestVersion, loading]);
+  useEffect(() => {
+    const id = ++request.current;
+    api<Brief | null>(`${base}/codex/brief`)
+      .then((result) => {
+        if (request.current === id) {
+          setBrief(result);
+          setLatestVersion(result?.generated_at ?? null);
+        }
+      })
+      .catch((e) => {
+        if (request.current === id) setError(e.message);
+      })
+      .finally(() => {
+        if (request.current === id) setLoading(false);
+      });
+    return () => { request.current += 1; };
+  }, [base]);
+  async function generate() {
+    if (generatingRef.current || loading || revisionLoading) return;
+    generatingRef.current = true;
+    const id = ++request.current;
+    setGenerating(true);
+    setError('');
+    try {
+      const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
+      if (request.current === id) {
+        setBrief(result);
+        setRevisionId(null);
+        setLatestVersion(result.generated_at);
+      }
+    } catch (e) {
+      if (request.current === id) setError((e as Error).message);
+    } finally {
+      generatingRef.current = false;
+      if (request.current === id) setGenerating(false);
+    }
+  }
+  const sections: [keyof Brief['sections'], string][] = [
+    ['since_last_brief', 'Since your last brief'],
+    ['overview', 'Overview'],
+    ['architecture', 'Architecture'],
+    ['changes', 'Recent changes'],
+    ['open_questions', 'Open questions'],
+  ];
+  const sources = citedSources(brief?.sources ?? [], sections.flatMap(([key]) =>
+    brief?.sections[key]?.flatMap((entry) => entry.source_ids) ?? [],
+  ));
+  const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
+  return (
+    <>
+      <section className="card project-brief" aria-busy={loading || generating}>
+        <div className="section-title">
+          <div>
+            <h2>Project brief</h2>
+            {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
+            {brief && <SavedGeneration generation={brief.generation} />}
+          </div>
+          <button disabled={loading || generating || revisionLoading} onClick={generate}>
+            {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
+          </button>
+        </div>
+        <p className="brief-note">
+          Generate or refresh to send saved conversations, notes, TODOs, Git metadata and file paths,
+          historical decisions, architecture, and the previous brief if available to OpenAI.
+        </p>
+        {generating && <GenerationStatus base={base} kind="brief" />}
+        <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
+          disabled={loading || generating} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          onSelect={(snapshot, id) => {
+            setBrief(snapshot);
+            setRevisionId(id);
+            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
+          }} />
+        {revisionLoading && <p role="status">Loading saved brief version…</p>}
+        <ErrorBox error={error} />
+        <ErrorBox error={evidenceError} />
+        {brief && revisionId === null && evidence && (
+          <>
+            <details>
+              <summary>Evidence freshness</summary>
+              <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
+              <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
+              <p>AI analysis: {evidence.analysis_generated_at ? new Date(evidence.analysis_generated_at).toLocaleString() : 'Not generated'}</p>
+              <p>{evidence.validation}</p>
+            </details>
+            {evidence.stale === true && (
+              <p role="status">Project changes detected since the last brief. Refresh to include them.</p>
+            )}
+            {evidence.stale === null && !evidence.git_error && !evidence.git?.change_detection_limited && (
+              <p role="status">Refresh the brief to establish an evidence baseline.</p>
+            )}
+            {evidence.git?.change_detection_limited && (
+              <p role="status">Brief freshness is unknown because repository change detection reached its safety limit.</p>
+            )}
+            {evidence.git_error && (
+              <p role="status">Brief freshness is unknown while repository evidence is unavailable: {evidence.git_error}</p>
+            )}
+          </>
+        )}
+        {loading && <Empty>Loading saved brief…</Empty>}
+        {!loading && !brief && <Empty>No saved brief yet.</Empty>}
+        {brief && (
+          <>
+            {sections.filter(([key]) => brief.sections[key]?.length).map(([key, title]) => (
+              <section className="brief-section" key={key}>
+                <h3>{title}</h3>
+                <ul className="brief-points">
+                  {brief.sections[key]?.map((entry, index) => (
+                    <li key={index}>
+                      {entry.text}
+                      {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+            {sections.every(([key]) => !brief.sections[key]?.length) && (
+              <Empty>The available sources did not support a brief.</Empty>
+            )}
+          </>
+        )}
+      </section>
+      {brief && (
+        <section className="card brief-sources" aria-label="Brief sources">
+          <h2>Sources</h2>
+          <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
+          <details>
+            <summary>What the brief covers</summary>
+            <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
+          </details>
+        </section>
+      )}
+    </>
+  );
+}
+
