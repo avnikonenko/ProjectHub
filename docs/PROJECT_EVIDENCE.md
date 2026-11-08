@@ -32,4 +32,4 @@ The baseline is captured before synthesis, so changes during generation can make
 
 ## Scope of this release
 
-This is the evidence foundation and freshness indicator. It preserves the existing brief UI and generation flow. A full Project Pulse presentation and Continue Working workflow remain separate checklist items. There is no checkpoint system or automatic AI refresh.
+This is the evidence foundation and freshness indicator. It preserves the existing brief UI and generation flow. The Dashboard remains the overview page, with Project status as its main summary. The richer structured project-status analysis and Continue Working workflow remain separate checklist items. There is no checkpoint system or automatic AI refresh.

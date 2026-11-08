@@ -58,7 +58,7 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
         if (!abort.signal.aborted) setEvidence(result);
       })
       .catch((e) => {
-        if (!abort.signal.aborted) setEvidenceError(`Could not check brief freshness: ${e.message}`);
+        if (!abort.signal.aborted) setEvidenceError(`Could not check project status freshness: ${e.message}`);
       });
     return () => abort.abort();
   }, [base, latestVersion, loading]);
@@ -100,7 +100,7 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
     }
   }
   const sections: [keyof Brief['sections'], string][] = [
-    ['since_last_brief', 'Since your last brief'],
+    ['since_last_brief', 'Since your last update'],
     ['overview', 'Overview'],
     ['architecture', 'Architecture'],
     ['changes', 'Recent changes'],
@@ -115,17 +115,17 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
       <section className="card project-brief" aria-busy={loading || generating}>
         <div className="section-title">
           <div>
-            <h2>Project brief</h2>
+            <h2>Project status</h2>
             {brief && <small>AI summary · Saved {new Date(brief.generated_at).toLocaleString()}</small>}
             {brief && <SavedGeneration generation={brief.generation} />}
           </div>
           <button disabled={loading || generating || revisionLoading} onClick={generate}>
-            {generating ? 'Generating…' : brief ? 'Refresh brief with OpenAI' : 'Generate brief with OpenAI'}
+            {generating ? 'Generating…' : brief ? 'Refresh project status' : 'Generate project status'}
           </button>
         </div>
         <p className="brief-note">
           Generate or refresh to send saved conversations, notes, TODOs, Git metadata and file paths,
-          historical decisions, architecture, and the previous brief if available to OpenAI.
+          historical decisions, architecture, and the previous summary if available to OpenAI.
         </p>
         {generating && <GenerationStatus base={base} kind="brief" />}
         <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
@@ -135,7 +135,7 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
             setRevisionId(id);
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
-        {revisionLoading && <p role="status">Loading saved brief version…</p>}
+        {revisionLoading && <p role="status">Loading saved project status version…</p>}
         <ErrorBox error={error} />
         <ErrorBox error={evidenceError} />
         {brief && revisionId === null && evidence && (
@@ -148,21 +148,21 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
               <p>{evidence.validation}</p>
             </details>
             {evidence.stale === true && (
-              <p role="status">Project changes detected since the last brief. Refresh to include them.</p>
+              <p role="status">Project changes detected since the last status update. Refresh to include them.</p>
             )}
             {evidence.stale === null && !evidence.git_error && !evidence.git?.change_detection_limited && (
-              <p role="status">Refresh the brief to establish an evidence baseline.</p>
+              <p role="status">Refresh project status to establish an evidence baseline.</p>
             )}
             {evidence.git?.change_detection_limited && (
-              <p role="status">Brief freshness is unknown because repository change detection reached its safety limit.</p>
+              <p role="status">Project status freshness is unknown because repository change detection reached its safety limit.</p>
             )}
             {evidence.git_error && (
-              <p role="status">Brief freshness is unknown while repository evidence is unavailable: {evidence.git_error}</p>
+              <p role="status">Project status freshness is unknown while repository evidence is unavailable: {evidence.git_error}</p>
             )}
           </>
         )}
-        {loading && <Empty>Loading saved brief…</Empty>}
-        {!loading && !brief && <Empty>No saved brief yet.</Empty>}
+        {loading && <Empty>Loading saved project status…</Empty>}
+        {!loading && !brief && <Empty>No saved project status yet.</Empty>}
         {brief && (
           <>
             {sections.filter(([key]) => brief.sections[key]?.length).map(([key, title]) => (
@@ -179,17 +179,17 @@ export function ProjectBrief({ base, generation }: GenerationProps) {
               </section>
             ))}
             {sections.every(([key]) => !brief.sections[key]?.length) && (
-              <Empty>The available sources did not support a brief.</Empty>
+              <Empty>The available sources did not support a project summary.</Empty>
             )}
           </>
         )}
       </section>
       {brief && (
-        <section className="card brief-sources" aria-label="Brief sources">
+        <section className="card brief-sources" aria-label="Project status sources">
           <h2>Sources</h2>
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
           <details>
-            <summary>What the brief covers</summary>
+            <summary>What the summary covers</summary>
             <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
           </details>
         </section>

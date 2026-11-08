@@ -19,6 +19,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Renamed the dashboard’s main summary to Project status; Dashboard remains the page name.
+
 - Sources shows session names, IDs, and Codex activity timestamps when available. Edit a session to assign a topic, then organize Sources by topic or recent activity.
 
 - Sources supports renaming, searching, and filtering sessions, with the most recent local activity shown first.

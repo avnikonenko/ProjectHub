@@ -1091,7 +1091,7 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
         <div>
           <h2>ChatGPT shared conversations</h2>
           <p className="muted">{onImported
-            ? 'Import a public share link to save its text for the brief and AI Q&A.'
+            ? 'Import a public share link to save its text for Project status and AI Q&A.'
             : 'Saved transcripts. Add conversations in Sources.'}</p>
         </div>
         {onImported && <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>}
