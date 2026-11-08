@@ -179,6 +179,21 @@ def get_brief(project_id: int, db: DB):
     return read_brief(db, project_id)
 
 
+@router.get('/evidence')
+def project_evidence(project_id: int, request: Request, db: DB):
+    from ...project_evidence import collect_project_evidence
+    project(db, project_id)
+    brief = read_brief(db, project_id)
+    db.rollback()
+    snapshot = collect_project_evidence(request.app.state.engine, project_id)
+    baseline = (brief or {}).get('project_state') or {}
+    complete = not snapshot.get('git_error') and not (snapshot.get('git') or {}).get('change_detection_limited')
+    stale = baseline['fingerprint'] != snapshot['fingerprint'] if baseline.get('fingerprint') and complete else None
+    return {key: value for key, value in snapshot.items() if key != 'sources'} | {
+        'analysis_generated_at': brief['generated_at'] if brief else None, 'stale': stale,
+    }
+
+
 @router.get('/revisions')
 def revisions(project_id: int, db: DB, kind: str = 'brief',
               offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):

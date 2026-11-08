@@ -153,6 +153,7 @@ class ProjectBrief(Base):
     coverage: Mapped[list] = mapped_column(JSON)
     project_map: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     generation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    project_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
 class ProjectHistoryBatch(Base):

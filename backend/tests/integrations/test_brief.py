@@ -151,3 +151,27 @@ def test_note_evidence_includes_all_parts_and_enforces_ownership(project_db):
     assert content in first
     assert evidence[-1]['sources'][0]['kind'] == 'ai_note'
     assert 'AI note' in evidence[-1]['sources'][0]['label']
+
+
+def test_successful_brief_saves_evidence_baseline_and_revision(project_db):
+    from backend.app.project_evidence import collect_project_evidence
+
+    codex = FakeCodex()
+    brief = refresh_brief(project_db, 1, codex)
+    baseline = brief['project_state']['fingerprint']
+    reads = list(codex.reads)
+    assert collect_project_evidence(project_db, 1)['fingerprint'] == baseline
+    assert codex.reads == reads
+    with Session(project_db) as db:
+        latest = db.scalar(select(GenerationRevision).where(
+            GenerationRevision.project_id == 1, GenerationRevision.kind == 'brief',
+        ).order_by(GenerationRevision.id.desc()))
+        assert latest.snapshot['project_state']['fingerprint'] == baseline
+        db.add(Note(project_id=1, title='New evidence', content='A newly reported limitation.'))
+        db.commit()
+    assert collect_project_evidence(project_db, 1)['fingerprint'] != baseline
+    codex.fail_read = True
+    with pytest.raises(CodexError):
+        refresh_brief(project_db, 1, codex)
+    with Session(project_db) as db:
+        assert read_brief(db, 1) == brief

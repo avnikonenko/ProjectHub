@@ -58,7 +58,10 @@ def read_brief(db, project_id):
     row = db.get(ProjectBrief, project_id)
     if row is None:
         return None
-    return {name: getattr(row, name) for name in ('generated_at', 'sections', 'sources', 'coverage', 'project_map', 'generation')}
+    result = {name: getattr(row, name) for name in ('generated_at', 'sections', 'sources', 'coverage', 'project_map', 'generation')}
+    if row.project_state is not None:
+        result['project_state'] = row.project_state
+    return result
 
 
 def note_evidence(db, project_id):
@@ -200,6 +203,8 @@ def refresh_brief(engine, project_id, manager):
         raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
     progress.begin(project_id, 'brief')
     try:
+        from ...project_evidence import collect_project_evidence
+        snapshot = collect_project_evidence(engine, project_id)
         with Session(engine) as db:
             project = db.get(Project, project_id)
             if project is None:
@@ -207,6 +212,9 @@ def refresh_brief(engine, project_id, manager):
             records = list(recorded_evidence(db, project))
             name = project.name
             previous = comparison_baseline(read_brief(db, project_id))
+        for source in snapshot['sources']:
+            if source.get('classification') == 'verified' or str(source['id']).startswith('task:'):
+                records.append({'text': source['text'], 'sources': [source]})
         history, coverage = archive_history(engine, project_id, manager)
         if not records and not history:
             raise CodexError('No saved session text, architecture diagram, or accepted decisions are available for a brief.')
@@ -214,6 +222,9 @@ def refresh_brief(engine, project_id, manager):
         recorded = summarize_evidence(engine, project_id, manager, records)
         history = summarize_evidence(engine, project_id, manager, history)
         coverage.append('Project notes (including AI notes), saved architecture and accepted decisions are included when available. Notes are unverified reference material.')
+        coverage.append(snapshot['validation'])
+        if snapshot.get('git_error'):
+            coverage.append('Repository evidence could not be read; Git freshness is unknown.')
         source_groups = {}
         sources = []
         for kind, evidence in (('recorded', recorded), ('history', history)):
@@ -239,6 +250,9 @@ def refresh_brief(engine, project_id, manager):
                   'and their reasons in the overview when useful, without asking the user to accept them. '
                   'Use project notes alongside conversations. AI-authored notes are proposals, not proof '
                   'that a user accepted a decision. '
+                  'Repository evidence verifies only the listed Git metadata and file presence, not '
+                  'working functionality. TODOs and conversations are reported intentions or claims. '
+                  'Do not claim tests passed or scientific validation succeeded without an actual test result. '
                   'Since last brief: compare the previous saved brief with current evidence. Return at most '
                   'three short, material changes in project state, such as completed work, a changed decision, '
                   'or a resolved blocker. State what changed. Cite current evidence for each change. The previous '
@@ -267,6 +281,9 @@ def refresh_brief(engine, project_id, manager):
             row.generated_at, row.sections = utcnow(), sections
             row.sources, row.coverage, row.project_map = cited, coverage, graph
             row.generation = generation_metadata(manager)
+            row.project_state = {key: snapshot.get(key) for key in (
+                'fingerprint', 'git_checked_at', 'history_indexed_at', 'validation',
+            )}
             db.flush()
             save_revision(db, project_id, 'brief', read_brief(db, project_id))
             db.commit()
