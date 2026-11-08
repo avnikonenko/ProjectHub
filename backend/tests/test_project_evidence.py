@@ -82,7 +82,7 @@ def test_reported_sources_are_scoped_bounded_and_not_validation(env):
     assert data['objective'] == 'Prepare garden beds'
     assert data['git'] is None and data['git_error'] is None
     assert data['history_indexed_at'] == 'new'
-    assert 'No independently recorded test execution' in data['validation']
+    assert data['validation'] == 'No verified test or validation results.'
     assert {source['classification'] for source in data['sources']} == {'reported'}
     serialized = json.dumps(data)
     assert 'Private' not in serialized and 'Foreign evidence' not in serialized and 'Unlinked evidence' not in serialized

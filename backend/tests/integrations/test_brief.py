@@ -204,7 +204,7 @@ def test_structured_status_certifies_observations_and_preserves_last_success(pro
     observation, = status['sections']['validation']
     assert observation['classification'] == 'verified'
     assert observation['source_ids'] == ['evidence:validation']
-    assert 'No independently recorded test execution' in observation['text']
+    assert observation['text'] == 'No verified test or validation results.'
     codex.invalid_status = True
     with pytest.raises(CodexError, match='invalid evidence classification'):
         refresh_brief(project_db, 1, codex)

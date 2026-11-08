@@ -454,8 +454,7 @@ def collect_project_evidence(engine, project_id):
     return {
         'objective': objective[:1800], 'git': git, 'git_error': error, 'git_checked_at': checked,
         'history_indexed_at': indexed_at,
-        'validation': 'No independently recorded test execution or scientific validation result is available. '
-                      'Test files and statements in conversations are not evidence of a passing test run.',
+        'validation': 'No verified test or validation results.',
         'sources': sources,
         'fingerprint': _digest({'project': project_marker, 'history': history_digest, 'sessions': identity,
                                 'records': content_digest.hexdigest(), 'git': git_fingerprint, 'git_error': error}),

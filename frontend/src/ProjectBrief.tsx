@@ -215,7 +215,8 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
       {brief && (
         <details className="card brief-sources" aria-label="Project status sources">
           <summary>Sources ({sources.length})</summary>
-          <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
+          <BriefSources sources={sources.map((source) => source.id === 'evidence:validation'
+            ? { ...source, text: validationCopy(source.text) } : source)} prefix={base.split('/')[2] + '-brief'} />
           <details>
             <summary>What the summary covers</summary>
             <ul>{brief.coverage.map((item, index) => <li key={index}>{validationCopy(item)}</li>)}</ul>

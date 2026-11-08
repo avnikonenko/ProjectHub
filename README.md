@@ -44,6 +44,8 @@ There is no separate question/answer acceptance workflow. Older structured recor
 
 The dashboard checks brief freshness locally without calling AI. A successful refresh saves an evidence baseline; later Git, history, note, or TODO changes can mark it outdated. See [project evidence](docs/PROJECT_EVIDENCE.md) for limits and exclusions.
 
+**Validation:** Test files and conversation claims do not establish that tests passed. Look for recorded test results.
+
 Saved Codex history syncs locally in the background about once a minute while ProjectHub runs. Unchanged sessions are skipped, and previous search data remains usable if a read fails. Use **Pause automatic sync** in Sources for an unavailable session; its saved history and requests remain intact. Manual refresh is available in History. Sync never starts AI generation; imported ChatGPT share links remain snapshots. To disable sync or change the interval, add `[history]` with `auto_sync = false` or `sync_interval = 120` to the config.
 
 ## Development
