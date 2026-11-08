@@ -343,7 +343,7 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     git('init', '-b', 'work')
     p = project(client, repository_path=str(repo))
     url = f"/api/projects/{p['id']}/repository"
-    assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': []}
+    assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [], 'github_issues_url': None}
     assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
     assert client.get('/api/projects/99999/repository').status_code == 404
 
@@ -373,3 +373,32 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     assert not (repo / 'ran-filter').exists()
     assert not (repo / 'ran-monitor').exists()
     assert (repo / '.git/index').read_bytes() == index
+
+
+
+def test_repository_issues_are_project_scoped_and_only_fetch_on_request(client, tmp_path, monkeypatch):
+    from backend.app.integrations import github_issues
+
+    repo = tmp_path / 'project'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', '-C', str(repo), 'remote', 'add', 'origin',
+                    'git@github.com:local-owner/sample.git'], check=True)
+    linked = project(client, repository_path=str(repo))
+    explicit = project(client, git_remote='https://github.com/other-owner/another')
+    unrelated = project(client, repository_path=str(repo), git_remote='https://example.com/foreign/repo')
+    calls = []
+
+    def fetch(repository):
+        calls.append(repository)
+        return {'url': github_issues.issues_url(repository), 'issues': []}
+
+    monkeypatch.setattr(github_issues, 'open_issues', fetch)
+    route = lambda entry: f"/api/projects/{entry['id']}/repository"
+    assert client.get(route(linked)).json()['github_issues_url'] == 'https://github.com/local-owner/sample/issues'
+    assert client.get(route(unrelated)).json()['github_issues_url'] is None
+    assert not calls
+    assert client.get(route(linked) + '/issues').status_code == 200
+    assert client.get(route(explicit) + '/issues').status_code == 200
+    assert client.get(route(unrelated) + '/issues').status_code == 404
+    assert client.get('/api/projects/99999/repository/issues').status_code == 404
+    assert calls == ['local-owner/sample', 'other-owner/another']

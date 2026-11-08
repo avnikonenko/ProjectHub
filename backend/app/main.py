@@ -12,12 +12,12 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
-from .integrations import chatgpt_share
+from .integrations import chatgpt_share, github_issues
 from .integrations.codex.history_search import search_history
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
-from .services import repository_snapshot
+from .services import repository_snapshot, repository_github_target
 
 
 def db_dependency(request: Request):
@@ -252,9 +252,23 @@ def create_app(data_dir=None):
 
     @app.get('/api/projects/{project_id}/repository')
     def get_repository_snapshot(project_id: int, db: Session = db_dep):
-        path = require_project(db, project_id).repository_path
+        project = require_project(db, project_id)
+        path, remote = project.repository_path, project.git_remote
         db.rollback()
-        return repository_snapshot(path)
+        return repository_snapshot(path, remote)
+
+    @app.get('/api/projects/{project_id}/repository/issues')
+    def get_repository_issues(project_id: int, db: Session = db_dep):
+        project = require_project(db, project_id)
+        path, remote = project.repository_path, project.git_remote
+        db.rollback()
+        repository = repository_github_target(remote, path)
+        if not repository:
+            raise HTTPException(404, 'No GitHub repository is linked to this project.')
+        try:
+            return github_issues.open_issues(repository)
+        except github_issues.IssuesReadError as exc:
+            raise HTTPException(502, str(exc)) from exc
 
     @app.get('/api/projects/{project_id}/history/search')
     def search_conversations(project_id: int, q: str = Query('', max_length=2000),

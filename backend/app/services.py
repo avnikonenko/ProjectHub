@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy import select
+from .integrations.github_issues import github_repository, issues_url
 from .models import Project, Question, Answer, Decision, Task, Note, AuditEvent, CodexSession, utcnow
 
 
@@ -55,11 +56,34 @@ def validate_repository(value, *, env=None):
     return str(path)
 
 
-def repository_snapshot(value):
-    if not value:
-        raise HTTPException(404, 'No repository is linked to this project')
+def _repository_env():
     env = {key: val for key, val in os.environ.items() if not key.startswith('GIT_')}
     env.update(GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0', GIT_NO_LAZY_FETCH='1', GIT_ALLOW_PROTOCOL='')
+    return env
+
+
+def repository_github_target(remote, path=None, *, validated=False):
+    if remote.strip():
+        return github_repository(remote)
+    if not path:
+        return None
+    env = _repository_env()
+    if not validated:
+        path = validate_repository(path, env=env)
+    try:
+        result = subprocess.run(
+            ['git', '-C', path, 'config', '--local', '--no-includes', '--get', 'remote.origin.url'],
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5, env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return github_repository(result.stdout) if result.returncode == 0 else None
+
+
+def repository_snapshot(value, remote=''):
+    if not value:
+        raise HTTPException(404, 'No repository is linked to this project')
+    env = _repository_env()
     path = validate_repository(value, env=env)
     command = ['git', '-C', path, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null']
 
@@ -93,8 +117,10 @@ def repository_snapshot(value):
                  for item in ('-c', f'{driver}.{option}')]
     status = git('status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty',
                  overrides=overrides)
+    target = repository_github_target(remote, path, validated=True)
     return {'branch': branch.stdout.strip() if branch.returncode == 0 else None,
-            'dirty': bool(status.stdout), 'commits': commits}
+            'dirty': bool(status.stdout), 'commits': commits,
+            'github_issues_url': issues_url(target) if target else None}
 
 
 def validate_links(db, project_id, values):
