@@ -41,6 +41,9 @@ class FakeCodex:
             refs = [source['id'] for source in data['sources'] if 'Conclusion from saved history' in source['text']]
             return json.dumps({'evidence': [{'text': 'Conclusion from saved history', 'source_ids': refs}]})
         assert self.closed
+        allowed = [source['id'] for source in data['sources']]
+        for section in output_schema['properties']['sections']['properties'].values():
+            assert section['items']['properties']['source_ids']['items']['enum'] == allowed
         self.input = data
         ref = 'foreign' if self.foreign_citation else data['sources'][-1]['id']
         diagram = data['sources'][0]['id']

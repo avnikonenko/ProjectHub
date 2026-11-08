@@ -330,3 +330,66 @@ def test_ask_generation_refuses_inherited_connectors_before_turn(env, monkeypatc
         env.manager.generate_brief('Synthetic question', {'type': 'object'}, verify_connectors=True)
     assert [method for method, _ in client.calls] == ['thread/start', 'mcpServerStatus/list']
     assert client.closed
+
+
+@pytest.mark.parametrize('profile', [False, True])
+def test_session_reader_reuses_one_transport_for_all_pages_and_metadata(env, tmp_path, monkeypatch, profile):
+    from backend.app.integrations.codex import accounts
+
+    home = tmp_path / 'codex-profile'
+    home.mkdir()
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {'profile:test': home})
+    clients = []
+
+    class ReadClient:
+        def __init__(self, **kwargs):
+            self.home = kwargs.get('codex_home')
+            self.calls = []
+            self.closed = False
+            clients.append(self)
+
+        def request(self, method, params):
+            self.calls.append((method, params))
+            if method == 'thread/read':
+                return {'thread': {'id': params['threadId'], 'status': {'type': 'idle'}}}
+            assert method == 'thread/turns/list'
+            return {'data': [], 'nextCursor': None}
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(module, 'AppServerClient', ReadClient)
+    env.manager.client_factory = ReadClient
+    session = SimpleNamespace(id=10, project_id=1, thread_id='saved-thread',
+                              codex_account='profile:test' if profile else None)
+    with env.manager.session_reader(session) as reader:
+        assert reader.identity == (10, 1, 'saved-thread', session.codex_account)
+        reader.request('thread/read', {'threadId': 'saved-thread', 'includeTurns': False})
+        for cursor in (None, 'page-2', 'page-3'):
+            assert reader.history(session, cursor, client=reader, archive=True) == {'turns': [], 'next_cursor': None}
+        assert len(clients) == 1
+        assert not clients[0].closed
+        assert clients[0].home == (str(home) if profile else None)
+        assert [params.get('cursor') for method, params in clients[0].calls if method == 'thread/turns/list'] == [None, 'page-2', 'page-3']
+        calls = len(clients[0].calls)
+        foreign = SimpleNamespace(id=11, project_id=2, thread_id='foreign', codex_account=session.codex_account)
+        with pytest.raises(CodexError, match='identity'):
+            reader.history(foreign, None, client=reader, archive=True)
+        with pytest.raises(CodexError, match='metadata'):
+            reader.request('thread/read', {'threadId': 'foreign', 'includeTurns': False})
+        with pytest.raises(CodexError, match='metadata'):
+            reader.request('turn/start', {'threadId': 'saved-thread'})
+        with pytest.raises(CodexError, match='cursor'):
+            reader.history(session, 'x' * 8001, client=reader, archive=True)
+        assert len(clients[0].calls) == calls
+    assert clients[0].closed
+
+
+def test_session_reader_closes_transport_on_failure(env, monkeypatch):
+    client = FakeClient()
+    monkeypatch.setattr(env.manager, '_new_read_client', lambda: client)
+    session = SimpleNamespace(id=1, project_id=1, thread_id='saved', codex_account=None)
+    with pytest.raises(CodexError, match='failed'):
+        with env.manager.session_reader(session):
+            raise CodexError('Read failed')
+    assert client.closed

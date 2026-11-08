@@ -48,6 +48,8 @@ class FakeCodex:
         ids = ([s['id'] for s in data['sources']] if 'sources' in data else
                [s for item in data['evidence'] for s in item['source_ids']])
         ids = list(dict.fromkeys(ids))
+        allowed = output_schema['properties']['evidence']['items']['properties']['source_ids']['items']['enum']
+        assert set(allowed) == set(ids)
         limit = output_schema['properties']['evidence']['maxItems']
         return json.dumps({'evidence': [{'text': 'Saved outcome ' + str(i),
                                         'source_ids': ['foreign' if self.foreign else source]}
@@ -268,3 +270,61 @@ def test_index_metadata_failure_falls_back_to_existing_reader(env):
     assert result
     assert manager.calls == [('a', None)]
     assert any('Index freshness could not be checked' in item for item in coverage)
+
+
+def test_reduction_does_not_call_ai_for_small_singleton_tail(env):
+    engine, manager = env
+    evidence = [{'text': f'Fact {i}', 'sources': [
+        {'id': f'note:{i}', 'label': f'Note {i}', 'text': f'Fact {i}'}]} for i in range(33)]
+    reduced = summarize_evidence(engine, 1, manager, evidence)
+    assert len(manager.inputs) == 2
+    assert reduced[-1] == evidence[-1]
+
+
+def test_profile_bound_reader_can_reuse_index(env):
+    from contextlib import contextmanager
+
+    engine, _ = env
+    manager = IndexedCodex()
+    with Session(engine) as db:
+        db.get(CodexSession, 1).codex_account = 'profile:original'
+        db.commit()
+    index_session(engine, manager)
+    manager.calls.clear()
+
+    @contextmanager
+    def session_reader(session):
+        manager.identity = (session.id, session.project_id, session.thread_id, session.codex_account)
+        try:
+            yield manager
+        finally:
+            manager.close()
+
+    manager.session_reader = session_reader
+    result, coverage = archive_history(engine, 1, manager)
+    assert result and manager.calls == []
+    assert manager.metadata_calls == ['a']
+    assert any('1 session indexes reused' in item for item in coverage)
+
+
+def test_retry_reuses_successful_batches_before_bad_citation(env):
+    engine, manager = env
+    manager.turns['a'] = [turn(i, 'x' * 15000) for i in range(3)]
+    generate = manager.generate_brief
+
+    def fail_second(prompt, schema):
+        manager.foreign = len(manager.inputs) == 1
+        return generate(prompt, schema)
+
+    manager.generate_brief = fail_second
+    with pytest.raises(CodexError, match='foreign'):
+        archive_history(engine, 1, manager)
+    with Session(engine) as db:
+        assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 1
+    first_input = manager.inputs[0]
+    manager.foreign = False
+    manager.generate_brief = generate
+    result, coverage = archive_history(engine, 1, manager)
+    assert result
+    assert manager.inputs.count(first_input) == 1
+    assert any('1 reused from cache' in item for item in coverage)

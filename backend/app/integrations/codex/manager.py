@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -113,6 +114,30 @@ def context_preview(db, project_id):
     if len(content) > 120_000:
         raise CodexError('Project context exceeds 120,000 characters; narrow project records before sending.')
     return {'content': content, 'version': hashlib.sha256(content.encode()).hexdigest()}
+
+
+class _HistoryReader:
+    """A single read transport bound to one exact saved-session identity."""
+    def __init__(self, session, client):
+        self.identity = (session.id, session.project_id, session.thread_id, session.codex_account)
+        self._client = client
+
+    def request(self, method, params):
+        if (method != 'thread/read' or params.get('threadId') != self.identity[2]
+                or params.get('includeTurns') is not False):
+            raise CodexError('The history reader only permits metadata for its selected session.')
+        return self._client.request(method, params)
+
+    def history(self, session, cursor=None, *, client, archive):
+        identity = (session.id, session.project_id, session.thread_id, session.codex_account)
+        if client is not self or not archive or identity != self.identity:
+            raise CodexError('History reader session identity changed.')
+        params = {'threadId': session.thread_id, 'itemsView': 'full', 'limit': 1, 'sortDirection': 'asc'}
+        if cursor is not None:
+            if not isinstance(cursor, str) or len(cursor) > 8000:
+                raise CodexError('History cursor exceeds the supported limit.')
+            params['cursor'] = cursor
+        return history_page(self._client.request('thread/turns/list', params), clip_messages=False, limit=1)
 
 
 class CodexManager:
@@ -279,6 +304,18 @@ class CodexManager:
                     return record_dict(session)
                 finally:
                     client.close()
+
+    @contextmanager
+    def session_reader(self, session):
+        if session.codex_account is not None:
+            from .accounts import account_home
+            client = AppServerClient(codex_home=account_home(session.codex_account, self.engine))
+        else:
+            client = self._new_read_client()
+        try:
+            yield _HistoryReader(session, client)
+        finally:
+            client.close()
 
     def history(self, session, cursor=None, *, client=None, archive=False, limit=5):
         account = getattr(session, 'codex_account', None)

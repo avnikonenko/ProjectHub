@@ -1,4 +1,5 @@
 """Bounded, explicitly requested synthesis of project-scoped reference data."""
+from copy import deepcopy
 import json
 import re
 import threading
@@ -308,7 +309,13 @@ def refresh_brief(engine, project_id, manager):
                   json.dumps({'project_name': name, 'sources': sources, 'coverage': coverage,
                               'previous_brief': previous}, ensure_ascii=False))
         progress.update(project_id, stage='Generating project brief')
-        sections, graph = validate_sections(manager.generate_brief(prompt, OUTPUT_SCHEMA), sources)
+        schema = deepcopy(OUTPUT_SCHEMA)
+        allowed_ids = [source['id'] for source in sources]
+        for section in schema['properties']['sections']['properties'].values():
+            section['items']['properties']['source_ids']['items']['enum'] = allowed_ids
+        for collection in schema['properties']['project_map']['properties'].values():
+            collection['items']['properties']['source_ids']['items']['enum'] = allowed_ids
+        sections, graph = validate_sections(manager.generate_brief(prompt, schema), sources)
         deduplicate_brief_changes(sections, previous)
         # Always show the known coverage gap, even if synthesis omits it.
         validation_entry = {'text': validation_source['text'], 'source_ids': [validation_id],
