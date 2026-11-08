@@ -31,6 +31,13 @@ class Project(Stamp, Base):
     architecture_mermaid: Mapped[str] = mapped_column(Text, default='')
 
 
+class CodexProfile(Base):
+    __tablename__ = 'codex_profiles'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    directory: Mapped[str] = mapped_column(Text, unique=True)
+
+
 class ProjectAIInstructions(Base):
     __tablename__ = 'project_ai_instructions'
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)

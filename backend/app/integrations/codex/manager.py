@@ -284,7 +284,7 @@ class CodexManager:
         account = getattr(session, 'codex_account', None)
         if account:
             from .accounts import account_home
-            with_client = partial(AppServerClient, codex_home=account_home(account))
+            with_client = partial(AppServerClient, codex_home=account_home(account, self.engine))
             if client is not None:
                 # A shared reader belongs to the launch account. Use a private
                 # connection for sessions created under a selected account.
@@ -657,7 +657,7 @@ def manager_for(app, project_id=None, *, account=_PROJECT_ACCOUNT):
         if key is None:
             return root
         from .accounts import account_home
-        home = account_home(key)
+        home = account_home(key, root.engine)
         cache_key = (project_id, key, home)
         if cache_key not in root.account_managers:
             child = copy.copy(root)

@@ -176,7 +176,7 @@ class HistorySync:
             if session.codex_account is None:
                 client = self.manager_factory()._new_read_client()
             else:
-                client = AppServerClient(codex_home=account_home(session.codex_account))
+                client = AppServerClient(codex_home=account_home(session.codex_account, self.engine))
             with self._lock:
                 self._active_client = client
             if self._stop.is_set():

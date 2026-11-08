@@ -125,11 +125,17 @@ def test_codex_activity_uses_existing_metadata_without_touching_local_timestamps
         assert db.get(CodexSession, 1).codex_activity_at == '1970-01-01T00:00:02+00:00'
 
 
-def test_original_account_reader_is_used(env, tmp_path, monkeypatch):
+@pytest.mark.parametrize('registered', [False, True])
+def test_original_account_reader_is_used(env, tmp_path, monkeypatch, registered):
     home = tmp_path / 'account'; home.mkdir()
+    from backend.app.models import CodexProfile
+    from backend.app.integrations.codex import accounts
     with Session(env.engine) as db:
-        db.get(CodexSession, 1).codex_account = 'profile:one'; db.commit()
-    monkeypatch.setattr(module, 'account_home', lambda key: str(home) if key == 'profile:one' else None)
+        if registered:
+            db.add(CodexProfile(id=1, name='Registered', directory=str(home)))
+        db.get(CodexSession, 1).codex_account = 'registered:1' if registered else 'profile:one'
+        db.commit()
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {'profile:one': home})
     monkeypatch.setattr(module, 'AppServerClient', lambda codex_home: FakeClient(env.state, env.calls, codex_home))
     env.worker.sync_once()
     a_calls = [(origin, method) for origin, method, params in env.calls if params['threadId'] == 'a']

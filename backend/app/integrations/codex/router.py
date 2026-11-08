@@ -1,16 +1,17 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
 from typing import Annotated
+from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
-from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions
+from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions, CodexProfile
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
-from .accounts import account_options, account_home
+from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
 from .qa import read_qa, refresh_qa
 from .ask import answer_project, retrieve_passages
 from . import progress
@@ -132,7 +133,7 @@ def audit(db, project_id, row, action):
 def status(project_id: int, db: DB):
     row = project(db, project_id)
     try:
-        home = account_home(row.codex_account)
+        home = account_home(row.codex_account, db.get_bind())
         return availability(home) if home else availability()
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -145,14 +146,49 @@ class AccountInput(Input):
 @router.get('/account')
 def get_account(project_id: int, db: DB):
     row = project(db, project_id)
-    return {'account': row.codex_account, 'options': account_options()}
+    selected_home = None
+    try:
+        selected_home = account_home(row.codex_account, db.get_bind())
+    except CodexError:
+        pass  # The unavailable selection is shown explicitly in options.
+    return {'account': row.codex_account, 'options': account_options(db.get_bind(), row.codex_account),
+            'include_launch': selected_home is None or Path(selected_home) != launch_home()}
+
+
+class AddAccountInput(Input):
+    name: str = Field(min_length=1, max_length=80)
+    directory: str = Field(min_length=1, max_length=4096)
+
+
+@router.post('/accounts')
+def add_account(project_id: int, body: AddAccountInput, db: DB):
+    project(db, project_id)
+    try:
+        directory = validate_profile_directory(body.directory)
+    except (CodexError, OSError, RuntimeError) as exc:
+        raise HTTPException(422, 'Choose an existing absolute Codex directory.') from exc
+    db.rollback()
+    capability = availability(directory)
+    if not capability['authenticated'] or not capability['app_server']:
+        raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
+    if Path(directory) == launch_home():
+        return {**get_account(project_id, db), 'registered_id': None, 'added': False}
+    for key, _, path in profile_entries(db.get_bind()):
+        if path.is_dir() and path.resolve() == Path(directory):
+            return {**get_account(project_id, db), 'registered_id': key, 'added': False}
+    stmt = insert(CodexProfile).values(name=body.name, directory=directory)
+    result = db.execute(stmt.on_conflict_do_nothing(index_elements=[CodexProfile.directory]))
+    added = result.rowcount == 1
+    db.commit()
+    saved = db.scalar(select(CodexProfile).where(CodexProfile.directory == directory))
+    return {**get_account(project_id, db), 'registered_id': f'registered:{saved.id}', 'added': added}
 
 
 @router.patch('/account')
 def set_account(project_id: int, body: AccountInput, request: Request, db: DB):
     row = project(db, project_id)
     try:
-        account_home(body.account)
+        account_home(body.account, db.get_bind())
     except CodexError as exc:
         raise HTTPException(422, str(exc)) from exc
     if not generation_lock.acquire(blocking=False):

@@ -454,3 +454,69 @@ def test_generation_routes_use_project_instructions_without_leaking_scope(setup,
     assert len(seen) == 6
     assert all(text in instructions for instructions in seen[:3])
     assert all(text not in instructions for instructions in seen[3:])
+
+
+def test_register_codex_directory_persists_routes_and_deduplicates(setup, tmp_path, monkeypatch):
+    from importlib import import_module
+    from backend.app.integrations.codex import accounts
+    from backend.app.models import CodexProfile
+
+    routes = import_module('backend.app.integrations.codex.router')
+    home = tmp_path / 'registered-home'
+    home.mkdir()
+    sentinel = home / 'auth.json'
+    sentinel.write_text('private sentinel, never read by ProjectHub')
+    probes = []
+
+    def availability(path):
+        probes.append(path)
+        return {'authenticated': True, 'app_server': True, 'error': ''}
+
+    monkeypatch.setattr(routes, 'availability', availability)
+    base = '/api/projects/1/codex'
+    result = setup.client.post(base + '/accounts', json={'name': 'Work profile', 'directory': str(home)})
+    assert result.status_code == 200, result.text
+    data = result.json()
+    key = data['registered_id']
+    assert key.startswith('registered:') and data['added']
+    assert data['account'] is None
+    assert {'id': key, 'label': 'Work profile'} in data['options']
+    assert 'private sentinel' not in result.text
+    duplicate = setup.client.post(base + '/accounts', json={'name': 'Duplicate', 'directory': str(home / '.')})
+    assert duplicate.status_code == 200 and duplicate.json()['registered_id'] == key
+    assert not duplicate.json()['added']
+    with Session(setup.engine) as db:
+        assert len(list(db.scalars(select(CodexProfile)))) == 1
+    assert accounts.account_home(key, setup.engine) == str(home.resolve())
+    assert setup.client.patch(base + '/account', json={'account': key}).status_code == 200
+    assert setup.client.get('/api/projects/2/codex/account').json()['account'] is None
+    child = module.manager_for(SimpleNamespace(state=SimpleNamespace(
+        engine=setup.engine, data_dir=setup.path, codex_manager=setup.manager)), 1)
+    assert child.client_factory.keywords['codex_home'] == str(home)
+    assert sentinel.read_text() == 'private sentinel, never read by ProjectHub'
+    assert probes == [str(home), str(home)]
+
+
+def test_codex_directory_rejects_missing_and_unlogged_profiles_before_registering(setup, tmp_path, monkeypatch):
+    from importlib import import_module
+    from backend.app.models import CodexProfile
+
+    routes = import_module('backend.app.integrations.codex.router')
+    probes = []
+
+    def availability(path):
+        probes.append(path)
+        return {'authenticated': False, 'app_server': True, 'error': 'Existing ChatGPT login required.'}
+
+    monkeypatch.setattr(routes, 'availability', availability)
+    base = '/api/projects/1/codex/accounts'
+    for directory in ('relative/path', str(tmp_path / 'missing'), '/'):
+        assert setup.client.post(base, json={'name': 'Invalid', 'directory': directory}).status_code == 422
+    assert not probes
+    home = tmp_path / 'logged-out'; home.mkdir()
+    assert setup.client.post('/api/projects/999/codex/accounts', json={'name': 'Unknown', 'directory': str(home)}).status_code == 404
+    assert not probes
+    result = setup.client.post(base, json={'name': 'Logged out', 'directory': str(home)})
+    assert result.status_code == 422
+    with Session(setup.engine) as db:
+        assert list(db.scalars(select(CodexProfile))) == []

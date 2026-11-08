@@ -3,6 +3,10 @@ import os
 import re
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from ...models import CodexProfile
+
 from .protocol import CodexError
 
 
@@ -19,15 +23,56 @@ def account_homes():
     return homes
 
 
-def account_home(key):
+def account_home(key, engine=None):
     if key is None:
         return None
-    home = account_homes().get(key)
+    if engine is not None and re.fullmatch(r'registered:[1-9][0-9]*', key):
+        with Session(engine) as db:
+            row = db.get(CodexProfile, int(key.split(':')[1]))
+            home = Path(row.directory) if row else None
+    else:
+        home = account_homes().get(key)
     if home is None or not home.is_dir():
         raise CodexError('The selected Codex account profile is unavailable.')
     return str(home.resolve())
 
 
-def account_options():
-    return [{'id': key, 'label': {'default': 'Default Codex account', 'current': 'ProjectHub launch account'}.get(
-        key, key.removeprefix('profile:'))} for key in account_homes()]
+def launch_home():
+    return Path(os.environ.get('CODEX_HOME', Path.home() / '.codex')).expanduser().resolve()
+
+
+def profile_entries(engine=None):
+    entries = [(key, {'default': 'Default Codex', 'current': 'Launch profile'}.get(
+        key, key.removeprefix('profile:')), path) for key, path in account_homes().items()]
+    if engine is not None:
+        with Session(engine) as db:
+            entries.extend((f'registered:{row.id}', row.name, Path(row.directory))
+                           for row in db.scalars(select(CodexProfile).order_by(CodexProfile.id)))
+    return entries
+
+
+def account_options(engine=None, selected=None):
+    entries = profile_entries(engine)
+    # Preserve an existing selection's identity while hiding other aliases.
+    entries.sort(key=lambda item: item[0] != selected)
+    seen = set() if selected is not None else {launch_home()}
+    options = []
+    for key, label, path in entries:
+        if not path.is_dir():
+            continue
+        canonical = path.resolve()
+        if canonical in seen or (canonical == launch_home() and key != selected):
+            continue
+        seen.add(canonical)
+        options.append({'id': key, 'label': label})
+    if selected and not any(option['id'] == selected for option in options):
+        options.insert(0, {'id': selected, 'label': 'Unavailable profile'})
+    return options
+
+
+def validate_profile_directory(value):
+    path = Path(value).expanduser()
+    if (not path.is_absolute() or any(ord(c) < 32 for c in str(path))
+            or not path.is_dir() or path.resolve() == Path('/')):
+        raise CodexError('Choose an existing absolute Codex directory.')
+    return str(path.resolve())

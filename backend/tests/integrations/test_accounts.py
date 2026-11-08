@@ -30,3 +30,17 @@ def test_account_routes_private_client_environment_and_keeps_history_reader(tmp_
         accounts.account_home('../../other')
     root.close()
     engine.dispose()
+
+
+def test_discovery_hides_missing_and_duplicate_directories_and_preserves_selected_alias(tmp_path, monkeypatch):
+    home = tmp_path / 'launch'; home.mkdir()
+    other = tmp_path / 'other'; other.mkdir()
+    alias = tmp_path / 'alias'; alias.symlink_to(home, target_is_directory=True)
+    monkeypatch.setenv('CODEX_HOME', str(home))
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {
+        'default': home, 'current': alias, 'profile:launch': home,
+        'profile:other': other, 'profile:missing': tmp_path / 'missing',
+    })
+    assert accounts.account_options() == [{'id': 'profile:other', 'label': 'other'}]
+    options = accounts.account_options(selected='profile:launch')
+    assert options == [{'id': 'profile:launch', 'label': 'launch'}, {'id': 'profile:other', 'label': 'other'}]
