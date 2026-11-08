@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Add a named Codex profile by directory in AI settings; duplicate directories are hidden.
+
 - Preview open issues from a public GitHub repository on the Dashboard.
 
 - Edit AI response instructions per project from AI settings.
