@@ -30,7 +30,11 @@ export function briefReferences(ids: string[], numbers: Map<string, number>, pre
         key={id}
         href={`#${target}`}
         aria-label={`Read source ${number}`}
-        onClick={() => document.getElementById(target)?.setAttribute('open', '')}
+        onClick={() => {
+          for (let element = document.getElementById(target); element; element = element.parentElement) {
+            if (element instanceof HTMLDetailsElement) element.open = true;
+          }
+        }}
       >
         [{number}]
       </a>

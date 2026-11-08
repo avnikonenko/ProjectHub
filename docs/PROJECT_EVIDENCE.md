@@ -30,6 +30,10 @@ Each successful existing brief refresh saves its baseline in the current brief a
 
 The baseline is captured before synthesis, so changes during generation can make the resulting brief stale. “Fresh” means no detected evidence changes, not that the AI claims have been independently verified.
 
-## Scope of this release
+## Project status
 
-This is the evidence foundation and freshness indicator. It preserves the existing brief UI and generation flow. The Dashboard remains the overview page, with Project status as its main summary. The richer structured project-status analysis and Continue Working workflow remain separate checklist items. There is no checkpoint system or automatic AI refresh.
+On the Dashboard, click **Refresh project status** to generate an updated summary using the existing Codex integration. The Dashboard leads with current status, blockers, and suggested next steps; expand the other sections for details. Numbered citations open the matching passage in Sources.
+
+New summaries distinguish verified observations, reported claims, inferences, and unresolved issues. Only exact observations collected by ProjectHub can retain a verified label. The validation section states when no independent test results are available; this does not imply that tests were never run.
+
+The generator reads linked history in bounded batches and reuses cached batch summaries when possible. Long histories can take longer and the final summary can omit details. Previous summaries are comparison context, not evidence. Existing versions remain readable in **Previous versions**. Failed generation keeps the last successful version.

@@ -20,12 +20,19 @@ function generationBody({ model, effort }: GenerationProps['generation']) {
   return { model: model || null, effort: effort || null };
 }
 
-type BriefEntry = { text: string; source_ids: string[] };
+type BriefEntry = { text: string; source_ids: string[]; classification?: 'verified' | 'reported' | 'inferred' | 'unresolved' };
+const evidenceLabels = { verified: 'Verified observation', reported: 'Reported', inferred: 'Inference', unresolved: 'Unresolved' };
 type Brief = {
   generated_at: string;
   generation?: GenerationProvenance | null;
   sections: {
     since_last_brief?: BriefEntry[];
+    current_status?: BriefEntry[];
+    implemented?: BriefEntry[];
+    work_in_progress?: BriefEntry[];
+    unresolved_problems?: BriefEntry[];
+    validation?: BriefEntry[];
+    next_steps?: BriefEntry[];
     overview: BriefEntry[];
     changes: BriefEntry[];
     architecture?: BriefEntry[];
@@ -99,15 +106,25 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
       if (request.current === id) setGenerating(false);
     }
   }
-  const sections: [keyof Brief['sections'], string][] = [
-    ['since_last_brief', 'Since your last update'],
-    ['overview', 'Overview'],
-    ['architecture', 'Architecture'],
-    ['changes', 'Recent changes'],
-    ['open_questions', 'Open questions'],
+  const sections: [keyof Brief['sections'], string, boolean][] = [
+    ['current_status', 'Current status', false],
+    ['unresolved_problems', 'Unresolved problems', false],
+    ['open_questions', 'Open questions', false],
+    ['next_steps', 'Recommended next steps', false],
+    ['overview', brief?.sections.current_status?.length ? 'Project objective' : 'Overview', !!brief?.sections.current_status?.length],
+    ['since_last_brief', 'Since your last update', true],
+    ['changes', 'Recent changes', true],
+    ['implemented', 'Implemented work', true],
+    ['work_in_progress', 'Work in progress', true],
+    ['validation', 'Validation', true],
+    ['architecture', 'Architecture', true],
   ];
-  const sources = citedSources(brief?.sources ?? [], sections.flatMap(([key]) =>
-    brief?.sections[key]?.flatMap((entry) => entry.source_ids) ?? [],
+  const visibleSections = sections.flatMap(([key, title, collapsed]) => {
+    const entries = brief?.sections[key];
+    return entries?.length ? [{ key, title, collapsed, entries }] : [];
+  });
+  const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
+    entries.flatMap((entry) => entry.source_ids),
   ));
   const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
@@ -165,34 +182,37 @@ export function ProjectBrief({ base, generation, evidenceVersion }: GenerationPr
         {!loading && !brief && <Empty>No saved project status yet.</Empty>}
         {brief && (
           <>
-            {sections.filter(([key]) => brief.sections[key]?.length).map(([key, title]) => (
-              <section className="brief-section" key={key}>
-                <h3>{title}</h3>
+            {visibleSections.map(({ key, title, collapsed, entries }) => {
+              const points = (
                 <ul className="brief-points">
-                  {brief.sections[key]?.map((entry, index) => (
+                  {entries.map((entry, index) => (
                     <li key={index}>
+                      {entry.classification && <><small>{evidenceLabels[entry.classification]}</small>{' · '}</>}
                       {entry.text}
                       {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
                     </li>
                   ))}
                 </ul>
-              </section>
-            ))}
-            {sections.every(([key]) => !brief.sections[key]?.length) && (
-              <Empty>The available sources did not support a project summary.</Empty>
-            )}
+              );
+              return collapsed ? (
+                <details className="brief-section" key={key}><summary>{title}</summary>{points}</details>
+              ) : (
+                <section className="brief-section" key={key}><h3>{title}</h3>{points}</section>
+              );
+            })}
+            {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
           </>
         )}
       </section>
       {brief && (
-        <section className="card brief-sources" aria-label="Project status sources">
-          <h2>Sources</h2>
+        <details className="card brief-sources" aria-label="Project status sources">
+          <summary>Sources ({sources.length})</summary>
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-brief'} />
           <details>
             <summary>What the summary covers</summary>
             <ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul>
           </details>
-        </section>
+        </details>
       )}
     </>
   );
