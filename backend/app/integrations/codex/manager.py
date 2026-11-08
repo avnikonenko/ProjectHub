@@ -39,6 +39,25 @@ def wait_for_generation(done, timeout):
                          'or increase PROJECTHUB_GENERATION_TIMEOUT before starting ProjectHub.')
 
 
+def brief_turn_error(turn):
+    if turn.get('status') == 'interrupted':
+        return 'Codex interrupted brief generation. Retry to start a new generation.'
+    error = turn.get('error')
+    info = error.get('codexErrorInfo') if isinstance(error, dict) else None
+    reason = {
+        'usageLimitExceeded': 'the selected account reached its usage limit',
+        'rateLimitExceeded': 'the selected account was rate limited',
+        'contextWindowExceeded': 'the input exceeded the model context window',
+        'modelNotFound': 'the selected model is unavailable',
+        'unauthorized': 'the selected account was not authorized',
+        'serverOverloaded': 'the service was overloaded',
+        'badRequest': 'the service rejected the generation request',
+        'internalServerError': 'the service reported an internal error',
+    }.get(info if isinstance(info, str) else None)
+    return (f'Codex did not complete brief generation: {reason}.'
+            if reason else 'Codex did not complete brief generation; no supported failure reason was provided.')
+
+
 def record_dict(row):
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}
 
@@ -353,7 +372,9 @@ class CodexManager:
         timeout = generation_timeout()
         done = threading.Event()
         state = {}
-        thread_id = None
+        messages, completed = {}, {}
+        event_lock = threading.Lock()
+        thread_id = turn_id = None
 
         def event(method, params):
             if method == 'projecthub/approvalDenied':
@@ -365,10 +386,17 @@ class CodexManager:
             if method == 'item/completed':
                 item = params.get('item', {})
                 if item.get('type') == 'agentMessage' and item.get('phase') in (None, 'final_answer'):
-                    state['message'] = (params.get('turnId'), item.get('text'))
+                    message_turn = params.get('turnId')
+                    if isinstance(message_turn, str):
+                        with event_lock:
+                            messages[message_turn] = item.get('text')
             elif method == 'turn/completed':
-                state['turn'] = params.get('turn')
-                done.set()
+                turn = params.get('turn')
+                if isinstance(turn, dict) and isinstance(turn.get('id'), str):
+                    with event_lock:
+                        completed[turn['id']] = turn
+                        if turn['id'] == turn_id:
+                            done.set()
 
         def disconnected():
             if not done.is_set():
@@ -408,17 +436,24 @@ class CodexManager:
                     'sandboxPolicy': {'type': 'readOnly', 'networkAccess': False},
                     'outputSchema': output_schema,
                 })
-                turn_id = (result.get('turn') or {}).get('id')
-                if not isinstance(turn_id, str) or not turn_id:
-                    raise CodexError('Codex did not return a brief turn ID.')
+                started_turn = result.get('turn') or {}
+                with event_lock:
+                    turn_id = started_turn.get('id')
+                    if not isinstance(turn_id, str) or not turn_id:
+                        raise CodexError('Codex did not return a brief turn ID.')
+                    if started_turn.get('status') in ('failed', 'interrupted'):
+                        completed.setdefault(turn_id, started_turn)
+                    if turn_id in completed:
+                        done.set()
                 wait_for_generation(done, timeout)
                 if 'error' in state:
                     raise CodexError(state['error'])
-                turn = state.get('turn') or {}
-                if turn.get('id') != turn_id or turn.get('status') != 'completed':
-                    raise CodexError('Codex did not complete brief generation.')
-                message_turn_id, message = state.get('message', (None, None))
-                if message_turn_id != turn_id or not isinstance(message, str) or not message.strip():
+                with event_lock:
+                    turn = completed.get(turn_id, {})
+                    message = messages.get(turn_id)
+                if turn.get('status') != 'completed':
+                    raise CodexError(brief_turn_error(turn))
+                if not isinstance(message, str) or not message.strip():
                     raise CodexError('Codex completed the brief without a final response.')
                 return message
             finally:

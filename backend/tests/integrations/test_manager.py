@@ -275,12 +275,18 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
                     ({**event, 'threadId': 'other'}, 'final_answer', 'wrong thread'),
                     (event, 'final_answer', '{"brief": "saved"}'),
                     (event, 'commentary', 'ignore commentary'),
+                    ({**event, 'turnId': 'other-turn'}, 'final_answer', 'ignore another turn'),
                 ]:
                     self.on_event('item/completed', {
                         **scope, 'item': {'type': 'agentMessage', 'phase': phase, 'text': text},
                     })
                 self.on_event('turn/completed', {
-                    'threadId': 'thread-1', 'turn': {'id': 'turn-1', 'status': status},
+                    'threadId': 'thread-1',
+                    'turn': {'id': 'turn-1', 'status': status,
+                             'error': {'codexErrorInfo': 'usageLimitExceeded', 'message': 'private diagnostic'}},
+                })
+                self.on_event('turn/completed', {
+                    'threadId': 'thread-1', 'turn': {'id': 'other-turn', 'status': 'failed'},
                 })
             return result
 
@@ -290,8 +296,9 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
             'Synthetic input', {'type': 'object'}, model=model, effort='high' if model else None,
         ) == '{"brief": "saved"}'
     else:
-        with pytest.raises(CodexError, match='ephemeral|did not complete'):
+        with pytest.raises(CodexError, match='reached its usage limit' if ephemeral else 'ephemeral') as exc:
             env.manager.generate_brief('Synthetic input', {'type': 'object'})
+        assert 'private diagnostic' not in str(exc.value)
     assert clients[0].closed
     assert [m for m, _ in clients[0].calls] == (
         ['account/read', 'thread/start'] + (['turn/start'] if ephemeral else []))
