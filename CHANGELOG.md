@@ -50,6 +50,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Since your last update describes evidenced project changes directly instead of narrating discussion about the summary.
+
 - History summaries constrain citations to their input batch. Selected-profile history reads reuse one reader per session, avoiding a Codex process restart for every page.
 
 - Recover ongoing AI generation progress and results after a browser refresh, with the original elapsed time.
