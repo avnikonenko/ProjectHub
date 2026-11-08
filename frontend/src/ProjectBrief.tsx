@@ -119,26 +119,31 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
       }
     }
   }
-  const overviewTexts = new Set((brief?.sections.overview ?? [])
-    .map((entry) => entry.text.trim().toLocaleLowerCase().replace(/\s+/g, ' ')));
+  const normalizePoint = (text: string) => text.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
+  const overviewTexts = new Set((brief?.sections.overview ?? []).map((entry) => normalizePoint(entry.text)));
+  const currentWork = new Map<string, BriefEntry>();
+  for (const entry of [...(brief?.sections.current_status ?? []), ...(brief?.sections.work_in_progress ?? [])]) {
+    const text = normalizePoint(entry.text);
+    if (overviewTexts.has(text)) continue;
+    const existing = currentWork.get(text);
+    currentWork.set(text, existing ? {
+      ...existing, source_ids: [...new Set([...existing.source_ids, ...entry.source_ids])],
+    } : entry);
+  }
   const sections: [keyof Brief['sections'], string, boolean][] = [
     ['overview', 'Overview', false],
-    ['current_status', 'Current focus', false],
     ['architecture', 'Reported architecture', false],
+    ['current_status', 'Current work', false],
     ['unresolved_problems', 'Unresolved problems', false],
     ['open_questions', 'Open questions', false],
     ['next_steps', 'Recommended next steps', false],
     ['since_last_brief', 'Since your last update', true],
     ['changes', 'Recent changes', true],
     ['implemented', 'Implemented work', true],
-    ['work_in_progress', 'Work in progress', true],
     ['validation', 'Validation', true],
   ];
   const visibleSections = sections.flatMap(([key, title, collapsed]) => {
-    const entries = key === 'current_status'
-      ? brief?.sections.current_status?.filter((entry) =>
-        !overviewTexts.has(entry.text.trim().toLocaleLowerCase().replace(/\s+/g, ' ')))
-      : brief?.sections[key];
+    const entries = key === 'current_status' ? [...currentWork.values()] : brief?.sections[key];
     if (key === 'architecture' && !entries?.length) {
       return [{ key, title, collapsed, entries: [
         { text: 'Architecture not documented in this saved summary.', source_ids: [] },
