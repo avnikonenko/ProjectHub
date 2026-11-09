@@ -14,6 +14,7 @@ import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOvervie
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
+import { groupSharedHistory } from './sharedHistory';
 import { TextSizeControl } from './TextSizeControl';
 import { PaletteControl } from './PaletteControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
@@ -1615,8 +1616,7 @@ function SavedHistory({
         || turn.messages.some((message) => message.text.toLowerCase().includes(query)))
     : turns;
 
-  const sharedTurns = query ? [] : visibleTurns.filter((turn) => turn.shared_history);
-  const firstShared = sharedTurns[0]?.id;
+  const historyGroups = groupSharedHistory(visibleTurns, !query);
   const renderTurn = (turn: SavedTurn) => (
     <article className="history-turn" key={turn.id}>
       <div className="section-title">
@@ -1694,17 +1694,12 @@ function SavedHistory({
       {query && !visibleTurns.length && turns.length > 0 && (
         <Empty>No matching turns on this page.</Empty>
       )}
-      {visibleTurns.map((turn) => {
-        if (!query && turn.shared_history) {
-          return turn.id === firstShared ? (
-            <details className="history-turn" key={`shared-${sessionId}-${turn.id}`}>
-              <summary>Shared history — {sharedTurns.length} {sharedTurns.length === 1 ? 'turn' : 'turns'} on this page</summary>
-              {sharedTurns.map(renderTurn)}
-            </details>
-          ) : null;
-        }
-        return renderTurn(turn);
-      })}
+      {historyGroups.map((group) => group.kind === 'shared' ? (
+        <details className="history-turn" key={`shared-${sessionId}-${group.turns[0].id}`}>
+          <summary>Shared history — {group.turns.length} {group.turns.length === 1 ? 'turn' : 'turns'} on this page</summary>
+          {group.turns.map(renderTurn)}
+        </details>
+      ) : renderTurn(group.turn))}
       {!turns.length && !loading && !error && (
         <Empty>No saved conversation turns found.</Empty>
       )}

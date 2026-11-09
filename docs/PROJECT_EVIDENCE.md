@@ -57,3 +57,10 @@ once. Alternate session references are attached after summary-cache lookup, so a
 a fork does not invalidate unchanged canonical summaries. Ask Project, Scheme, and
 recent overview excerpts also deduplicate confirmed indexed prefixes. Previous saved
 reports are not rewritten. Search still exposes original per-session matches.
+
+Deduplication compares the normalized user/assistant text available to ProjectHub.
+It does not establish equality of tool output or attachments, which are excluded
+from AI history evidence. Original session copies and their references remain intact.
+Different retrieved excerpts from the same shared turn remain separate evidence;
+only identical excerpt text is collapsed. Known-stale indexes are excluded from sharing decisions, and sharing stops at
+unreadable rows. Collapsed groups preserve visible turn order.

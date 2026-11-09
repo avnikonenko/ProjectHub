@@ -80,6 +80,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Shared-history groups preserve message order, complementary excerpts remain in AI evidence, unreadable or known-stale indexes do not cause unsafe collapse, and alternate-session metadata no longer invalidates unchanged reduction caches.
+
 - Since your last update describes evidenced project changes directly instead of narrating discussion about the summary.
 
 - History summaries constrain citations to their input batch. Selected-profile history reads reuse one reader per session, avoiding a Codex process restart for every page.
