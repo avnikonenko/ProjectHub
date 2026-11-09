@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Fixed
+
+- Opt-in knowledge briefs include original acceptance excerpts during synthesis and retain proposal–acceptance citation pairs when shortening visible references. Underlying knowledge and evidence are preserved.
+
 ## [0.2.0] - 2026-11-09
 
 ### Added

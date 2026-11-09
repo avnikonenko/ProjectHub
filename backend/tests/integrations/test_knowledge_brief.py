@@ -215,13 +215,15 @@ def test_unavailable_historical_choices_are_retained_with_visible_coverage(prepa
     assert any('need rechecking' in line for line in result['brief']['coverage'])
 
 
-def test_synthesis_does_not_repeat_raw_quotes_and_window_manifests(prepared):
+def test_synthesis_includes_selected_quotes_without_window_manifests(prepared):
     candidate = _candidate()
     candidate['items'][0]['context_dependencies'] = [{'source_id': 'x', 'revision': 'large-window-marker'}] * 200
     sources, groups = pilot._brief_inputs(candidate, prepared.bundle, {'sources': []})
     item = sources[0]['item']
     assert item['rationale'] == candidate['items'][0]['rationale']
-    assert 'context_dependencies' not in item and 'evidence' not in item
+    assert 'context_dependencies' not in item
+    assert item['evidence'][0]['excerpt'] == 'Use SQLite.'
+    assert 'revision' not in item['evidence'][0]
     assert groups[sources[0]['id']][0]['text'] == candidate['sources'][0]['text']
 
 
@@ -258,3 +260,69 @@ def test_synthesis_suppresses_repetition_without_mutating_knowledge_or_evidence(
     assert sections['overview'] and sections['architecture'] and sections['current_status']
     assert candidate == before
     assert cited[0]['text'] == candidate['sources'][0]['text']
+
+
+def test_synthesis_receives_acceptance_evidence_and_scope(prepared):
+    candidate = _candidate()
+    candidate['items'][0]['agreement_basis'] = 'direct_user'
+    before = deepcopy(candidate)
+    class EvidenceSynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('Return only the required structured JSON.\n', 1)[1])
+            item = payload['sources'][0]['item']
+            assert item['scope'] == 'project'
+            assert item['agreement_basis'] == 'direct_user'
+            assert item['evidence'][0]['excerpt'] == 'Use SQLite.'
+            assert item['evidence'][0]['role'] == 'user'
+            assert 'Never call an initial scope accepted' in prompt
+            return super().generate_brief(prompt, schema)
+    pilot._synthesize(EvidenceSynthesis(), candidate, prepared.bundle, {'sources': []})
+    assert candidate == before
+
+
+def test_visible_citations_are_bounded_but_all_support_is_retained(prepared):
+    candidate = _candidate()
+    item = candidate['items'][0]
+    # Assistant context precedes the decisive user instruction in storage.
+    for index in range(4):
+        identifier = f'assistant-{index}'
+        candidate['sources'].insert(0, {'id': identifier, 'text': 'Use SQLite.', 'role': 'assistant'})
+        item['evidence'].insert(0, {'source_id': identifier, 'role': 'assistant', 'excerpt': 'Use SQLite.'})
+    before = deepcopy(candidate)
+    sections, _, cited = pilot._synthesize(FakeSynthesis(), candidate, prepared.bundle, {'sources': []})
+    for entry in sections['overview']:
+        assert len(entry['source_ids']) == 3
+        assert entry['source_ids'][0] == 'source-one'
+        assert len(entry['supporting_source_ids']) == 5
+    assert len(cited) == 5
+    assert candidate == before
+
+
+def test_compound_agreements_keep_each_proposal_and_acceptance(prepared):
+    candidate = _candidate()
+    candidate['items'] = []
+    candidate['sources'] = []
+    for index in range(3):
+        proposal, acceptance = f'proposal-{index}', f'acceptance-{index}'
+        item = deepcopy(_candidate()['items'][0])
+        item.update(id=f'item-{index}', agreement_basis='proposal_acceptance', evidence=[
+            {'source_id': proposal, 'role': 'assistant', 'excerpt': f'Use option {index}?'},
+            {'source_id': acceptance, 'role': 'user', 'excerpt': 'Agree.'}])
+        candidate['items'].append(item)
+        candidate['sources'].extend([
+            {'id': proposal, 'text': f'Use option {index}?', 'role': 'assistant'},
+            {'id': acceptance, 'text': 'Agree.', 'role': 'user'}])
+    before = deepcopy(candidate)
+    class CompoundSynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            result = json.loads(super().generate_brief(prompt, schema))
+            refs = ['knowledge:item-' + str(index) for index in range(3)]
+            result['sections']['overview'][0]['source_ids'] = refs
+            return json.dumps(result)
+    sections, _, cited = pilot._synthesize(CompoundSynthesis(), candidate, prepared.bundle, {'sources': []})
+    ids = sections['overview'][0]['source_ids']
+    assert len(ids) == 6  # Evidence context takes precedence over the soft limit.
+    for index in range(3):
+        assert f'proposal-{index}' in ids and f'acceptance-{index}' in ids
+    assert len(cited) == 6
+    assert candidate == before

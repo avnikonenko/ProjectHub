@@ -34,12 +34,16 @@ def _brief_inputs(candidate, bundle, repository):
             raise CodexError('Knowledge item has missing source evidence.')
         identifier = 'knowledge:' + item['id'].removeprefix('knowledge:')
         groups[identifier] = [{**originals[ref], 'classification': 'reported'} for ref in refs]
-        # Synthesis consumes the reconciled interpretation, not repeated raw
-        # quotations/window manifests for every item. Original excerpts remain
-        # in groups for published citations and in the knowledge snapshot.
+        # Include selected supporting quotes so synthesis can check acceptance
+        # and scientific constraints, without repeating complete source fragments
+        # or extraction-window manifests.
         view = {key: item.get(key) for key in (
             'statement', 'category', 'design_status', 'scope', 'rationale',
             'alternatives', 'limitations', 'source_state', 'conflicts_with', 'relationships')}
+        view['agreement_basis'] = item.get('agreement_basis', 'none')
+        view['evidence'] = [{key: evidence.get(key) for key in
+                             ('source_id', 'role', 'excerpt', 'conversation_id', 'order')}
+                            for evidence in item['evidence']]
         sources.append({'id': identifier, 'kind': 'extracted_interpretation',
                         'item': view, 'classification': 'reported'})
     metadata = bundle['project']
@@ -104,6 +108,11 @@ def _synthesize(manager, candidate, bundle, repository):
         'from shared keywords: retain distinct release/experiment scopes, incompatible alternatives and '
         'genuine conflicts. A broad agreement does not settle an unresolved first-release boundary. '
         'Do not alter, merge, or erase underlying knowledge items or their statuses. '
+        'Check supplied evidence excerpts and agreement_basis before describing a choice as agreed. '
+        'Label substantive choices Agreed, Proposed, or Unresolved in the text when needed; '
+        'reported is provenance, not agreement. Never call an initial scope accepted merely because '
+        'a broader project objective was accepted. Keep each claim focused and cite 1–3 decisive '
+        'knowledge IDs, favoring explicit user evidence while retaining the proposal it accepts. '
         'Use valid supported agreed choices for the current approach. Historical design_status must not be '
         'rewritten when source_state is stale/unavailable/excluded/unknown; if discussing those items, '
         'state the availability limitation and do not present them as currently reverified. '
@@ -134,7 +143,38 @@ def _synthesize(manager, candidate, bundle, repository):
         collection['items']['properties']['source_ids']['items']['enum'] = ids
     sections, graph = validate_sections(manager.generate_brief(prompt, schema), sources)
     sections = suppress_repeated_points(sections)
+    # Prefer three visible references, but never discard the proposal behind a
+    # short acceptance just to meet that presentation target. Compound claims
+    # may need more than three references to preserve each acceptance pair.
+    interpretations = {source['id']: source.get('item', {}) for source in sources}
+    preferred = {}
+    for entries in (*sections.values(), *graph.values()):
+        for entry in entries:
+            ranked = [sorted(groups[ref], key=lambda source: source.get('role') != 'user')
+                      for ref in entry['source_ids']]
+            required = []
+            for ref, group in zip(entry['source_ids'], ranked):
+                if group:
+                    required.append(group[0]['id'])
+                if interpretations.get(ref, {}).get('agreement_basis') == 'proposal_acceptance':
+                    for role in ('user', 'assistant'):
+                        source = next((source for source in group if source.get('role') == role), None)
+                        if source:
+                            required.append(source['id'])
+            selected = list(dict.fromkeys(required))
+            for index in range(max(map(len, ranked), default=0)):
+                for group in ranked:
+                    for source in group[index:index + 1]:
+                        if len(selected) < 3 and source['id'] not in selected:
+                            selected.append(source['id'])
+            preferred[id(entry)] = selected
     cited = resolve_citations(sections, graph, groups)
+    for entries in (*sections.values(), *graph.values()):
+        for entry in entries:
+            order = preferred[id(entry)]
+            if set(entry['source_ids']) != set(order):
+                entry['supporting_source_ids'] = list(entry['source_ids'])
+            entry['source_ids'] = order
     return sections, graph, cited
 
 
