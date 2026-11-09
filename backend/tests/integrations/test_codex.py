@@ -566,3 +566,22 @@ def test_delete_review_response_requires_project_session_and_completed_message(s
     result = setup.client.get(f'{base}/{first}/events').json()
     assert result['session']['id'] == first
     assert [event['id'] for event in result['events']] == [102]
+
+
+def test_delete_only_older_overview_revision_in_project(setup):
+    from backend.app.models import GenerationRevision, ProjectBrief
+
+    with Session(setup.engine) as db:
+        db.add(ProjectBrief(project_id=1, generated_at='latest', sections={}, sources=[], coverage=[]))
+        db.add_all([GenerationRevision(id=i, project_id=pid, kind=kind, generated_at=date, snapshot={})
+                    for i, pid, kind, date in (
+                        (1, 1, 'brief', 'older'), (2, 1, 'brief', 'latest'),
+                        (3, 2, 'brief', 'older'), (4, 1, 'qa', 'older'))])
+        db.commit()
+    route = '/api/projects/1/codex/revisions'
+    assert setup.client.delete(f'{route}/2').status_code == 409
+    assert setup.client.delete(f'{route}/3').status_code == 404
+    assert setup.client.delete(f'{route}/4').status_code == 404
+    assert setup.client.delete(f'{route}/1').status_code == 204
+    assert setup.client.get(f'{route}/1').status_code == 404
+    assert setup.client.get('/api/projects/1/codex/brief').json()['generated_at'] == 'latest'

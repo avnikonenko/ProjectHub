@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { DeleteButton } from './ui';
 import { SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 
 type Revision = { id: number; generated_at: string; generation?: GenerationProvenance | null };
@@ -78,6 +79,28 @@ export function RevisionHistory<T>({
     }
   }
 
+  async function remove(revision: Revision) {
+    if (disabled || busy.current || revision.generated_at === version) return;
+    if (!window.confirm(`Delete the saved overview from ${new Date(revision.generated_at).toLocaleString()}?`)) return;
+    busy.current = true;
+    setSelecting(true);
+    onLoadingChange(true);
+    setError('');
+    try {
+      const latest = selectedId === revision.id ? await api<T | null>(`${prefix}/brief`) : undefined;
+      await api(`${prefix}/revisions/${revision.id}`, { method: 'DELETE' });
+      if (latest !== undefined) current.current.onSelect(latest, null);
+      setPage(null);
+      setOffsets([0]);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      busy.current = false;
+      setSelecting(false);
+      current.current.onLoadingChange(false);
+    }
+  }
+
   return (
     <div className="revision-history">
       {selectedId !== null && (
@@ -103,6 +126,10 @@ export function RevisionHistory<T>({
                   {revision.generated_at === version ? ' · Latest' : ''}
                   {selectedId === revision.id ? ' · Viewing' : ''}
                 </button>
+                {kind === 'brief' && revision.generated_at !== version && (
+                  <DeleteButton label={`Delete overview from ${new Date(revision.generated_at).toLocaleString()}`}
+                    disabled={disabled || selecting || loading} onClick={() => void remove(revision)} />
+                )}
                 <SavedGeneration generation={revision.generation} />
               </li>
             ))}

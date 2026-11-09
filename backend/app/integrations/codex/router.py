@@ -263,6 +263,19 @@ def revision_snapshot(project_id: int, revision_id: int, db: DB):
     return {'kind': row.kind, 'snapshot': row.snapshot}
 
 
+@router.delete('/revisions/{revision_id}', status_code=204)
+def delete_brief_revision(project_id: int, revision_id: int, db: DB):
+    project(db, project_id)
+    row = scoped(db, GenerationRevision, project_id, revision_id)
+    if row.kind != 'brief':
+        raise HTTPException(404, 'Saved overview not found.')
+    latest = read_brief(db, project_id)
+    if latest and latest['generated_at'] == row.generated_at:
+        raise HTTPException(409, 'The current overview cannot be deleted.')
+    db.delete(row)
+    db.commit()
+
+
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
