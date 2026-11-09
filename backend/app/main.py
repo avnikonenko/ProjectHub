@@ -18,6 +18,7 @@ from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
 from .services import repository_snapshot, repository_github_target
+from .version import VERSION
 
 
 def db_dependency(request: Request):
@@ -25,7 +26,7 @@ def db_dependency(request: Request):
 
 
 def create_app(data_dir=None):
-    app = FastAPI(title='ProjectHub', version='0.1.0')
+    app = FastAPI(title='ProjectHub', version=VERSION)
     engine, directory = initialize(data_dir or default_data_dir())
     app.state.engine, app.state.data_dir = engine, directory
     db_dep = Depends(db_dependency)
@@ -64,7 +65,7 @@ def create_app(data_dir=None):
         return response
 
     @app.get('/api/health')
-    def health(): return {'status':'ok','version':'0.1.0'}
+    def health(): return {'status':'ok','version':VERSION}
 
     @app.get('/api/projects')
     def list_projects(compact: bool = False, db: Session = db_dep):

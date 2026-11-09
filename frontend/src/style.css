@@ -159,6 +159,10 @@ button:disabled {
   line-height: 1.8;
   margin-top: 8px;
 }
+.app-version {
+  display: block;
+  margin-top: 12px;
+}
 .local-dot {
   display: inline-block;
   width: 6px;

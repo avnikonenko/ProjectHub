@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { version } from '../package.json';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
@@ -150,6 +151,7 @@ export default function App() {
             <br />
             Codex requests go to OpenAI.
           </small>
+          <span className="app-version">ProjectHub v{version}</span>
         </div>
       </aside>
       <div className="workspace">

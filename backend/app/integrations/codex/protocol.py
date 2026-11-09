@@ -5,6 +5,7 @@ import queue
 import shutil
 import subprocess
 import threading
+from ...version import VERSION
 
 
 class CodexError(RuntimeError):
@@ -61,7 +62,7 @@ class AppServerClient:
         self.reader.start()
         try:
             self.request('initialize', {'clientInfo': {'name': 'projecthub',
-                         'title': 'ProjectHub', 'version': '0.1.0'}})
+                         'title': 'ProjectHub', 'version': VERSION}})
             self._write({'method': 'initialized', 'params': {}})
         except Exception:
             self.close()

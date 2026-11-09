@@ -4,7 +4,11 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.0] - 2026-11-09
+
 ### Added
+
+- Display the application version at the bottom of the sidebar; API and Codex client metadata use the same release version.
 
 - Opt-in evidence-based knowledge pilot with source-checked reference cases, contextual extraction caches, conservative history reconciliation, and atomic knowledge/brief publication. Existing brief generation remains the default pending evaluation.
 
