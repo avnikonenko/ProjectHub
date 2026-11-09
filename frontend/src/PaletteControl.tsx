@@ -5,6 +5,7 @@ const palettes = [
   { value: 'lavender', label: 'Lavender' },
   { value: 'sand', label: 'Warm sand' },
   { value: 'slate', label: 'Slate blue' },
+  { value: 'black', label: 'Black' },
 ];
 const storageKey = 'projecthub.palette';
 

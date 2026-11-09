@@ -1,4 +1,26 @@
 /* Optional palettes; the original green theme is left untouched. */
+:root[data-palette='black'] {
+  --page: #f4f4f4;
+  --surface: #ffffff;
+  --surface-subtle: #eaeaea;
+  --text: #222222;
+  --muted: #595959;
+  --accent: #333333;
+  --border: #c6c6c6;
+  --palette-selected: #dedede;
+  --palette-button: #333333;
+}
+:root[data-theme='dark'][data-palette='black'] {
+  --page: #000000;
+  --surface: #121212;
+  --surface-subtle: #1d1d1d;
+  --text: #eeeeee;
+  --muted: #bfbfbf;
+  --accent: #e0e0e0;
+  --border: #484848;
+  --palette-selected: #2b2b2b;
+  --palette-button: #404040;
+}
 :root[data-palette='lavender'] {
   --page: #f5f1fb;
   --surface: #fdfbff;
