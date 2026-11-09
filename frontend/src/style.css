@@ -866,6 +866,7 @@ a:focus-visible {
   border-color: #dce6df;
 }
 .todo-list label {
+  font-size: 1rem;
   display: flex;
   flex: 1;
   min-width: 0;
