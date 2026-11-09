@@ -60,6 +60,7 @@ class DecisionCreate(Input):
 
 
 class TaskCreate(Input):
+    pinned: bool = False
     title: str = Field(min_length=1, max_length=500)
     description: str = ''
     priority: Priority = 'medium'

@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Star TODOs to pin them first in their open or completed list, across pages and reloads.
+
 - App settings now offer persistent text sizes from 100% to 200%, including labels and controls.
 
 - Add a named Codex profile by directory in AI settings; duplicate directories are hidden.

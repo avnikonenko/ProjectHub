@@ -430,3 +430,39 @@ def test_repository_issues_are_project_scoped_and_only_fetch_on_request(client, 
     assert client.get(route(unrelated) + '/issues').status_code == 404
     assert client.get('/api/projects/99999/repository/issues').status_code == 404
     assert calls == ['local-owner/sample', 'other-owner/another']
+
+
+def test_pinned_tasks_are_persistent_scoped_and_sorted_before_paging(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    base = f'/api/projects/{pid}'
+    tasks = [client.post(f'{base}/tasks', json={'title': f'Task {i}'}).json() for i in range(12)]
+    assert all(task['pinned'] is False for task in tasks)
+    target = tasks[0]['id']
+    assert client.patch(f'/api/projects/{other}/tasks/{target}', json={'pinned': True}).status_code == 404
+    assert client.patch(f'{base}/tasks/{target}', json={'pinned': None}).status_code == 422
+    assert client.patch(f'{base}/tasks/{target}', json={'pinned': True}).json()['pinned'] is True
+    for path in (f'{base}/tasks', f'{base}/overview?compact=true'):
+        data = client.get(path).json()
+        rows = data if isinstance(data, list) else data['tasks']
+        assert rows[0]['id'] == target and rows[0]['pinned'] is True
+    assert client.patch(f'{base}/tasks/{target}', json={'title': 'Edited'}).json()['pinned'] is True
+    assert client.patch(f'{base}/tasks/{target}', json={'pinned': False}).json()['pinned'] is False
+
+
+def test_task_pin_migration_preserves_legacy_tasks(tmp_path):
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine, text
+
+    engine = create_engine('sqlite:///' + str(tmp_path / 'legacy.sqlite3'))
+    cfg = Config()
+    cfg.set_main_option('script_location', str(Path(__file__).resolve().parents[2] / 'migrations'))
+    with engine.begin() as connection:
+        cfg.attributes['connection'] = connection
+        command.upgrade(cfg, '0017')
+        connection.execute(text("INSERT INTO projects (id,name,description,goals,status,tags,architecture_mermaid,git_remote,created_at,updated_at) VALUES (1,'Legacy','','','planning','[]','','','now','now')"))
+        connection.execute(text("INSERT INTO tasks (project_id,title,description,priority,status,created_at,updated_at) VALUES (1,'Keep me','','medium','backlog','now','now')"))
+        command.upgrade(cfg, 'head')
+        assert connection.execute(text('SELECT title,pinned FROM tasks')).one() == ('Keep me', 0)
+    engine.dispose()

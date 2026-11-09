@@ -25,7 +25,8 @@ def scoped(db, cls, project_id, entity_id):
 
 
 def records(db, cls, project_id):
-    return list(db.scalars(select(cls).where(cls.project_id == project_id).order_by(cls.id)))
+    ordering = (cls.pinned.desc(), cls.id) if cls is Task else (cls.id,)
+    return list(db.scalars(select(cls).where(cls.project_id == project_id).order_by(*ordering)))
 
 
 def question_dict(db, q):

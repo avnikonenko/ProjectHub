@@ -88,6 +88,7 @@ class Decision(Scoped, Base):
 
 class Task(Scoped, Base):
     __tablename__ = 'tasks'
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default='')
     priority: Mapped[str] = mapped_column(String, default='medium')

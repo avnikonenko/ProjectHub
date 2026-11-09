@@ -302,8 +302,10 @@ function ProjectWorkspace({
       time: commit.committed_at,
     })),
   ].sort((a, b) => (Date.parse(b.time ?? '') || 0) - (Date.parse(a.time ?? '') || 0));
-  const activeTodos = tasks.filter((task) => task.status !== 'completed');
-  const completedTodos = tasks.filter((task) => task.status === 'completed');
+  const todoOrder = (a: RecordData, b: RecordData) =>
+    Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.id - a.id;
+  const activeTodos = tasks.filter((task) => task.status !== 'completed').sort(todoOrder);
+  const completedTodos = tasks.filter((task) => task.status === 'completed').sort(todoOrder);
   const todoRow = (task: RecordData) => (
     <li key={task.id}>
       <div className="todo-content">
@@ -321,6 +323,17 @@ function ProjectWorkspace({
         </label>
         {task.description && <details><summary>Notes</summary><Markdown>{task.description}</Markdown></details>}
       </div>
+      <button type="button" className="icon-edit"
+        aria-label={`${task.pinned ? 'Unpin' : 'Pin'} TODO: ${task.title}`}
+        title={task.pinned ? 'Unpin TODO' : 'Pin TODO'}
+        aria-pressed={Boolean(task.pinned)} disabled={busy}
+        onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, { pinned: !task.pinned })); }}>
+        <svg viewBox="0 0 24 24" width="16" height="16"
+          fill={task.pinned ? 'currentColor' : 'none'} stroke="currentColor"
+          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-3-5.6 3 1-6.2L3 9.6l6.2-.9L12 3Z" />
+        </svg>
+      </button>
       <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
         onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
           { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
@@ -544,12 +557,12 @@ function ProjectWorkspace({
                     }} />
                 )}
                 {activeTodos.length
-                  ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{[...activeTodos].reverse().map(todoRow)}</PagedItems>
+                  ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
                   : <Empty>No open TODOs.</Empty>}
                 {!!completedTodos.length && (
                   <details>
                     <summary>Completed ({completedTodos.length})</summary>
-                    <PagedItems label="Completed TODO pages" listClass="todo-list" pageSize={10}>{[...completedTodos].reverse().map(todoRow)}</PagedItems>
+                    <PagedItems label="Completed TODO pages" listClass="todo-list" pageSize={10}>{completedTodos.map(todoRow)}</PagedItems>
                   </details>
                 )}
               </section>
