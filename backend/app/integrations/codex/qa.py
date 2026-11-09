@@ -1,5 +1,6 @@
 """Generate a separate, source-backed project Q&A from linked conversations."""
 from contextlib import ExitStack
+from copy import deepcopy
 import json
 import re
 import unicodedata
@@ -48,8 +49,10 @@ def generate_items(manager, batch):
     )
     indexed = {str(i): item for i, item in enumerate(batch, 1)}
     payload = [{'id': key, 'text': item['text']} for key, item in indexed.items()]
+    schema = deepcopy(_SCHEMA)
+    schema['properties']['items']['items']['properties']['source_ids']['items']['enum'] = list(indexed)
     try:
-        raw = manager.generate_brief(prompt + json.dumps(payload, ensure_ascii=False), _SCHEMA)
+        raw = manager.generate_brief(prompt + json.dumps(payload, ensure_ascii=False), schema)
         if not isinstance(raw, str) or len(raw) > 30_000:
             raise ValueError('Invalid response size')
         result = json.loads(raw)

@@ -24,7 +24,10 @@ def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path
         bad = False
 
         def generate_brief(self, prompt, schema):
-            first = json.loads(prompt.split('\n', 1)[1])[0]['text']
+            batch = json.loads(prompt.split('\n', 1)[1])
+            allowed = schema['properties']['items']['items']['properties']['source_ids']['items']['enum']
+            assert allowed == [item['id'] for item in batch]
+            first = batch[0]['text']
             return json.dumps({'items': [{'question': f'What was {first}?', 'answer': first,
                                           'source_ids': ['unknown' if self.bad else '1']}]})
 
