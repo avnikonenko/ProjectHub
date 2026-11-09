@@ -35,6 +35,7 @@ Startup loads only project names and IDs. Open a project to load its workspace. 
 
 - **Sources:** import public ChatGPT share links and manage Codex sessions. Unlink removes a session from active history and sync while keeping its records. Add the same thread ID again to relink it.
 - **History:** browse and search saved conversations. Select text to save it as a note with a link back to the source.
+- **Scheme:** generate evidence-linked architecture and workflow diagrams, inspect direct dependencies, and browse code structure. It uses existing project AI settings and runs AI only on explicit refresh. See [Scheme](docs/SCHEME.md).
 - **Dashboard / AI Q&A:** generate a compact overview and explanations of choices from conversations. Project status also reads bounded code and documentation excerpts during explicit refreshes and reconstructs architecture from those excerpts and sessions when no diagram is saved.
 - Link a Git repository in **Edit overview** to see its current branch, recent commits, and top-level working-tree status on the dashboard. This is a local read-only snapshot; it does not run tests or inspect changes inside submodules. Expand **Open GitHub issues** to see up to three issues from a public GitHub repository. You can also set its URL in **Git remote**.
 - **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes. Use the trash icon to remove a note from ProjectHub.
