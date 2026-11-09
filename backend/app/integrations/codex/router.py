@@ -14,6 +14,9 @@ from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .scheme import read_scheme, refresh_scheme
+from .knowledge import read_knowledge, reconcile
+from .knowledge_sources import load_sources
+from .knowledge_brief import generate_knowledge_brief
 from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
@@ -69,6 +72,10 @@ class DeliveryInput(Input):
 
 class GenerationInput(ModelInput):
     confirmed: bool = False
+
+
+class KnowledgeGenerationInput(GenerationInput):
+    publish: bool = Field(default=False, strict=True)
 
 
 class QAGenerationInput(GenerationInput):
@@ -258,7 +265,7 @@ def project_evidence(project_id: int, request: Request, db: DB):
 def revisions(project_id: int, db: DB, kind: str = 'brief',
               offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge'):
         raise HTTPException(422, 'Unknown generation kind.')
     return list_revisions(db, project_id, kind, offset)
 
@@ -286,7 +293,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge'):
         raise HTTPException(422, 'Unknown generation kind.')
     return progress.read(project_id, kind)
 
@@ -336,6 +343,43 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         db.rollback()
         with use_project_instructions(instructions):
             return refresh_brief(request.app.state.engine, project_id, selected)
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/knowledge')
+def get_knowledge(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    saved = read_knowledge(db, project_id)
+    brief = read_brief(db, project_id)
+    db.rollback()
+    current = load_sources(request.app.state.engine, project_id,
+                           previous_manifest=(saved or {}).get('source_manifest'))
+    paired = bool(saved and brief and saved.get('publication_id') ==
+                  (brief.get('project_state') or {}).get('publication_id'))
+    availability = {}
+    if saved:
+        availability = {item['id']: item['source_state'] for item in reconcile(
+            saved, [], current, saved['extraction_version'])}
+    return {'snapshot': saved, 'paired_with_current_brief': paired,
+            'current_evidence_availability': availability,
+            'current_source_manifest': current['manifest'], 'coverage': current['coverage']}
+
+
+@router.post('/knowledge/brief')
+def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Confirm sending primary project evidence to Codex for the knowledge pilot.')
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
