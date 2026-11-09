@@ -89,7 +89,7 @@ and mocked extraction/synthesis, not real Codex model inference.
 
 ## Evaluation and known limitations
 
-The initial nine reference cases are in tests/fixtures/knowledge/Example Research_reference.json
+The initial ten reference cases are in tests/fixtures/knowledge/Example Research_reference.json
 and described in KNOWLEDGE_REFERENCE_CASES.md. Their excerpts/roles/offsets were source-checked
 by an agent; human confirmation is still pending. They are not established scientific ground
 truth or a measured extraction-accuracy benchmark.
@@ -111,8 +111,8 @@ import dates are never cross-session chronology. Source limits and exclusions ar
 The adapter reads bounded local originals to compare hashes; it does not provide network-level
 incremental syncing beyond the existing indexer.
 
-No live model comparison, decision precision/recall, token cost, or scientific-validation claim
-has been established for this pilot. Before promotion, review the nine cases plus synthetic
+An initial live qualitative comparison is recorded in KNOWLEDGE_PILOT_EVALUATION.md.
+Decision precision/recall, actual token cost, and scientific validity remain unmeasured. Before promotion, review the ten cases plus synthetic
 supersession/failure cases, score false agreements and missed decisions separately, verify older
 reasons survive new discussions, and repeat with changed/unavailable sources. Q&A/Scheme integration,
 manual corrections, and advanced semantic merging remain deferred.
