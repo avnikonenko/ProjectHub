@@ -64,9 +64,11 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
                     **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
                     **({'account': manager.generation_account} if getattr(manager, 'generation_account', None) else {}),
                     'limit': limit, 'payload': payload}
-    # Reduction prompts omit source.updated_at; it is citation metadata only.
-    # Keep the payload exact, including any timestamps actually seen by the model.
-    semantic_sources = [{key: value for key, value in source.items() if key != 'updated_at'}
+    # Reduction prompts omit timestamps and alternate-session links: these
+    # describe citations rather than the evidence seen by the model.
+    # Keep the payload exact, including any metadata actually in the prompt.
+    semantic_sources = [{key: value for key, value in source.items()
+                         if key not in ('updated_at', 'shared_sessions')}
                         for source in sources]
 
     def fingerprint_for(source_metadata):

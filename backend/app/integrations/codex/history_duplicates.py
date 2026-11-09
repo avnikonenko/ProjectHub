@@ -2,12 +2,14 @@
 from collections import OrderedDict
 import hashlib
 import json
+import logging
 from threading import Lock
 
 from sqlalchemy import text
 
 from .shared_history import SharedPrefixIndex
 
+log = logging.getLogger(__name__)
 _cache = OrderedDict()
 _lock = Lock()
 
@@ -15,15 +17,16 @@ _lock = Lock()
 def _signature(turn):
     return hashlib.sha256(json.dumps(
         {'status': turn['status'], 'messages': turn['messages']},
-        sort_keys=True, ensure_ascii=False).encode()).digest()
+        sort_keys=True, ensure_ascii=True).encode()).digest()
 
 
 def indexed_sharing(db, project_id):
     # Metadata only: text is streamed once per changed index, not per page.
     markers = db.execute(text(
-        'SELECT id,history_indexed_at,history_indexed_activity,thread_id,codex_account '
+        'SELECT id,history_indexed_at,history_indexed_activity,thread_id,codex_account,codex_activity_at '
         'FROM codex_sessions WHERE project_id=:pid AND is_linked=1 '
-        'AND history_indexed_at IS NOT NULL AND history_indexed_activity IS NOT NULL ORDER BY id'),
+        'AND history_indexed_at IS NOT NULL AND history_indexed_activity IS NOT NULL '
+        'AND (codex_activity_at IS NULL OR codex_activity_at=history_indexed_activity) ORDER BY id'),
         {'pid': project_id}).all()
     if not markers:
         return SharedPrefixIndex(), {}
@@ -42,8 +45,22 @@ def indexed_sharing(db, project_id):
                 'WHERE project_id=:pid AND session_id=:sid ORDER BY id'),
                 {'pid': project_id, 'sid': session_id})
             for row in rows:
-                turn = {'id': row.turn_id, 'status': row.status, 'messages': json.loads(row.messages)}
-                signatures[(session_id, row.turn_id)] = _signature(turn)
+                try:
+                    messages = json.loads(row.messages)
+                    if (not isinstance(messages, list) or any(
+                            not isinstance(message, dict) or message.get('role') not in ('user', 'assistant')
+                            or not isinstance(message.get('text'), str) for message in messages)):
+                        raise ValueError('Unsupported indexed message structure')
+                    signature = _signature({'status': row.status, 'messages': messages})
+                except (ValueError, TypeError, RecursionError):
+                    # Sharing is optional. An unreadable saved row must not
+                    # prevent browsing valid live history or join both sides
+                    # of an unknown prefix gap.
+                    log.warning('Ignoring shared-prefix detection after an unreadable indexed turn '
+                                'in project %s session %s.', project_id, session_id)
+                    messages, signature = None, None
+                turn = {'id': row.turn_id, 'status': row.status, 'messages': messages}
+                signatures[(session_id, row.turn_id)] = signature
                 yield turn
 
         sharing.add_session(session_id, turns())
@@ -82,16 +99,22 @@ def deduplicate_sources(db, project_id, sources):
     sharing, _ = indexed_sharing(db, project_id)
     titles = dict(db.execute(text('SELECT id,title FROM codex_sessions WHERE project_id=:pid AND is_linked=1'),
                              {'pid': project_id}).all())
-    seen, retained = set(), []
+    seen, retained = {}, []
     for source in sources:
         if 'session_id' not in source or 'turn_id' not in source:
             retained.append(source)
             continue
         ref = source['session_id'], source['turn_id']
         canonical = sharing.canonical.get(ref, ref)
-        if canonical in seen:
-            continue
-        seen.add(canonical)
+        # Two excerpts from one shared turn may cover different parts of a
+        # long message (for example a recent tail and a matching FTS snippet).
+        # Collapse only identical excerpts; never discard complementary facts.
+        excerpt = source.get('text')
+        excerpts = seen.setdefault(canonical, set())
+        if isinstance(excerpt, str):
+            if excerpt in excerpts:
+                continue
+            excerpts.add(excerpt)
         copies = [{'session_id': canonical[0], 'turn_id': canonical[1]},
                   *sharing.aliases.get(canonical, [])]
         aliases = [{**copy, 'session_title': titles.get(copy['session_id'], '')} for copy in copies

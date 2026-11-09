@@ -533,3 +533,17 @@ def test_archive_fork_aliases_cover_each_fragment_of_a_long_shared_turn(env):
     assert len(shared_fragments) == 3
     assert all(any(alias['session_id'] == 3 and alias['turn_id'] == 'fork-long'
                    for alias in source['shared_sessions']) for source in shared_fragments)
+
+
+def test_reduction_reuses_text_when_only_fork_links_change(env):
+    from backend.app.integrations.codex.archive import _summarize
+    engine, manager = env
+    source = {'id': 'session:1:turn:a', 'label': 'Original', 'text': 'Original text',
+              'shared_sessions': [{'session_id': 2, 'turn_id': 'b'}]}
+    payload = {'evidence': [{'text': 'Fact', 'source_ids': [source['id']]}]}
+    _summarize(engine, 1, manager, payload, [source], 'reduction')
+    calls = len(manager.inputs)
+    source['shared_sessions'].append({'session_id': 4, 'turn_id': 'c'})
+    result, cached = _summarize(engine, 1, manager, payload, [source], 'reduction')
+    assert cached and len(manager.inputs) == calls
+    assert result[0]['sources'][0]['shared_sessions'] == source['shared_sessions']

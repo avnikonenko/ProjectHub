@@ -64,14 +64,14 @@ def test_page_annotations_preserve_original_text_and_reject_changed_live_content
 def test_retrieved_sources_keep_one_copy_and_resolvable_other_session_links(history):
     engine, _ = history
     sources = [
-        {'id': '1', 'session_id': 2, 'turn_id': 'b1', 'text': 'Fork excerpt'},
-        {'id': '2', 'session_id': 1, 'turn_id': 'a1', 'text': 'Original excerpt'},
+        {'id': '1', 'session_id': 2, 'turn_id': 'b1', 'text': 'Shared excerpt'},
+        {'id': '2', 'session_id': 1, 'turn_id': 'a1', 'text': 'Shared excerpt'},
         {'id': '3', 'note_id': 7, 'text': 'An ordinary note'},
     ]
     with Session(engine) as db:
         result = deduplicate_sources(db, 1, sources)
         assert len(result) == 2
-        assert result[0]['text'] == 'Fork excerpt'
+        assert result[0]['text'] == 'Shared excerpt'
         assert result[0]['shared_sessions'] == [
             {'session_id': 1, 'turn_id': 'a1', 'session_title': 'Session 1'},
         ]
@@ -122,3 +122,88 @@ def test_ask_and_scheme_reuse_shared_evidence_without_removing_index_rows(histor
         reported = _reported_sources(db, 1, 'First context')
         assert len(reported) == 4
         assert db.execute(text('SELECT count(*) FROM codex_history_turns')).scalar_one() == 8
+
+
+def test_distinct_excerpts_from_shared_turn_preserve_complementary_evidence(history):
+    engine, _ = history
+    sources = [
+        {'id': 'tail', 'session_id': 2, 'turn_id': 'b1', 'text': 'Decision at the end of a long turn.'},
+        {'id': 'middle', 'session_id': 1, 'turn_id': 'a1', 'text': 'Different matching fact in the middle.'},
+        {'id': 'copy', 'session_id': 1, 'turn_id': 'a1', 'text': 'Decision at the end of a long turn.'},
+    ]
+    with Session(engine) as db:
+        result = deduplicate_sources(db, 1, sources)
+        assert [source['id'] for source in result] == ['tail', 'middle']
+        assert result[0]['shared_sessions'] == [
+            {'session_id': 1, 'turn_id': 'a1', 'session_title': 'Session 1'},
+        ]
+        assert result[1]['shared_sessions'] == [
+            {'session_id': 2, 'turn_id': 'b1', 'session_title': 'Session 2'},
+        ]
+
+
+@pytest.mark.parametrize('stale_session', [1, 2])
+def test_observed_activity_change_prevents_stale_prefix_collapse(history, stale_session):
+    engine, sequences = history
+    with Session(engine) as db:
+        assert indexed_sharing(db, 1)[0].canonical
+        db.get(CodexSession, stale_session).codex_activity_at = 'newer-activity'
+        db.commit()
+        # Even an unchanged later turn does not prove that an earlier live
+        # prefix remains identical after its thread has changed.
+        page = annotate_page(db, 1, 2, {'turns': [sequences[2][1]]})
+        assert 'shared_history' not in page['turns'][0]
+        assert indexed_sharing(db, 1)[0].canonical == {}
+        sources = [
+            {'session_id': 1, 'turn_id': 'a1', 'text': 'Same excerpt'},
+            {'session_id': 2, 'turn_id': 'b1', 'text': 'Same excerpt'},
+        ]
+        assert len(deduplicate_sources(db, 1, sources)) == 2
+        db.get(CodexSession, stale_session).history_indexed_activity = 'newer-activity'
+        db.get(CodexSession, stale_session).history_indexed_at = 'version2'
+        db.commit()
+        assert indexed_sharing(db, 1)[0].canonical
+
+
+@pytest.mark.parametrize('bad_messages', ['invalid json', '[' * 1200 + ']' * 1200, None],
+                         ids=['invalid-json', 'deep-invalid-shape', 'decoder-recursion'])
+def test_unreadable_index_row_does_not_break_live_history_or_match_across_gap(
+        history, caplog, bad_messages, monkeypatch):
+    if bad_messages is None:
+        # Decoder recursion limits differ between supported Python versions.
+        # Inject that specific failure while retaining real SQLite integration.
+        from backend.app.integrations.codex import history_duplicates
+        bad_messages = 'simulated-deep-json'
+        original = history_duplicates.json.loads
+        def loads(value, *args, **kwargs):
+            if value == bad_messages:
+                raise RecursionError('simulated decoder depth limit')
+            return original(value, *args, **kwargs)
+        monkeypatch.setattr(history_duplicates.json, 'loads', loads)
+    engine, sequences = history
+    with Session(engine) as db:
+        db.execute(text("UPDATE codex_history_turns SET messages=:messages "
+                        "WHERE session_id=2 AND turn_id='b1'"), {'messages': bad_messages})
+        db.get(CodexSession, 2).history_indexed_at = 'damaged-version'
+        db.commit()
+        result = annotate_page(db, 1, 2, {'turns': sequences[2], 'next_cursor': None})
+        assert result == {'turns': sequences[2], 'next_cursor': None}
+        assert indexed_sharing(db, 1)[0].canonical == {}
+        assert 'unreadable indexed turn' in caplog.text
+
+
+def test_exact_signatures_handle_json_escaped_surrogates_without_breaking_history(history):
+    engine, sequences = history
+    with Session(engine) as db:
+        for sid, tid in ((1, 'a1'), (2, 'b1')):
+            value = 'First context ' * 12 + chr(0xD800)
+            messages = [{'role': 'user', 'text': value}]
+            db.execute(text('UPDATE codex_history_turns SET messages=:messages '
+                            'WHERE session_id=:sid AND turn_id=:tid'),
+                       {'messages': json.dumps(messages), 'sid': sid, 'tid': tid})
+            db.get(CodexSession, sid).history_indexed_at = 'escaped-version'
+        db.commit()
+        live = turn('b1', value)
+        result = annotate_page(db, 1, 2, {'turns': [live]})
+        assert result['turns'][0]['messages'] == live['messages']
+        assert result['turns'][0]['shared_history']['turn_id'] == 'a1'
