@@ -8,6 +8,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Project Knowledge tab with local search and filters, expandable reasoning and original evidence, source availability, conflicts and supersession. Matching knowledge-generated overviews link to compact important choices; unpublished previews stay separate and opt-in. Dashboard is labelled Overview; Scheme remains separate.
 
+### Changed
+
+- Version opt-in knowledge extraction instructions to preserve independently proposed options, concrete scientific checks and clear user selections. Source-pinned recall regressions supplement the existing agreement and cache tests; live quality evaluation remains separate from software checks.
+
 ### Fixed
 
 - Missing publication identifiers no longer count as a matching brief/knowledge pair.

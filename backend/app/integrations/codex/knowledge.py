@@ -11,7 +11,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 4
+PROMPT_VERSION = 6
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -40,18 +40,41 @@ OUTPUT_SCHEMA = _object({'items': {'type': 'array', 'maxItems': MAX_ITEMS, 'item
 })}})
 
 PROMPT = (
-    'Extract a small set of material project choices, requirements, proposals, open questions, and findings '
+    'Extract material project choices, requirements, proposals, open questions, and findings '
     'from original messages, preserving reasons, alternatives, limitations and scope. Do not extract every '
     'sentence or create TODOs. Keep each item atomic: do not combine a firm commitment with tentative '
     'tool, dataset, reuse, or implementation ideas in one AGREED statement. Split clauses with different '
     'acceptance strength. Thinking of, probably, could, as an option, and discussion questions do not '
     'establish agreement for the associated proposal, even alongside an explicit commitment elsewhere. '
+    'Preserve independently meaningful claims across ALL statuses, not only AGREED. An unresolved '
+    'question must not absorb a tentative approach suggested to address it: retain that approach as '
+    'its own PROPOSED item, with its scope and reasoning. A user preference and a separate suitability '
+    'concern also need distinct items when they express different claims. Retaining their quotations '
+    'inside another item is not a substitute for retaining their statements and statuses. '
+    'Cover material scientific and technical constraints as well as broad architecture and library '
+    'choices. Preserve explicitly discussed component classes, context-sensitive retention policies, '
+    'chemical identity/integrity checks, exceptions, and validation requirements when these affect '
+    'what the project should do. Do not reduce concrete constraints to generic component handling '
+    'or validation. Keep one coherent requirement together, but separate independently configurable '
+    'policies and alternatives. '
+    'When a source specifies concrete properties to inspect or preserve, name those properties in '
+    'the statement itself; a generic inspection/validation heading or a quotation alone does not '
+    'retain that requirement as searchable structured knowledge. One coherent checklist is sufficient. '
+    'Before returning, check the primary messages for material claims '
+    'missing from the items; use the available item budget for coverage rather than selecting only '
+    'the most prominent themes. Do not fill missing facts, classify every sentence, or promote an '
+    'assistant-described requirement into user agreement. '
     'Records marked partial_message are fragments, not complete messages; '
     'message_revision/message_order identify their original message, and order is within-conversation '
     'fragment order, not a date. Missing context must not establish acceptance or chronology. '
     'Distinguish long-term project scope from first-release or experiment scope. '
     'AGREED or REJECTED requires appropriate user evidence, never an assistant claiming "we agreed". '
-    'A direct user instruction can establish agreement; use agreement_basis direct_user. A short reply '
+    'A direct user instruction can establish agreement; use agreement_basis direct_user. An unhedged '
+    'user declaration assigning a concrete choice or role can also establish agreement even when '
+    'it is a terse fragment rather than the words "I agree". Do not downgrade a clear selection '
+    'merely because it is brief. Its role as the user\'s own choice must be clear in context; naming '
+    'a discussed option, asking a question, or pasting another author\'s proposal does not suffice. '
+    'A short reply '
     'such as yes, agree, or do needs its unambiguous proposal and user acceptance, both quoted exactly; '
     'use proposal_acceptance. Numbered agreement must match the identifiable numbered questions or '
     'options it answers, not every earlier numbered recommendation. Multiple options or unclear '
