@@ -1,6 +1,7 @@
 """Generate a separate, source-backed project Q&A from linked conversations."""
 from contextlib import ExitStack
 from copy import deepcopy
+import hashlib
 import json
 import re
 import unicodedata
@@ -8,7 +9,7 @@ import unicodedata
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...models import Answer, Project, ProjectQA, Question, utcnow
+from ...models import Answer, Project, ProjectQA, ProjectHistoryBatch, Question, utcnow
 from .archive import archive_history
 from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, recorded_evidence, generation_metadata
@@ -19,6 +20,8 @@ from .protocol import CodexError
 _FIELDS = {'question': 180, 'answer': 800}
 DEFAULT_QA_MAX_ITEMS = 25
 _GROUP_SIZE = 72
+_DRAFT_BATCH_ITEMS = 32
+_DRAFT_BATCH_CHARS = 24_000
 _INLINE_CITATION = re.compile(r'\s*\[\d+(?:\s*[,;–-]\s*\d+)*\]')
 _SCHEMA = {
     'type': 'object', 'required': ['items'], 'additionalProperties': False,
@@ -42,7 +45,7 @@ def read_qa(db, project_id):
     }
 
 
-def generate_items(manager, batch):
+def generate_items(manager, batch, *, engine=None, project_id=None):
     prompt = (
         'Turn conversations, accepted solutions and decisions, and architecture into useful project Q&A. '
         'Explain what the project does, how its components connect, and what solutions were chosen and why. '
@@ -57,25 +60,76 @@ def generate_items(manager, batch):
     payload = [{'id': key, 'text': item['text'], 'sources': [
         source.get('label', 'Saved conversation evidence') for source in item['sources']
     ]} for key, item in indexed.items()]
+    limit = max(8, ((len(batch) + 11) // 12) * 8)
     schema = deepcopy(_SCHEMA)
+    schema['properties']['items']['maxItems'] = limit
     schema['properties']['items']['items']['properties']['source_ids']['items']['enum'] = list(indexed)
     serialized = json.dumps(payload, ensure_ascii=False)
+    fingerprint = None
+    if engine is not None and project_id is not None:
+        from .ai_instructions import ai_instructions
+        # Cache only successful drafts. Resolve citations against today's sources
+        # on every hit; changing final question count does not invalidate drafts.
+        inputs = {
+            'stage': 'qa-draft-v1', 'prompt': prompt, 'payload': payload, 'schema': schema,
+            'source_ids': [[source['id'] for source in item['sources']] for item in batch],
+            'instructions': ai_instructions(),
+            **{key: getattr(manager, 'generation_' + key, None)
+               for key in ('account', 'model', 'effort')},
+        }
+        fingerprint = hashlib.sha256(json.dumps(
+            inputs, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        with Session(engine) as db:
+            cached = db.get(ProjectHistoryBatch, (project_id, fingerprint))
+            if cached is not None:
+                if (not isinstance(cached.evidence, list) or len(cached.evidence) != 1
+                        or not isinstance(cached.evidence[0], dict)):
+                    raise CodexError('Saved Q&A draft cache is invalid.')
+                return _validate_items(cached.evidence[0].get('raw'), indexed, limit)
     try:
-        return _validate_items(manager.generate_brief(prompt + serialized, schema), indexed)
+        raw = manager.generate_brief(prompt + serialized, schema)
+        result = _validate_items(raw, indexed, limit)
     except InvalidQACitation:
         # Retry only this batch; never salvage or guess a citation.
         correction = ('The previous attempt cited unavailable evidence. Copy IDs exactly from this batch. '
                       'Omit any answer without a valid citation.\n')
-        return _validate_items(manager.generate_brief(correction.rstrip() + ' ' + prompt + serialized, schema), indexed)
+        raw = manager.generate_brief(correction.rstrip() + ' ' + prompt + serialized, schema)
+        result = _validate_items(raw, indexed, limit)
+    if fingerprint is not None:
+        with Session(engine) as db:
+            db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=fingerprint, evidence=[{'raw': raw}]))
+            db.commit()
+    return result
+
+
+def draft_batches(evidence):
+    """Stable forward boundaries let retries reuse completed unchanged groups."""
+    batches, batch = [], []
+    for item in evidence:
+        payload = [{'id': str(i), 'text': entry['text'], 'sources': [
+            source.get('label', 'Saved conversation evidence') for source in entry['sources']
+        ]} for i, entry in enumerate([*batch, item], 1)]
+        if batch and (len(batch) >= _DRAFT_BATCH_ITEMS
+                      or len(json.dumps(payload, ensure_ascii=False)) > _DRAFT_BATCH_CHARS):
+            batches.append(batch)
+            batch = []
+        single = [{'id': '1', 'text': item['text'], 'sources': [
+            source.get('label', 'Saved conversation evidence') for source in item['sources']]}]
+        if len(json.dumps(single, ensure_ascii=False)) > _DRAFT_BATCH_CHARS:
+            raise CodexError('A Q&A evidence item exceeds the draft input limit.')
+        batch.append(item)
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 class InvalidQACitation(CodexError):
     pass
 
 
-def _validate_items(raw, indexed):
+def _validate_items(raw, indexed, limit=8):
     try:
-        if not isinstance(raw, str) or len(raw) > 30_000:
+        if not isinstance(raw, str) or len(raw) > max(30_000, limit * 1400):
             raise ValueError('Invalid response size')
         result = json.loads(raw)
     except (ValueError, RecursionError) as exc:
@@ -83,7 +137,7 @@ def _validate_items(raw, indexed):
     if not isinstance(result, dict) or set(result) != {'items'}:
         raise CodexError('Q&A generation returned an invalid structure.')
     items = result['items']
-    if not isinstance(items, list) or len(items) > 8:
+    if not isinstance(items, list) or len(items) > limit:
         raise CodexError('Q&A generation exceeded the batch limit.')
     validated = []
     for item in items:
@@ -259,10 +313,11 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         if not evidence:
             raise CodexError('No saved conversations, accepted solutions or decisions, or architecture are available for Q&A.')
         items, sources = [], {}
-        # Start with the latest batch in the archive order, without claiming cross-session chronology.
-        for end in range(len(evidence), 0, -12):
-            progress.update(project_id, stage=f'Generating Q&A batch {(len(evidence) - end) // 12 + 1} of {(len(evidence) + 11) // 12}')
-            for item, cited in generate_items(manager, evidence[max(0, end - 12):end]):
+        # Reverse group order, without claiming chronology across sessions.
+        batches = draft_batches(evidence)
+        for index, batch in enumerate(reversed(batches), 1):
+            progress.update(project_id, stage=f'Generating Q&A batch {index} of {len(batches)}')
+            for item, cited in generate_items(manager, batch, engine=engine, project_id=project_id):
                 items.append(item)
                 sources.update(cited)
         progress.update(project_id, stage='Consolidating and ranking Q&A')

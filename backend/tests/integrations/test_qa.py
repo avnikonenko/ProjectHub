@@ -19,6 +19,7 @@ def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_p
     evidence = [{'text': f'Decision {i}', 'sources': [{'id': f'turn:{i}', 'text': f'Original {i}'}]}
                 for i in range(15)]
     monkeypatch.setattr(qa, 'archive_history', lambda *args: (evidence, []))
+    monkeypatch.setattr(qa, '_DRAFT_BATCH_ITEMS', 12)
 
     class Generator:
         bad = False
@@ -56,7 +57,7 @@ def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_p
             self.batches += 1
             allowed = schema['properties']['items']['items']['properties']['source_ids']['items']['enum']
             assert allowed == [item['id'] for item in batch]
-            if batch[0]['text'] == 'Decision 3':
+            if batch[0]['text'] == 'Decision 12':
                 return json.dumps({'items': [
                     {'question': 'How does One store data?', 'answer': 'In SQLite.', 'source_ids': ['2']},
                     {'question': 'What does One do?', 'answer': 'One tracks context for any project. [99]',
@@ -74,14 +75,15 @@ def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_p
     assert manager.consolidations == 1
     assert [item['question'] for item in saved['items']] == ['What does One do?', 'How does One store data?']
     assert saved['items'][0]['answer'] == 'One tracks context for any project locally.'
-    assert saved['items'][0]['source_ids'] == ['turn:3', 'turn:0']
+    assert saved['items'][0]['source_ids'] == ['turn:12', 'turn:0']
     assert saved['items'][0]['variants'][0]['source_ids'] == ['turn:1']
-    assert saved['items'][1]['source_ids'] == ['turn:4']
-    assert {source['id'] for source in saved['sources']} == {'turn:3', 'turn:0', 'turn:1', 'turn:4'}
+    assert saved['items'][1]['source_ids'] == ['turn:13']
+    assert {source['id'] for source in saved['sources']} == {'turn:12', 'turn:0', 'turn:1', 'turn:13'}
     manager.bad = True
     with pytest.raises(CodexError, match='foreign evidence'):
         qa.refresh_qa(engine, 1, manager, max_items=2)
     assert manager.consolidations == 3
+    assert manager.batches == 2  # Completed drafts survive the failed final consolidation.
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert qa.read_qa(db, 2) is None
@@ -172,3 +174,178 @@ def test_qa_limit_applies_to_output_without_a_fixed_saved_ceiling(monkeypatch):
     assert calls[-1][1] == 15
     assert len(qa.consolidate_items(None, candidates, 120)) == 120
     assert all(size <= 72 and limit <= 72 for size, limit in calls)
+
+
+
+def test_qa_draft_cache_survives_manager_restart_and_refreshes_source_metadata(tmp_path):
+    from backend.app.models import ProjectHistoryBatch
+
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add_all([Project(id=1, name='One'), Project(id=2, name='Two')])
+        db.commit()
+
+    class Generator:
+        calls = 0
+        generation_account = 'example-codex-profile'
+        generation_model = 'model-a'
+        generation_effort = 'low'
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            return json.dumps({'items': [{'question': 'Which storage?',
+                                          'answer': 'SQLite.', 'source_ids': ['1']}]})
+
+    batch = [{'text': 'Use SQLite.', 'sources': [
+        {'id': 'turn:1', 'label': 'Storage discussion', 'text': 'Original passage', 'updated_at': 'old'},
+    ]}]
+    first = Generator()
+    qa.generate_items(first, batch, engine=engine, project_id=1)
+    assert first.calls == 1
+    second = Generator()
+    batch[0]['sources'][0]['updated_at'] = 'new'
+    result = qa.generate_items(second, batch, engine=engine, project_id=1)
+    assert second.calls == 0
+    assert result[0][1]['turn:1']['updated_at'] == 'new'
+    qa.generate_items(second, batch, engine=engine, project_id=2)
+    assert second.calls == 1  # Another project cannot reuse the cached row.
+    with Session(engine) as db:
+        assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 2
+    engine.dispose()
+
+
+def test_qa_draft_cache_keys_include_generation_settings_and_evidence(tmp_path):
+    from backend.app.integrations.codex.ai_instructions import use_project_instructions
+
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(id=1, name='One'))
+        db.commit()
+
+    class Generator:
+        calls = 0
+        generation_account = 'example-codex-profile'
+        generation_model = 'model-a'
+        generation_effort = 'low'
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            return json.dumps({'items': [{'question': 'Which storage?',
+                                          'answer': 'SQLite.', 'source_ids': ['1']}]})
+
+    manager = Generator()
+    batch = [{'text': 'Use SQLite.', 'sources': [{'id': 'turn:1', 'text': 'Original'}]}]
+    def generate():
+        qa.generate_items(manager, batch, engine=engine, project_id=1)
+
+    with use_project_instructions('Be compact.'):
+        generate()
+        generate()
+        assert manager.calls == 1
+        for key, value in [('generation_account', 'another-account'),
+                           ('generation_model', 'model-b'), ('generation_effort', 'high')]:
+            setattr(manager, key, value)
+            generate()
+        assert manager.calls == 4
+        batch[0]['text'] = 'Use SQLite locally.'
+        generate()
+        batch[0]['sources'][0]['id'] = 'turn:2'
+        generate()
+        assert manager.calls == 6
+    with use_project_instructions('Include reasons.'):
+        generate()
+        assert manager.calls == 7
+    engine.dispose()
+
+
+def test_qa_invalid_drafts_are_not_cached_and_empty_success_is_cached(tmp_path):
+    from backend.app.models import ProjectHistoryBatch
+
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(id=1, name='One'))
+        db.commit()
+
+    class Generator:
+        calls = 0
+        invalid = True
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            if self.invalid:
+                return json.dumps({'items': [{'question': 'Unsupported?', 'answer': 'Unsupported.',
+                                              'source_ids': ['foreign']}]})
+            return json.dumps({'items': []})
+
+    manager = Generator()
+    batch = [{'text': 'Proposed backlog only.', 'sources': [{'id': 'turn:1'}]}]
+    with pytest.raises(CodexError, match='foreign evidence'):
+        qa.generate_items(manager, batch, engine=engine, project_id=1)
+    assert manager.calls == 2
+    with Session(engine) as db:
+        assert list(db.scalars(select(ProjectHistoryBatch))) == []
+    manager.invalid = False
+    assert qa.generate_items(manager, batch, engine=engine, project_id=1) == []
+    assert qa.generate_items(manager, batch, engine=engine, project_id=1) == []
+    assert manager.calls == 3
+    engine.dispose()
+
+
+def test_qa_draft_batches_reduce_calls_and_keep_forward_boundaries():
+    evidence = [{'text': f'Fact {i}', 'sources': [{'id': f'turn:{i}'}]} for i in range(131)]
+    batches = qa.draft_batches(evidence)
+    assert [len(batch) for batch in batches] == [32, 32, 32, 32, 3]
+    extended = qa.draft_batches([*evidence, {'text': 'New fact', 'sources': [{'id': 'turn:131'}]}])
+    assert extended[:-1] == batches[:-1]
+    assert [item for batch in batches for item in batch] == evidence
+
+
+def test_qa_draft_batches_bound_actual_serialized_payload_and_reject_oversized_items():
+    evidence = [{'text': 'α' * 5500, 'sources': [
+        {'id': f'turn:{i}', 'label': 'A discussion label' * 50},
+    ]} for i in range(10)]
+    batches = qa.draft_batches(evidence)
+    assert len(batches) > 1
+    for batch in batches:
+        payload = [{'id': str(i), 'text': item['text'],
+                    'sources': [source.get('label', 'Saved conversation evidence')
+                                for source in item['sources']]}
+                   for i, item in enumerate(batch, 1)]
+        assert len(json.dumps(payload, ensure_ascii=False)) <= 24_000
+    with pytest.raises(CodexError, match='input limit'):
+        qa.draft_batches([{'text': 'x' * 24_000, 'sources': [{'id': 'turn:large'}]}])
+
+
+def test_qa_retry_reuses_completed_drafts_after_a_later_batch_fails(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(id=1, name='One'))
+        db.commit()
+    evidence = [{'text': f'Fact {i}', 'sources': [{'id': f'turn:{i}'}]} for i in range(33)]
+    monkeypatch.setattr(qa, 'archive_history', lambda *args: (evidence, []))
+
+    class Generator:
+        fail = True
+        seen = []
+
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('\n', 1)[1])
+            if 'Build a compact project reference' in prompt:
+                return json.dumps({'items': [{**payload[0], 'variants': []}]})
+            first = payload[0]['text']
+            self.seen.append(first)
+            if self.fail and first == 'Fact 0':
+                raise CodexError('Synthetic unavailable service')
+            return json.dumps({'items': [{'question': f'What is {first}?',
+                                          'answer': first, 'source_ids': ['1']}]})
+
+    manager = Generator()
+    with pytest.raises(CodexError, match='Synthetic unavailable'):
+        qa.refresh_qa(engine, 1, manager)
+    with Session(engine) as db:
+        assert qa.read_qa(db, 1) is None
+    manager.fail = False
+    saved = qa.refresh_qa(engine, 1, manager)
+    assert manager.seen == ['Fact 32', 'Fact 0', 'Fact 0']
+    assert saved['items'][0]['source_ids'] == ['turn:32']
+    engine.dispose()
