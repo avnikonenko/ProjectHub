@@ -1,5 +1,6 @@
 """Pilot HTTP contracts; no Codex calls and no production data."""
 from types import SimpleNamespace
+import pytest
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -69,4 +70,33 @@ def test_read_overlay_reports_unavailable_evidence_without_rewriting_agreement(t
         assert client.get('/api/projects/2/codex/knowledge').status_code == 404
     with Session(engine) as db:
         assert db.get(ProjectKnowledge, 1).snapshot == saved
+    engine.dispose()
+
+
+@pytest.mark.parametrize(('knowledge_publication', 'brief_publication', 'paired'), [
+    (None, None, False), ('', '', False), (' ', ' ', False),
+    ('one', None, False), (None, 'one', False), ('one', 'two', False),
+    ('one', 'one', True),
+])
+def test_pairing_requires_nonempty_matching_publication_ids(
+        tmp_path, monkeypatch, knowledge_publication, brief_publication, paired):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='One'))
+        db.commit()
+    saved = {'project_id': 1, 'publication_id': knowledge_publication,
+             'extraction_version': 'v1', 'source_manifest': {'entries': []}, 'items': []}
+    brief = {'project_state': {'publication_id': brief_publication}}
+    monkeypatch.setattr(routes, 'read_knowledge', lambda *args: saved)
+    monkeypatch.setattr(routes, 'read_brief', lambda *args: brief)
+    monkeypatch.setattr(routes, 'load_sources', lambda *args, **kwargs: {
+        'sources': [], 'manifest': {'entries': []}, 'coverage': {}})
+    app = FastAPI()
+    app.state.engine = engine
+    app.include_router(routes.router)
+    with TestClient(app) as client:
+        response = client.get('/api/projects/1/codex/knowledge')
+        assert response.status_code == 200
+        assert response.json()['paired_with_current_brief'] is paired
+        assert response.json()['snapshot'] == saved
     engine.dispose()

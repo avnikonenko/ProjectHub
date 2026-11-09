@@ -357,7 +357,8 @@ def get_knowledge(project_id: int, request: Request, db: DB):
     db.rollback()
     current = load_sources(request.app.state.engine, project_id,
                            previous_manifest=(saved or {}).get('source_manifest'))
-    paired = bool(saved and brief and saved.get('publication_id') ==
+    publication_id = (saved or {}).get('publication_id')
+    paired = bool(isinstance(publication_id, str) and publication_id.strip() and brief and publication_id ==
                   (brief.get('project_state') or {}).get('publication_id'))
     availability = {}
     if saved:

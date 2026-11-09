@@ -4,7 +4,13 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Added
+
+- Project Knowledge tab with local search and filters, expandable reasoning and original evidence, source availability, conflicts and supersession. Matching knowledge-generated overviews link to compact important choices; unpublished previews stay separate and opt-in. Dashboard is labelled Overview; Scheme remains separate.
+
 ### Fixed
+
+- Missing publication identifiers no longer count as a matching brief/knowledge pair.
 
 - Knowledge citation selection follows recorded proposal–acceptance chronology and preserves ambiguous pairs. Speaker/order corrections invalidate current evidence support without rewriting historical agreement. Shared synthesis quotations are sent once to avoid unnecessary input-limit failures.
 

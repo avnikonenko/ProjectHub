@@ -1,3 +1,6 @@
+import { KnowledgePage } from './KnowledgePage';
+import { BriefPreview, type Brief } from './BriefContent';
+import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
@@ -89,6 +92,7 @@ export default function App() {
   const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [historyLink, setHistoryLink] = useState(() => readHistoryLink(window.location.hash));
+  const [knowledgeLink, setKnowledgeLink] = useState(() => readKnowledgeLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
     const data = await api<Pick<Project, 'id' | 'name'>[]>('/projects?compact=true');
     setProjects(data);
@@ -104,18 +108,23 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [fetchProjects]);
   useEffect(() => {
-    const update = () => setHistoryLink(readHistoryLink(window.location.hash));
+    const update = () => {
+      setHistoryLink(readHistoryLink(window.location.hash));
+      setKnowledgeLink(readKnowledgeLink(window.location.hash));
+    };
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
-  const linkedProjectExists = !!historyLink && projects.some((p) => p.id === historyLink.projectId);
-  const selectedProject = linkedProjectExists ? historyLink.projectId : selected;
+  const linkedProject = historyLink?.projectId ?? knowledgeLink?.projectId;
+  const linkedProjectExists = linkedProject !== undefined && projects.some((p) => p.id === linkedProject);
+  const selectedProject = linkedProject !== undefined ? (linkedProjectExists ? linkedProject : null) : selected;
   function selectProject(projectId: number) {
     setSelected(projectId);
     try { localStorage.setItem('projecthub.selected-project', String(projectId)); } catch { /* Storage is optional. */ }
-    if (historyLink) {
+    if (historyLink || knowledgeLink) {
       window.history.pushState(null, '', window.location.pathname + window.location.search);
       setHistoryLink(null);
+      setKnowledgeLink(null);
     }
   }
   return (
@@ -164,8 +173,8 @@ export default function App() {
           </div>
         </header>
         <ErrorBox error={error} />
-        {!loading && historyLink && !linkedProjectExists && (
-          <ErrorBox error="The project in this history link is not available." />
+        {!loading && (historyLink || knowledgeLink) && !linkedProjectExists && (
+          <ErrorBox error="The project in this source link is not available." />
         )}
         {loading ? (
           <Empty>Loading projects…</Empty>
@@ -184,6 +193,7 @@ export default function App() {
             key={selectedProject}
             projectId={selectedProject}
             historyLink={linkedProjectExists ? historyLink : null}
+            knowledgeLink={linkedProjectExists ? knowledgeLink : null}
             onLeaveHistory={() => selectProject(selectedProject)}
             onProjectChanged={fetchProjects}
           />
@@ -210,21 +220,24 @@ function ProjectWorkspace({
   projectId,
   onProjectChanged,
   historyLink,
+  knowledgeLink,
   onLeaveHistory,
 }: {
   projectId: number;
   onProjectChanged: () => Promise<void>;
   historyLink: HistoryLink | null;
+  knowledgeLink: KnowledgeLink | null;
   onLeaveHistory: () => void;
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [selectedView, setView] = useState('Dashboard');
-  const view = historyLink ? 'History' : selectedView;
-  const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false });
+  const view = historyLink ? 'History' : knowledgeLink ? 'Knowledge' : selectedView;
+  const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
+    if (view === 'Knowledge') setVisited((previous) => previous.knowledge ? previous : { ...previous, knowledge: true });
     if (view === 'Scheme') setVisited((previous) => previous.scheme ? previous : { ...previous, scheme: true });
   }, [view]);
   const [generation, setGeneration] = useState(loadGenerationSettings);
@@ -377,6 +390,7 @@ function ProjectWorkspace({
   );
   const tabs = [
     'Dashboard',
+    'Knowledge',
     'Scheme',
     'History',
     'AI Q&A',
@@ -423,13 +437,14 @@ function ProjectWorkspace({
             key={t}
             className={view === t ? 'active' : ''}
             onClick={() => {
-              if (historyLink) onLeaveHistory();
+              if (historyLink || knowledgeLink) onLeaveHistory();
+              if (t === 'Knowledge') window.location.hash = knowledgeHref({ projectId });
               setView(t);
               setReport(null);
               setResults(null);
             }}
           >
-            {t}
+            {t === 'Dashboard' ? 'Overview' : t}
           </button>
         ))}
       </nav>
@@ -477,6 +492,12 @@ function ProjectWorkspace({
               visible={view === 'Dashboard' && !results}
               recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, brief: active })); }} />
+          </div>
+        )}
+        {(visited.knowledge || view === 'Knowledge') && (
+          <div hidden={view !== 'Knowledge' || !!results}>
+            <KnowledgePage base={base} generation={generation} link={knowledgeLink} visible={view === 'Knowledge' && !results}
+              renderBrief={(candidate) => <BriefPreview brief={candidate as Brief} prefix={`${projectId}-knowledge-preview`} />} />
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (

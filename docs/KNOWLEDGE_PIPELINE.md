@@ -1,8 +1,8 @@
 # Evidence-based knowledge pilot
 
-Branch: feature/evidence-knowledge-pipeline. This is opt-in evaluation work, not the
-new default brief path. Do not merge or promote it until the reference cases and
-live model output have been reviewed. Q&A and Scheme are unchanged.
+The evidence-based pipeline remains opt-in, rather than the default brief path.
+Do not promote it to the default until the reference cases and live model output
+have been reviewed. Q&A and Scheme are unchanged.
 
 ## What is implemented
 
@@ -51,8 +51,9 @@ brief. Historical design_status is not rewritten by this read-only availability 
 A later legacy refresh can create a newer legacy brief; the pairing flag then becomes false.
 
 GET /api/projects/{id}/codex/generation/status?kind=knowledge exposes pilot progress.
-The ordinary /codex/brief endpoint and existing Dashboard button remain unchanged.
-There is no pilot UI yet; this branch is for API-based evaluation before wider integration.
+The ordinary /codex/brief endpoint remains the default for the Overview refresh button.
+The Knowledge tab exposes published snapshots and a separate opt-in unpublished preview.
+See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for UI behavior and evaluation limits.
 
 ## Isolated testing
 
