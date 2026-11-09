@@ -1548,6 +1548,7 @@ type SavedTurn = {
   id: string;
   status: string;
   messages: { role: 'user' | 'assistant'; text: string }[];
+  shared_history?: { session_id: number; turn_id: string; session_title?: string };
 };
 
 const HISTORY_PAGE_SIZE = 3;
@@ -1614,6 +1615,42 @@ function SavedHistory({
         || turn.messages.some((message) => message.text.toLowerCase().includes(query)))
     : turns;
 
+  const sharedTurns = query ? [] : visibleTurns.filter((turn) => turn.shared_history);
+  const firstShared = sharedTurns[0]?.id;
+  const renderTurn = (turn: SavedTurn) => (
+    <article className="history-turn" key={turn.id}>
+      <div className="section-title">
+        <h3>Turn {turn.id}</h3>
+        <Badge value={turn.status} />
+      </div>
+      {turn.shared_history && (
+        <p className="muted">Shared with{' '}
+          <a href={historyTurnHref({
+            projectId: passageNotes.projectId,
+            sessionId: turn.shared_history.session_id,
+            turnId: turn.shared_history.turn_id,
+          })}>
+            {turn.shared_history.session_title
+                  ? `${turn.shared_history.session_title} · #${turn.shared_history.session_id}`
+                  : `Session #${turn.shared_history.session_id}`}
+          </a>
+        </p>
+      )}
+      <SaveablePassage context={passageNotes} title={sessionTitle ? `Passage from ${sessionTitle}` : `Passage from session #${sessionId}`}
+        reference={historyTurnHref({ projectId: passageNotes.projectId, sessionId: Number(sessionId), turnId: turn.id })}>
+      {turn.messages.map((message, index) => (
+        <div className="history-message" key={`${turn.id}-${index}`}>
+          <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
+          <Markdown>{message.text}</Markdown>
+        </div>
+      ))}
+      </SaveablePassage>
+      {!turn.messages.length && (
+        <p className="muted">No user or assistant text in this turn.</p>
+      )}
+    </article>
+  );
+
   return (
     <section className="card saved-history">
       <div className="section-title">
@@ -1657,26 +1694,17 @@ function SavedHistory({
       {query && !visibleTurns.length && turns.length > 0 && (
         <Empty>No matching turns on this page.</Empty>
       )}
-      {visibleTurns.map((turn) => (
-        <article className="history-turn" key={turn.id}>
-          <div className="section-title">
-            <h3>Turn {turn.id}</h3>
-            <Badge value={turn.status} />
-          </div>
-          <SaveablePassage context={passageNotes} title={sessionTitle ? `Passage from ${sessionTitle}` : `Passage from session #${sessionId}`}
-            reference={historyTurnHref({ projectId: passageNotes.projectId, sessionId: Number(sessionId), turnId: turn.id })}>
-          {turn.messages.map((message, index) => (
-            <div className="history-message" key={`${turn.id}-${index}`}>
-              <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
-              <Markdown>{message.text}</Markdown>
-            </div>
-          ))}
-          </SaveablePassage>
-          {!turn.messages.length && (
-            <p className="muted">No user or assistant text in this turn.</p>
-          )}
-        </article>
-      ))}
+      {visibleTurns.map((turn) => {
+        if (!query && turn.shared_history) {
+          return turn.id === firstShared ? (
+            <details className="history-turn" key={`shared-${sessionId}-${turn.id}`}>
+              <summary>Shared history — {sharedTurns.length} {sharedTurns.length === 1 ? 'turn' : 'turns'} on this page</summary>
+              {sharedTurns.map(renderTurn)}
+            </details>
+          ) : null;
+        }
+        return renderTurn(turn);
+      })}
       {!turns.length && !loading && !error && (
         <Empty>No saved conversation turns found.</Empty>
       )}

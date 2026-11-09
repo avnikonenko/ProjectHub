@@ -10,6 +10,7 @@ export type BriefSource = {
   note_id?: number;
   share?: boolean;
   kind?: string;
+  shared_sessions?: { session_id: number; turn_id: string; session_title?: string }[];
 };
 export function citedSources(sources: BriefSource[], ids: string[]) {
   const byId = new Map(sources.map((source) => [source.id, source]));
@@ -66,6 +67,22 @@ export function BriefSources({ sources, prefix, openInNewTab = false }: {
               <a {...linkOptions} href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
                 Read full turn
               </a>
+            )}
+            {!!source.shared_sessions?.length && (
+              <div>
+                <small>Also in{' '}
+                  {source.shared_sessions.map((session, index) => (
+                    <span key={`${session.session_id}:${session.turn_id}`}>
+                      {index > 0 && ', '}
+                      <a {...linkOptions} href={historyTurnHref({
+                        projectId, sessionId: session.session_id, turnId: session.turn_id,
+                      })}>
+                        {session.session_title ? `${session.session_title} · #${session.session_id}` : `Session #${session.session_id}`}
+                      </a>
+                    </span>
+                  ))}
+                </small>
+              </div>
             )}
             {source.share && source.note_id !== undefined && (
               <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id })}>Read full transcript</a>

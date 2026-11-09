@@ -39,3 +39,21 @@ New summaries distinguish verified observations, reported claims, inferences, an
 The generator reads linked history in bounded batches and reuses cached batch summaries when possible. Long histories can take longer and the final summary can omit details. Previous summaries are comparison context, not evidence. Existing versions remain readable in **Previous versions**. Failed generation keeps the last successful version.
 
 An explicit Project status refresh also supplies bounded source-code and documentation excerpts to Codex. Repository text is untrusted data and is never executed. Architecture can be reconstructed from those excerpts and session evidence; inferred connections remain labeled. Excerpt coverage is recorded with the saved summary.
+
+## Shared history in forked sessions
+
+ProjectHub detects exact initial sequences shared by linked sessions in the same project.
+A match requires at least two nonblank finished turns and 200 text characters.
+Message roles, text, order, and terminal status must match; content after a divergence
+remains separate, even when individual later messages repeat.
+
+Original Codex files and saved per-session index records remain unchanged. History
+pages can collapse confirmed shared turns from complete saved indexes; unindexed or
+incomplete histories remain visible normally. The first check after an index change
+streams saved text to compute fingerprints; later pages reuse bounded cached metadata.
+
+AI history preparation stages text in temporary files, then summarizes retained turns
+once. Alternate session references are attached after summary-cache lookup, so adding
+a fork does not invalidate unchanged canonical summaries. Ask Project, Scheme, and
+recent overview excerpts also deduplicate confirmed indexed prefixes. Previous saved
+reports are not rewritten. Search still exposes original per-session matches.

@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Exact shared prefixes in forked Codex histories can be collapsed while preserving original messages and alternate-session source links.
+
 - Scheme diagrams support zoom, fit-to-view, and fullscreen without another AI request.
 
 - Terminal agents can link their current Codex session to a project using the existing ProjectHub skill and `projecthub session link`.
@@ -40,6 +42,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Linked Codex history syncs in the background. Individual sources can be paused without losing saved history.
 
 ### Changed
+
+- Overview, Q&A, Ask Project, and Scheme evidence avoid repeated copies of confirmed shared conversation prefixes. Detection is project-scoped and does not rewrite Codex history or existing reports.
 
 - Compact project headers and consistent TODO, note, and session rows; full thread IDs remain expandable and copyable. Summary metadata, sources, and previous versions are grouped outside the main answer.
 
