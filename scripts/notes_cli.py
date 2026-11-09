@@ -1,4 +1,4 @@
-"""Local terminal bridge for ProjectHub notes and TODOs."""
+"""Local terminal bridge for ProjectHub notes, TODOs, and linked sessions."""
 import argparse
 import json
 import os
@@ -32,11 +32,11 @@ def request(method, path, payload=None):
             return json.load(response)
     except HTTPError as exc:
         if method == 'POST' and exc.code >= 500:
-            raise ValueError('ProjectHub returned a server error. Check Notes or TODO before retrying; the item may have been saved.') from exc
+            raise ValueError('ProjectHub returned a server error. Check Notes, TODO, or Sources before retrying; the item may have been saved.') from exc
         raise ValueError(f'ProjectHub rejected the request (HTTP {exc.code}).') from exc
     except (URLError, TimeoutError, OSError, ValueError) as exc:
         raise ValueError('Could not confirm the ProjectHub response. Start ProjectHub if needed. '
-                         'For a submission, check Notes or TODO before retrying to avoid a duplicate.') from exc
+                         'For a submission, check Notes, TODO, or Sources before retrying to avoid a duplicate.') from exc
 
 
 def resolve_project(projects, args):
@@ -76,6 +76,13 @@ def parser():
     todo_add = todo_actions.add_parser('add')
     project_arguments(todo_add)
     todo_add.add_argument('--title', required=True)
+    sessions = commands.add_parser('session', help='List or link Codex sessions for reading')
+    session_actions = sessions.add_subparsers(dest='action', required=True)
+    project_arguments(session_actions.add_parser('list'))
+    linking = session_actions.add_parser('link')
+    project_arguments(linking)
+    linking.add_argument('--session', help='Codex thread ID (defaults to CODEX_THREAD_ID)')
+    linking.add_argument('--title', help='Optional display name (otherwise use the Codex name)')
     return root
 
 
@@ -85,6 +92,37 @@ def main(argv=None):
         if args.command == 'projects':
             projects = request('GET', '/projects')
             print(json.dumps([{'id': p['id'], 'name': p['name']} for p in projects], ensure_ascii=False))
+            return 0
+        if args.command == 'session':
+            session = None
+            if args.action == 'link':
+                session = args.session if args.session is not None else os.environ.get('CODEX_THREAD_ID', '')
+                if not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', session):
+                    raise ValueError('Provide a valid --session or run from a Codex session with CODEX_THREAD_ID.')
+                if args.title is not None and not 1 <= len(args.title.strip()) <= 200:
+                    raise ValueError('Session title must contain 1–200 characters.')
+            project = resolve_project(request('GET', '/projects'), args)
+            path = f"/projects/{project['id']}/codex/sessions"
+            rows = request('GET', path)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise ValueError('Unexpected session list response.')
+            if args.action == 'list':
+                print(json.dumps({'project_id': project['id'], 'sessions': rows}, ensure_ascii=False))
+                return 0
+            existing = next((row for row in rows if row.get('thread_id') == session
+                             and row.get('is_linked') is True), None)
+            payload = {'thread_id': session}
+            if args.title is not None:
+                payload['title'] = args.title.strip()
+            result = existing if existing is not None else request('POST', path, payload)
+            if (not isinstance(result, dict) or type(result.get('id')) is not int
+                    or result.get('project_id') != project['id'] or result.get('thread_id') != session
+                    or result.get('is_linked') is not True):
+                raise ValueError('Unexpected session response. Check Sources or projecthub session list before retrying; '
+                                 'the session may already be linked.')
+            print(json.dumps({'session_id': result['id'], 'thread_id': session, 'project_id': project['id'],
+                              'project': project['name'], 'title': result.get('title', ''),
+                              'already_linked': existing is not None}, ensure_ascii=False))
             return 0
         if args.action == 'list':
             project = resolve_project(request('GET', '/projects'), args)

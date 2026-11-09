@@ -16,6 +16,7 @@ Commands:
   projects List local project IDs and names
   note     List notes or add an AI note
   todo     List TODOs or add a checklist item
+  session  List or link Codex sessions for reading
   help     Show this help
 
 Environment:
@@ -30,7 +31,7 @@ EOF
 command_name="${1:-start}"
 
 case "$command_name" in
-  projects|note|notes|todo)
+  projects|note|notes|todo|session)
     if [[ ! -x "$project_root/.venv/bin/python" ]]; then
       echo "projecthub: run 'projecthub setup' first" >&2
       exit 1
