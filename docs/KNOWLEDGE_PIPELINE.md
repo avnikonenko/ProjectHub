@@ -116,3 +116,7 @@ Decision precision/recall, actual token cost, and scientific validity remain unm
 supersession/failure cases, score false agreements and missed decisions separately, verify older
 reasons survive new discussions, and repeat with changed/unavailable sources. Q&A/Scheme integration,
 manual corrections, and advanced semantic merging remain deferred.
+
+Human confirmation status and the review rubric are in KNOWLEDGE_HUMAN_REVIEW.md. The complete
+v4 run and a controlled incremental update are recorded in KNOWLEDGE_PILOT_EVALUATION.md;
+request counts and timings are observations, not token costs or accuracy scores.

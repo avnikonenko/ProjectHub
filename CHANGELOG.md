@@ -45,6 +45,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Knowledge-pilot briefs suppress presentation repetition without merging source knowledge, preserve distinct scopes, and distinguish missing acceptance evidence from nonacceptance.
+
 - Overview, Q&A, Ask Project, and Scheme evidence avoid repeated copies of confirmed shared conversation prefixes. Detection is project-scoped and does not rewrite Codex history or existing reports.
 
 - Compact project headers and consistent TODO, note, and session rows; full thread IDs remain expandable and copyable. Summary metadata, sources, and previous versions are grouped outside the main answer.
