@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Opt-in evidence-based knowledge pilot with source-checked reference cases, contextual extraction caches, conservative history reconciliation, and atomic knowledge/brief publication. Existing brief generation remains the default pending evaluation.
+
 - Exact shared prefixes in forked Codex histories can be collapsed while preserving original messages and alternate-session source links.
 
 - Scheme diagrams support zoom, fit-to-view, and fullscreen without another AI request.
