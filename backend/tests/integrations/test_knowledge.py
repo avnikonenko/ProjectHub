@@ -288,3 +288,32 @@ def test_extractor_receives_fragment_context_instead_of_assuming_complete_messag
             return json.dumps({'items': []})
     k.extract_batch(db_engine, 1, Extractor(), window([original]), k.extraction_configuration(Extractor()))
     db_engine.dispose()
+
+
+@pytest.mark.parametrize('changes', [
+    {'role': 'assistant'}, {'order': 0}, {'conversation_id': 'different'},
+    {'message_revision': 'changed-whole-message'},
+])
+def test_changed_acceptance_identity_invalidates_support_without_rewriting_history(changes):
+    original = source('user:1', 'Use Gemmi for ingestion.')
+    old = validate(sources=[original])
+    # Old persisted context dependencies lacked speaker/order, but its evidence
+    # still records them and must be checked independently.
+    old['context_dependencies'] = [{'source_id': original['id'], 'revision': original['revision'],
+                                    'source_key': original['source_key']}]
+    current = {**original, **changes}
+    updated = k.reconcile({'items': [old]}, [], bundle([current]), 'v1')[0]
+    assert updated['source_state'] == 'stale'
+    assert updated['design_status'] == 'AGREED'
+    assert old['source_state'] == 'valid'
+
+
+def test_context_only_speaker_change_invalidates_acceptance():
+    context = source('context', 'We can use Gemmi.', role='assistant', order=0)
+    acceptance = source('acceptance', 'Agree.', order=1)
+    old = validate(item([context, acceptance], agreement_basis='proposal_acceptance'), [context, acceptance])
+    # Context metadata is saved for subsequent snapshots as well as quoted evidence.
+    assert old['context_dependencies'][0]['role'] == 'assistant'
+    updated = k.reconcile({'items': [old]}, [], bundle([{**context, 'role': 'user'}, acceptance]), 'v1')[0]
+    assert updated['source_state'] == 'stale'
+    assert updated['design_status'] == 'AGREED'

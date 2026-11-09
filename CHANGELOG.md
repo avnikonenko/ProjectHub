@@ -4,6 +4,12 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Fixed
+
+- Knowledge citation selection follows recorded proposal–acceptance chronology and preserves ambiguous pairs. Speaker/order corrections invalidate current evidence support without rewriting historical agreement. Shared synthesis quotations are sent once to avoid unnecessary input-limit failures.
+
+- Opt-in knowledge briefs include original acceptance excerpts during synthesis and retain proposal–acceptance citation pairs when shortening visible references. Underlying knowledge and evidence are preserved.
+
 ## [0.2.0] - 2026-11-09
 
 ### Added

@@ -173,8 +173,9 @@ def validate_extraction(raw, window, project_id, extraction_version):
                     item['design_status'], _normalized(item['statement'])])[:32], project_id=project_id,
                     evidence=evidence, extraction_version=extraction_version, source_state='valid',
                     supersedes=[], conflicts_with=[], superseded_by=[], relationships=[],
-                    context_dependencies=[{'source_id': source['id'], 'revision': source['revision'],
-                                           'source_key': source.get('source_key')} for source in window['sources']])
+                    context_dependencies=[{**{key: source.get(key) for key in (
+                        'role', 'conversation_id', 'order', 'message_order', 'message_revision', 'source_key')},
+                        'source_id': source['id'], 'revision': source['revision']} for source in window['sources']])
         validated.append(item)
     return validated
 
@@ -209,10 +210,12 @@ def _source_state(item, sources, entries, extraction_version):
     if item.get('extraction_version') != extraction_version:
         return 'stale'
     states = []
-    for ref in item.get('context_dependencies', item.get('evidence', [])):
+    for ref in [*item.get('context_dependencies', []), *item.get('evidence', [])]:
         current = sources.get(ref['source_id'])
         if current is not None:
-            states.append('valid' if current['revision'] == ref.get('revision') else 'stale')
+            identity_changed = any(ref[key] != current.get(key) for key in (
+                'role', 'conversation_id', 'order', 'message_order', 'message_revision') if key in ref)
+            states.append('valid' if current['revision'] == ref.get('revision') and not identity_changed else 'stale')
         else:
             entry = entries.get(ref.get('source_key'))
             availability = entry.get('availability') if entry else None
