@@ -95,3 +95,24 @@ def test_duplicate_questions_merge_sources_and_preserve_differing_answers():
     assert items[0]['variants'] == [{
         'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['c', 'd'],
     }]
+
+
+def test_qa_retries_only_the_invalid_batch_and_keeps_no_partial_answers():
+    class Generator:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            assert schema['properties']['items']['items']['properties']['source_ids']['items']['enum'] == ['1']
+            items = [{'question': 'What was chosen?', 'answer': 'SQLite', 'source_ids': ['1']}]
+            if self.calls == 1:
+                items.append({'question': 'Unsupported?', 'answer': 'Other', 'source_ids': ['unknown']})
+            else:
+                assert 'previous attempt cited unavailable evidence' in prompt
+            return json.dumps({'items': items})
+
+    manager = Generator()
+    result = qa.generate_items(manager, [{'text': 'SQLite', 'sources': [{'id': 'note:1'}]}])
+    assert manager.calls == 2
+    assert len(result) == 1
+    assert result[0][0]['source_ids'] == ['note:1']

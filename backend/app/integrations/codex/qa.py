@@ -56,8 +56,22 @@ def generate_items(manager, batch):
     ]} for key, item in indexed.items()]
     schema = deepcopy(_SCHEMA)
     schema['properties']['items']['items']['properties']['source_ids']['items']['enum'] = list(indexed)
+    serialized = json.dumps(payload, ensure_ascii=False)
     try:
-        raw = manager.generate_brief(prompt + json.dumps(payload, ensure_ascii=False), schema)
+        return _validate_items(manager.generate_brief(prompt + serialized, schema), indexed)
+    except InvalidQACitation:
+        # Retry only this batch; never salvage or guess a citation.
+        correction = ('The previous attempt cited unavailable evidence. Copy IDs exactly from this batch. '
+                      'Omit any answer without a valid citation.\n')
+        return _validate_items(manager.generate_brief(correction.rstrip() + ' ' + prompt + serialized, schema), indexed)
+
+
+class InvalidQACitation(CodexError):
+    pass
+
+
+def _validate_items(raw, indexed):
+    try:
         if not isinstance(raw, str) or len(raw) > 30_000:
             raise ValueError('Invalid response size')
         result = json.loads(raw)
@@ -68,6 +82,7 @@ def generate_items(manager, batch):
     items = result['items']
     if not isinstance(items, list) or len(items) > 8:
         raise CodexError('Q&A generation exceeded the batch limit.')
+    validated = []
     for item in items:
         if not isinstance(item, dict) or set(item) != {*_FIELDS, 'source_ids'}:
             raise CodexError('Q&A generation returned an invalid item.')
@@ -77,9 +92,10 @@ def generate_items(manager, batch):
         refs = item['source_ids']
         if (not isinstance(refs, list) or not 1 <= len(refs) <= 3
                 or any(not isinstance(ref, str) or ref not in indexed for ref in refs)):
-            raise CodexError('Q&A generation cited missing or foreign evidence.')
+            raise InvalidQACitation('Q&A generation cited missing or foreign evidence.')
         sources = {source['id']: source for ref in refs for source in indexed[ref]['sources']}
-        yield {**item, 'source_ids': list(sources)}, sources
+        validated.append(({**item, 'source_ids': list(sources)}, sources))
+    return validated
 
 
 def normalized_text(value):
