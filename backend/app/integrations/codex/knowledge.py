@@ -11,7 +11,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 3
+PROMPT_VERSION = 4
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -42,7 +42,11 @@ OUTPUT_SCHEMA = _object({'items': {'type': 'array', 'maxItems': MAX_ITEMS, 'item
 PROMPT = (
     'Extract a small set of material project choices, requirements, proposals, open questions, and findings '
     'from original messages, preserving reasons, alternatives, limitations and scope. Do not extract every '
-    'sentence or create TODOs. Records marked partial_message are fragments, not complete messages; '
+    'sentence or create TODOs. Keep each item atomic: do not combine a firm commitment with tentative '
+    'tool, dataset, reuse, or implementation ideas in one AGREED statement. Split clauses with different '
+    'acceptance strength. Thinking of, probably, could, as an option, and discussion questions do not '
+    'establish agreement for the associated proposal, even alongside an explicit commitment elsewhere. '
+    'Records marked partial_message are fragments, not complete messages; '
     'message_revision/message_order identify their original message, and order is within-conversation '
     'fragment order, not a date. Missing context must not establish acceptance or chronology. '
     'Distinguish long-term project scope from first-release or experiment scope. '
