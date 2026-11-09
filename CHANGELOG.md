@@ -27,7 +27,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
-- AI Q&A merges overlapping questions across conversations and saves up to 15 entries ranked by lasting usefulness. Citations are numbered from the displayed sources.
+- AI Q&A merges overlapping questions across conversations and ranks entries by lasting usefulness. The default limit is 25, and you can choose a different limit before refreshing. Citations are numbered from the displayed sources.
 
 - Project overviews use two complete sentences, a single Current work section, and next steps based on explicit priorities rather than repeated AI suggestions.
 

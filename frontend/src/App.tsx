@@ -1093,6 +1093,12 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
   );
 }
 
+const DEFAULT_QA_QUESTIONS = 25;
+
+function isValidQALimit(value: number) {
+  return Number.isSafeInteger(value) && value >= 1;
+}
+
 function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
@@ -1106,6 +1112,14 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('');
   const path = `${base}/codex/qa`;
+  const limitStorageKey = `projecthub.qa-max-questions:${base}`;
+  const [maxQuestions, setMaxQuestions] = useState(() => {
+    try {
+      const savedLimit = Number(localStorage.getItem(limitStorageKey));
+      if (isValidQALimit(savedLimit)) return String(savedLimit);
+    } catch { /* Storage is optional. */ }
+    return String(DEFAULT_QA_QUESTIONS);
+  });
   useEffect(() => {
     let active = true;
     api<SavedQA | null>(path)
@@ -1121,14 +1135,16 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [path, recoveryVersion]);
+  const generationDisabled = loading || generating || recoveryBusy || deleting || revisionLoading;
+  const validLimit = isValidQALimit(Number(maxQuestions));
   async function generate() {
-    if (loading || generatingRef.current || revisionLoading || recoveryBusy || deleting) return;
+    if (generationDisabled || generatingRef.current || !validLimit) return;
     generatingRef.current = true;
     setGenerating(true);
     onGenerating(true);
     setError('');
     try {
-      const result = await post(path, { confirmed: true, ...generationBody(generation) });
+      const result = await post(path, { confirmed: true, ...generationBody(generation), max_items: Number(maxQuestions) });
       setSaved(result);
       setRevisionId(null);
       setLatestVersion(result.generated_at);
@@ -1176,11 +1192,26 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
             {saved && <SavedGeneration generation={saved.generation} />}
           </div>
-          <button disabled={loading || generating || recoveryBusy || deleting || revisionLoading} onClick={generate}>
-            {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
-          </button>
+          <div className="toolbar" style={{ marginBottom: 0 }}>
+            <label className="inline" style={{ margin: 0 }}>
+              Max questions
+              <input type="number" min={1} step={1} value={maxQuestions} disabled={generationDisabled}
+                aria-invalid={!validLimit} style={{ width: '7em', margin: 0 }}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setMaxQuestions(value);
+                  if (isValidQALimit(Number(value))) {
+                    try { localStorage.setItem(limitStorageKey, value); } catch { /* Storage is optional. */ }
+                  }
+                }} />
+            </label>
+            <button disabled={generationDisabled || !validLimit} onClick={generate}>
+              {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
+            </button>
+            {!validLimit && <small role="status">Enter a positive whole number.</small>}
+          </div>
         </div>
-        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generating sends that evidence to OpenAI.</p>
+        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generating sends that evidence to OpenAI and may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
           disabled={loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {

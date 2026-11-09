@@ -12,7 +12,7 @@ from .protocol import CodexError
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
-from .qa import read_qa, refresh_qa
+from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .ask import answer_project, retrieve_passages
 from . import progress
 from .revisions import list_revisions
@@ -66,6 +66,10 @@ class DeliveryInput(Input):
 
 class GenerationInput(ModelInput):
     confirmed: bool = False
+
+
+class QAGenerationInput(GenerationInput):
+    max_items: int = Field(default=DEFAULT_QA_MAX_ITEMS, ge=1, strict=True)
 
 
 class InstructionsInput(Input):
@@ -368,7 +372,7 @@ def delete_qa_item(project_id: int, db: DB,
 
 
 @router.post('/qa')
-def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB):
+def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
@@ -378,7 +382,7 @@ def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
-            return refresh_qa(request.app.state.engine, project_id, selected)
+            return refresh_qa(request.app.state.engine, project_id, selected, max_items=body.max_items)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
