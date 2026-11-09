@@ -66,7 +66,7 @@ def _descriptor(root_fd, relative):
             os.close(fd)
 
 
-def _read(root_fd, relative):
+def _read(root_fd, relative, *, allow_prefix=False):
     fd = _descriptor(root_fd, relative)
     try:
         data = bytearray()
@@ -75,8 +75,12 @@ def _read(root_fd, relative):
             if not chunk:
                 break
             data.extend(chunk)
-        if len(data) > _MAX_BYTES or b'\0' in data:
-            raise ValueError('Oversized or binary file')
+        if b'\0' in data:
+            raise ValueError('Binary file')
+        if len(data) > _MAX_BYTES:
+            if not allow_prefix:
+                raise ValueError('Oversized file')
+            data = data[:_MAX_BYTES].rsplit(b'\n', 1)[0]
         return data.decode('utf-8')
     finally:
         os.close(fd)
@@ -98,6 +102,107 @@ def _markers(root_fd, candidates):
     return result
 
 
+_AUXILIARY = {'script', 'scripts', 'migration', 'migrations', 'test', 'tests',
+              'tool', 'tools', 'benchmark', 'benchmarks', 'example', 'examples', 'docs'}
+_ENTRYPOINTS = {'main', 'app', 'index', 'server', 'cli', 'router', 'routes', 'services', 'models'}
+_CODE_EXTENSIONS = ('.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
+
+
+def _production_path(relative):
+    path = PurePosixPath(relative)
+    return _code_category(relative) == 'code' and not any(part.lower() in _AUXILIARY for part in path.parts[:-1])
+
+
+def _scheme_order(relative):
+    path = PurePosixPath(relative)
+    category = _code_category(relative)
+    group = 0 if _manifest(relative) else 1 if category == 'docs' else 2 if _production_path(relative) else 3
+    return group, path.stem.casefold() not in _ENTRYPOINTS, len(path.parts), relative.casefold(), relative
+
+
+def _area(relative):
+    parts = PurePosixPath(relative).parts
+    return parts[0] if len(parts) > 1 else '.'
+
+
+def _shared_feature_stems(paths):
+    areas = {}
+    for relative in paths:
+        if _production_path(relative):
+            stem = PurePosixPath(relative).stem.casefold()
+            if stem not in _ENTRYPOINTS:
+                areas.setdefault(stem, set()).add(_area(relative))
+    # Selection hint only: matching names do not establish a dependency.
+    return {stem for stem, locations in areas.items() if len(locations) > 1}
+
+
+def _import_targets(value, relative, available):
+    """Resolve explicit local imports; prioritize application entrypoints/feature use."""
+    path = PurePosixPath(relative)
+    bases, feature_names = [], set()
+    if path.suffix.lower() == '.py':
+        try:
+            parsed = ast.parse(value)
+        except (SyntaxError, ValueError, RecursionError):
+            return []
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Call):
+                name = _qualified_name(node.value.func)
+                if name:
+                    feature_names.add(name.split('.')[0])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {'include_router', 'register_blueprint', 'use'}:
+                feature_names.update(argument.id for argument in node.args if isinstance(argument, ast.Name))
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                bases.extend((PurePosixPath(*alias.name.split('.')), alias.asname or alias.name.split('.')[0]) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    parent = path.parent
+                    for _ in range(node.level - 1):
+                        parent = parent.parent
+                    base = parent / PurePosixPath(*(node.module or '').split('.'))
+                else:
+                    base = PurePosixPath(*(node.module or '').split('.'))
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    bases.append((base, name))
+                    if alias.name != '*':
+                        bases.append((base / alias.name, name))
+    else:
+        masked = _mask_js(value)
+        feature_names.update(re.findall(r'<([A-Z][A-Za-z0-9_]*)\b', masked))
+        for match in re.finditer(r"(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['\"]([^'\"]{1,180})['\"]", value):
+            if not masked[match.start():match.start() + 4].strip():
+                continue
+            target = match[1]
+            if target.startswith('.') and not any(char in target for char in ('?', '#', ':')):
+                parts = list(path.parent.parts)
+                safe = True
+                for part in PurePosixPath(target).parts:
+                    if part == '..':
+                        if parts:
+                            parts.pop()
+                        else:
+                            safe = False
+                            break
+                    elif part != '.':
+                        parts.append(part)
+                if safe:
+                    base = PurePosixPath(*parts)
+                    bases.append((base, base.stem))
+    found = {}
+    for base, symbol in bases:
+        candidates = [base.as_posix(), *((str(base) + ext) for ext in _CODE_EXTENSIONS),
+                      *((base / ('index' + ext)).as_posix() for ext in _CODE_EXTENSIONS),
+                      (base / '__init__.py').as_posix()]
+        for candidate in candidates:
+            if candidate in available and candidate != relative:
+                score = (symbol not in feature_names,
+                         PurePosixPath(candidate).stem.casefold() not in {'router', 'routes', 'app', 'main', 'index', 'server'})
+                found[candidate] = min(found.get(candidate, score), score)
+    return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
+
+
 def _repository(repository_path, patterns):
     if not repository_path:
         return None, [], [], ['No repository is linked; diagrams can use saved discussions only.']
@@ -112,14 +217,20 @@ def _repository(repository_path, patterns):
     limits = []
     if len(paths) > _MAX_PATHS:
         limits.append('Code structure is limited to 300 safe paths; other paths were omitted.')
-    paths = sorted(paths, key=lambda value: (not _manifest(value), *_code_order(value)))[:_MAX_PATHS]
+    paths = sorted(paths, key=_scheme_order)[:_MAX_PATHS]
     manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)[:_MAX_MANIFESTS]
     docs = sorted((v for v in paths if _code_category(v) == 'docs'), key=_code_order)[:3]
-    code = sorted((v for v in paths if _code_category(v) == 'code'), key=_code_order)
+    shared_stems = _shared_feature_stems(paths)
+    code = sorted((v for v in paths if _code_category(v) == 'code'), key=lambda v: (
+        PurePosixPath(v).stem.casefold() not in _ENTRYPOINTS,
+        PurePosixPath(v).stem.casefold() not in shared_stems, *_scheme_order(v)))
+    production = [v for v in code if _production_path(v)]
+    if production:
+        code = production
     # Round-robin top-level areas so a backend does not hide a frontend.
     buckets = {}
     for value in code:
-        buckets.setdefault(PurePosixPath(value).parts[0] if '/' in value else '.', []).append(value)
+        buckets.setdefault(_area(value), []).append(value)
     chosen = []
     while any(buckets.values()) and len(chosen) < _MAX_FILES - len(manifests) - len(docs):
         for values in buckets.values():
@@ -208,42 +319,176 @@ def _parse_manifest(value, path, source_id, dependencies, includes, limitations)
         _requirements(value, path, source_id, dependencies, includes, limitations)
 
 
+def _qualified_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _qualified_name(node.value)
+        return parent + '.' + node.attr if parent else node.attr
+    if isinstance(node, ast.Call):
+        name = _qualified_name(node.func)
+        return name + '(...)' if name else ''
+    return ''
+
+
+def _mask_js(value):
+    """Mask literals/comments for conservative lexical JS inspection, not a parser."""
+    chars = list(value)
+    index, length = 0, len(chars)
+    while index < length:
+        begin = index
+        if value.startswith('//', index):
+            index = value.find('\n', index)
+            if index < 0:
+                index = length
+        elif value.startswith('/*', index):
+            end = value.find('*/', index + 2)
+            index = length if end < 0 else end + 2
+        elif value[index] in ('"', "'", '`'):
+            quote = value[index]
+            index += 1
+            while index < length:
+                if value[index] == '\\':
+                    index += 2
+                elif value[index] == quote:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            index = min(index, length)
+        else:
+            index += 1
+            continue
+        for offset in range(begin, index):
+            if chars[offset] != '\n':
+                chars[offset] = ' '
+    return ''.join(chars)
+
+
+_ROUTINE_CALLS = {'isinstance', 'len', 'set', 'list', 'dict', 'tuple', 'str', 'int', 'bool', 'any', 'all',
+                  'min', 'max', 'round', 'sorted', 'enumerate', 'range', 'getattr', 'hasattr', 'ord',
+                  'ValueError', 'TypeError', 'RuntimeError', 'Error', 'setTimeout', 'clearTimeout'}
+
+
+def _call_summary(names, preferred=()):
+    def priority(name):
+        leaf = name.rsplit('.', 1)[-1]
+        return (name in _ROUTINE_CALLS or leaf in {'append', 'extend', 'strip', 'get', 'items', 'values', 'keys', 'join'},
+                name not in preferred, leaf.startswith(('use', 'set')), name.startswith('_'))
+    return ', '.join(sorted(names, key=priority)[:12])
+
+
 def _structural_excerpt(value, relative):
-    """Expose declarations and import targets, never initializer/default literals."""
-    declarations = []
+    """Balanced declarations/imports/static call names; no argument or initializer literals."""
+    imports, declarations, calls = [], [], []
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
         except (SyntaxError, ValueError, RecursionError):
             parsed = None
         if parsed is not None:
-            nodes = sorted(ast.walk(parsed), key=lambda node: getattr(node, 'lineno', 0))
-            for node in nodes:
-                if isinstance(node, ast.Import):
-                    declaration = 'import ' + ', '.join(alias.name for alias in node.names)
-                elif isinstance(node, ast.ImportFrom):
-                    declaration = 'from ' + '.' * node.level + (node.module or '') + ' import ' + ', '.join(alias.name for alias in node.names)
-                elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    declaration = 'def ' + node.name + '(...)'
-                elif isinstance(node, ast.ClassDef):
-                    declaration = 'class ' + node.name
-                else:
-                    continue
-                declarations.append(f'L{node.lineno}: {declaration}')
-            return '\n'.join(declarations)[:_MAX_EXCERPT]
-    for number, line in enumerate(value.splitlines(), 1):
-        # Import syntax may share a line with executable code; extract its module
-        # literal only. Everything after a declaration name is deliberately omitted.
-        imported = re.search(r"(?:\bfrom\s*|^\s*import\s*)['\"]([^'\"]{1,180})['\"]", line)
-        declaration = re.match(r'\s*(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?(?:function|def)\s+|class\s+|(?:const|let|var|interface|type|enum)\s+)([A-Za-z_$][\w$]*)', line)
-        if imported:
-            target = imported[1]
+            class Visitor(ast.NodeVisitor):
+                scope = []
+                observed_calls = {}
+
+                def visit_Import(self, node):
+                    imports.append((node.lineno, 'import ' + ', '.join(alias.name for alias in node.names)))
+
+                def visit_ImportFrom(self, node):
+                    imports.append((node.lineno, 'from ' + '.' * node.level + (node.module or '')
+                                    + ' import ' + ', '.join(alias.name for alias in node.names)))
+
+                def visit_FunctionDef(self, node):
+                    declarations.append((node.lineno, 'def ' + node.name + '(...)'))
+                    self.scope.append(node.name)
+                    # Defaults/decorators are not function-body runtime evidence.
+                    for child in node.body:
+                        self.visit(child)
+                    self.scope.pop()
+
+                visit_AsyncFunctionDef = visit_FunctionDef
+
+                def visit_ClassDef(self, node):
+                    declarations.append((node.lineno, 'class ' + node.name))
+                    self.scope.append(node.name)
+                    for child in node.body:
+                        self.visit(child)
+                    self.scope.pop()
+
+                def visit_Call(self, node):
+                    name = _qualified_name(node.func)
+                    if name and self.scope:
+                        key = '.'.join(self.scope)
+                        names = self.observed_calls.setdefault(key, [node.lineno, []])[1]
+                        if name not in names and len(names) < 64:
+                            names.append(name)
+                    self.generic_visit(node)
+
+            preferred = set()
+            for node in ast.walk(parsed):
+                if isinstance(node, ast.ImportFrom):
+                    preferred.update(alias.asname or alias.name for alias in node.names
+                                     if (alias.asname or alias.name)[:1].islower())
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.Return)) and isinstance(node.value, ast.Call):
+                    preferred.add(_qualified_name(node.value.func))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {'commit', 'flush', 'rollback'}:
+                    preferred.add(_qualified_name(node.func))
+            visitor = Visitor()
+            visitor.visit(parsed)
+            calls = [(line, scope + ' uses call syntax: ' + _call_summary(names, preferred))
+                     for scope, (line, names) in visitor.observed_calls.items()]
+    if not declarations and not imports:
+        masked = _mask_js(value)
+        declared_positions = set()
+        declaration_pattern = re.compile(r'\b(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?(?:function|def)\s+|class\s+|(?:const|let|var|interface|type|enum)\s+)([A-Za-z_$][\w$]*)')
+        for match in declaration_pattern.finditer(masked):
+            number = value.count('\n', 0, match.start()) + 1
+            declarations.append((number, 'declaration ' + match[1]))
+            declared_positions.add(match.start(1))
+        import_pattern = re.compile(r"(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['\"]([^'\"]{1,180})['\"]")
+        for match in import_pattern.finditer(value):
+            if not masked[match.start():match.start() + 4].strip():
+                continue
+            target = match[1]
             if '://' in target or any(char in target for char in ('?', '#')):
                 target = '[external module location omitted]'
-            declarations.append(f'L{number}: import {target}')
-        elif declaration:
-            declarations.append(f'L{number}: declaration {declaration[1]}')
-    return '\n'.join(declarations)[:_MAX_EXCERPT]
+            imports.append((value.count('\n', 0, match.start()) + 1, 'import ' + target))
+        seen_calls = set()
+        function_marks = [(match.start(1), match[1]) for match in re.finditer(
+            r'\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', masked)]
+        grouped_calls = {}
+        for match in re.finditer(r'\b([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)(?:<[^<>;{}\n]{1,120}>)?\s*\(', masked):
+            name = re.sub(r'\s+', '', match[1])
+            if (name in seen_calls or name in {'if', 'for', 'while', 'switch', 'catch', 'function', 'import', 'super', 'return', 'async'}
+                    or match.start(1) in declared_positions):
+                continue
+            seen_calls.add(name)
+            scope = next((name for start, name in reversed(function_marks) if start < match.start()), 'module')
+            number = value.count('\n', 0, match.start()) + 1
+            group = grouped_calls.setdefault(scope, [number, []])
+            if len(group[1]) < 64:
+                group[1].append(name)
+        calls = [(number, scope + ' lexical call syntax: ' + _call_summary(names))
+                 for scope, (number, names) in grouped_calls.items()]
+    # Public declarations and their call groups should not disappear behind long
+    # import blocks or private helpers. Interleave groups within the same hard cap.
+    declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
+    calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
+    buckets = [declarations, calls, imports]
+    rendered = ['Static syntax only; call names do not prove runtime execution.']
+    used = len(rendered[0]) + 1
+    positions = [0, 0, 0]
+    while any(positions[i] < len(bucket) for i, bucket in enumerate(buckets)):
+        for i, bucket in enumerate(buckets):
+            if positions[i] >= len(bucket):
+                continue
+            number, statement = bucket[positions[i]]
+            positions[i] += 1
+            line = f'L{number}: {statement[:320]}'
+            if used + len(line) + 1 <= _MAX_EXCERPT:
+                rendered.append(line)
+                used += len(line) + 1
+    return '\n'.join(rendered) if len(rendered) > 1 else ''
 
 
 def _records(db, project):
@@ -338,7 +583,7 @@ def collect_evidence(engine, project_id):
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
         markers = _markers(root_fd, paths) if root_fd is not None else []
-        key = _digest({'namespace': 'scheme-inspection-v2', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v4', 'project_id': project_id,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
             'freshness_unknown': freshness_unknown})
@@ -352,14 +597,45 @@ def collect_evidence(engine, project_id):
         scanned = []
         files_read = 0
         pending = list(candidates)
+        shared_stems = _shared_feature_stems(paths)
+        priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in {'main', 'app', 'index', 'server', 'cli'}
+                             else (1, -1) if PurePosixPath(path).stem.casefold() in shared_stems
+                             else (99, i)) for i, path in enumerate(candidates)}
+        last_area = None
+        code_paths = {path for path in paths if _production_path(path)}
+        if not code_paths:
+            code_paths = {path for path in paths if _code_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         while pending and len(scanned) < _MAX_FILES:
-            relative = pending.pop(0)
+            pick = 0
+            if pending and _code_category(pending[0]) == 'code':
+                choices = [i for i, candidate in enumerate(pending)
+                           if _area(candidate) != last_area and _code_category(candidate) == 'code']
+                if not choices:
+                    choices = [i for i, candidate in enumerate(pending) if _code_category(candidate) == 'code']
+                pick = min(choices, key=lambda i: priorities.get(pending[i], (99, i)))
+            relative = pending.pop(pick)
+            if _code_category(relative) == 'code':
+                last_area = _area(relative)
             if relative in scanned:
                 continue
             scanned.append(relative)
             try:
-                value = _read(root_fd, relative)
+                is_code = _code_category(relative) == 'code'
+                value = _read(root_fd, relative, allow_prefix=True) if is_code else _read(root_fd, relative)
+                if is_code:
+                    # Metadata already participates in the cache key; a large file
+                    # contributes only a bounded prefix, never an implied full scan.
+                    marker = dict(markers).get(relative)
+                    if isinstance(marker, list) and marker[3] > _MAX_BYTES:
+                        limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
+                    linked = _import_targets(value, relative, code_paths)
+                    for order, target in enumerate(linked):
+                        if target not in scanned:
+                            candidate_priority = (priorities.get(relative, (99, 0))[0] + 1, order)
+                            priorities[target] = min(priorities.get(target, candidate_priority), candidate_priority)
+                            if target not in pending:
+                                pending.append(target)
                 files_read += 1
                 source_id = 'repository:file:' + hashlib.sha256(relative.encode()).hexdigest()[:24]
                 includes = []
@@ -392,8 +668,8 @@ def collect_evidence(engine, project_id):
             except OSError:
                 freshness_unknown = True
                 limitations.add('Some selected files could not be read safely; their freshness is unknown.')
-            except (ValueError, TypeError, AttributeError):
-                limitations.add('Some selected files were unreadable, unsafe, malformed, binary, or above 64 KiB.')
+            except (ValueError, TypeError, AttributeError, RecursionError):
+                limitations.add('Some selected files were unreadable, unsafe, malformed, binary, above 64 KiB, or too deeply nested.')
         if pending:
             limitations.add('The selected file limit was reached; some inputs were omitted.')
         if len(dependencies) > _MAX_DEPENDENCIES:

@@ -33,8 +33,10 @@ excerpts supplied to Codex, not complete repository/history exports.
 
 Inspection reuses existing Git safety, path, and exclusion helpers. Defaults bound the tree
 to 300 safe paths, content inspection to 24 files of up to 64 KiB each, direct dependency
-declarations to 100, and total evidence text to 40,000 characters. Code signatures retain
-declaration/import names without initializer or default values; private dependency and
+declarations to 100, and total evidence text to 40,000 characters. Production entrypoints and their explicit local imports are prioritized over utility scripts,
+tests, and migrations. Large source files contribute at most a 64 KiB prefix with partial
+coverage recorded. Code excerpts balance declarations, imports, and syntactic call names
+without arguments, initializer values, or defaults; private dependency and
 import locations are redacted. Project code is never executed.
 
 Supported declarations: PEP 621 pyproject.toml, Python dependency groups, common requirements

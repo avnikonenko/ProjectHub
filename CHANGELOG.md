@@ -39,6 +39,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Scheme prioritizes production/import-linked code, preserves useful declarations and static call names, and describes the main project workflow instead of its own generation pipeline.
+
 - Linking sessions uses the Codex name or preview when available, with an optional custom name. Linked history turns show their session name alongside the ID.
 
 - TODO titles use the full reading font size and grow with the accessibility text-size setting.

@@ -124,6 +124,9 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
 
         def generate_brief(self, prompt, schema):
             self.calls += 1
+            assert 'primary end-to-end' in prompt
+            assert 'Do not substitute the workflow for generating this Scheme' in prompt
+            assert 'static' in prompt and 'runtime correctness' in prompt
             assert 'Preserve conflicts' in prompt
             assert 'Do not use tools' in prompt
             assert schema['properties']['architecture']['properties']['nodes']['maxItems'] == 20

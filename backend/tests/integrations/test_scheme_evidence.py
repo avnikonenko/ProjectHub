@@ -131,3 +131,87 @@ def test_user_exclusions_and_oversized_source_are_reported(tmp_path, monkeypatch
     assert not any(s.get('path') == 'main.py' for s in result['sources'])
     assert any('64 KiB' in msg for msg in result['coverage']['limitations'])
     engine.dispose()
+
+
+def test_production_entrypoints_and_imported_modules_survive_utility_noise(tmp_path):
+    repo = repository(tmp_path)
+    files = {
+        'pyproject.toml': '[project]\ndependencies=["fastapi>=0.115"]\n',
+        'frontend/package.json': '{"dependencies":{"react":"^19"}}',
+        'backend/app/main.py': 'from .router import routes\nclass Application: pass\n',
+        'backend/app/router.py': 'from .core.pipeline import prepare\ndef process():\n    return prepare()\n',
+        'backend/app/core/pipeline.py': 'def prepare():\n    return None\n',
+        'frontend/src/main.tsx': 'import App from "./App";\nexport function boot() { return App(); }\n',
+        'frontend/src/App.tsx': 'import FlowView from "./features/FlowView";\nexport function App() { return FlowView(); }\n',
+        'frontend/src/features/FlowView.tsx': 'export function FlowView() { return null; }\n',
+    }
+    for index in range(30):
+        files[f'migrations/{index:04d}_old.py'] = 'def upgrade(): pass\n'
+        files[f'scripts/tool_{index:02d}.py'] = 'def run(): pass\n'
+        files[f'tests/test_{index:02d}.py'] = 'def test_case(): pass\n'
+        files[f'backend/app/aaa_helper_{index:02d}.py'] = 'class Helper: pass\n'
+    for path, content in files.items():
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content)
+    engine = setup(tmp_path, repo)
+    result = evidence.collect_evidence(engine, 1)
+    selected = {source['path'] for source in result['sources'] if source.get('path')}
+    assert {
+        'backend/app/main.py', 'backend/app/router.py', 'backend/app/core/pipeline.py',
+        'frontend/src/main.tsx', 'frontend/src/App.tsx', 'frontend/src/features/FlowView.tsx',
+    } <= selected
+    assert not any(path.startswith(('migrations/', 'scripts/', 'tests/')) for path in selected)
+    assert result['coverage']['files_inspected'] <= evidence._MAX_FILES
+    assert len(result['sources']) < len(files)
+    engine.dispose()
+
+
+def test_structural_excerpts_keep_late_declarations_and_safe_call_relationships():
+    imports = ''.join(f'import package_{index}\n' for index in range(100))
+    source = imports + '''
+def prepare(default="EXAMPLE_PRIVATE_DEFAULT"):
+    result = manager.generate_brief("EXAMPLE_PRIVATE_PAYLOAD")
+    validated = validate_output(result, "EXAMPLE_PRIVATE_ARGUMENT")
+    save_revision(validated)
+    return validated
+'''
+    excerpt = evidence._structural_excerpt(source, 'pipeline.py')
+    assert 'def prepare' in excerpt
+    assert all(name in excerpt for name in ('manager.generate_brief', 'validate_output', 'save_revision'))
+    assert 'EXAMPLE_PRIVATE' not in excerpt
+    assert len(excerpt) <= evidence._MAX_EXCERPT
+
+    js = ''.join(f'import item{index} from "package_{index}";\n' for index in range(100)) + '''
+export async function draw(secret = "EXAMPLE_PRIVATE_DEFAULT") {
+    const text = 'imaginary.execute()';
+    // phantom.run() is explanatory text, not a call.
+    const diagrammer = await import('mermaid');
+    return mermaid.render("EXAMPLE_PRIVATE_DIAGRAM_ID", secret);
+}
+'''
+    excerpt = evidence._structural_excerpt(js, 'FlowView.tsx')
+    assert 'draw' in excerpt
+    assert 'mermaid' in excerpt and 'mermaid.render' in excerpt
+    assert 'imaginary.execute' not in excerpt and 'phantom.run' not in excerpt
+    assert 'EXAMPLE_PRIVATE' not in excerpt
+    assert len(excerpt) <= evidence._MAX_EXCERPT
+
+
+def test_large_frontend_entrypoint_uses_bounded_prefix_for_imported_components(tmp_path):
+    repo = repository(tmp_path)
+    app = repo / 'frontend/src/App.tsx'
+    app.parent.mkdir(parents=True)
+    app.write_text('import FlowView from "./features/FlowView";\n'
+                   'export function App() { return FlowView(); }\n' + '// padding\n' * 7000)
+    component = repo / 'frontend/src/features/FlowView.tsx'
+    component.parent.mkdir()
+    component.write_text('export function FlowView() { return null; }\n')
+    engine = setup(tmp_path, repo)
+    result = evidence.collect_evidence(engine, 1)
+    selected = {source['path'] for source in result['sources'] if source.get('path')}
+    assert {'frontend/src/App.tsx', 'frontend/src/features/FlowView.tsx'} <= selected
+    assert result['coverage']['partial']
+    assert any('prefix' in message.lower() or 'truncat' in message.lower()
+               for message in result['coverage']['limitations'])
+    engine.dispose()
