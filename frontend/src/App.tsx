@@ -1101,6 +1101,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const generatingRef = useRef(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('');
@@ -1121,7 +1122,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     return () => { active = false; };
   }, [path, recoveryVersion]);
   async function generate() {
-    if (loading || generatingRef.current || revisionLoading || recoveryBusy) return;
+    if (loading || generatingRef.current || revisionLoading || recoveryBusy || deleting) return;
     generatingRef.current = true;
     setGenerating(true);
     onGenerating(true);
@@ -1140,6 +1141,20 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       onGenerating(false);
     }
   }
+  async function removeQuestion(question: string) {
+    if (!saved || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
+    if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;
+    const query = new URLSearchParams({ question, generated_at: saved.generated_at });
+    setDeleting(true);
+    setError('');
+    try {
+      setSaved(await api<SavedQA>(`${path}/items?${query}`, { method: 'DELETE' }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  }
   const pageSize = 5;
   const terms = filter.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const filtered = (saved?.items ?? []).filter((item) => {
@@ -1154,20 +1169,20 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
+      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || deleting}>
         <div className="section-title">
           <div>
             <h2>AI Q&A</h2>
             {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
             {saved && <SavedGeneration generation={saved.generation} />}
           </div>
-          <button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
+          <button disabled={loading || generating || recoveryBusy || deleting || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
           </button>
         </div>
         <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generating sends that evidence to OpenAI.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
-          disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          disabled={loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {
             setSaved(snapshot);
             setRevisionId(id);
@@ -1195,7 +1210,12 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         )}
         {items.map((item) => (
           <article className="brief-section" key={item.question}>
-            <h3>{item.question}</h3>
+            <div className="section-title">
+              <h3>{item.question}</h3>
+              <DeleteButton label={`Delete Q&A: ${item.question}`}
+                disabled={revisionId !== null || loading || generating || recoveryBusy || revisionLoading || deleting}
+                onClick={() => void removeQuestion(item.question)} />
+            </div>
             <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
             {!!item.variants?.length && (
               <details>
@@ -1830,6 +1850,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [prompt, setPrompt] = useState('');
   const [context, setContext] = useState<string | null>(null);
   const [events, setEvents] = useState<any>(null);
+  const responseVersion = useRef(0);
   const [eventsError, setEventsError] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -1921,10 +1942,11 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   useEffect(() => {
     if (!sessionId) return;
     let alive = true;
-    const poll = () =>
-      api(`${prefix}/sessions/${sessionId}/events`)
+    const poll = () => {
+      const version = responseVersion.current;
+      return api(`${prefix}/sessions/${sessionId}/events`)
         .then((result) => {
-          if (alive) {
+          if (alive && version === responseVersion.current) {
             setEvents(result);
             setEventsError('');
           }
@@ -1934,6 +1956,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             setEventsError(e.message);
           }
         });
+    };
     poll();
     const timer = window.setInterval(poll, 3000);
     return () => {
@@ -2025,7 +2048,21 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                 <article className="answer" key={message.id}>
                   <div className="section-title">
                     <h3>Codex response</h3>
-                    <Badge value="unverified" />
+                    <div className="note-actions">
+                      <Badge value="unverified" />
+                      <DeleteButton label={`Delete saved Codex response #${message.id}`} disabled={busy}
+                        onClick={() => {
+                          if (!window.confirm(`Delete saved Codex response #${message.id} from ProjectHub? The original Codex session is kept.`)) return;
+                          void action(async () => {
+                            await api(`${prefix}/sessions/${sessionId}/responses/${message.id}`, { method: 'DELETE' });
+                            responseVersion.current += 1;
+                            setEvents((current: any) => current && ({
+                              ...current,
+                              events: current.events.filter((event: RecordData) => event.id !== message.id),
+                            }));
+                          });
+                        }} />
+                    </div>
                   </div>
                   <Markdown>{message.text}</Markdown>
                   <button

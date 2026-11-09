@@ -520,3 +520,49 @@ def test_codex_directory_rejects_missing_and_unlogged_profiles_before_registerin
     assert result.status_code == 422
     with Session(setup.engine) as db:
         assert list(db.scalars(select(CodexProfile))) == []
+
+
+def test_delete_current_qa_entry_preserves_revisions_and_shared_sources(setup):
+    from backend.app.models import GenerationRevision, ProjectQA
+
+    items = [
+        {'question': 'Remove?', 'answer': 'Old', 'source_ids': ['a', 'shared']},
+        {'question': 'Keep?', 'answer': 'Current', 'source_ids': ['b'],
+         'variants': [{'answer': 'Alternative', 'source_ids': ['shared']}]},
+    ]
+    sources = [{'id': key} for key in ('a', 'b', 'shared')]
+    snapshot = {'items': items, 'sources': sources, 'generated_at': 'saved', 'generation': None}
+    with Session(setup.engine) as db:
+        db.add(ProjectQA(project_id=1, **snapshot))
+        db.add(GenerationRevision(project_id=1, kind='qa', generated_at='saved', snapshot=snapshot))
+        db.commit()
+    params = {'question': 'Remove?', 'generated_at': 'saved'}
+    assert setup.client.delete('/api/projects/2/codex/qa/items', params=params).status_code == 404
+    route = '/api/projects/1/codex/qa/items'
+    assert setup.client.delete(route, params={**params, 'generated_at': 'old'}).status_code == 409
+    result = setup.client.delete(route, params=params)
+    assert result.status_code == 200
+    assert result.json()['items'] == items[1:]
+    assert result.json()['sources'] == sources[1:]
+    assert setup.client.delete(route, params=params).status_code == 404
+    with Session(setup.engine) as db:
+        assert db.scalar(select(GenerationRevision)).snapshot == snapshot
+
+
+def test_delete_review_response_requires_project_session_and_completed_message(setup):
+    first, second = create_session(setup), create_session(setup)
+    with Session(setup.engine) as db:
+        db.add_all([
+            CodexEvent(id=101, project_id=1, session_id=first, method='item/completed',
+                       payload={'item': {'type': 'agentMessage', 'text': 'Saved response'}}),
+            CodexEvent(id=102, project_id=1, session_id=first, method='turn/completed', payload={}),
+        ])
+        db.commit()
+    base = '/api/projects/1/codex/sessions'
+    assert setup.client.delete(f'{base}/{second}/responses/101').status_code == 404
+    assert setup.client.delete(f'/api/projects/2/codex/sessions/{first}/responses/101').status_code == 404
+    assert setup.client.delete(f'{base}/{first}/responses/102').status_code == 404
+    assert setup.client.delete(f'{base}/{first}/responses/101').status_code == 204
+    result = setup.client.get(f'{base}/{first}/events').json()
+    assert result['session']['id'] == first
+    assert [event['id'] for event in result['events']] == [102]

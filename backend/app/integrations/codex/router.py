@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
-from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions, CodexProfile
+from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions, CodexProfile, ProjectQA
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
@@ -328,6 +328,32 @@ def get_qa(project_id: int, db: DB):
     return read_qa(db, project_id)
 
 
+@router.delete('/qa/items')
+def delete_qa_item(project_id: int, db: DB,
+                   question: Annotated[str, Query(min_length=1, max_length=180)],
+                   generated_at: Annotated[str, Query(min_length=1, max_length=100)]):
+    if not generation_lock.acquire(blocking=False):
+        raise HTTPException(409, 'Wait for AI generation to finish before deleting an answer.')
+    try:
+        project(db, project_id)
+        row = db.get(ProjectQA, project_id)
+        if row is None:
+            raise HTTPException(404, 'No saved Q&A for this project.')
+        if row.generated_at != generated_at:
+            raise HTTPException(409, 'The saved Q&A changed. Reload before deleting an answer.')
+        remaining = [item for item in row.items if item['question'] != question]
+        if len(remaining) == len(row.items):
+            raise HTTPException(404, 'Saved question not found.')
+        cited = {source_id for item in remaining for answer in (item, *item.get('variants', []))
+                 for source_id in answer['source_ids']}
+        row.items = remaining
+        row.sources = [source for source in row.sources if source['id'] in cited]
+        db.commit()
+        return read_qa(db, project_id)
+    finally:
+        generation_lock.release()
+
+
 @router.post('/qa')
 def generate_qa(project_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
@@ -591,6 +617,20 @@ def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, requ
         return result
     except CodexError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.delete('/sessions/{session_id}/responses/{event_id}', status_code=204)
+def delete_review_response(project_id: int, session_id: int, event_id: int, db: DB):
+    project(db, project_id)
+    scoped(db, CodexSession, project_id, session_id)
+    event = scoped(db, CodexEvent, project_id, event_id)
+    item = event.payload.get('item')
+    if (event.session_id != session_id or event.method != 'item/completed'
+            or not isinstance(item, dict) or item.get('type') != 'agentMessage'
+            or not isinstance(item.get('text'), str)):
+        raise HTTPException(404, 'Saved Codex response not found in this session.')
+    db.delete(event)
+    db.commit()
 
 
 @router.get('/sessions/{session_id}/events')
