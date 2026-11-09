@@ -10,6 +10,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Display the application version at the bottom of the sidebar; API and Codex client metadata use the same release version.
 
+- Delete individual saved AI Q&A entries, review responses, and older overview revisions.
+- Add multiple TODOs together, edit their notes, and delete individual TODOs.
+- Knowledge-pilot previews can be evaluated without publishing. Successful extraction batches remain cached if later synthesis fails; publishing saves the knowledge snapshot and brief together.
+
 - Opt-in evidence-based knowledge pilot with source-checked reference cases, contextual extraction caches, conservative history reconciliation, and atomic knowledge/brief publication. Existing brief generation remains the default pending evaluation.
 
 - Exact shared prefixes in forked Codex histories can be collapsed while preserving original messages and alternate-session source links.
@@ -48,6 +52,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Linked Codex history syncs in the background. Individual sources can be paused without losing saved history.
 
 ### Changed
+
+- AI Q&A focuses on conversations and terminal Codex sessions rather than treating backlog items as project knowledge.
+- Settings panels close when clicking outside. Shared AI writing recommendations favor concise, complete answers while allowing context needed to understand them.
+- Knowledge extraction retains proposal–acceptance context, separates tentative clauses from accepted commitments, and keeps historical agreement separate from current source availability.
 
 - Knowledge-pilot briefs suppress presentation repetition without merging source knowledge, preserve distinct scopes, and distinguish missing acceptance evidence from nonacceptance.
 
@@ -88,6 +96,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Invalid Q&A citations receive one bounded retry; citations are checked against the evidence supplied to that batch.
+
 - Shared-history groups preserve message order, complementary excerpts remain in AI evidence, unreadable or known-stale indexes do not cause unsafe collapse, and alternate-session metadata no longer invalidates unchanged reduction caches.
 
 - Since your last update describes evidenced project changes directly instead of narrating discussion about the summary.
@@ -106,6 +116,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Project goals and description now reach the project-status generator instead of being omitted from its evidence.
 
 ### Maintenance
+
+- Added documented Example Research reference cases and live knowledge-pilot evaluations, including incremental updates and cache reuse. Formal human verification remains pending; the pilot stays opt-in.
+- Preserved existing project briefs through the additive knowledge-storage migration.
+- Publication setup includes an MIT license, a shorter illustrated README, installation tooling, and editable private configuration using existing Codex sign-in profiles.
 
 - Reuse one request-scoped Codex transport across overview and Q&A batches while keeping each call in an isolated ephemeral thread.
 - Small note edits preserve cached summaries of unchanged chunks and refresh their citation metadata.
