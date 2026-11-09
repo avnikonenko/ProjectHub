@@ -11,7 +11,7 @@ from backend.app.models import Answer, Decision, Project, Note, Question, Task, 
 from sqlalchemy import select
 
 
-def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path, monkeypatch):
+def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add_all([Project(name='One'), Project(name='Two')])
@@ -22,21 +22,64 @@ def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path
 
     class Generator:
         bad = False
+        batches = 0
+        consolidations = 0
 
         def generate_brief(self, prompt, schema):
             batch = json.loads(prompt.split('\n', 1)[1])
+            if 'Build a compact project reference' in prompt:
+                assert self.batches >= 2
+                self.consolidations += 1
+                if self.consolidations == 3:
+                    assert 'Correct the previous attempt' in prompt
+                assert all('[99]' not in item['answer'] for item in batch)
+                by_question = {item['question']: item['source_ids'] for item in batch}
+                assert set(by_question) == {
+                    'How does One store data?', 'What does One do?', 'What is the purpose of One?',
+                    'Which projects does One target?',
+                }
+                return json.dumps({'items': [{
+                    'question': 'What does One do?',
+                    'answer': 'One tracks context for any project locally. [99]',
+                    'source_ids': [*by_question['What does One do?'], *by_question['What is the purpose of One?']],
+                    'variants': [{
+                        'answer': 'A separate discussion says it targets only software projects.',
+                        'source_ids': ['foreign' if self.bad else by_question['Which projects does One target?'][0]],
+                    }],
+                }, {
+                    'question': 'How does One store data?',
+                    'answer': 'One stores records in SQLite.',
+                    'source_ids': by_question['How does One store data?'],
+                }]})
+            self.batches += 1
             allowed = schema['properties']['items']['items']['properties']['source_ids']['items']['enum']
             assert allowed == [item['id'] for item in batch]
-            first = batch[0]['text']
-            return json.dumps({'items': [{'question': f'What was {first}?', 'answer': first,
-                                          'source_ids': ['unknown' if self.bad else '1']}]})
+            if batch[0]['text'] == 'Decision 3':
+                return json.dumps({'items': [
+                    {'question': 'How does One store data?', 'answer': 'In SQLite.', 'source_ids': ['2']},
+                    {'question': 'What does One do?', 'answer': 'One tracks context for any project. [99]',
+                     'source_ids': ['1']},
+                ]})
+            assert batch[0]['text'] == 'Decision 0'
+            return json.dumps({'items': [
+                {'question': 'What is the purpose of One?', 'answer': 'It works locally.', 'source_ids': ['1']},
+                {'question': 'Which projects does One target?', 'answer': 'Only software projects.', 'source_ids': ['2']},
+            ]})
 
     manager = Generator()
     saved = qa.refresh_qa(engine, 1, manager)
-    assert [item['source_ids'] for item in saved['items']] == [['turn:3'], ['turn:0']]
+    assert manager.batches == 2
+    assert manager.consolidations == 1
+    assert [item['question'] for item in saved['items']] == ['What does One do?', 'How does One store data?']
+    assert saved['items'][0]['answer'] == 'One tracks context for any project locally.'
+    assert saved['items'][0]['source_ids'] == ['turn:3', 'turn:0']
+    assert saved['items'][0]['variants'][0]['source_ids'] == ['turn:1']
+    assert saved['items'][1]['source_ids'] == ['turn:4']
+    assert {source['id'] for source in saved['sources']} == {'turn:3', 'turn:0', 'turn:1', 'turn:4'}
     manager.bad = True
     with pytest.raises(CodexError, match='foreign evidence'):
         qa.refresh_qa(engine, 1, manager)
+    assert manager.consolidations == 3
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert qa.read_qa(db, 2) is None
@@ -68,6 +111,9 @@ def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, 
     class Generator:
         generation_metadata = {'account': 'test-profile', 'model': 'test-model', 'effort': 'high'}
         def generate_brief(self, prompt, schema):
+            if 'Build a compact project reference' in prompt:
+                candidates = json.loads(prompt.split('\n', 1)[1])
+                return json.dumps({'items': [{**candidates[0], 'variants': []}]})
             assert 'Use glass jars' in prompt
             assert all(text in prompt for text in ('Ignore TODO lists', 'UI --> API', 'Use SQLite', 'Use local storage'))
             assert all(text not in prompt for text in ('NOTE BACKLOG', 'TASK BACKLOG', 'PROPOSED ONLY', 'FOREIGN DECISION'))
@@ -79,22 +125,6 @@ def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, 
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
     engine.dispose()
-
-
-def test_duplicate_questions_merge_sources_and_preserve_differing_answers():
-    items = qa.merge_items([
-        {'question': 'Why use SQLite?', 'answer': 'It runs locally.', 'source_ids': ['a']},
-        {'question': ' WHY use SQLite?? ', 'answer': 'It runs locally.', 'source_ids': ['b']},
-        {'question': 'Why use SQLite?', 'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['c']},
-        {'question': 'Why use SQLite?', 'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['d']},
-        {'question': 'Why use C++?', 'answer': 'Fast.', 'source_ids': ['e']},
-        {'question': 'Why use C#?', 'answer': 'Managed.', 'source_ids': ['f']},
-    ])
-    assert len(items) == 3
-    assert items[0]['source_ids'] == ['a', 'b']
-    assert items[0]['variants'] == [{
-        'answer': 'Later the team chose PostgreSQL.', 'source_ids': ['c', 'd'],
-    }]
 
 
 def test_qa_retries_only_the_invalid_batch_and_keeps_no_partial_answers():
