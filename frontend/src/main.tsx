@@ -2,8 +2,11 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './style.css';
+import './palettes.css';
+import { applySavedPalette } from './PaletteControl';
 import { applySavedTextSize } from './TextSizeControl';
 
+applySavedPalette();
 applySavedTextSize();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -15,6 +15,7 @@ import { BriefSources, briefReferences, citedSources, type BriefSource } from '.
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { TextSizeControl } from './TextSizeControl';
+import { PaletteControl } from './PaletteControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
 
@@ -941,6 +942,7 @@ function AppSettings() {
         <summary className="button secondary" aria-label="App settings" title="App settings">⚙</summary>
         <div className="generation-options">
           <h3>Settings</h3>
+          <PaletteControl />
           <TextSizeControl />
           <button type="button" className="secondary"
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>

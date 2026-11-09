@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Choose Green, Lavender, Warm sand, or Slate blue in app settings; the saved palette works with light and dark mode.
+
 - Star TODOs to pin them first in their open or completed list, across pages and reloads.
 
 - App settings now offer persistent text sizes from 100% to 200%, including labels and controls.
