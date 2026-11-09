@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 
+export type GenerationKind = 'brief' | 'qa' | 'scheme';
+const generationKinds: GenerationKind[] = ['brief', 'qa', 'scheme'];
+
 export type GenerationProvenance = { account: string; model: string; effort: string };
 type Progress = {
   state: 'idle' | 'running' | 'completed' | 'failed';
@@ -12,19 +15,19 @@ type Progress = {
 
 export function useGenerationRecovery(base: string) {
   const [checking, setChecking] = useState(true);
-  const [running, setRunning] = useState({ brief: false, qa: false });
-  const [version, setVersion] = useState({ brief: 0, qa: 0 });
-  const [errors, setErrors] = useState({ brief: '', qa: '' });
+  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
+  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0 });
+  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '' });
   useEffect(() => {
     const abort = new AbortController();
-    const timers: Partial<Record<'brief' | 'qa', ReturnType<typeof setTimeout>>> = {};
+    const timers: Partial<Record<GenerationKind, ReturnType<typeof setTimeout>>> = {};
     const checked = new Set<string>();
-    function poll(kind: 'brief' | 'qa', recovering = false) {
+    function poll(kind: GenerationKind, recovering = false) {
       void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
         .then((status) => {
           if (abort.signal.aborted) return;
           checked.add(kind);
-          if (checked.size === 2) setChecking(false);
+          if (checked.size === generationKinds.length) setChecking(false);
           setErrors((previous) => ({ ...previous, [kind]: '' }));
           if (status.state === 'running') {
             setRunning((previous) => ({ ...previous, [kind]: true }));
@@ -46,8 +49,7 @@ export function useGenerationRecovery(base: string) {
           timers[kind] = setTimeout(() => poll(kind, recovering), 1500);
         });
     }
-    poll('brief');
-    poll('qa');
+    generationKinds.forEach((kind) => poll(kind));
     return () => {
       abort.abort();
       Object.values(timers).forEach(clearTimeout);
@@ -55,11 +57,11 @@ export function useGenerationRecovery(base: string) {
   }, [base]);
   return {
     checking, running, version, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
-    clearError: () => setErrors({ brief: '', qa: '' }),
+    clearError: () => setErrors({ brief: '', qa: '', scheme: '' }),
   };
 }
 
-function describeProgress(stage: string, kind: 'brief' | 'qa') {
+function describeProgress(stage: string, kind: GenerationKind) {
   const session = /^Reading session (\d+) of (\d+)$/.exec(stage);
   if (session) return `Reading conversation ${session[1]} of ${session[2]}`;
   const batch = /^Generating Q&A batch (\d+) of (\d+)$/.exec(stage);
@@ -70,11 +72,14 @@ function describeProgress(stage: string, kind: 'brief' | 'qa') {
     case 'Reusing cached evidence batch': return 'Reusing a previously saved summary';
     case 'Combining evidence': return 'Waiting for Codex to combine the evidence';
     case 'Summarizing project notes and decisions': return 'Gathering project notes and decisions';
+    case 'Collecting Scheme evidence': return 'Inspecting selected code and saved discussions';
+    case 'Generating Scheme': return 'Waiting for Codex to explain architecture and workflow';
+    case 'Validating Scheme': return 'Checking diagrams and source references';
     case 'Generating project brief': return 'Waiting for Codex to write the project summary';
     case 'Completed': return 'Finished. Loading the result…';
     case 'Failed': return 'Generation failed';
     case '':
-    case 'Starting generation': return kind === 'brief' ? 'Gathering project information' : 'Preparing questions and answers';
+    case 'Starting generation': return kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : 'Preparing questions and answers';
     default: return stage;
   }
 }
@@ -93,7 +98,7 @@ export function GenerationStatus({
   base, kind, label,
 }: {
   base: string;
-  kind: 'brief' | 'qa';
+  kind: GenerationKind;
   label?: string;
 }) {
   const [progress, setProgress] = useState<Progress | null>(null);

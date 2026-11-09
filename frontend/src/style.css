@@ -1250,3 +1250,22 @@ a:focus-visible {
   background: #e8cd7b;
   color: #211d10;
 }
+
+/* Scheme keeps its overview compact; supporting evidence stays expandable. */
+.scheme-panel .section-title h2 { margin-bottom: .3rem; }
+.scheme-freshness { display: flex; align-items: baseline; flex-wrap: wrap; gap: .6rem 1rem; margin: 1rem 0; }
+.scheme-freshness details { flex-basis: 100%; }
+.scheme-tabs { margin: 1rem 0; }
+.scheme-diagram { overflow: auto; padding: 1rem 0; min-width: 0; }
+.scheme-diagram svg { display: block; width: 100%; min-width: 420px; height: auto; margin: 0 auto; }
+.scheme-components, .scheme-code-tree, .scheme-sources, .scheme-development { margin-top: 1.3rem; }
+.scheme-components li { margin-bottom: .8rem; }
+.scheme-components p { margin: .35rem 0; }
+.scheme-code-tree ul { list-style: none; padding-left: 1.25rem; margin: .3rem 0; }
+.scheme-code-tree > ul { padding-left: 0; }
+.scheme-code-tree { overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
+.scheme-referenced-file { font-weight: 700; text-decoration: underline; text-underline-offset: .2rem; }
+.scheme-table-scroll { overflow-x: auto; margin: 1rem 0; }
+.scheme-dependencies { width: 100%; border-collapse: collapse; text-align: left; }
+.scheme-dependencies th, .scheme-dependencies td { padding: .75rem .5rem; vertical-align: top; border-bottom: 1px solid var(--border, #d9e2dd); }
+.scheme-dependencies small { display: block; padding-top: .3rem; }
