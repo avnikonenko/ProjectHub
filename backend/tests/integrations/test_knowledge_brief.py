@@ -272,7 +272,8 @@ def test_synthesis_receives_acceptance_evidence_and_scope(prepared):
             item = payload['sources'][0]['item']
             assert item['scope'] == 'project'
             assert item['agreement_basis'] == 'direct_user'
-            assert item['evidence'][0]['excerpt'] == 'Use SQLite.'
+            quote_id = item['evidence'][0]['excerpt_id']
+            assert payload['evidence_excerpts'][quote_id] == 'Use SQLite.'
             assert item['evidence'][0]['role'] == 'user'
             assert 'Never call an initial scope accepted' in prompt
             return super().generate_brief(prompt, schema)
@@ -325,4 +326,41 @@ def test_compound_agreements_keep_each_proposal_and_acceptance(prepared):
     for index in range(3):
         assert f'proposal-{index}' in ids and f'acceptance-{index}' in ids
     assert len(cited) == 6
+    assert candidate == before
+
+
+def test_citations_keep_preceding_proposal_despite_later_rationale(prepared):
+    candidate = _candidate()
+    refs = [('reason', 'user', 0), ('later', 'assistant', 4),
+            ('proposal', 'assistant', 1), ('acceptance', 'user', 2)]
+    candidate['items'][0].update(agreement_basis='proposal_acceptance', evidence=[
+        {'source_id': name, 'role': role, 'order': order, 'conversation_id': 'same', 'excerpt': name}
+        for name, role, order in refs])
+    candidate['sources'] = [{'id': name, 'role': role, 'text': name} for name, role, _ in refs]
+    before = deepcopy(candidate)
+    sections, _, _ = pilot._synthesize(FakeSynthesis(), candidate, prepared.bundle, {'sources': []})
+    assert 'proposal' in sections['overview'][0]['source_ids']
+    assert 'acceptance' in sections['overview'][0]['source_ids']
+    assert candidate == before
+
+
+def test_shared_quotes_do_not_exhaust_synthesis_budget(prepared):
+    candidate = _candidate()
+    refs = [{'source_id': f'quote-source-{index}', 'role': 'assistant',
+             'excerpt': str(index) + 'x' * 1599} for index in range(6)]
+    candidate['items'] = [{**deepcopy(candidate['items'][0]), 'id': f'item-{index}',
+                           'design_status': 'PROPOSED', 'agreement_basis': 'none', 'evidence': deepcopy(refs)}
+                          for index in range(20)]
+    candidate['sources'] = [{'id': ref['source_id'], 'role': ref['role'], 'text': ref['excerpt']} for ref in refs]
+    before = deepcopy(candidate)
+    class CompactSynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('Return only the required structured JSON.\n', 1)[1])
+            assert len(payload['evidence_excerpts']) == 6
+            assert len(json.dumps(payload)) < pilot.MAX_SYNTHESIS_CHARS
+            for source in payload['sources']:
+                for evidence in source.get('item', {}).get('evidence', []):
+                    assert payload['evidence_excerpts'][evidence['excerpt_id']] in [ref['excerpt'] for ref in refs]
+            return super().generate_brief(prompt, schema)
+    pilot._synthesize(CompactSynthesis(), candidate, prepared.bundle, {'sources': []})
     assert candidate == before
