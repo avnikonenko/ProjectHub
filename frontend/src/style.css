@@ -198,22 +198,25 @@ button:disabled {
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 24px;
-  padding: 22px 32px 18px;
+  gap: 1rem;
+  padding: 16px 32px 12px;
   background: #fff;
 }
 .project-header h1 {
-  margin: 0 0 7px;
+  font-size: 1.642857rem;
+  margin: 0 0 0.25rem;
+  overflow-wrap: anywhere;
 }
 .project-header p {
   margin: 0;
-  max-width: 750px;
+  max-width: 72ch;
 }
 .project-actions {
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 0.6rem;
   align-items: center;
-  flex-shrink: 0;
+  max-width: 100%;
 }
 .generation-settings {
   position: relative;
@@ -835,6 +838,13 @@ a:focus-visible {
   align-items: center;
   gap: 0.5rem;
 }
+.todo-list > li {
+  padding-block: 0.5rem;
+  border-bottom: 1px solid var(--border, #e1e5e2);
+}
+.todo-list > li:last-child {
+  border-bottom: 0;
+}
 .note-actions {
   flex-shrink: 0;
 }
@@ -873,7 +883,7 @@ a:focus-visible {
   align-items: baseline;
   gap: 0.65rem;
   margin: 0;
-  padding: 0.6rem 0;
+  padding: 0.25rem 0;
   cursor: pointer;
 }
 .todo-list input {
@@ -947,12 +957,11 @@ a:focus-visible {
     font-size: 1.428571rem;
   }
   .project-header {
-    padding: 25px;
+    padding: 16px 25px 12px;
     align-items: flex-start;
   }
   .project-actions {
-    flex-direction: column;
-    align-items: flex-end;
+    align-items: center;
   }
   main {
     padding: 22px 25px;
@@ -1020,14 +1029,14 @@ a:focus-visible {
     padding: 0 18px;
   }
   .project-header {
-    padding: 23px 18px;
+    padding: 16px 18px 12px;
     display: block;
   }
   .project-header h1 {
-    font-size: 1.857143rem;
+    font-size: 1.642857rem;
   }
   .project-actions {
-    margin-top: 16px;
+    margin-top: 0.75rem;
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
@@ -1269,3 +1278,105 @@ a:focus-visible {
 .scheme-dependencies { width: 100%; border-collapse: collapse; text-align: left; }
 .scheme-dependencies th, .scheme-dependencies td { padding: .75rem .5rem; vertical-align: top; border-bottom: 1px solid var(--border, #d9e2dd); }
 .scheme-dependencies small { display: block; padding-top: .3rem; }
+
+/* Keep titles, supporting details, and actions in consistent reading rows. */
+.record-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem 1rem;
+}
+.record-main {
+  flex: 1 1 12rem;
+  min-width: 0;
+}
+.record-actions,
+.note-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  max-width: 100%;
+  margin-inline-start: auto;
+}
+.note-card .section-title {
+  align-items: flex-start;
+  gap: 0.6rem 1rem;
+}
+.note-card h2,
+.note-card h3,
+.record-main h3 {
+  margin: 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+.session-metadata {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.85rem;
+  margin-block: 0.4rem 0.6rem;
+  font-size: 0.857143rem;
+  color: var(--muted, #68756f);
+}
+.session-metadata small {
+  font-size: inherit;
+}
+.session-id {
+  margin-block: 0.5rem;
+  font-size: 0.857143rem;
+}
+.session-id summary {
+  cursor: pointer;
+}
+.session-id code {
+  overflow-wrap: anywhere;
+}
+.session-id[open] > :not(summary) {
+  margin-block-start: 0.5rem;
+}
+.markdown > p,
+.markdown > ul,
+.markdown > ol,
+.brief-section > p,
+.brief-note,
+.scheme-panel > p {
+  max-width: 72ch;
+}
+.markdown > p,
+.brief-section > p {
+  line-height: 1.7;
+}
+.brief-details > summary {
+  cursor: pointer;
+  font-weight: 550;
+}
+.brief-details[open] > summary {
+  margin-bottom: 1rem;
+}
+.brief-details .brief-meta {
+  margin-bottom: 0.8rem;
+}
+.brief-details .brief-sources {
+  margin-top: 1rem;
+}
+
+.session-choice.record-main {
+  font-size: 1rem;
+}
+.session-id-value,
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+.session-id-value > code {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.session-actions {
+  margin-top: 0.5rem;
+}

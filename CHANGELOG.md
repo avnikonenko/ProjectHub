@@ -39,6 +39,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Compact project headers and consistent TODO, note, and session rows; full thread IDs remain expandable and copyable. Summary metadata, sources, and previous versions are grouped outside the main answer.
+
 - Scheme prioritizes production/import-linked code, preserves useful declarations and static call names, and describes the main project workflow instead of its own generation pipeline.
 
 - Linking sessions uses the Codex name or preview when available, with an optional custom name. Linked history turns show their session name alongside the ID.

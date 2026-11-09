@@ -27,6 +27,28 @@ function sessionCaption(session: RecordData) {
   return [session.title || 'Untitled session', `#${session.id}`, session.topic].filter(Boolean).join(' · ');
 }
 
+function SessionIdentifier({ threadId }: { threadId: string }) {
+  const [status, setStatus] = useState('');
+  return (
+    <details className="session-id">
+      <summary>Thread <code>{threadId.length > 16 ? `${threadId.slice(0, 8)}…${threadId.slice(-6)}` : threadId}</code></summary>
+      <div className="session-id-value">
+        <code>{threadId}</code>
+        <button type="button" className="secondary" aria-label="Copy full thread ID"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(threadId);
+              setStatus('Copied');
+            } catch {
+              setStatus('Copy unavailable. Select the full ID above to copy it.');
+            }
+          }}>Copy ID</button>
+      </div>
+      {status && <small role="status">{status}</small>}
+    </details>
+  );
+}
+
 function sessionActivity(session: RecordData) {
   return session.codex_activity_at ?? session.last_activity_at ?? session.created_at;
 }
@@ -310,7 +332,7 @@ function ProjectWorkspace({
   const activeTodos = tasks.filter((task) => task.status !== 'completed').sort(todoOrder);
   const completedTodos = tasks.filter((task) => task.status === 'completed').sort(todoOrder);
   const todoRow = (task: RecordData) => (
-    <li key={task.id}>
+    <li className="record-row" key={task.id}>
       <div className="todo-content">
         <label>
           <input
@@ -326,26 +348,28 @@ function ProjectWorkspace({
         </label>
         {task.description && <details><summary>Notes</summary><Markdown>{task.description}</Markdown></details>}
       </div>
-      <button type="button" className="icon-edit"
-        aria-label={`${task.pinned ? 'Unpin' : 'Pin'} TODO: ${task.title}`}
-        title={task.pinned ? 'Unpin TODO' : 'Pin TODO'}
-        aria-pressed={Boolean(task.pinned)} disabled={busy}
-        onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, { pinned: !task.pinned })); }}>
-        <svg viewBox="0 0 24 24" width="16" height="16"
-          fill={task.pinned ? 'currentColor' : 'none'} stroke="currentColor"
-          strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-3-5.6 3 1-6.2L3 9.6l6.2-.9L12 3Z" />
-        </svg>
-      </button>
-      <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
-        onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
-          { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
-          (data) => ({ title: String(data.title).trim(), description: data.description }))} />
-      <DeleteButton label={`Delete TODO: ${task.title}`} disabled={busy} onClick={() => {
-          if (window.confirm(`Delete TODO “${task.title}”?`)) {
-            void run(() => api(`${base}/tasks/${task.id}`, { method: 'DELETE' }));
-          }
-        }} />
+      <div className="record-actions">
+        <button type="button" className="icon-edit"
+          aria-label={`${task.pinned ? 'Unpin' : 'Pin'} TODO: ${task.title}`}
+          title={task.pinned ? 'Unpin TODO' : 'Pin TODO'}
+          aria-pressed={Boolean(task.pinned)} disabled={busy}
+          onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, { pinned: !task.pinned })); }}>
+          <svg viewBox="0 0 24 24" width="16" height="16"
+            fill={task.pinned ? 'currentColor' : 'none'} stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-3-5.6 3 1-6.2L3 9.6l6.2-.9L12 3Z" />
+          </svg>
+        </button>
+        <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
+          onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
+            { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
+            (data) => ({ title: String(data.title).trim(), description: data.description }))} />
+        <DeleteButton label={`Delete TODO: ${task.title}`} disabled={busy} onClick={() => {
+            if (window.confirm(`Delete TODO “${task.title}”?`)) {
+              void run(() => api(`${base}/tasks/${task.id}`, { method: 'DELETE' }));
+            }
+          }} />
+      </div>
     </li>
   );
   const tabs = [
@@ -366,10 +390,7 @@ function ProjectWorkspace({
             PROJECT / {String(project.id).padStart(2, '0')}
           </p>
           <h1>{project.name}</h1>
-          <p className="muted">
-            {project.description ||
-              'Add a description to give this project context.'}
-          </p>
+          {project.description && <p className="muted project-description">{project.description}</p>}
         </div>
         <div className="project-actions">
           <Badge value={project.status} />
@@ -659,7 +680,7 @@ function ProjectWorkspace({
                 </div>
                 {!notes.length && <Empty>No notes yet.</Empty>}
                 <PagedItems label="Note pages">{[...notes].reverse().map((n) => (
-                  <section className="card" key={n.id}>
+                  <section className="card note-card" key={n.id}>
                     <div className="section-title">
                       <h2>{n.title}</h2>
                       <div className="note-actions">
@@ -1798,25 +1819,27 @@ function Codex({ base, onError }: {
           </label>
           <PagedItems key={JSON.stringify([sessionQuery, sessionFilter, sessionOrder])} label="Project session pages">
             {filteredSessions.map((session) => (
-              <article className="list-item" key={session.id}>
-                <div className="section-title">
-                  <label className="session-choice">
+              <article className="list-item session-row" key={session.id}>
+                <div className="record-row">
+                  <label className="session-choice record-main">
                     <input type="radio" name="source-session" value={session.id} disabled={busy}
                       checked={String(session.id) === sessionId}
                       onChange={() => setSessionId(String(session.id))} />
-                    {sessionCaption(session)}
+                    <strong>{session.title || 'Untitled session'}</strong>
                   </label>
-                  <EditButton label={`Edit session: ${sessionCaption(session)}`} disabled={busy}
-                    onClick={() => setRenaming(session)} />
+                  <div className="record-actions">
+                    <EditButton label={`Edit session: ${sessionCaption(session)}`} disabled={busy}
+                      onClick={() => setRenaming(session)} />
+                  </div>
                 </div>
-                <small>{label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
-                <br />
-                <small>Thread ID: <code>{session.thread_id}</code></small>
-                <br />
-                <small>{session.codex_activity_at ? 'Codex last updated' : 'Last activity recorded here'}: {
-                  sessionActivity(session) ? new Date(sessionActivity(session)).toLocaleString() : 'Unknown'
-                }</small>
-                <br />
+                <div className="session-metadata">
+                  <small>#{session.id}{session.topic ? ` · ${session.topic}` : ''} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
+                  <small>{session.codex_activity_at ? 'Codex last updated' : 'Last activity recorded here'}: {
+                    sessionActivity(session) ? new Date(sessionActivity(session)).toLocaleString() : 'Unknown'
+                  }</small>
+                </div>
+                <SessionIdentifier threadId={String(session.thread_id ?? '')} />
+                <div className="session-actions">
                 <button className="quiet" disabled={busy} onClick={() => void action(() =>
                   patch(`${prefix}/sessions/${session.id}/sync`, { enabled: session.auto_sync === false }))}>
                   {session.auto_sync === false ? 'Resume automatic sync' : 'Pause automatic sync'}
@@ -1827,6 +1850,7 @@ function Codex({ base, onError }: {
                     void action(() => patch(`${prefix}/sessions/${session.id}/link`, { linked: false }));
                   }
                 }}>Unlink</button>
+                </div>
               </article>
             ))}
           </PagedItems>

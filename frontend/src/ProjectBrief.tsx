@@ -198,44 +198,44 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
             {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
           </>
         )}
-        <details className="brief-meta">
-          <summary>Summary details</summary>
-          {brief?.generation && <SavedGeneration generation={brief.generation} />}
-          <p className="brief-note">
-            Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
-            historical decisions, architecture, and the previous summary to OpenAI.
-          </p>
-          <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
-            disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
-            onSelect={(snapshot, id) => {
-              setBrief(snapshot);
-              setRevisionId(id);
-              if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
-            }} />
-          <ErrorBox error={evidenceError} />
-          {brief && revisionId === null && evidence && (
-            <details>
-              <summary>Evidence freshness</summary>
-              <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
-              <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
-              <p>{validationCopy(evidence.validation)}</p>
-              {evidence.git?.change_detection_limited && <p>Git changes could only be checked partially.</p>}
-              {evidence.git_error && <p>Git evidence unavailable: {evidence.git_error}</p>}
-            </details>
-          )}
-        </details>
       </section>
-      {brief && (
-        <details className="card brief-sources" aria-label="Project status sources">
-          <summary>Sources ({sources.length})</summary>
-          <BriefSources sources={sources.map((source) => source.id === 'evidence:validation'
-            ? { ...source, text: validationCopy(source.text) } : source)} prefix={base.split('/')[2] + '-brief'} />
+      <details className="card brief-details" aria-label="Project status details">
+        <summary>{brief ? `Summary details & sources (${sources.length})` : 'Generation details'}</summary>
+        {brief?.generation && <SavedGeneration generation={brief.generation} />}
+        <p className="brief-note">
+          Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
+          historical decisions, architecture, and the previous summary to OpenAI.
+        </p>
+        <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
+          disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          onSelect={(snapshot, id) => {
+            setBrief(snapshot);
+            setRevisionId(id);
+            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
+          }} />
+        <ErrorBox error={evidenceError} />
+        {brief && revisionId === null && evidence && (
           <details>
-            <summary>What the summary covers</summary>
-            <ul>{brief.coverage.map((item, index) => <li key={index}>{validationCopy(item)}</li>)}</ul>
+            <summary>Evidence freshness</summary>
+            <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
+            <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
+            <p>{validationCopy(evidence.validation)}</p>
+            {evidence.git?.change_detection_limited && <p>Git changes could only be checked partially.</p>}
+            {evidence.git_error && <p>Git evidence unavailable: {evidence.git_error}</p>}
           </details>
-        </details>
-      )}
+        )}
+        {brief && (
+          <details className="brief-sources" aria-label="Project status sources">
+            <summary>Sources ({sources.length})</summary>
+            <BriefSources sources={sources.map((source) => source.id === 'evidence:validation'
+              ? { ...source, text: validationCopy(source.text) } : source)} prefix={base.split('/')[2] + '-brief'} />
+            <details>
+              <summary>What the summary covers</summary>
+              <ul>{brief.coverage.map((item, index) => <li key={index}>{validationCopy(item)}</li>)}</ul>
+            </details>
+          </details>
+        )}
+      </details>
     </>
   );
 }
