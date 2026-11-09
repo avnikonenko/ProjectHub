@@ -11,14 +11,14 @@
   --palette-button: #333333;
 }
 :root[data-theme='dark'][data-palette='black'] {
-  --page: #000000;
-  --surface: #121212;
-  --surface-subtle: #1d1d1d;
+  --page: #171717;
+  --surface: #202020;
+  --surface-subtle: #282828;
   --text: #eeeeee;
   --muted: #bfbfbf;
   --accent: #e0e0e0;
   --border: #484848;
-  --palette-selected: #2b2b2b;
+  --palette-selected: #333333;
   --palette-button: #404040;
 }
 :root[data-palette='lavender'] {

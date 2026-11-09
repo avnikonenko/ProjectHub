@@ -10,7 +10,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Scheme tab with source-backed architecture/workflow diagrams, direct dependencies and code structure, saved revisions, and separate freshness/coverage indicators. Explicit generation uses existing project AI settings.
 
-- Black palette with neutral light surfaces and a true-black background in dark mode.
+- Black palette with neutral light surfaces and a charcoal (#171717) background in dark mode.
 
 - Choose Green, Lavender, Warm sand, or Slate blue in app settings; the saved palette works with light and dark mode.
 
