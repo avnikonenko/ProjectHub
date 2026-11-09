@@ -1,16 +1,12 @@
+import { BriefContent, briefSections, validationCopy, type Brief } from './BriefContent';
+import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
-import { SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { SavedGeneration } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
-import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
+import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
 
-function validationCopy(text: string) {
-  return text === 'No independently recorded test execution or scientific validation result is available. '
-    + 'Test files and statements in conversations are not evidence of a passing test run.'
-    ? 'No verified test or validation results.'
-    : text;
-}
 
 type GenerationProps = { base: string; generation: { model: string; effort: string }; evidenceVersion?: string };
 type EvidenceFreshness = {
@@ -27,28 +23,6 @@ function generationBody({ model, effort }: GenerationProps['generation']) {
   return { model: model || null, effort: effort || null };
 }
 
-type BriefEntry = { text: string; source_ids: string[]; classification?: 'verified' | 'reported' | 'inferred' | 'unresolved' };
-const evidenceLabels = { verified: 'Verified observation', reported: 'Reported', inferred: 'Inference', unresolved: 'Unresolved' };
-type Brief = {
-  generated_at: string;
-  generation?: GenerationProvenance | null;
-  sections: {
-    since_last_brief?: BriefEntry[];
-    current_status?: BriefEntry[];
-    implemented?: BriefEntry[];
-    work_in_progress?: BriefEntry[];
-    unresolved_problems?: BriefEntry[];
-    validation?: BriefEntry[];
-    next_steps?: BriefEntry[];
-    overview: BriefEntry[];
-    changes: BriefEntry[];
-    architecture?: BriefEntry[];
-    open_questions: BriefEntry[];
-    decision_candidates: BriefEntry[];
-  };
-  sources: BriefSource[];
-  coverage: string[];
-};
 
 export function ProjectBrief({ base, generation, evidenceVersion, visible, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { visible: boolean; onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
   const [brief, setBrief] = useState<Brief | null>(null);
@@ -119,42 +93,10 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
       }
     }
   }
-  const normalizePoint = (text: string) => text.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
-  const overviewTexts = new Set((brief?.sections.overview ?? []).map((entry) => normalizePoint(entry.text)));
-  const currentWork = new Map<string, BriefEntry>();
-  for (const entry of [...(brief?.sections.current_status ?? []), ...(brief?.sections.work_in_progress ?? [])]) {
-    const text = normalizePoint(entry.text);
-    if (overviewTexts.has(text)) continue;
-    const existing = currentWork.get(text);
-    currentWork.set(text, existing ? {
-      ...existing, source_ids: [...new Set([...existing.source_ids, ...entry.source_ids])],
-    } : entry);
-  }
-  const sections: [keyof Brief['sections'], string, boolean][] = [
-    ['overview', 'Overview', false],
-    ['architecture', 'Reported architecture', false],
-    ['current_status', 'Current work', false],
-    ['unresolved_problems', 'Unresolved problems', false],
-    ['open_questions', 'Open questions', false],
-    ['next_steps', 'Recommended next steps', false],
-    ['since_last_brief', 'Since your last update', true],
-    ['changes', 'Recent changes', true],
-    ['implemented', 'Implemented work', true],
-    ['validation', 'Validation', true],
-  ];
-  const visibleSections = sections.flatMap(([key, title, collapsed]) => {
-    const entries = key === 'current_status' ? [...currentWork.values()] : brief?.sections[key];
-    if (key === 'architecture' && !entries?.length) {
-      return [{ key, title, collapsed, entries: [
-        { text: 'Architecture not documented in this saved summary.', source_ids: [] },
-      ] }];
-    }
-    return entries?.length ? [{ key, title, collapsed, entries }] : [];
-  });
+  const visibleSections = briefSections(brief);
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
     entries.flatMap((entry) => entry.source_ids),
   ));
-  const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
       <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
@@ -177,28 +119,11 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
         {!loading && !brief && <Empty>No saved project status yet.</Empty>}
         {brief && (
           <>
-            {visibleSections.map(({ key, title, collapsed, entries }) => {
-              const points = (
-                <ul className="brief-points">
-                  {entries.map((entry, index) => (
-                    <li key={index}>
-                      {entry.classification && <><small>{evidenceLabels[entry.classification]}</small>{' · '}</>}
-                      {key === 'validation' ? validationCopy(entry.text) : entry.text}
-                      {briefReferences(entry.source_ids, sourceNumbers, base.split('/')[2] + '-brief')}
-                    </li>
-                  ))}
-                </ul>
-              );
-              return collapsed ? (
-                <details className="brief-section" key={key}><summary>{title}</summary>{points}</details>
-              ) : (
-                <section className="brief-section" key={key}><h3>{title}</h3>{points}</section>
-              );
-            })}
-            {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
+            <BriefContent brief={brief} prefix={base.split('/')[2] + '-brief'} />
           </>
         )}
       </section>
+      <ImportantKnowledge base={base} publicationId={brief?.project_state?.publication_id} visible={visible} />
       <details className="card brief-details" aria-label="Project status details">
         <summary>{brief ? `Summary details & sources (${sources.length})` : 'Generation details'}</summary>
         {brief?.generation && <SavedGeneration generation={brief.generation} />}
