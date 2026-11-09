@@ -9,6 +9,7 @@ import {
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 import { ProjectBrief } from './ProjectBrief';
+import { Scheme } from './Scheme';
 import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
@@ -193,11 +194,12 @@ function ProjectWorkspace({
   const [overview, setOverview] = useState<Overview | null>(null);
   const [selectedView, setView] = useState('Dashboard');
   const view = historyLink ? 'History' : selectedView;
-  const [visited, setVisited] = useState({ brief: false, qa: false });
-  const [running, setRunning] = useState({ brief: false, qa: false });
+  const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false });
+  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
+    if (view === 'Scheme') setVisited((previous) => previous.scheme ? previous : { ...previous, scheme: true });
   }, [view]);
   const [generation, setGeneration] = useState(loadGenerationSettings);
   useEffect(() => {
@@ -347,6 +349,7 @@ function ProjectWorkspace({
   );
   const tabs = [
     'Dashboard',
+    'Scheme',
     'History',
     'AI Q&A',
     'TODO',
@@ -439,8 +442,8 @@ function ProjectWorkspace({
             </button>
           )}
         </form>
-        {(['brief', 'qa'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
-          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : 'AI Q&A'} />
+        {(['brief', 'qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
+          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
         <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
@@ -456,6 +459,13 @@ function ProjectWorkspace({
             <ProjectQA base={base} generation={generation}
               recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, qa: active })); }} />
+          </div>
+        )}
+        {(visited.scheme || view === 'Scheme') && (
+          <div hidden={view !== 'Scheme' || !!results}>
+            <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              recoveryVersion={recovery.version.scheme} recoveryBusy={recovery.checking || recovery.running.scheme}
+              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, scheme: active })); }} />
           </div>
         )}
         {results ? (
@@ -1382,6 +1392,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
       ) : historyLink ? (
         <IndexedHistoryTurn key={`${historyLink.sessionId}/${historyLink.turnId}`}
           prefix={`${base}/codex`} target={historyLink} indexVersion={indexVersion}
+          sessionTitle={sessions.find((session) => session.id === historyLink.sessionId)?.title}
           onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : (
       <>
@@ -1455,10 +1466,11 @@ function IndexedChatGPTTranscript({ note, query, onClose, passageNotes }: {
   );
 }
 
-function IndexedHistoryTurn({ prefix, target, indexVersion, onClose, passageNotes }: {
+function IndexedHistoryTurn({ prefix, target, indexVersion, sessionTitle, onClose, passageNotes }: {
   prefix: string;
   target: HistoryTurnLink;
   indexVersion: number;
+  sessionTitle?: string;
   onClose: () => void;
   passageNotes: PassageNoteContext;
 }) {
@@ -1485,7 +1497,7 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, onClose, passageNote
   return (
     <section className="card saved-history" aria-busy={loading}>
       <div className="section-title">
-        <div><h2 ref={heading} tabIndex={-1}>Saved conversation turn</h2><small>Session #{target.sessionId} · Turn {target.turnId}</small></div>
+        <div><h2 ref={heading} tabIndex={-1}>Saved conversation turn</h2><small>{sessionTitle ? `${sessionTitle} · #${target.sessionId}` : `Session #${target.sessionId}`} · Turn {target.turnId}</small></div>
         <button className="secondary" onClick={onClose}>Browse recent turns</button>
       </div>
       <ErrorBox error={error} />
@@ -1494,7 +1506,7 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, onClose, passageNote
       {turn && (
         <>
           <Badge value={turn.status} />
-          <SaveablePassage context={passageNotes} title={`Passage from session #${target.sessionId}`}
+          <SaveablePassage context={passageNotes} title={sessionTitle ? `Passage from ${sessionTitle}` : `Passage from session #${target.sessionId}`}
             reference={historyTurnHref(target)}>
           {turn.messages.map((message, index) => (
             <div className="history-message" key={index}>
@@ -1658,6 +1670,7 @@ function Codex({ base, onError }: {
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
   const [threadId, setThreadId] = useState('');
+  const [linkTitle, setLinkTitle] = useState('');
   const [sessionQuery, setSessionQuery] = useState('');
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
@@ -1855,6 +1868,12 @@ function Codex({ base, onError }: {
             </button>
           </div>
           <label>
+            Session name (optional)
+            <input value={linkTitle} maxLength={200} disabled={busy}
+              onChange={(event) => setLinkTitle(event.target.value)}
+              placeholder="Use the Codex session name" />
+          </label>
+          <label>
             Existing thread ID (optional)
             <input
               value={threadId}
@@ -1869,8 +1888,13 @@ function Codex({ base, onError }: {
               action(async () => {
                 const session = await post(`${prefix}/sessions`, {
                   thread_id: threadId.trim(),
+                  ...(linkTitle.trim() ? { title: linkTitle.trim() } : {}),
                 });
-                if (mounted.current) setSessionId(String(session.id));
+                if (mounted.current) {
+                  setSessionId(String(session.id));
+                  setThreadId('');
+                  setLinkTitle('');
+                }
               })
             }
           >

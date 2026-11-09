@@ -522,3 +522,29 @@ def test_generation_scope_cannot_be_reopened_from_a_copied_context_after_exit(en
     with pytest.raises(CodexError, match='scope has ended'):
         context.run(env.manager.generate_brief, 'late request', {})
     assert clients == []
+
+
+@pytest.mark.parametrize('metadata,title,expected', [
+    ({'name': 'Fix history links', 'preview': 'Original prompt'}, 'Codex discussion', 'Fix history links'),
+    ({'preview': 'Original\nprompt'}, 'Codex discussion', 'Original prompt'),
+    ({'name': '   ', 'preview': None}, 'Codex discussion', 'Codex discussion'),
+    ({'name': 'Original title'}, 'My project session', 'My project session'),
+    ({'name': 'x' * 250}, 'Codex discussion', 'x' * 200),
+])
+def test_link_session_uses_codex_name_and_preserves_custom_name(env, metadata, title, expected):
+    client = FakeClient()
+    original = client.request
+
+    def request(method, params):
+        result = original(method, params)
+        if method == 'thread/read':
+            result['thread'].update(metadata)
+        return result
+
+    client.request = request
+    env.manager._new_read_client = lambda: client
+    row = env.manager.associate(env.project, title, 'external-named-thread')
+    assert row['title'] == expected
+    assert row['thread_id'] == 'external-named-thread'
+    assert client.closed
+    assert client.calls == [('thread/read', {'threadId': 'external-named-thread', 'includeTurns': False})]

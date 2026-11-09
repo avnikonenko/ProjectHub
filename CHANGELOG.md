@@ -31,6 +31,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Linking sessions uses the Codex name or preview when available, with an optional custom name. Linked history turns show their session name alongside the ID.
+
 - TODO titles use the full reading font size and grow with the accessibility text-size setting.
 
 - Q&A retries reuse successful project-scoped drafts, and larger bounded evidence batches reduce sequential Codex calls.

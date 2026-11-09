@@ -300,6 +300,13 @@ class CodexManager:
                     thread = result.get('thread')
                     if not isinstance(thread, dict) or thread.get('id') != thread_id:
                         raise CodexError('Unsupported Codex thread response.')
+                    if title == 'Codex discussion':
+                        name = thread.get('name')
+                        preview = thread.get('preview')
+                        if isinstance(name, str) and name.strip():
+                            title = name.strip()[:200]
+                        elif isinstance(preview, str) and preview.strip():
+                            title = ' '.join(preview.split())[:200]
                     session = CodexSession(project_id=project.id, thread_id=thread_id,
                                            title=title, status='linked')
                     db.add(session); db.commit(); db.refresh(session)
