@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import qa
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import Project, Note, GenerationRevision
+from backend.app.models import Answer, Decision, Project, Note, Question, Task, GenerationRevision
 from sqlalchemy import select
 
 
@@ -45,19 +45,32 @@ def test_qa_persists_multiple_batches_and_preserves_snapshot_on_failure(tmp_path
     engine.dispose()
 
 
-def test_qa_can_use_notes_without_conversations_and_saves_provenance(tmp_path, monkeypatch):
+def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
-        db.add(Project(name='Notes only'))
+        db.add_all([Project(name='One', architecture_mermaid='flowchart LR; UI --> API'),
+                    Project(name='Two')])
         db.flush()
-        db.add(Note(project_id=1, title='Agent finding', content='Use glass jars', kind='ai_note'))
+        db.add(Question(id=1, project_id=1, title='Which storage?'))
+        db.flush()
+        db.add_all([
+            Note(project_id=1, title='Shared discussion', content='Use glass jars', kind='document',
+                 reference='https://chatgpt.com/share/00000000-0000-4000-8000-000000000001'),
+            Note(project_id=1, title='Backlog notes', content='NOTE BACKLOG', kind='ai_note'),
+            Decision(project_id=1, title='Use SQLite', status='accepted'),
+            Decision(project_id=1, title='PROPOSED ONLY', status='proposed'),
+            Decision(project_id=2, title='FOREIGN DECISION', status='accepted'),
+            Answer(project_id=1, question_id=1, solution='Use local storage', status='accepted'),
+            Task(project_id=1, title='TASK BACKLOG'),
+        ])
         db.commit()
     monkeypatch.setattr(qa, 'archive_history', lambda *args: ([], []))
     class Generator:
         generation_metadata = {'account': 'test-profile', 'model': 'test-model', 'effort': 'high'}
         def generate_brief(self, prompt, schema):
             assert 'Use glass jars' in prompt
-            assert 'unverified proposals' in prompt
+            assert all(text in prompt for text in ('Ignore TODO lists', 'UI --> API', 'Use SQLite', 'Use local storage'))
+            assert all(text not in prompt for text in ('NOTE BACKLOG', 'TASK BACKLOG', 'PROPOSED ONLY', 'FOREIGN DECISION'))
             return json.dumps({'items': [{'question': 'What containers were suggested?',
                                           'answer': 'Glass jars were suggested.', 'source_ids': ['1']}]})
     saved = qa.refresh_qa(engine, 1, Generator())

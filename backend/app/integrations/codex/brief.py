@@ -72,8 +72,11 @@ def read_brief(db, project_id):
     return result
 
 
-def note_evidence(db, project_id):
-    for note in db.scalars(select(Note).where(Note.project_id == project_id).order_by(Note.id)):
+def note_evidence(db, project_id, *, shared_only=False):
+    query = select(Note).where(Note.project_id == project_id)
+    if shared_only:
+        query = query.where(Note.kind == 'document', Note.reference.startswith('https://chatgpt.com/share/'))
+    for note in db.scalars(query.order_by(Note.id)):
         text = f'{note.title}\n{note.content}\nReference: {note.reference}'
         for offset in range(0, len(text), 1500):
             excerpt = text[offset:offset + 1500]
@@ -91,7 +94,7 @@ def generation_metadata(manager):
     })
 
 
-def recorded_evidence(db, project):
+def recorded_evidence(db, project, *, include_notes=True):
     diagram = project.architecture_mermaid.strip()
     if diagram:
         for offset in range(0, len(diagram), 3000):
@@ -110,7 +113,8 @@ def recorded_evidence(db, project):
                       'label': f'Accepted decision #{decision.id}', 'decision_id': decision.id,
                       'updated_at': decision.updated_at, 'text': excerpt}
             yield {'text': excerpt, 'sources': [source]}
-    yield from note_evidence(db, project.id)
+    if include_notes:
+        yield from note_evidence(db, project.id)
 
 
 def validate_sections(raw, sources):

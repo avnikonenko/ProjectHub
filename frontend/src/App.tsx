@@ -1165,7 +1165,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
           </button>
         </div>
-        <p className="brief-note">Questions and answers drawn from your linked conversations and project notes. Generating sends that evidence to OpenAI.</p>
+        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generating sends that evidence to OpenAI.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
           disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {
