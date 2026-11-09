@@ -34,8 +34,14 @@ def _brief_inputs(candidate, bundle, repository):
             raise CodexError('Knowledge item has missing source evidence.')
         identifier = 'knowledge:' + item['id'].removeprefix('knowledge:')
         groups[identifier] = [{**originals[ref], 'classification': 'reported'} for ref in refs]
+        # Synthesis consumes the reconciled interpretation, not repeated raw
+        # quotations/window manifests for every item. Original excerpts remain
+        # in groups for published citations and in the knowledge snapshot.
+        view = {key: item.get(key) for key in (
+            'statement', 'category', 'design_status', 'scope', 'rationale',
+            'alternatives', 'limitations', 'source_state', 'conflicts_with', 'relationships')}
         sources.append({'id': identifier, 'kind': 'extracted_interpretation',
-                        'item': item, 'classification': 'reported'})
+                        'item': view, 'classification': 'reported'})
     metadata = bundle['project']
     objective = {'id': 'project:metadata', 'label': 'User-maintained project metadata',
                  'text': '\n'.join(str(metadata.get(key) or '') for key in ('name', 'description', 'goals'))[:4000],

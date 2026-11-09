@@ -213,3 +213,13 @@ def test_unavailable_historical_choices_are_retained_with_visible_coverage(prepa
     result = pilot.generate_knowledge_brief(prepared.engine, 1, Synthesis())
     assert result['knowledge']['items'][0]['design_status'] == 'AGREED'
     assert any('need rechecking' in line for line in result['brief']['coverage'])
+
+
+def test_synthesis_does_not_repeat_raw_quotes_and_window_manifests(prepared):
+    candidate = _candidate()
+    candidate['items'][0]['context_dependencies'] = [{'source_id': 'x', 'revision': 'large-window-marker'}] * 200
+    sources, groups = pilot._brief_inputs(candidate, prepared.bundle, {'sources': []})
+    item = sources[0]['item']
+    assert item['rationale'] == candidate['items'][0]['rationale']
+    assert 'context_dependencies' not in item and 'evidence' not in item
+    assert groups[sources[0]['id']][0]['text'] == candidate['sources'][0]['text']
