@@ -11,7 +11,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 6
+PROMPT_VERSION = 7
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -51,6 +51,11 @@ PROMPT = (
     'its own PROPOSED item, with its scope and reasoning. A user preference and a separate suitability '
     'concern also need distinct items when they express different claims. Retaining their quotations '
     'inside another item is not a substitute for retaining their statements and statuses. '
+    'Independently optional actions need separate items even when their status and broad scope match. '
+    'In particular, reuse of an existing resource and a pipeline operation are separate choices '
+    'unless the source explicitly describes them as one mechanism; appearing in the same message '
+    'does not establish that link. Keep coherent capability or backend checklists together rather '
+    'than spending separate slots on equivalent lists. The item limit is an upper bound, not a target. '
     'Cover material scientific and technical constraints as well as broad architecture and library '
     'choices. Preserve explicitly discussed component classes, context-sensitive retention policies, '
     'chemical identity/integrity checks, exceptions, and validation requirements when these affect '
