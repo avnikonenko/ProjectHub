@@ -44,10 +44,53 @@ const freshnessLabels: Record<string, string> = {
 
 function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
   const container = useRef<HTMLDivElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
+  const viewer = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [viewError, setViewError] = useState('');
   const id = useId().replace(/[^a-zA-Z0-9]/g, '');
   const [error, setError] = useState('');
   const [rendering, setRendering] = useState(false);
   const [theme, setTheme] = useState(() => document.documentElement.dataset.theme);
+
+  function fitDiagram() {
+    const svg = container.current?.querySelector('svg');
+    const width = viewport.current?.clientWidth;
+    const bounds = svg?.getAttribute('viewBox')?.trim().split(/[ ,]+/).map(Number);
+    if (!width || !bounds || bounds.length !== 4 || !bounds.every(Number.isFinite)
+        || bounds[2] <= 0 || bounds[3] <= 0) {
+      setZoom(1);
+      return;
+    }
+    const availableHeight = Math.max(160, Math.min(window.innerHeight * 0.65, 560));
+    setZoom(Math.min(1, availableHeight * bounds[2] / (width * bounds[3])));
+    viewport.current?.scrollTo({ top: 0, left: 0 });
+  }
+
+  async function toggleFullscreen() {
+    setViewError('');
+    try {
+      if (document.fullscreenElement === viewer.current) {
+        await document.exitFullscreen();
+      } else if (viewer.current?.requestFullscreen) {
+        await viewer.current.requestFullscreen();
+      } else {
+        setViewError('Fullscreen is unavailable in this browser. Zoom controls are still available.');
+      }
+    } catch {
+      setViewError('Could not change fullscreen mode. Zoom controls are still available.');
+    }
+  }
+
+  useEffect(() => {
+    function changed() {
+      setFullscreen(document.fullscreenElement === viewer.current);
+      requestAnimationFrame(fitDiagram);
+    }
+    document.addEventListener('fullscreenchange', changed);
+    return () => document.removeEventListener('fullscreenchange', changed);
+  }, []);
   useEffect(() => {
     const observer = new MutationObserver(() => setTheme(document.documentElement.dataset.theme));
     observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -58,6 +101,8 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
     const element = container.current;
     if (element) element.replaceChildren();
     setError('');
+    setViewError('');
+    setZoom(1);
     if (!graph.nodes.length || !graph.mermaid.trim()) { setRendering(false); return; }
     setRendering(true);
     void import('mermaid').then(async ({ default: mermaid }) => {
@@ -86,16 +131,41 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
       }
       svg.setAttribute('role', 'img');
       svg.setAttribute('aria-label', 'Project scheme diagram');
+      // Keep zoom outside Mermaid rendering and allow Fit on narrow screens.
+      svg.style.width = '100%';
+      svg.style.minWidth = '0';
+      svg.style.maxWidth = 'none';
+      svg.style.height = 'auto';
       element.replaceChildren(document.importNode(svg, true));
+      fitDiagram();
     }).catch(() => { if (active) setError('The diagram could not be rendered. Its components and evidence are available below.'); })
       .finally(() => { if (active) setRendering(false); });
     return () => { active = false; };
   }, [graph.mermaid, graph.nodes.length, id, theme]);
-  return <>
+  const available = !rendering && !error && graph.nodes.length > 0 && !!graph.mermaid.trim();
+  const supportsFullscreen = typeof document.documentElement.requestFullscreen === 'function'
+    && document.fullscreenEnabled !== false;
+  return <div ref={viewer} className="scheme-viewer">
+    <div className="scheme-diagram-controls" role="group" aria-label="Diagram view controls">
+      <button type="button" className="secondary" disabled={!available || zoom <= 0.25}
+        aria-label="Zoom out diagram" onClick={() => setZoom((value) => Math.max(0.25, value - 0.25))}>−</button>
+      <output aria-label="Diagram zoom">{Math.round(zoom * 100)}%</output>
+      <button type="button" className="secondary" disabled={!available || zoom >= 3}
+        aria-label="Zoom in diagram" onClick={() => setZoom((value) => Math.min(3, value + 0.25))}>+</button>
+      <button type="button" className="secondary" disabled={!available} onClick={fitDiagram}>Fit diagram</button>
+      <button type="button" className="secondary" disabled={!supportsFullscreen || !available}
+        title={supportsFullscreen ? undefined : 'Fullscreen is unavailable in this browser'}
+        aria-pressed={fullscreen} onClick={() => void toggleFullscreen()}>
+        {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+      </button>
+    </div>
     {rendering && <p role="status">Rendering diagram…</p>}
-    <ErrorBox error={error} />
-    <div ref={container} className="scheme-diagram" />
-  </>;
+    <ErrorBox error={error || viewError} />
+    <div ref={viewport} className="scheme-viewport" tabIndex={0}
+      role="region" aria-label="Scrollable project diagram">
+      <div ref={container} className="scheme-diagram" style={{ width: `${zoom * 100}%` }} />
+    </div>
+  </div>;
 }
 
 type Directory = { name: string; path: string; directory: boolean; children: Map<string, Directory> };

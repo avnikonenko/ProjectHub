@@ -1265,8 +1265,8 @@ a:focus-visible {
 .scheme-freshness { display: flex; align-items: baseline; flex-wrap: wrap; gap: .6rem 1rem; margin: 1rem 0; }
 .scheme-freshness details { flex-basis: 100%; }
 .scheme-tabs { margin: 1rem 0; }
-.scheme-diagram { overflow: auto; padding: 1rem 0; min-width: 0; }
-.scheme-diagram svg { display: block; width: 100%; min-width: 420px; height: auto; margin: 0 auto; }
+.scheme-diagram { padding: 1rem 0; min-width: 0; margin-inline: auto; }
+.scheme-diagram svg { display: block; width: 100%; min-width: 0; height: auto; margin: 0 auto; }
 .scheme-components, .scheme-code-tree, .scheme-sources, .scheme-development { margin-top: 1.3rem; }
 .scheme-components li { margin-bottom: .8rem; }
 .scheme-components p { margin: .35rem 0; }
@@ -1379,4 +1379,33 @@ a:focus-visible {
 }
 .session-actions {
   margin-top: 0.5rem;
+}
+.scheme-diagram-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-block: 0.75rem;
+}
+.scheme-diagram-controls output {
+  min-width: 4ch;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.scheme-viewport {
+  min-width: 0;
+  max-height: min(65vh, 40rem);
+  overflow: auto;
+}
+.scheme-viewer:fullscreen {
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  overflow: auto;
+  background: var(--surface, #fff);
+  color: var(--text, #26332e);
+}
+.scheme-viewer:fullscreen .scheme-viewport {
+  flex: 1;
+  max-height: none;
 }

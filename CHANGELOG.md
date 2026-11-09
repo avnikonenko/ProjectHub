@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Scheme diagrams support zoom, fit-to-view, and fullscreen without another AI request.
+
 - Terminal agents can link their current Codex session to a project using the existing ProjectHub skill and `projecthub session link`.
 
 - Scheme tab with source-backed architecture/workflow diagrams, direct dependencies and code structure, saved revisions, and separate freshness/coverage indicators. Explicit generation uses existing project AI settings.
