@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ...models import ProjectBrief, ProjectKnowledge, utcnow
 from ...project_evidence import collect_project_evidence, collect_repository_code
 from . import progress
-from .brief import (BriefBusy, OUTPUT_SCHEMA, generation_lock, generation_metadata,
+from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, generation_metadata,
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
@@ -56,6 +56,33 @@ def _brief_inputs(candidate, bundle, repository):
     return sources, groups
 
 
+def suppress_repeated_points(sections):
+    """Remove exact optional repetitions, without semantic merging or source loss.
+
+    Required sections remain intact. Different classifications or citations can
+    represent distinct issues/scopes, so only identical attribution is suppressed.
+    This operates on presentation copies, never the knowledge snapshot.
+    """
+    result = deepcopy(sections)
+    required = ('overview', 'current_status', 'architecture')
+    def key(entry):
+        return (' '.join(entry['text'].split()), entry['classification'],
+                tuple(sorted(set(entry['source_ids']))))
+    seen = {key(entry) for name in required for entry in result[name]}
+    for name in SECTION_NAMES:
+        entries = result[name]
+        if name in required:
+            continue
+        kept = []
+        for entry in entries:
+            identity = key(entry)
+            if identity not in seen:
+                kept.append(entry)
+                seen.add(identity)
+        result[name] = kept
+    return result
+
+
 def _synthesize(manager, candidate, bundle, repository):
     sources, groups = _brief_inputs(candidate, bundle, repository)
     payload = {'project': {key: bundle['project'].get(key) for key in ('name', 'description', 'goals')},
@@ -70,6 +97,13 @@ def _synthesize(manager, candidate, bundle, repository):
         'Preserve older supported agreed choices and their rationale. Do not promote assistant claims, '
         'repeated proposals, ambiguous replies, or presupposed prior agreement into user acceptance. '
         'Separate long-term project scope from first-release scope and experiments. '
+        'Suppress redundancy only in presentation: when compatible statements concern the same scoped '
+        'choice, present it once using the strongest supporting original evidence and retain its important '
+        'reason or limitation. An assistant-only UNKNOWN restatement does not make a user-supported AGREED '
+        'choice uncertain. Do not repeat that restatement as a separate problem. Do not infer equivalence '
+        'from shared keywords: retain distinct release/experiment scopes, incompatible alternatives and '
+        'genuine conflicts. A broad agreement does not settle an unresolved first-release boundary. '
+        'Do not alter, merge, or erase underlying knowledge items or their statuses. '
         'Use valid supported agreed choices for the current approach. Historical design_status must not be '
         'rewritten when source_state is stale/unavailable/excluded/unknown; if discussing those items, '
         'state the availability limitation and do not present them as currently reverified. '
@@ -77,9 +111,12 @@ def _synthesize(manager, candidate, bundle, repository):
         'provided relationship and original evidence establish a scoped revision. '
         'Overview: purpose and main workflow in two complete sentences. Architecture: supported component '
         'responsibilities and the reasons for the approach; say briefly if not established. '
-        'Current_status: current direction without inventing implementation. Unresolved_problems: supported '
+        'Current_status: current direction without inventing implementation or repeating overview/open issues. '
+        'Unresolved_problems: supported '
         'open questions, with consequences if known. Next_steps: only explicit supported priorities. '
-        'Do not claim uninspected code is absent, static code works, or reported tests were executed. '
+        'Missing retrieved acceptance is not proof of nonacceptance: say acceptance is not established '
+        'in the supplied evidence, never that a choice has not been accepted unless an explicit rejection '
+        'supports that statement. Do not claim uninspected code is absent, static code works, or reported tests were executed. '
         'Design agreement is independent of implementation and validation evidence. Use classification reported '
         'for conversational choices, inferred for interpretation, unresolved for unresolved conflicts; '
         'verified is reserved for an exact deterministic observation copied from supplied evidence. '
@@ -96,6 +133,7 @@ def _synthesize(manager, candidate, bundle, repository):
     for collection in schema['properties']['project_map']['properties'].values():
         collection['items']['properties']['source_ids']['items']['enum'] = ids
     sections, graph = validate_sections(manager.generate_brief(prompt, schema), sources)
+    sections = suppress_repeated_points(sections)
     cited = resolve_citations(sections, graph, groups)
     return sections, graph, cited
 

@@ -223,3 +223,38 @@ def test_synthesis_does_not_repeat_raw_quotes_and_window_manifests(prepared):
     assert item['rationale'] == candidate['items'][0]['rationale']
     assert 'context_dependencies' not in item and 'evidence' not in item
     assert groups[sources[0]['id']][0]['text'] == candidate['sources'][0]['text']
+
+
+def test_presentation_suppression_preserves_required_sections_distinct_scope_and_conflicts():
+    sections = {name: [] for name in SECTION_NAMES}
+    agreed = {'text': 'Support docking and MD.', 'classification': 'reported', 'source_ids': ['scope']}
+    mvp = {'text': 'First-release docking scope remains undecided.', 'classification': 'unresolved', 'source_ids': ['mvp']}
+    conflict = {'text': 'Support docking and MD.', 'classification': 'unresolved', 'source_ids': ['conflicting-source']}
+    sections['overview'] = [deepcopy(agreed)]
+    sections['current_status'] = [deepcopy(agreed)]
+    sections['architecture'] = [{'text': 'Use independent adapters.', 'classification': 'reported', 'source_ids': ['architecture']}]
+    sections['changes'] = [deepcopy(agreed)]
+    sections['unresolved_problems'] = [mvp, conflict]
+    before = deepcopy(sections)
+    shown = pilot.suppress_repeated_points(sections)
+    assert sections == before
+    assert shown['changes'] == []
+    assert shown['overview'] == shown['current_status'] == [agreed]
+    assert shown['unresolved_problems'] == [mvp, conflict]
+
+
+def test_synthesis_suppresses_repetition_without_mutating_knowledge_or_evidence(prepared):
+    candidate = _candidate()
+    before = deepcopy(candidate)
+    class RepeatedSynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            assert 'Suppress redundancy only in presentation' in prompt
+            assert 'A broad agreement does not settle an unresolved first-release boundary' in prompt
+            result = json.loads(super().generate_brief(prompt, schema))
+            result['sections']['changes'] = deepcopy(result['sections']['overview'])
+            return json.dumps(result)
+    sections, graph, cited = pilot._synthesize(RepeatedSynthesis(), candidate, prepared.bundle, {'sources': []})
+    assert sections['changes'] == []
+    assert sections['overview'] and sections['architecture'] and sections['current_status']
+    assert candidate == before
+    assert cited[0]['text'] == candidate['sources'][0]['text']
