@@ -270,3 +270,21 @@ def test_readoption_with_reused_claim_identity_remains_unresolved_without_cycle(
     original = next(value for value in values if value['id'] == old['id'])
     assert replacement['id'] not in original['supersedes']
     assert any(relation['status'] == 'unresolved_identity_cycle' for relation in original['relationships'])
+
+
+def test_extractor_receives_fragment_context_instead_of_assuming_complete_messages(tmp_path):
+    db_engine = engine(tmp_path)
+    original = source('part', 'The second option is ...')
+    original.update(partial_message=True, message_revision='whole-message-hash', message_order=3,
+                    offset_start=6000, offset_end=6024)
+    class Extractor:
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('\n', 1)[1])
+            fragment = payload['sources'][0]
+            assert fragment['partial_message'] is True
+            assert fragment['message_revision'] == 'whole-message-hash'
+            assert fragment['message_order'] == 3 and fragment['offset_start'] == 6000
+            assert 'Missing context must not establish acceptance' in prompt
+            return json.dumps({'items': []})
+    k.extract_batch(db_engine, 1, Extractor(), window([original]), k.extraction_configuration(Extractor()))
+    db_engine.dispose()

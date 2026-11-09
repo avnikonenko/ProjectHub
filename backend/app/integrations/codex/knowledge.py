@@ -11,7 +11,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 1
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -42,7 +42,10 @@ OUTPUT_SCHEMA = _object({'items': {'type': 'array', 'maxItems': MAX_ITEMS, 'item
 PROMPT = (
     'Extract a small set of material project choices, requirements, proposals, open questions, and findings '
     'from original messages, preserving reasons, alternatives, limitations and scope. Do not extract every '
-    'sentence or create TODOs. Distinguish long-term project scope from first-release or experiment scope. '
+    'sentence or create TODOs. Records marked partial_message are fragments, not complete messages; '
+    'message_revision/message_order identify their original message, and order is within-conversation '
+    'fragment order, not a date. Missing context must not establish acceptance or chronology. '
+    'Distinguish long-term project scope from first-release or experiment scope. '
     'AGREED or REJECTED requires appropriate user evidence, never an assistant claiming "we agreed". '
     'A direct user instruction can establish agreement; use agreement_basis direct_user. A short reply '
     'such as yes, agree, or do needs its unambiguous proposal and user acceptance, both quoted exactly; '
@@ -177,7 +180,8 @@ def extract_batch(engine, project_id, manager, window, configuration):
     # Exclude parent-conversation revisions: appending messages should not invalidate
     # an unchanged original window. Context messages themselves remain in this key.
     payload = {'sources': [{key: source.get(key) for key in (
-        'id', 'role', 'text', 'revision', 'conversation_id', 'order')} for source in window['sources']],
+        'id', 'role', 'text', 'revision', 'conversation_id', 'order', 'partial_message',
+        'message_revision', 'message_order', 'offset_start', 'offset_end')} for source in window['sources']],
         'primary_ids': window['primary_ids']}
     key = _digest({'namespace': 'knowledge-extraction-v1', 'project_id': project_id,
                    'configuration': configuration, 'payload': payload})
