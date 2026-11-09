@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- App settings now offer persistent text sizes from 100% to 200%, including labels and controls.
+
 - Add a named Codex profile by directory in AI settings; duplicate directories are hidden.
 
 - Preview open issues from a public GitHub repository on the Dashboard.
