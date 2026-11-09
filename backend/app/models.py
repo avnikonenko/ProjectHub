@@ -189,6 +189,12 @@ class ProjectQA(Base):
     generation: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
 
+class ProjectScheme(Base):
+    __tablename__ = 'project_schemes'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+
+
 class GenerationRevision(Base):
     __tablename__ = 'generation_revisions'
     id: Mapped[int] = mapped_column(primary_key=True)

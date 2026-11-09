@@ -13,6 +13,8 @@ from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
+from .scheme import read_scheme, refresh_scheme
+from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
 from .revisions import list_revisions
@@ -255,7 +257,7 @@ def project_evidence(project_id: int, request: Request, db: DB):
 def revisions(project_id: int, db: DB, kind: str = 'brief',
               offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):
     project(db, project_id)
-    if kind not in ('brief', 'qa'):
+    if kind not in ('brief', 'qa', 'scheme'):
         raise HTTPException(422, 'Unknown generation kind.')
     return list_revisions(db, project_id, kind, offset)
 
@@ -283,7 +285,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa'):
+    if kind not in ('brief', 'qa', 'scheme'):
         raise HTTPException(422, 'Unknown generation kind.')
     return progress.read(project_id, kind)
 
@@ -333,6 +335,42 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         db.rollback()
         with use_project_instructions(instructions):
             return refresh_brief(request.app.state.engine, project_id, selected)
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/scheme')
+def get_scheme(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    saved = read_scheme(db, project_id)
+    db.rollback()
+    evidence = collect_evidence(request.app.state.engine, project_id)
+    coverage = evidence['coverage']
+    state = ('not_generated' if saved is None else
+             'unknown' if coverage.get('freshness_unknown') or not evidence.get('fingerprint') else
+             'unchanged' if saved.get('fingerprint') == evidence['fingerprint'] else 'changed')
+    return {
+        'snapshot': saved,
+        'freshness': {'state': state, 'partial': coverage['partial'],
+                      'limitations': coverage['limitations']},
+        'inspection': {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')},
+    }
+
+
+@router.post('/scheme')
+def generate_scheme(project_id: int, body: GenerationInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Confirm sending selected project evidence to Codex before generating Scheme.')
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return refresh_scheme(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

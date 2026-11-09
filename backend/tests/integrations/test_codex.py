@@ -436,24 +436,25 @@ def test_generation_routes_use_project_instructions_without_leaking_scope(setup,
     routes = import_module('backend.app.integrations.codex.router')
     seen = []
 
-    def generate(*args):
+    def generate(*args, **kwargs):
         seen.append(ai_instructions())
         return {'ok': True}
 
     monkeypatch.setattr(routes, 'refresh_brief', generate)
     monkeypatch.setattr(routes, 'refresh_qa', generate)
+    monkeypatch.setattr(routes, 'refresh_scheme', generate)
     monkeypatch.setattr(routes, 'answer_project', generate)
     monkeypatch.setattr(routes, 'retrieve_passages', lambda *args: [{'text': 'Evidence'}])
     text = 'Use the terminology from this project.'
     assert setup.client.patch('/api/projects/1/codex/instructions', json={'instructions': text}).status_code == 200
     for pid in (1, 2):
-        for kind in ('brief', 'qa', 'ask'):
+        for kind in ('brief', 'qa', 'ask', 'scheme'):
             body = {'confirmed': True, **({'question': 'What changed?'} if kind == 'ask' else {})}
             response = setup.client.post(f'/api/projects/{pid}/codex/{kind}', json=body)
             assert response.status_code == 200, response.text
-    assert len(seen) == 6
-    assert all(text in instructions for instructions in seen[:3])
-    assert all(text not in instructions for instructions in seen[3:])
+    assert len(seen) == 8
+    assert all(text in instructions for instructions in seen[:4])
+    assert all(text not in instructions for instructions in seen[4:])
 
 
 def test_register_codex_directory_persists_routes_and_deduplicates(setup, tmp_path, monkeypatch):
