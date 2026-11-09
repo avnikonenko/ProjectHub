@@ -18,6 +18,7 @@ from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
 from .revisions import list_revisions
+from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
@@ -549,7 +550,8 @@ def history(project_id: int, session_id: int, request: Request, db: DB,
     project(db, project_id)
     row = linked_session(db, project_id, session_id)
     try:
-        return manager_for(request.app).history(row, cursor, limit=limit)
+        return annotate_page(db, project_id, session_id,
+                             manager_for(request.app).history(row, cursor, limit=limit))
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
 

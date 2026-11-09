@@ -2,6 +2,7 @@
 import hashlib
 import json
 import tempfile
+from pathlib import Path
 from contextlib import ExitStack
 
 from sqlalchemy import select, text
@@ -10,6 +11,7 @@ from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, ProjectHistoryBatch
 from .protocol import CodexError
 from . import progress
+from .shared_history import SharedPrefixIndex
 
 CHUNK_CHARS = 4000
 BATCH_CHARS = 24_000
@@ -191,65 +193,88 @@ def archive_history(engine, project_id, manager):
             progress.update(project_id, batches=generated + reused)
             batch = []
 
-    if sessions:
-        reader_factory = getattr(manager, 'session_reader', None)
-        client = None if callable(reader_factory) else manager._new_read_client()
-        try:
-            for index, session in enumerate(sessions, 1):
-                with ExitStack() as scope:
-                    reader = scope.enter_context(reader_factory(session)) if callable(reader_factory) else manager
-                    read_client = reader if callable(reader_factory) else client
-                    seen = set()
-                    progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
-                    try:
-                        indexed = _indexed_turns(engine, project_id, session, read_client)
-                    except CodexError:
-                        # Reuse is optional; metadata failures must not break
-                        # sessions supported by the existing history reader.
-                        index_check_failures += 1
-                        indexed = None
-                    if indexed is not None:
-                        indexed_sessions.append((session.id, session.history_indexed_at))
-                    try:
-                        pages = (_indexed_pages(indexed) if indexed is not None
-                                 else _live_pages(reader, session, read_client, f'Reading session {index} of {len(sessions)}'))
-                        for page in pages:
-                            progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
-                            for turn in page['turns']:
-                                if turn['id'] in seen:
-                                    continue
-                                seen.add(turn['id'])
-                                if turn['status'] == 'inProgress':
-                                    skipped += 1
-                                    continue
-                                text = '\n\n'.join(f"{message['role']}: {message['text']}"
-                                                   for message in turn['messages'])
-                                if not text:
-                                    continue
-                                turns_seen += 1
-                                progress.update(project_id, turns=turns_seen)
-                                for offset in range(0, len(text), CHUNK_CHARS):
-                                    part = offset // CHUNK_CHARS + 1
-                                    source = {'id': f"session:{session.id}:turn:{turn['id']}:part:{part}",
-                                              'label': f"Session #{session.id}, turn {turn['id']}, part {part}",
-                                              'text': text[offset:offset + CHUNK_CHARS], 'session_id': session.id,
-                                              'turn_id': turn['id'], 'turn_status': turn['status']}
-                                    size = len(json.dumps({'sources': [*batch, source]}, ensure_ascii=False))
-                                    if batch and size > BATCH_CHARS:
-                                        flush()
-                                    if len(json.dumps({'sources': [source]}, ensure_ascii=False)) > BATCH_CHARS:
-                                        raise CodexError('History source metadata exceeds the batch size limit.')
-                                    batch.append(source)
-                                    fragments += 1
-                    finally:
+    sharing = SharedPrefixIndex()
+    duplicates_omitted = 0
+    turns_read = 0
+    with tempfile.TemporaryDirectory(prefix='projecthub-history-') as directory:
+        if sessions:
+            reader_factory = getattr(manager, 'session_reader', None)
+            client = None if callable(reader_factory) else manager._new_read_client()
+            try:
+                for index, session in enumerate(sessions, 1):
+                    path = Path(directory) / f'{session.id}.jsonl'
+                    with ExitStack() as scope, path.open('w', encoding='utf-8') as staged:
+                        reader = scope.enter_context(reader_factory(session)) if callable(reader_factory) else manager
+                        read_client = reader if callable(reader_factory) else client
+                        seen = set()
+                        progress.update(project_id, stage=f'Reading session {index} of {len(sessions)}')
+                        try:
+                            indexed = _indexed_turns(engine, project_id, session, read_client)
+                        except CodexError:
+                            index_check_failures += 1
+                            indexed = None
                         if indexed is not None:
-                            indexed.close()
-                    # Boundaries stay stable when another session later gains new turns.
-                    flush()
+                            indexed_sessions.append((session.id, session.history_indexed_at))
+                        try:
+                            pages = (_indexed_pages(indexed) if indexed is not None else _live_pages(
+                                reader, session, read_client, f'Reading session {index} of {len(sessions)}'))
+                            for page in pages:
+                                for turn in page['turns']:
+                                    if turn['id'] not in seen:
+                                        seen.add(turn['id'])
+                                        staged.write(json.dumps(turn, ensure_ascii=False) + '\n')
+                                        if turn['status'] != 'inProgress' and any(
+                                                message.get('text') for message in turn['messages']):
+                                            turns_read += 1
+                                            progress.update(project_id, turns=turns_read)
+                        finally:
+                            if indexed is not None:
+                                indexed.close()
+                    with path.open(encoding='utf-8') as staged:
+                        sharing.add_session(session.id, (json.loads(line) for line in staged))
                     progress.update(project_id, sessions=index)
-        finally:
-            if client is not None:
-                client.close()
+            finally:
+                if client is not None:
+                    client.close()
+        # Only fingerprints and identifiers are held in memory. Text stays on
+        # disk until shared prefixes are confirmed, then each retained turn is
+        # summarized once. Original Codex and saved-index records are untouched.
+        for session in sessions:
+            with (Path(directory) / f'{session.id}.jsonl').open(encoding='utf-8') as staged:
+                for line in staged:
+                    turn = json.loads(line)
+                    if turn['status'] == 'inProgress':
+                        skipped += 1
+                        continue
+                    value = '\n\n'.join(f"{message['role']}: {message['text']}"
+                                        for message in turn['messages'])
+                    if not value:
+                        continue
+                    turns_seen += 1
+                    if (session.id, turn['id']) in sharing.canonical:
+                        duplicates_omitted += 1
+                        continue
+                    for offset in range(0, len(value), CHUNK_CHARS):
+                        part = offset // CHUNK_CHARS + 1
+                        source = {'id': f"session:{session.id}:turn:{turn['id']}:part:{part}",
+                                  'label': f"Session #{session.id}, turn {turn['id']}, part {part}",
+                                  'text': value[offset:offset + CHUNK_CHARS], 'session_id': session.id,
+                                  'turn_id': turn['id'], 'turn_status': turn['status']}
+                        size = len(json.dumps({'sources': [*batch, source]}, ensure_ascii=False))
+                        if batch and size > BATCH_CHARS:
+                            flush()
+                        if len(json.dumps({'sources': [source]}, ensure_ascii=False)) > BATCH_CHARS:
+                            raise CodexError('History source metadata exceeds the batch size limit.')
+                        batch.append(source)
+                        fragments += 1
+            flush()
+    titles = {session.id: session.title for session in sessions}
+    for entry in evidence:
+        for source in entry['sources']:
+            aliases = sharing.aliases.get((source.get('session_id'), source.get('turn_id')), [])
+            if aliases:
+                source['shared_sessions'] = [
+                    {**alias, 'session_title': titles.get(alias['session_id'], '')} for alias in aliases]
     coverage = [*([f'Index freshness could not be checked for {index_check_failures} sessions; read their history through Codex instead.']
                   if index_check_failures else []),
                 f'Read saved history for {len(sessions)} project sessions, oldest turns first within each session.',
@@ -260,6 +285,7 @@ def archive_history(engine, project_id, manager):
                 f'Included user/assistant text from {turns_seen} finished turns in {fragments} bounded fragments; '
                 'tool output and attachment contents are excluded.',
                 f'Skipped {skipped} in-progress turns; refresh after they finish to include them.',
+                f'Omitted {duplicates_omitted} exact shared-prefix turn copies from AI evidence; original session links are retained.',
                 f'History summary batches: {reused} reused from cache, {generated} generated. '
                 'Summaries are AI interpretations and may omit details; citations retain original text fragments.']
     return evidence, coverage

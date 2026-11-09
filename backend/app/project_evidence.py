@@ -506,6 +506,7 @@ def _history_digest(db, project_id, identity):
 
 
 def _reported_sources(db, project_id, objective):
+    from .integrations.codex.history_duplicates import deduplicate_sources
     sources = []
     recent = db.execute(text(
         'SELECT h.session_id,h.turn_id,s.title,h.status,length(h.content) AS chars,'
@@ -547,7 +548,7 @@ def _reported_sources(db, project_id, objective):
             added += 1
             if added == 2:
                 break
-    return sources
+    return deduplicate_sources(db, project_id, sources)
 
 
 def collect_project_evidence(engine, project_id):

@@ -492,6 +492,7 @@ def _structural_excerpt(value, relative):
 
 
 def _records(db, project):
+    from .history_duplicates import deduplicate_sources
     sources, markers, limitations = [], [], []
     if len(project.description) > 1600 or len(project.goals) > 1600:
         limitations.append('Project description or goals were truncated to 1,600 characters each.')
@@ -524,6 +525,7 @@ def _records(db, project):
         sources.append(_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
             f"Session #{row['session_id']}, turn {row['turn_id']}", row['excerpt'], 'Codex conversation',
             session_id=row['session_id'], turn_id=row['turn_id']))
+    sources = deduplicate_sources(db, project.id, sources)
     notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,1200) AS content,kind,updated_at, '
                            'length(content) AS content_length,length(title) AS title_length '
                            'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'), {'pid': project.id}).mappings().all()

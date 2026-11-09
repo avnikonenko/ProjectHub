@@ -422,3 +422,114 @@ def test_cached_citations_remain_project_and_batch_scoped(env):
     with pytest.raises(CodexError, match='foreign'):
         _summarize(engine, 1, manager, payload, [source], 'history')
     assert len(manager.inputs) == 2
+
+
+def test_archive_deduplicates_exact_fork_prefix_and_retains_every_session_reference(env):
+    from copy import deepcopy
+
+    engine, manager = env
+    first = 'First accepted result: ' + 'A' * 120
+    second = 'Second accepted result: ' + 'B' * 120
+    manager.turns['a'] = [turn('original-1', first), turn('original-2', second),
+                          turn('original-3', 'Original branch outcome')]
+    manager.turns['fork'] = [turn('fork-1', first), turn('fork-2', second),
+                             turn('fork-3', 'Different fork outcome'),
+                             turn('fork-4', second)]
+    # An identical prefix from another project must not become an alias.
+    manager.turns['b'] = [turn('foreign-1', first), turn('foreign-2', second),
+                          turn('foreign-3', 'FOREIGN PROJECT DATA')]
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='fork', title='Fork discussion'))
+        db.commit()
+    original_turns = deepcopy(manager.turns)
+
+    evidence, _ = archive_history(engine, 1, manager)
+    sent = [source for payload in manager.inputs for source in payload['sources']]
+    assert [(source['session_id'], source['turn_id']) for source in sent] == [
+        (1, 'original-1'), (1, 'original-2'), (1, 'original-3'),
+        (3, 'fork-3'), (3, 'fork-4'),
+    ]
+    assert sum(source['text'].endswith(first) for source in sent) == 1
+    # Equal text encountered after divergence is still a separate occurrence.
+    assert sum(source['text'].endswith(second) for source in sent) == 2
+    assert all('FOREIGN PROJECT DATA' not in source['text'] for source in sent)
+    returned = {source['id']: source for item in evidence for source in item['sources']}
+    for original, fork in (('original-1', 'fork-1'), ('original-2', 'fork-2')):
+        source = returned[f'session:1:turn:{original}:part:1']
+        aliases = {(alias['session_id'], alias['turn_id']) for alias in source['shared_sessions']}
+        assert (3, fork) in aliases
+        assert all(session_id in (1, 3) for session_id, _ in aliases)
+    assert all('session:3:turn:fork-1:' not in source_id
+               and 'session:3:turn:fork-2:' not in source_id for source_id in returned)
+    assert manager.turns == original_turns
+    assert all(thread_id != 'b' for thread_id, _ in manager.calls)
+    with Session(engine) as db:
+        assert db.get(CodexSession, 1).thread_id == 'a'
+        assert db.get(CodexSession, 3).thread_id == 'fork'
+
+
+def test_archive_keeps_short_replies_and_near_matching_prefixes_separate(env):
+    engine, manager = env
+    manager.turns['a'] = [turn('a-1', 'do'), turn('a-2', 'continue')]
+    manager.turns['fork'] = [turn('f-1', 'do'), turn('f-2', 'continue')]
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='fork'))
+        db.commit()
+    evidence, _ = archive_history(engine, 1, manager)
+    sent = [source for payload in manager.inputs for source in payload['sources']]
+    assert len(sent) == 4
+    assert all(not source.get('shared_sessions') for item in evidence for source in item['sources'])
+
+    # Even substantial prefixes differ when an exact message changes.
+    manager.inputs.clear()
+    manager.turns['a'] = [turn('a-long-1', 'A' * 150), turn('a-long-2', 'B' * 150)]
+    manager.turns['fork'] = [turn('f-long-1', 'A' * 150), turn('f-long-2', 'B' * 150 + '!')]
+    evidence, _ = archive_history(engine, 1, manager)
+    sent = [source for payload in manager.inputs for source in payload['sources']]
+    assert len(sent) == 4
+    assert all(not source.get('shared_sessions') for item in evidence for source in item['sources'])
+
+
+def test_archive_new_fork_aliases_reuse_canonical_cache_and_failed_suffix_stays_uncached(env):
+    engine, manager = env
+    manager.turns['a'] = [turn('base-1', 'A' * 150), turn('base-2', 'B' * 150)]
+    archive_history(engine, 1, manager)
+    canonical_input = manager.inputs[0]
+    with Session(engine) as db:
+        saved = [(row.fingerprint, row.evidence) for row in db.scalars(select(ProjectHistoryBatch))]
+        db.add(CodexSession(id=3, project_id=1, thread_id='fork'))
+        db.commit()
+    manager.turns['fork'] = [turn('copied-1', 'A' * 150), turn('copied-2', 'B' * 150),
+                             turn('new-result', 'A unique fork result')]
+    manager.fail = True
+    with pytest.raises(CodexError, match='Generation failed'):
+        archive_history(engine, 1, manager)
+    with Session(engine) as db:
+        assert [(row.fingerprint, row.evidence) for row in db.scalars(select(ProjectHistoryBatch))] == saved
+    manager.fail = False
+    evidence, _ = archive_history(engine, 1, manager)
+    assert manager.inputs.count(canonical_input) == 1
+    assert len(manager.inputs) == 2
+    first = next(source for item in evidence for source in item['sources']
+                 if source['id'] == 'session:1:turn:base-1:part:1')
+    assert any(alias['session_id'] == 3 and alias['turn_id'] == 'copied-1'
+               for alias in first['shared_sessions'])
+
+
+def test_archive_fork_aliases_cover_each_fragment_of_a_long_shared_turn(env):
+    engine, manager = env
+    long_text = 'L' * 8500 + 'SHARED TAIL'
+    manager.turns['a'] = [turn('base-long', long_text), turn('base-next', 'N' * 220)]
+    manager.turns['fork'] = [turn('fork-long', long_text), turn('fork-next', 'N' * 220)]
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='fork'))
+        db.commit()
+    evidence, _ = archive_history(engine, 1, manager)
+    sent = [source for payload in manager.inputs for source in payload['sources']]
+    assert ''.join(source['text'] for source in sent).count('SHARED TAIL') == 1
+    assert all(source['session_id'] == 1 for source in sent)
+    shared_fragments = [source for item in evidence for source in item['sources']
+                        if source['turn_id'] == 'base-long']
+    assert len(shared_fragments) == 3
+    assert all(any(alias['session_id'] == 3 and alias['turn_id'] == 'fork-long'
+                   for alias in source['shared_sessions']) for source in shared_fragments)

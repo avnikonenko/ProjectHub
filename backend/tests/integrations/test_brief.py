@@ -112,13 +112,14 @@ def test_brief_collects_multiple_scoped_sessions_and_keeps_decision_candidates_s
     assert codex.reads == [('a-first', None), ('a-first', 'next'),
                           ('a-second', None), ('a-second', 'next')]
     excerpts = [source['text'] for source in codex.input['sources']]
-    assert len(excerpts) == 6
+    assert len(excerpts) == 5  # The two identical session prefixes now share one evidence summary.
     assert 'Project A' in excerpts[2]
     assert 'Support reproducible local analysis' in excerpts[2]
     assert all('Conclusion from saved history' in text for text in excerpts[4:])
     assert 'Service --> Database' in excerpts[0] and 'Accepted evidence' in excerpts[1]
     assert not any(value in '\n'.join(excerpts)
                    for value in ('Foreign diagram', 'Tentative idea', 'Private decision'))
+    assert any(source.get('shared_sessions') for source in brief['sources'])
     assert brief['sections']['decision_candidates']
     assert brief['project_map']['edges'][0]['source_ids'] == ['architecture:1']
     assert brief['sections']['architecture'][0]['source_ids'] == ['architecture:1']

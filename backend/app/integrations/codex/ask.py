@@ -4,6 +4,7 @@ import re
 
 from sqlalchemy import text
 
+from .history_duplicates import deduplicate_sources
 from .history_search import _SHARE_REFERENCE
 from .protocol import CodexError
 
@@ -61,6 +62,9 @@ def retrieve_passages(db, project_id, question):
             if 'share' in source:
                 source['share'] = bool(source['share'])
             sources.append(source)
+    sources = deduplicate_sources(db, project_id, sources)
+    for index, source in enumerate(sources, 1):
+        source['id'] = str(index)
     return sources
 
 
