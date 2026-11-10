@@ -894,6 +894,7 @@ function generationBody({ model, effort }: Generation) {
 function AskProject({ base, projectId, generation }: GenerationProps & { projectId: number }) {
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState<{ answer: string; sources: BriefSource[] } | null>(null);
+  const [answeredQuestion, setAnsweredQuestion] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [remoteBusy, setRemoteBusy] = useState(false);
@@ -913,7 +914,10 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
         body: JSON.stringify({ question: query, confirmed: true, ...generationBody(generation) }),
         signal: controller.signal,
       });
-      if (!controller.signal.aborted) setResult(response);
+      if (!controller.signal.aborted) {
+        setResult(response);
+        setAnsweredQuestion(query);
+      }
     } catch (e) {
       if (!controller.signal.aborted && !isGenerationCancelled(e)) setError((e as Error).message);
     } finally {
@@ -944,7 +948,8 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
       <ErrorBox error={error} />
       {result && (
         <section className="brief-section">
-          <h3>Answer</h3>
+          <h3>{busy || remoteBusy ? 'Previous answer' : 'Answer'}</h3>
+          {answeredQuestion && <p className="muted">{answeredQuestion}</p>}
           <p className="shared-transcript">{result.answer.split(/(\[\d+\])/g).map((part, index) => {
             const id = /^\[(\d+)\]$/.exec(part)?.[1];
             return id && numbers.has(id)
