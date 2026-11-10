@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 from contextlib import ExitStack, contextmanager
 from contextvars import ContextVar
 from functools import partial
@@ -21,6 +22,7 @@ from ...models import (Project, Question, Decision, Task, CodexSession,
                        ContextPackage, Delivery, CodexEvent)
 from .protocol import AppServerClient, CodexError
 from .ai_instructions import ai_instructions, read_project_instructions
+from . import progress
 
 log = logging.getLogger(__name__)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
@@ -36,7 +38,22 @@ def generation_timeout():
 
 
 def wait_for_generation(done, timeout):
-    if not done.wait(timeout):
+    cancellation = progress.current_cancel_event()
+    if cancellation is None:
+        completed = done.wait(timeout)
+    else:
+        deadline = time.monotonic() + timeout
+        while True:
+            progress.check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                completed = False
+                break
+            if done.wait(min(0.1, remaining)):
+                progress.check_cancelled()
+                completed = True
+                break
+    if not completed:
         raise CodexError(f'Codex did not finish generation within {timeout} seconds. '
                          'The previous saved result is unchanged. Retry, use a lower reasoning effort, '
                          'or increase PROJECTHUB_GENERATION_TIMEOUT before starting ProjectHub.')
@@ -432,6 +449,7 @@ class CodexManager:
 
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None, verify_connectors=False):
         """Generate in a separate ephemeral thread; never resume a source session."""
+        progress.check_cancelled()
         instructions = ai_instructions()
         timeout = generation_timeout()
         done = threading.Event()
@@ -495,6 +513,7 @@ class CodexManager:
                 client = self._new_client(on_event=event, on_disconnect=disconnected)
             succeeded = False
             try:
+                progress.check_cancelled()
                 if pooled and reused_client:
                     self._assert_subscription(client)
                 result = client.request('thread/start', {
@@ -516,6 +535,7 @@ class CodexManager:
                     raise CodexError('Codex did not create an ephemeral brief thread.')
                 if verify_connectors:
                     self._assert_no_connectors(client, thread_id)
+                progress.check_cancelled()
                 result = client.request('turn/start', {
                     'threadId': thread_id, 'input': [{'type': 'text', 'text': prompt}],
                     **({'effort': effort} if effort is not None else {}),
@@ -542,9 +562,28 @@ class CodexManager:
                     raise CodexError(brief_turn_error(turn))
                 if not isinstance(message, str) or not message.strip():
                     raise CodexError('Codex completed the brief without a final response.')
+                progress.check_cancelled()
                 succeeded = True
                 return message
             finally:
+                cancellation = progress.current_cancel_event()
+                if cancellation is not None and cancellation.is_set() and thread_id and turn_id:
+                    # Never use a source-session client here. The generated
+                    # thread is ephemeral and belongs only to this request.
+                    interrupted = threading.Event()
+                    def interrupt():
+                        try:
+                            client.request('turn/interrupt', {'threadId': thread_id, 'turnId': turn_id})
+                        except Exception:
+                            log.warning('Could not acknowledge generation cancellation; closing its transport.')
+                        finally:
+                            interrupted.set()
+                    threading.Thread(target=interrupt, daemon=True,
+                                     name='projecthub-generation-cancel').start()
+                    # A disconnected or old server must not turn cancellation
+                    # into another full request timeout. Cleanup closes this
+                    # private transport whether or not acknowledgement arrives.
+                    interrupted.wait(0.2)
                 if pooled:
                     client.on_event = lambda *args: None
                     client.on_disconnect = lambda: None
@@ -652,6 +691,8 @@ class CodexManager:
         with self.lock:
             with Session(self.engine) as db:
                 delivery = db.get(Delivery, delivery_id)
+                if delivery.status == 'cancelled':
+                    raise CodexError('This request was cancelled. Submit a new question to start again.')
                 session = db.get(CodexSession, delivery.session_id)
                 if not session.is_linked:
                     raise CodexError('Link this session again before using it.')
@@ -726,6 +767,7 @@ class CodexManager:
                 raise CodexError('Session is disconnected; no interrupt was sent.')
             with Session(self.engine) as db:
                 deliveries = db.scalars(select(Delivery).where(Delivery.session_id == session.id,
+                                      Delivery.project_id == session.project_id,
                                       Delivery.turn_id.is_not(None)).order_by(Delivery.id.desc())).first()
                 if deliveries is None:
                     raise CodexError('No known turn to interrupt.')

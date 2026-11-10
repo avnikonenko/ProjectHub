@@ -27,7 +27,7 @@ def test_progress_is_scoped_and_reads_are_snapshots():
     progress.update(project_id, turns=999)
     assert progress.read(project_id, 'brief') == {
         'state': 'failed', 'stage': 'Failed', 'error': 'Transport failed', 'turns': 5, 'sessions': 2, 'batches': 0,
-        'started_at': started_at}
+        'started_at': started_at, 'budget_seconds': 900}
     progress.begin(project_id, 'qa')
     progress.finish(project_id)
     assert progress.read(project_id, 'qa')['state'] == 'completed'
@@ -79,3 +79,85 @@ def test_archive_reports_scoped_counts_and_cached_batches(tmp_path):
         assert manager.generations == 1
     finally:
         engine.dispose()
+
+
+def test_cancel_is_scoped_to_observed_generation_and_clears_context():
+    import pytest
+    from backend.app.integrations.codex.protocol import CodexError
+
+    pid = 93001
+    progress.begin(pid, 'qa')
+    old = progress.read(pid, 'qa')['started_at']
+    event = progress.current_cancel_event()
+    try:
+        for project_id, kind, started_at in ((pid + 1, 'qa', old), (pid, 'brief', old), (pid, 'qa', 'stale')):
+            with pytest.raises(CodexError, match='no longer running'):
+                progress.cancel(project_id, kind, started_at)
+        assert not event.is_set()
+        state = progress.cancel(pid, 'qa', old)
+        assert state['state'] == 'running' and state['stage'] == 'Cancelling'
+        assert state['cancel_requested'] is True and event.is_set()
+        with pytest.raises(progress.GenerationCancelled):
+            progress.check_cancelled()
+        with pytest.raises(progress.GenerationCancelled):
+            progress.update(pid, turns=4)
+        with pytest.raises(progress.GenerationCancelled):
+            progress.complete(pid, lambda: None)
+    finally:
+        progress.finish(pid, error='Any later error')
+    assert progress.current_cancel_event() is None
+    assert progress.read(pid, 'qa')['state'] == 'cancelled'
+    assert progress.read(pid, 'qa')['error'] is None
+    progress.begin(pid, 'qa')
+    try:
+        assert progress.current_cancel_event() is not event
+        progress.check_cancelled()
+        with pytest.raises(CodexError):
+            progress.cancel(pid, 'qa', old)
+    finally:
+        progress.finish(pid)
+
+
+def test_successful_save_and_cancellation_are_atomic():
+    from threading import Event
+    import pytest
+    from backend.app.integrations.codex.protocol import CodexError
+
+    pid = 93002
+    entered, attempted = Event(), Event()
+    progress.begin(pid, 'brief')
+    started = progress.read(pid, 'brief')['started_at']
+
+    def cancel():
+        entered.wait(2)
+        attempted.set()
+        with pytest.raises(CodexError, match='no longer running'):
+            progress.cancel(pid, 'brief', started)
+
+    def save():
+        entered.set()
+        assert attempted.wait(2)
+        return 'saved'
+
+    with ThreadPoolExecutor(max_workers=1) as threads:
+        future = threads.submit(cancel)
+        assert progress.complete(pid, save) == 'saved'
+        future.result(timeout=2)
+    assert progress.read(pid, 'brief')['state'] == 'completed'
+    assert progress.current_cancel_event() is None
+
+
+def test_save_failure_keeps_active_generation_for_error_finalization():
+    import pytest
+
+    pid = 93003
+    progress.begin(pid, 'scheme')
+    try:
+        def save():
+            raise RuntimeError('Commit failed')
+        with pytest.raises(RuntimeError, match='Commit failed'):
+            progress.complete(pid, save)
+        assert progress.read(pid, 'scheme')['state'] == 'running'
+    finally:
+        progress.finish(pid, error='Commit failed')
+    assert progress.read(pid, 'scheme')['state'] == 'failed'

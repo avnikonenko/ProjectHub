@@ -263,7 +263,7 @@ def refresh_scheme(engine, project_id, manager):
             else:
                 row.snapshot = snapshot
             save_revision(db, project_id, 'scheme', snapshot)
-            db.commit()
+            progress.complete(project_id, db.commit)
         progress.finish(project_id)
         return snapshot
     except Exception as exc:

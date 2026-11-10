@@ -1,16 +1,26 @@
-import { useEffect, useState } from 'react';
-import { api } from './api';
+import { useEffect, useRef, useState } from 'react';
+import { api, post } from './api';
 
-export type GenerationKind = 'brief' | 'qa' | 'scheme';
-const generationKinds: GenerationKind[] = ['brief', 'qa', 'scheme'];
+type SavedGenerationKind = 'brief' | 'qa' | 'scheme';
+export type GenerationKind = SavedGenerationKind | 'ask';
+const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
 
 export type GenerationProvenance = { account: string; model: string; effort: string };
 type Progress = {
-  state: 'idle' | 'running' | 'completed' | 'failed';
+  state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage: string;
   sessions: number;
   error?: string;
   started_at?: string;
+  cancel_requested?: boolean;
+  batch_total?: number;
+  batch_completed?: number;
+  batch_started_at?: string | null;
+  last_batch_seconds?: number | null;
+  batch_phase?: string;
+  cache_hits?: number;
+  budget_seconds?: number;
+  elapsed_seconds?: number;
 };
 
 export function useGenerationRecovery(base: string) {
@@ -20,9 +30,9 @@ export function useGenerationRecovery(base: string) {
   const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '' });
   useEffect(() => {
     const abort = new AbortController();
-    const timers: Partial<Record<GenerationKind, ReturnType<typeof setTimeout>>> = {};
+    const timers: Partial<Record<SavedGenerationKind, ReturnType<typeof setTimeout>>> = {};
     const checked = new Set<string>();
-    function poll(kind: GenerationKind, recovering = false) {
+    function poll(kind: SavedGenerationKind, recovering = false) {
       void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
         .then((status) => {
           if (abort.signal.aborted) return;
@@ -77,12 +87,20 @@ function describeProgress(stage: string, kind: GenerationKind) {
     case 'Validating Scheme': return 'Checking diagrams and source references';
     case 'Generating project brief': return 'Waiting for Codex to write the project summary';
     case 'Completed': return 'Finished. Loading the result…';
+    case 'Cancelling': return 'Cancelling… Waiting for Codex to stop.';
+    case 'Cancelled': return 'Cancelled. Saved results are unchanged.';
     case 'Failed': return 'Generation failed';
     case '':
-    case 'Starting generation': return kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : 'Preparing questions and answers';
+    case 'Starting generation': return kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'ask' ? 'Preparing an answer' : 'Preparing questions and answers';
     default: return stage;
   }
 }
+
+export function isGenerationCancelled(error: unknown) {
+  return error instanceof Error && /^(?:AI )?generation cancelled\./i.test(error.message);
+}
+
+export const cancelledGenerationMessage = 'Cancelled. Saved results are unchanged.';
 
 export function SavedGeneration({ generation }: { generation?: GenerationProvenance | null }) {
   const account = generation?.account?.trim() || 'Account not recorded';
@@ -94,23 +112,39 @@ export function SavedGeneration({ generation }: { generation?: GenerationProvena
   </small>;
 }
 
+function durationLabel(seconds: number) {
+  const whole = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+}
+
 export function GenerationStatus({
-  base, kind, label,
+  base, kind, label, onRunningChange,
 }: {
   base: string;
   kind: GenerationKind;
   label?: string;
+  onRunningChange?: (running: boolean) => void;
 }) {
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState('');
+  const [cancelError, setCancelError] = useState('');
+  const [cancellingFor, setCancellingFor] = useState<string | null>(null);
+  const cancelRequest = useRef<AbortController | null>(null);
   const [startedAt, setStartedAt] = useState(Date.now);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
+    onRunningChange?.(progress?.state === 'running');
+  }, [progress?.state, onRunningChange]);
+  useEffect(() => {
+    if (progress?.state !== 'running') return;
     const timer = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000))), 1000);
     return () => clearInterval(timer);
-  }, [startedAt]);
+  }, [startedAt, progress?.state]);
   useEffect(() => {
     const abort = new AbortController();
+    setProgress(null);
+    setCancelError('');
+    setCancellingFor(null);
     let timer: ReturnType<typeof setTimeout> | undefined;
     let sawRunning = false;
     async function poll() {
@@ -127,7 +161,8 @@ export function GenerationStatus({
             setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
           }
         }
-        if (sawRunning) setProgress(status);
+        if (sawRunning || kind === 'ask') setProgress(status);
+        if (status.cancel_requested || status.state === 'cancelled') setCancelError('');
         setError('');
       } catch (e) {
         if (abort.signal.aborted) return;
@@ -138,10 +173,45 @@ export function GenerationStatus({
     void poll();
     return () => {
       abort.abort();
+      cancelRequest.current?.abort();
+      cancelRequest.current = null;
       if (timer) clearTimeout(timer);
     };
   }, [base, kind]);
-  const elapsedLabel = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+  async function cancel() {
+    if (progress?.state !== 'running' || !progress.started_at || cancelRequest.current
+        || progress.cancel_requested || cancellingFor === progress.started_at) return;
+    const started = progress.started_at;
+    const controller = new AbortController();
+    cancelRequest.current = controller;
+    setCancellingFor(started);
+    setCancelError('');
+    try {
+      // Tab changes must not abort a cancellation already requested by the user.
+      // The controller guards local state updates; the server request continues.
+      const result = await post(`${base}/codex/generation/cancel`, { kind, started_at: started }) as Progress;
+      if (!controller.signal.aborted) setProgress(result);
+    } catch (e) {
+      if (!controller.signal.aborted) {
+        setCancellingFor(null);
+        setCancelError(`Could not confirm cancellation: ${(e as Error).message}`);
+      }
+    } finally {
+      if (cancelRequest.current === controller) cancelRequest.current = null;
+    }
+  }
+  const cancelling = progress?.state === 'running'
+    && (progress.cancel_requested || cancellingFor === progress.started_at);
+  const measuredElapsed = progress?.state === 'running' ? elapsed : progress?.elapsed_seconds ?? elapsed;
+  const elapsedLabel = durationLabel(measuredElapsed);
+  const batchStarted = Date.parse(progress?.batch_started_at ?? '');
+  const batchElapsed = Number.isFinite(batchStarted) ? Math.max(0, (Date.now() - batchStarted) / 1000) : null;
+  const batchPhase = progress?.batch_phase === 'history' ? 'Conversation summaries'
+    : progress?.batch_phase === 'reduction' ? 'Evidence reduction' : 'Batches';
+  const hasBatchTotal = Number.isFinite(progress?.batch_total) && (progress?.batch_total ?? 0) > 0;
+  const budget = progress?.budget_seconds;
+  const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;
+  if (kind === 'ask' && (!progress || progress.state === 'idle' || progress.state === 'completed')) return null;
   return (
     <div className="generation-progress">
       <p>
@@ -149,12 +219,35 @@ export function GenerationStatus({
       </p>
       <div role="status" aria-atomic="true">
         <p>{error ? 'Progress updates are temporarily unavailable. Still waiting for the result.'
+          : cancelling ? 'Cancelling… Waiting for Codex to stop.'
           : describeProgress(progress?.stage ?? '', kind)}</p>
         {!error && progress?.state === 'failed' && progress.error && <p>{progress.error}</p>}
+        {!error && hasBatchTotal && (
+          <p>{batchPhase}: {progress?.batch_completed ?? 0} of {progress?.batch_total} batches completed.
+            {' '}This count covers this phase only.</p>
+        )}
+        {!error && progress?.state === 'running' && batchElapsed !== null && (
+          <p>Current batch: {durationLabel(batchElapsed)}</p>
+        )}
+        {!error && typeof progress?.last_batch_seconds === 'number' && (
+          <p>Previous batch: {durationLabel(progress.last_batch_seconds)}
+            {typeof progress.cache_hits === 'number' ? ` · ${progress.cache_hits} cached batches reused` : ''}</p>
+        )}
+        {hasBudget && (
+          <p>Overall time budget: {durationLabel(budget)}
+            {progress?.state === 'running' ? ` · ${durationLabel(budget - measuredElapsed)} remaining` : ''}</p>
+        )}
         {!error && progress?.state === 'running' && progress.sessions > 0 && (
           <p>{progress.sessions.toLocaleString()} {progress.sessions === 1 ? 'conversation processed' : 'conversations processed'}</p>
         )}
       </div>
+      {progress?.state === 'running' && progress.started_at && (
+        <button type="button" className="secondary" disabled={!!cancelling}
+          onClick={() => void cancel()}>
+          {cancelling ? 'Cancelling…' : 'Cancel generation'}
+        </button>
+      )}
+      {cancelError && <p role="alert">{cancelError}</p>}
     </div>
   );
 }

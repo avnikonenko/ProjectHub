@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
-import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import {
   chatGPTTranscriptHref, historyTurnHref, readHistoryLink, transcriptMatch, type HistoryLink, type HistoryTurnLink,
@@ -896,17 +896,17 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
   const [result, setResult] = useState<{ answer: string; sources: BriefSource[] } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
   const request = useRef<AbortController | null>(null);
   useEffect(() => () => request.current?.abort(), []);
 
   async function ask() {
     const query = question.trim();
-    if (!query || request.current) return;
+    if (!query || request.current || remoteBusy) return;
     const controller = new AbortController();
     request.current = controller;
     setBusy(true);
     setError('');
-    setResult(null);
     try {
       const response = await api<{ answer: string; sources: BriefSource[] }>(`${base}/codex/ask`, {
         method: 'POST',
@@ -915,7 +915,7 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
       });
       if (!controller.signal.aborted) setResult(response);
     } catch (e) {
-      if (!controller.signal.aborted) setError((e as Error).message);
+      if (!controller.signal.aborted && !isGenerationCancelled(e)) setError((e as Error).message);
     } finally {
       if (request.current === controller) request.current = null;
       if (!controller.signal.aborted) setBusy(false);
@@ -925,7 +925,7 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
   const prefix = `${projectId}-ask`;
   const numbers = new Map(result?.sources.map((source, index) => [source.id, index + 1]));
   return (
-    <section className="card project-brief" aria-busy={busy}>
+    <section className="card project-brief" aria-busy={busy || remoteBusy}>
       <h2>Ask Project</h2>
       <p className="brief-note">
         ProjectHub searches saved conversations and notes locally. Your question and matching passages
@@ -934,13 +934,13 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
       <form onSubmit={(event) => { event.preventDefault(); void ask(); }}>
         <label>
           Project question
-          <textarea rows={3} required maxLength={2000} value={question} disabled={busy}
+          <textarea rows={3} required maxLength={2000} value={question} disabled={busy || remoteBusy}
             onChange={(event) => setQuestion(event.target.value)}
             placeholder="What have we already tried?" />
         </label>
-        <button disabled={busy || !question.trim()}>{busy ? 'Asking…' : 'Ask Project'}</button>
+        <button disabled={busy || remoteBusy || !question.trim()}>{busy || remoteBusy ? 'Asking…' : 'Ask Project'}</button>
       </form>
-      {busy && <p role="status">Looking for evidence and preparing an answer…</p>}
+      <GenerationStatus base={base} kind="ask" label="Project answer" onRunningChange={setRemoteBusy} />
       <ErrorBox error={error} />
       {result && (
         <section className="brief-section">
@@ -1181,6 +1181,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const generatingRef = useRef(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState('');
+  const [cancelled, setCancelled] = useState(false);
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState('');
   const path = `${base}/codex/qa`;
@@ -1215,6 +1216,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     setGenerating(true);
     onGenerating(true);
     setError('');
+    setCancelled(false);
     try {
       const result = await post(path, { confirmed: true, ...generationBody(generation), max_items: Number(maxQuestions) });
       setSaved(result);
@@ -1222,7 +1224,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       setLatestVersion(result.generated_at);
       setPage(0);
     } catch (e) {
-      setError((e as Error).message);
+      if (isGenerationCancelled(e)) setCancelled(true);
+      else setError((e as Error).message);
     } finally {
       generatingRef.current = false;
       setGenerating(false);
@@ -1294,6 +1297,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           }} />
         {revisionLoading && <p role="status">Loading saved Q&A version…</p>}
         <ErrorBox error={error} />
+        {cancelled && <p role="status">{cancelledGenerationMessage}</p>}
         {!!saved?.items.length && (
           <label>
             Search all saved Q&A
@@ -1997,6 +2001,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [cancelRequested, setCancelRequested] = useState<number | null>(null);
   const [waiting, setWaiting] = useState<{ id: number; sessionId: string; generation: Generation } | null>(null);
   const autoRetried = useRef<number | null>(null);
   const [responsePage, setResponsePage] = useState(0);
@@ -2008,6 +2013,11 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const newestResponseId = completed[0]?.id;
   useEffect(() => { setResponsePage(0); }, [sessionId, newestResponseId]);
   const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
+  const activeReview = (events?.deliveries ?? []).findLast((item: RecordData) =>
+    item.decision_id == null && item.status === 'sent' && events?.session?.status === 'running');
+  const queuedReview = latestRequest?.status === 'queued' ? latestRequest : null;
+  const cancelTargets: RecordData[] = [activeReview, queuedReview].filter(Boolean);
+
 
   useEffect(() => {
     const abort = new AbortController();
@@ -2038,8 +2048,30 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
       setBusy(false);
     }
   }
+  async function cancelReview(id: number) {
+    if (busy || cancelRequested === id) return;
+    if (waiting?.id === id) setWaiting(null);
+    autoRetried.current = id;
+    setCancelRequested(id);
+    await action(async () => {
+      try {
+        const updated: RecordData = await post(`${prefix}/deliveries/${id}/cancel`);
+        responseVersion.current += 1;
+        setEvents((current: any) => current && ({
+          ...current,
+          deliveries: current.deliveries.map((item: RecordData) => item.id === id ? updated : item),
+        }));
+        if (!updated.cancel_requested) setCancelRequested(null);
+      } catch (error) {
+        setCancelRequested(null);
+        throw error;
+      }
+    });
+  }
+
   function selectReviewSession(id: string) {
     setWaiting(null);
+    setCancelRequested(null);
     setEvents(null);
     setEventsError('');
     setSessionId(id);
@@ -2174,6 +2206,16 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             </form>
           </details>
         )}
+        {!!cancelTargets.length && <div className="actions left">
+          {cancelTargets.map((item) => (
+            <button type="button" className="secondary" key={item.id}
+              disabled={busy || cancelRequested === item.id}
+              onClick={() => void cancelReview(item.id)}>
+              {cancelRequested === item.id ? 'Cancelling…' : item.status === 'queued'
+                ? 'Cancel queued question' : 'Cancel current response'}
+            </button>
+          ))}
+        </div>}
         {waiting && <p role="status">Waiting for Codex to finish. Keep Reviews open to send this question automatically.</p>}
       </section>
       {sessionId && (

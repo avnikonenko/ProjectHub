@@ -285,9 +285,9 @@ def consolidate_items(manager, items, max_items):
 def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A brief or Q&A refresh is already running. Try again when it finishes.')
-    progress.begin(project_id, 'qa')
     transport_scope = ExitStack()
     try:
+        progress.begin(project_id, 'qa')
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
@@ -333,7 +333,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
             row.generation = generation_metadata(manager)
             db.flush()
             save_revision(db, project_id, 'qa', read_qa(db, project_id))
-            db.commit()
+            progress.complete(project_id, db.commit)
             progress.finish(project_id)
             return read_qa(db, project_id)
     except Exception as exc:

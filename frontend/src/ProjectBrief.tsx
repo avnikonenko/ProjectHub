@@ -2,7 +2,7 @@ import { BriefContent, briefSections, validationCopy, type Brief } from './Brief
 import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
-import { SavedGeneration } from './GenerationStatus';
+import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
@@ -31,6 +31,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [evidence, setEvidence] = useState<EvidenceFreshness | null>(null);
   const [evidenceError, setEvidenceError] = useState('');
@@ -76,6 +77,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
     setGenerating(true);
     onGenerating(true);
     setError('');
+    setNotice('');
     try {
       const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
       if (request.current === id) {
@@ -84,7 +86,10 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
         setLatestVersion(result.generated_at);
       }
     } catch (e) {
-      if (request.current === id) setError((e as Error).message);
+      if (request.current === id) {
+        if (isGenerationCancelled(e)) setNotice(cancelledGenerationMessage);
+        else setError((e as Error).message);
+      }
     } finally {
       generatingRef.current = false;
       if (request.current === id) {
@@ -111,6 +116,7 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
         </div>
         <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         <ErrorBox error={error} />
+        {notice && <p role="status">{notice}</p>}
         {revisionLoading && <p role="status">Loading saved version…</p>}
         {brief && revisionId === null && evidence?.stale === true && (
           <p role="status">Project changes detected. Refresh to include them.</p>

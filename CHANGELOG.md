@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Added
+
+- History batch totals, per-batch timing and cache reuse in AI generation progress; cooperative cancellation and a configurable overall generation budget preserve previous saved results and completed caches.
+
 ## [0.2.1] - 2026-11-10
 
 ### Added

@@ -548,3 +548,114 @@ def test_link_session_uses_codex_name_and_preserves_custom_name(env, metadata, t
     assert row['thread_id'] == 'external-named-thread'
     assert client.closed
     assert client.calls == [('thread/read', {'threadId': 'external-named-thread', 'includeTurns': False})]
+
+
+def test_generation_wait_wakes_quickly_for_cancellation():
+    from threading import Event, Thread
+    from time import monotonic
+    from backend.app.integrations.codex import progress
+
+    pid = 93004
+    progress.begin(pid, 'brief')
+    started = progress.read(pid, 'brief')['started_at']
+    waiting = Event()
+    done = Event()
+
+    def cancel():
+        assert waiting.wait(2)
+        progress.cancel(pid, 'brief', started)
+
+    thread = Thread(target=cancel)
+    thread.start()
+    before = monotonic()
+    def wait(seconds):
+        waiting.set()
+        return done.wait(seconds)
+    try:
+        with pytest.raises(progress.GenerationCancelled):
+            module.wait_for_generation(SimpleNamespace(wait=wait), 600)
+        assert monotonic() - before < 1
+    finally:
+        thread.join(timeout=2)
+        progress.finish(pid)
+
+
+def test_cancelled_generation_interrupts_only_its_ephemeral_turn_and_closes_client(env):
+    from backend.app.integrations.codex import progress
+
+    pid = 93005
+    clients = []
+    progress.begin(pid, 'qa')
+    started = progress.read(pid, 'qa')['started_at']
+
+    class CancelClient(FakeClient):
+        def __init__(self, **callbacks):
+            super().__init__(**callbacks)
+            clients.append(self)
+
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['thread']['ephemeral'] = True
+            if method == 'turn/start':
+                progress.cancel(pid, 'qa', started)
+            return result
+
+    env.manager.client_factory = CancelClient
+    try:
+        with env.manager.generation_session():
+            with pytest.raises(progress.GenerationCancelled):
+                env.manager.generate_brief('Synthetic request', {'type': 'object'})
+            assert clients[0].closed
+        calls = [(method, params) for method, params in clients[0].calls if method == 'turn/interrupt']
+        assert calls == [('turn/interrupt', {'threadId': 'thread-1', 'turnId': 'turn-1'})]
+        assert not any(method == 'thread/resume' for method, _ in clients[0].calls)
+    finally:
+        progress.finish(pid)
+    assert progress.read(pid, 'qa')['state'] == 'cancelled'
+
+
+def test_cancel_before_generation_creates_no_transport(env):
+    from backend.app.integrations.codex import progress
+
+    pid = 93006
+    progress.begin(pid, 'scheme')
+    progress.cancel(pid, 'scheme', progress.read(pid, 'scheme')['started_at'])
+    env.manager.client_factory = lambda **kwargs: pytest.fail('Cancelled generation opened a transport')
+    try:
+        with pytest.raises(progress.GenerationCancelled):
+            env.manager.generate_brief('Synthetic', {})
+    finally:
+        progress.finish(pid)
+
+
+def test_cancelled_delivery_cannot_be_sent_or_automatically_retried(env):
+    session_id, delivery_id = session_and_delivery(env)
+    with Session(env.engine) as db:
+        db.get(Delivery, delivery_id).status = 'cancelled'
+        db.commit()
+    client = env.manager.clients[session_id]
+    before = list(client.calls)
+    with pytest.raises(CodexError, match='cancelled'):
+        env.manager.send(delivery_id, reconnect=True)
+    assert client.calls == before
+    with Session(env.engine) as db:
+        assert db.get(Delivery, delivery_id).status == 'cancelled'
+
+
+@pytest.mark.parametrize('has_owned_turn', [False, True])
+def test_interrupt_never_uses_a_foreign_project_delivery(env, has_owned_turn):
+    sid, did = session_and_delivery(env)
+    with Session(env.engine) as db:
+        owned = db.get(Delivery, did)
+        owned.turn_id = 'owned-turn' if has_owned_turn else None
+        db.add(Delivery(project_id=2, session_id=sid, content='Foreign record', turn_id='foreign-turn'))
+        db.commit()
+        session = db.get(CodexSession, sid)
+        if has_owned_turn:
+            env.manager.interrupt(session)
+        else:
+            with pytest.raises(CodexError, match='No known turn'):
+                env.manager.interrupt(session)
+    interrupts = [params for method, params in env.manager.clients[sid].calls if method == 'turn/interrupt']
+    assert interrupts == ([{'threadId': session.thread_id, 'turnId': 'owned-turn'}] if has_owned_turn else [])

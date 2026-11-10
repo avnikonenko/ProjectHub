@@ -18,6 +18,8 @@ port = 8766
 
 [ai]
 generation_timeout = 600
+# Overall generation budget across all batches (seconds).
+generation_budget = 900
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 
@@ -33,12 +35,14 @@ class Settings:
     data_dir: Path
     generation_timeout: int
     codex_home: Path | None
+    generation_budget: int = 900
     history_auto_sync: bool = True
     history_sync_interval: int = 60
 
     def apply_environment(self):
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
+        os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(self.generation_budget)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_HISTORY_AUTO_SYNC'] = str(self.history_auto_sync).lower()
         os.environ['PROJECTHUB_HISTORY_SYNC_INTERVAL'] = str(self.history_sync_interval)
@@ -91,7 +95,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         data = {}
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
-    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'codex_home'},
+    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home'},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -109,6 +113,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
         generation_timeout=_integer(
             env.get('PROJECTHUB_GENERATION_TIMEOUT', ai.get('generation_timeout', 600)),
             'ai.generation_timeout', 30, 3600),
+        generation_budget=_integer(env.get('PROJECTHUB_GENERATION_BUDGET', ai.get('generation_budget', 900)),
+                                   'ai.generation_budget', 30, 7200),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),

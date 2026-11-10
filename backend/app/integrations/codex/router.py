@@ -1,5 +1,5 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
-from typing import Annotated
+from typing import Annotated, Literal
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -80,6 +80,11 @@ class KnowledgeGenerationInput(GenerationInput):
 
 class QAGenerationInput(GenerationInput):
     max_items: int = Field(default=DEFAULT_QA_MAX_ITEMS, ge=1, strict=True)
+
+
+class CancelGenerationInput(Input):
+    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask']
+    started_at: str = Field(min_length=1, max_length=100)
 
 
 class InstructionsInput(Input):
@@ -293,9 +298,18 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask'):
         raise HTTPException(422, 'Unknown generation kind.')
     return progress.read(project_id, kind)
+
+
+@router.post('/generation/cancel')
+def cancel_generation(project_id: int, body: CancelGenerationInput, db: DB):
+    project(db, project_id)
+    try:
+        return progress.cancel(project_id, body.kind, body.started_at)
+    except CodexError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get('/instructions')
@@ -485,14 +499,22 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     if not generation_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation is running. Try again when it finishes.')
     try:
+        progress.begin(project_id, 'ask')
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
-            return answer_project(selected, body.question, sources)
+            progress.update(project_id, stage='Generating project answer')
+            result = answer_project(selected, body.question, sources)
+            progress.complete(project_id, lambda: None)
+            return result
     except CodexError as exc:
+        progress.finish(project_id, error=str(exc))
         raise HTTPException(503, str(exc)) from exc
+    except Exception:
+        progress.finish(project_id, error='Project answer generation failed.')
+        raise
     finally:
         generation_lock.release()
 
@@ -697,6 +719,19 @@ def preview_delivery(project_id: int, body: DeliveryInput, db: DB):
     audit(db, project_id, row, 'decision_update_previewed')
     db.commit(); db.refresh(row)
     return record_dict(row)
+
+
+@router.post('/deliveries/{delivery_id}/cancel')
+def cancel_review_request(project_id: int, delivery_id: int, request: Request, db: DB):
+    from .review_cancel import cancel_review
+    project(db, project_id)
+    row = scoped(db, Delivery, project_id, delivery_id)
+    session = managed_session(db, project_id, row.session_id)
+    try:
+        manager = manager_for(request.app, project_id, account=session.codex_account)
+        return cancel_review(db, project_id, delivery_id, manager)
+    except CodexError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.post('/deliveries/{delivery_id}/send')

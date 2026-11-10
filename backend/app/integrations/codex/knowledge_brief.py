@@ -204,7 +204,7 @@ def _repository_signature(repository):
     return hashlib.sha256(json.dumps(repository, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 
-def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None, expected_repository=None):
+def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None, expected_repository=None, guarded=False):
     """Short writer transaction: recheck original inputs, then publish the complete pair."""
     if (candidate.get('project_id') != project_id
             or candidate.get('source_manifest', {}).get('fingerprint') != expected_manifest.get('fingerprint')
@@ -237,15 +237,18 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
         db.flush()
         save_revision(db, project_id, 'knowledge', candidate)
         save_revision(db, project_id, 'brief', read_brief(db, project_id))
-        db.commit()
+        if guarded:
+            progress.complete(project_id, db.commit)
+        else:
+            db.commit()
 
 
 def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation is running.')
-    progress.begin(project_id, 'knowledge')
     started = time.monotonic()
     try:
+        progress.begin(project_id, 'knowledge')
         with ExitStack() as scope:
             session = getattr(manager, 'generation_session', None)
             if callable(session):
@@ -278,7 +281,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             if publish:
                 publish_pair(engine, project_id, candidate, brief, bundle['manifest'],
                              repository_path=bundle['project'].get('repository_path'),
-                             expected_repository=repository if bundle['project'].get('repository_path') else None)
+                             expected_repository=repository if bundle['project'].get('repository_path') else None, guarded=True)
             else:
                 if bundle['project'].get('repository_path') and _repository_signature(
                         collect_repository_code(bundle['project']['repository_path'])) != _repository_signature(repository):
@@ -286,6 +289,8 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                 current = load_sources(engine, project_id, previous_manifest=bundle['manifest'])
                 if current['manifest']['fingerprint'] != bundle['manifest']['fingerprint']:
                     raise CodexError('Sources changed during preview generation; cached extraction is preserved.')
+            if not publish:
+                progress.complete(project_id, lambda: None)
             progress.finish(project_id)
             return {'published': publish, 'publication_id': publication_id, 'knowledge': candidate, 'brief': brief, 'baseline_brief': baseline_brief,
                     'diagnostics': {'duration_seconds': round(time.monotonic() - started, 3),

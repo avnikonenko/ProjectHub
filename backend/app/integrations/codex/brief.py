@@ -227,9 +227,9 @@ def deduplicate_brief_changes(sections, previous):
 def refresh_brief(engine, project_id, manager):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
-    progress.begin(project_id, 'brief')
     transport_scope = ExitStack()
     try:
+        progress.begin(project_id, 'brief')
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
@@ -408,7 +408,7 @@ def refresh_brief(engine, project_id, manager):
             )}
             db.flush()
             save_revision(db, project_id, 'brief', read_brief(db, project_id))
-            db.commit()
+            progress.complete(project_id, db.commit)
             progress.finish(project_id)
             return read_brief(db, project_id)
     except Exception as exc:

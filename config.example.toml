@@ -6,6 +6,8 @@ port = 8766
 
 [ai]
 generation_timeout = 600
+# Overall generation budget across all batches (seconds).
+generation_budget = 900
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 

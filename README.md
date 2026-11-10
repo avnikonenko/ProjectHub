@@ -72,3 +72,5 @@ projecthub check
 Single-user, local-only application. Do not expose it publicly without authentication and a security review. Installation is supported from a source checkout; standalone Python wheels are not currently a supported distribution.
 
 [MIT license](LICENSE).
+
+AI generation shows completed/total history batches, batch timing and cache reuse. Use **Cancel generation** to stop an active request while keeping the saved result and completed batch caches. The overall budget defaults to 900 seconds; configure `[ai] generation_budget` (30–7200 seconds) or `PROJECTHUB_GENERATION_BUDGET`. This is separate from the per-response `generation_timeout`. Cancellation and budget checks are cooperative; an in-flight protocol operation can take additional time to stop.

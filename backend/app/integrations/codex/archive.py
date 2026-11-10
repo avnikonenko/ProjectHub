@@ -2,13 +2,14 @@
 import hashlib
 import json
 import tempfile
+import time
 from pathlib import Path
 from contextlib import ExitStack
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from ...models import Project, CodexSession, ProjectHistoryBatch
+from ...models import Project, CodexSession, ProjectHistoryBatch, utcnow
 from .protocol import CodexError
 from . import progress
 from .shared_history import SharedPrefixIndex
@@ -117,6 +118,16 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     return result, False
 
 
+
+def _timed_summary(engine, project_id, manager, payload, sources, stage, limit=8):
+    started = time.monotonic()
+    progress.update(project_id, batch_started_at=utcnow(), batch_phase=stage)
+    result = _summarize(engine, project_id, manager, payload, sources, stage, limit)
+    progress.update(project_id, batch_started_at=None,
+                    last_batch_seconds=round(time.monotonic() - started, 3))
+    return result
+
+
 def _live_pages(manager, session, client, stage):
     cursor, cursors = None, set()
     while True:
@@ -185,14 +196,17 @@ def archive_history(engine, project_id, manager):
     indexed_sessions = []
     index_check_failures = 0
 
+    batch_total = 0
+
     def flush():
-        nonlocal batch, reused, generated
+        nonlocal batch, batch_total
         if batch:
-            summarized, cached = _summarize(engine, project_id, manager, {'sources': batch}, batch, 'history')
-            evidence.extend(summarized)
-            reused += cached
-            generated += not cached
-            progress.update(project_id, batches=generated + reused)
+            progress.check_cancelled()
+            # Stage only one bounded batch at a time, retaining exact existing
+            # boundaries/cache inputs while discovering the full history total.
+            path = Path(directory) / f'batch-{batch_total}.json'
+            path.write_text(json.dumps(batch, ensure_ascii=False), encoding='utf-8')
+            batch_total += 1
             batch = []
 
     sharing = SharedPrefixIndex()
@@ -244,6 +258,7 @@ def archive_history(engine, project_id, manager):
         for session in sessions:
             with (Path(directory) / f'{session.id}.jsonl').open(encoding='utf-8') as staged:
                 for line in staged:
+                    progress.check_cancelled()
                     turn = json.loads(line)
                     if turn['status'] == 'inProgress':
                         skipped += 1
@@ -270,6 +285,19 @@ def archive_history(engine, project_id, manager):
                         batch.append(source)
                         fragments += 1
             flush()
+        progress.update(project_id, batch_phase='history', batch_total=batch_total,
+                        batch_completed=0, cache_hits=0, batch_started_at=None)
+        for batch_index in range(batch_total):
+            progress.check_cancelled()
+            batch = json.loads((Path(directory) / f'batch-{batch_index}.json').read_text(encoding='utf-8'))
+            summarized, cached = _timed_summary(
+                engine, project_id, manager, {'sources': batch}, batch, 'history')
+            evidence.extend(summarized)
+            reused += cached
+            generated += not cached
+            progress.update(project_id, batches=generated + reused,
+                            batch_completed=batch_index + 1, cache_hits=reused)
+            batch = []
     titles = {session.id: session.title for session in sessions}
     for entry in evidence:
         for source in entry['sources']:
@@ -319,14 +347,22 @@ def summarize_evidence(engine, project_id, manager, evidence):
         if current:
             groups.append(current)
         reduced = []
+        pending = [group for group in groups
+                   if not (len(group) == 1 and size(group) <= BATCH_CHARS // 2)]
+        progress.update(project_id, batch_phase='reduction', batch_total=len(pending),
+                        batch_completed=0, cache_hits=0, batch_started_at=None)
+        completed = hits = 0
         for group in groups:
             if len(group) == 1 and size(group) <= BATCH_CHARS // 2:
                 reduced.extend(group)
                 continue
             sources = {source['id']: source for item in group for source in item['sources']}
-            summarized, _ = _summarize(engine, project_id, manager, payload_for(group), list(sources.values()),
+            summarized, cached = _timed_summary(engine, project_id, manager, payload_for(group), list(sources.values()),
                                        'reduction', limit=max(1, min(8, len(group) // 2)))
             reduced.extend(summarized)
+            completed += 1
+            hits += cached
+            progress.update(project_id, batch_completed=completed, cache_hits=hits)
         if len(reduced) >= len(evidence) and size(reduced) >= old_size:
             raise CodexError('History evidence could not be reduced within the input limit.')
         evidence = reduced

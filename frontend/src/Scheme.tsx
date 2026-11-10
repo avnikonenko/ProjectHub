@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, post } from './api';
 import { briefReferences, BriefSources, type BriefSource } from './BriefReferences';
-import { SavedGeneration, type GenerationProvenance } from './GenerationStatus';
+import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage, type GenerationProvenance } from './GenerationStatus';
 import { Empty, ErrorBox, label } from './ui';
 import { RevisionHistory } from './RevisionHistory';
 import { decodeSchemeText } from './SchemeText';
@@ -231,6 +231,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const [revisionId, setRevisionId] = useState<number | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const inFlight = useRef(false);
@@ -257,6 +258,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     inFlight.current = true;
     setGenerating(true);
     setError('');
+    setNotice('');
     onGenerating(true);
     try {
       const snapshot = await post(path, { confirmed: true, model: generation.model || null, effort: generation.effort || null }) as SchemeSnapshot;
@@ -276,7 +278,10 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         }
       }
     } catch (e) {
-      if (alive.current) setError((e as Error).message);
+      if (alive.current) {
+        if (isGenerationCancelled(e)) setNotice(cancelledGenerationMessage);
+        else setError((e as Error).message);
+      }
     } finally {
       inFlight.current = false;
       if (alive.current) { setGenerating(false); onGenerating(false); }
@@ -329,6 +334,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         setRevisionId(id);
       }} />
     <ErrorBox error={error} />
+    {notice && <p role="status">{notice}</p>}
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {(['Architecture', 'Workflow', 'Dependencies'] as const).map((name) =>
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
