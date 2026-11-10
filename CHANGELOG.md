@@ -4,6 +4,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.1] - 2026-11-10
+
 ### Added
 
 - Project Knowledge tab with local search and filters, expandable reasoning and original evidence, source availability, conflicts and supersession. Matching knowledge-generated overviews link to compact important choices; unpublished previews stay separate and opt-in. Dashboard is labelled Overview; Scheme remains separate.
