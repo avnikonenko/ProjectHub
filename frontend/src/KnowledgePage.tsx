@@ -6,11 +6,12 @@ import {
   type KnowledgeLink, type KnowledgeResponse, type KnowledgeSnapshot,
 } from './knowledge';
 import { Empty, ErrorBox } from './ui';
+import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import type { Brief } from './BriefContent';
 
 type Preview = { knowledge: KnowledgeSnapshot; brief: Brief };
 type LoadState = { base: string; key: string; loading: boolean; data: KnowledgeResponse | null; error: string };
-type PreviewState = { base: string; busy: boolean; result: Preview | null; error: string; started: number };
+type PreviewState = { base: string; busy: boolean; result: Preview | null; error: string; started: number; cancelled?: boolean };
 type Props = {
   base: string;
   generation: { model: string; effort: string };
@@ -29,8 +30,6 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const [load, setLoad] = useState<LoadState>({ base, key: loadKey, loading: true, data: null, error: '' });
   const [preview, setPreview] = useState<PreviewState>({ base, busy: false, result: null, error: '', started: 0 });
   const [dismissedLink, setDismissedLink] = useState('');
-  const [progress, setProgress] = useState({ base, stage: '', error: '' });
-  const [elapsed, setElapsed] = useState(0);
   const active = useRef<{ base: string; controller: AbortController } | null>(null);
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
   const currentPreview = preview.base === base ? preview : null;
@@ -63,30 +62,6 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     active.current = null;
   }, [base]);
 
-  useEffect(() => {
-    if (!busy) return;
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const started = currentPreview?.started ?? Date.now();
-    setProgress({ base, stage: 'Preparing source-linked knowledge', error: '' });
-    setElapsed(0);
-    const clock = setInterval(() => setElapsed(Math.floor((Date.now() - started) / 1000)), 1000);
-    async function poll() {
-      try {
-        const status = await api<{ state: string; stage?: string }>(
-          `${base}/codex/generation/status?kind=knowledge`, { signal: controller.signal });
-        if (!controller.signal.aborted) setProgress((previous) => ({ base,
-          stage: status.state === 'running' ? status.stage || previous.stage : previous.stage, error: '' }));
-      } catch (error) {
-        if (!controller.signal.aborted) setProgress((previous) => ({ ...previous,
-          error: `Progress unavailable: ${(error as Error).message}` }));
-      }
-      if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
-    }
-    void poll();
-    return () => { controller.abort(); clearInterval(clock); if (timer) clearTimeout(timer); };
-  }, [base, busy, currentPreview?.started]);
-
   async function generatePreview() {
     if (active.current) return;
     const controller = new AbortController();
@@ -105,7 +80,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       }
     } catch (error) {
       if (!controller.signal.aborted && active.current === run) setPreview({ base, busy: false,
-        result: null, error: (error as Error).message, started: 0 });
+        result: null, error: isGenerationCancelled(error) ? '' : (error as Error).message,
+        started: 0, cancelled: isGenerationCancelled(error) });
     } finally {
       if (active.current === run) active.current = null;
     }
@@ -159,10 +135,9 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         <summary>Try an unpublished knowledge preview</summary>
         <p>This opt-in action sends selected project conversations and evidence to OpenAI through Codex. It does not replace published knowledge or the saved overview.</p>
         <button disabled={busy} onClick={generatePreview}>{busy ? 'Generating preview…' : 'Generate unpublished preview'}</button>
-        {busy && <div className="generation-progress" role="status" aria-live="polite">
-          <p>{progress.base === base ? progress.stage : 'Preparing source-linked knowledge'} · Elapsed {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}</p>
-          {progress.base === base && progress.error && <small>{progress.error}</small>}
-        </div>}
+        {busy && <GenerationStatus key={`${base}:${currentPreview?.started}`} base={base}
+          kind="knowledge" label="Knowledge preview" />}
+        {currentPreview?.cancelled && <p role="status">{cancelledGenerationMessage}</p>}
         <ErrorBox error={currentPreview?.error ?? ''} />
         {currentPreview?.result && <section aria-label="Unpublished knowledge preview">
           <h3>Unpublished preview</h3>

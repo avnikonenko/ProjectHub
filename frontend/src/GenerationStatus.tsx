@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme';
-export type GenerationKind = SavedGenerationKind | 'ask';
+export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge';
 const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
 
 export type GenerationProvenance = { account: string; model: string; effort: string };
@@ -91,7 +91,7 @@ function describeProgress(stage: string, kind: GenerationKind) {
     case 'Cancelled': return 'Cancelled. Saved results are unchanged.';
     case 'Failed': return 'Generation failed';
     case '':
-    case 'Starting generation': return kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'ask' ? 'Preparing an answer' : 'Preparing questions and answers';
+    case 'Starting generation': return kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'ask' ? 'Preparing an answer' : kind === 'knowledge' ? 'Preparing source-linked knowledge' : 'Preparing questions and answers';
     default: return stage;
   }
 }
@@ -207,7 +207,8 @@ export function GenerationStatus({
   const batchStarted = Date.parse(progress?.batch_started_at ?? '');
   const batchElapsed = Number.isFinite(batchStarted) ? Math.max(0, (Date.now() - batchStarted) / 1000) : null;
   const batchPhase = progress?.batch_phase === 'history' ? 'Conversation summaries'
-    : progress?.batch_phase === 'reduction' ? 'Evidence reduction' : 'Batches';
+    : progress?.batch_phase === 'reduction' ? 'Evidence reduction'
+      : progress?.batch_phase === 'knowledge extraction' ? 'Knowledge extraction' : 'Batches';
   const hasBatchTotal = Number.isFinite(progress?.batch_total) && (progress?.batch_total ?? 0) > 0;
   const budget = progress?.budget_seconds;
   const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;

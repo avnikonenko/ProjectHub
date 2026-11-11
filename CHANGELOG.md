@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Fixed
+
+- Knowledge previews now expose shared batch progress, time budgets and cancellation controls. Cancellation responses no longer share mutable timing data with internal progress state.
+
 ### Changed
 
 - Stop legacy evidence reduction as soon as the full remaining input fits, avoiding unnecessary model calls and preserving untouched evidence. Record stage durations in generation status/server logs and expose knowledge-extraction batch timing and cache reuse.

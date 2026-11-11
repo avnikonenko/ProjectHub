@@ -82,7 +82,7 @@ def cancel(project_id, kind, started_at):
         _events[project_id].set()
         _record_stage(project_id, snapshot)
         snapshot.update(stage='Cancelling', cancel_requested=True)
-        return dict(snapshot)
+        return {**snapshot, 'stage_seconds': dict(snapshot.get('stage_seconds', {}))}
 
 
 def _record_stage(project_id, snapshot):

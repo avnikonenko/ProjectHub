@@ -22,3 +22,18 @@ def test_stage_timing_and_terminal_duration(monkeypatch):
     assert terminal['stage_seconds']['Generating knowledge-based brief'] == 3
     clock[0] = 100
     assert progress.read(98421, 'knowledge')['elapsed_seconds'] == 10
+
+
+def test_cancel_response_cannot_mutate_stored_timing():
+    progress.begin(98422, 'knowledge')
+    try:
+        progress.update(98422, stage='Extracting source-linked knowledge')
+        started = progress.read(98422, 'knowledge')['started_at']
+        response = progress.cancel(98422, 'knowledge', started)
+        response['stage_seconds'].clear()
+        response['stage_seconds']['injected'] = 999
+        current = progress.read(98422, 'knowledge')
+        assert current['stage_seconds']
+        assert 'injected' not in current['stage_seconds']
+    finally:
+        progress.finish(98422)
