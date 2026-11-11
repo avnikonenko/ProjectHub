@@ -1458,3 +1458,34 @@ a:focus-visible {
   border-top: 1px solid var(--border, #dce4de);
   margin-block: 1.5rem;
 }
+
+/* GFM tables retain Markdown alignment and scroll within the reading area. */
+.markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin-block: 1rem;
+  border-spacing: 0;
+}
+.markdown th {
+  background: var(--surface-subtle, #eef2ef);
+  color: inherit;
+  font-weight: 650;
+}
+.markdown :is(th, td) {
+  padding: 0.65em 0.85em;
+  border-color: var(--border, #dfe6e0);
+  line-height: 1.5;
+}
+.markdown tbody tr:nth-child(even) {
+  background: var(--surface-subtle, #f6f8f6);
+}
+.markdown .contains-task-list {
+  list-style: none;
+  padding-inline-start: 0;
+}
+.markdown .task-list-item input {
+  display: inline-block;
+  width: auto;
+  margin: 0 0.5em 0 0;
+}

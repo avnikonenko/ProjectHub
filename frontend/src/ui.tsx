@@ -1,5 +1,6 @@
 import { Children, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export type Field = {
   name: string;
@@ -53,7 +54,7 @@ export function DeleteButton({ label, onClick, disabled }: {
 export function Markdown({ children }: { children?: string }) {
   return children ? (
     <div className="markdown">
-      <ReactMarkdown
+      <ReactMarkdown remarkPlugins={[remarkGfm]}
         components={{
           img: ({ alt }) => <span>[Image: {alt || 'image'}]</span>,
         }}

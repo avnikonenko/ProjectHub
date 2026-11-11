@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- GitHub-flavoured Markdown rendering for tables, task lists, and strikethrough, with palette-aware table styling.
+
 - History batch totals, per-batch timing and cache reuse in AI generation progress; cooperative cancellation and a configurable overall generation budget preserve previous saved results and completed caches.
 
 ## [0.2.1] - 2026-11-10
