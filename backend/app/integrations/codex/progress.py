@@ -3,6 +3,7 @@ from contextvars import ContextVar
 import threading
 import time
 import os
+import logging
 
 from ...models import utcnow
 from .protocol import CodexError
@@ -12,6 +13,8 @@ _active = {}
 _snapshots = {}
 _events = {}
 _clocks = {}
+_stage_clocks = {}
+log = logging.getLogger('uvicorn.error')
 _current = ContextVar('projecthub_active_generation', default=None)
 
 
@@ -48,6 +51,7 @@ def begin(project_id, kind):
             raise RuntimeError('Generation progress is already active for this project.')
         event = threading.Event()
         _clocks[project_id] = (time.monotonic(), budget)
+        _stage_clocks[project_id] = time.monotonic()
         _active[project_id] = kind
         _events[project_id] = event
         _snapshots[project_id, kind] = {**_idle(), 'state': 'running', 'stage': 'Starting generation', 'started_at': utcnow(), 'budget_seconds': budget}
@@ -76,8 +80,20 @@ def cancel(project_id, kind, started_at):
                 or snapshot.get('started_at') != started_at or snapshot['state'] != 'running'):
             raise CodexError('This AI generation is no longer running. Refresh its status.')
         _events[project_id].set()
+        _record_stage(project_id, snapshot)
         snapshot.update(stage='Cancelling', cancel_requested=True)
         return dict(snapshot)
+
+
+def _record_stage(project_id, snapshot):
+    now = time.monotonic()
+    elapsed = max(0, now - _stage_clocks.get(project_id, now))
+    name = snapshot.get('stage', '')
+    stages = snapshot.setdefault('stage_seconds', {})
+    stages[name] = round(stages.get(name, 0) + elapsed, 3)
+    _stage_clocks[project_id] = now
+    log.info('AI stage project=%s kind=%s stage=%s seconds=%.3f',
+             project_id, _active.get(project_id), name, elapsed)
 
 
 def update(project_id, **fields):
@@ -88,6 +104,8 @@ def update(project_id, **fields):
                 raise GenerationCancelled()
             _check_budget(project_id)
             snapshot = _snapshots[project_id, kind]
+            if 'stage' in fields and fields['stage'] != snapshot['stage']:
+                _record_stage(project_id, snapshot)
             for key in ('stage', 'sessions', 'turns', 'batches', 'batch_total', 'batch_completed',
                         'batch_started_at', 'last_batch_seconds', 'batch_phase', 'cache_hits'):
                 if key in fields:
@@ -95,6 +113,12 @@ def update(project_id, **fields):
 
 
 def _finish_locked(project_id, error=None):
+    kind = _active.get(project_id)
+    if kind is not None:
+        snapshot = _snapshots[project_id, kind]
+        _record_stage(project_id, snapshot)
+        snapshot['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[project_id][0]), 3)
+        _stage_clocks.pop(project_id, None)
     kind = _active.pop(project_id, None)
     event = _events.pop(project_id, None)
     if kind is not None:
@@ -132,4 +156,9 @@ def complete(project_id, save):
 
 def read(project_id, kind):
     with _lock:
-        return dict(_snapshots.get((project_id, kind), _idle()))
+        result = dict(_snapshots.get((project_id, kind), _idle()))
+        if 'stage_seconds' in result:
+            result['stage_seconds'] = dict(result['stage_seconds'])
+        if _active.get(project_id) == kind:
+            result['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[project_id][0]), 3)
+        return result

@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Changed
+
+- Stop legacy evidence reduction as soon as the full remaining input fits, avoiding unnecessary model calls and preserving untouched evidence. Record stage durations in generation status/server logs and expose knowledge-extraction batch timing and cache reuse.
+
 ### Added
 
 - GitHub-flavoured Markdown rendering for tables, task lists, and strikethrough, with palette-aware table styling.

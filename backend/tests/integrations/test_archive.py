@@ -343,7 +343,9 @@ def test_small_long_note_edit_reuses_unchanged_chunks_and_refreshes_citations(en
     evidence[-1]['text'] += '!'
     evidence[-1]['sources'][0]['text'] += '!'
     result = summarize_evidence(engine, 1, manager, evidence)
-    assert len(manager.inputs) - first_calls == 1
+    # The changed tail now fits verbatim after reusing earlier reductions.
+    assert len(manager.inputs) == first_calls
+    assert result[-1] == evidence[-1]
     assert all(source['updated_at'] == 'new' for item in result for source in item['sources'])
 
 
@@ -547,3 +549,48 @@ def test_reduction_reuses_text_when_only_fork_links_change(env):
     result, cached = _summarize(engine, 1, manager, payload, [source], 'reduction')
     assert cached and len(manager.inputs) == calls
     assert result[0]['sources'][0]['shared_sessions'] == source['shared_sessions']
+
+
+@pytest.mark.parametrize('count', [25, 32])
+def test_reduction_preserves_tail_once_full_input_fits(env, count):
+    from backend.app.integrations.codex import progress
+
+    engine, manager = env
+    evidence = [{'text': f'Independent fact {i}', 'sources': [
+        {'id': f'note:{i}', 'label': f'Note {i}', 'text': f'Exact original {i}'}]}
+        for i in range(count)]
+    progress.begin(1, 'brief')
+    try:
+        reduced = summarize_evidence(engine, 1, manager, evidence)
+        assert len(manager.inputs) == 1
+        assert reduced[8:] == evidence[16:]
+        assert all(actual is original for actual, original in zip(reduced[8:], evidence[16:]))
+        assert len(reduced) <= 24
+        status = progress.read(1, 'brief')
+        assert status['batch_total'] == status['batch_completed'] == 1
+        assert status['cache_hits'] == 0
+        replay = summarize_evidence(engine, 1, manager, evidence)
+        assert replay == reduced
+        assert len(manager.inputs) == 1
+        status = progress.read(1, 'brief')
+        assert status['batch_total'] == status['batch_completed'] == status['cache_hits'] == 1
+        assert replay[8:] == evidence[16:]
+    finally:
+        progress.finish(1)
+
+
+def test_reduction_cannot_skip_tail_that_still_exceeds_character_limit(env):
+    engine, manager = env
+    evidence = [{'text': f'Fact {i}: ' + 'x' * 1450, 'sources': [
+        {'id': f'note:{i}', 'label': f'Note {i}', 'text': f'Exact original {i}'}]}
+        for i in range(32)]
+    reduced = summarize_evidence(engine, 1, manager, evidence)
+    assert len(manager.inputs) == 2
+    payload = {'evidence': [{'text': item['text'],
+                            'source_ids': [s['id'] for s in item['sources']],
+                            'source_labels': [s['label'] for s in item['sources']]}
+                           for item in reduced]}
+    assert len(reduced) <= 24
+    assert len(json.dumps(payload, ensure_ascii=False)) <= BATCH_CHARS
+    assert all(s in evidence[int(s['id'].split(':')[1])]['sources']
+               for item in reduced for s in item['sources'])

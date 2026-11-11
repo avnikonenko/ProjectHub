@@ -74,3 +74,5 @@ Single-user, local-only application. Do not expose it publicly without authentic
 [MIT license](LICENSE).
 
 AI generation shows completed/total history batches, batch timing and cache reuse. Use **Cancel generation** to stop an active request while keeping the saved result and completed batch caches. The overall budget defaults to 900 seconds; configure `[ai] generation_budget` (30–7200 seconds) or `PROJECTHUB_GENERATION_BUDGET`. This is separate from the per-response `generation_timeout`. Cancellation and budget checks are cooperative; an in-flight protocol operation can take additional time to stop.
+
+Generation status includes measured elapsed time and completed-stage durations (`elapsed_seconds`, `stage_seconds`). Server logs record stage duration without prompts or source excerpts. Knowledge extraction reports its own batch timing/cache reuse. Legacy evidence reduction stops as soon as the full remaining evidence fits its original size limits; untouched evidence and original citations are retained. These changes reduce avoidable calls but do not guarantee fast uncached generation or resolve intermittent Codex stalls.

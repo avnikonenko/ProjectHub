@@ -352,7 +352,17 @@ def summarize_evidence(engine, project_id, manager, evidence):
         progress.update(project_id, batch_phase='reduction', batch_total=len(pending),
                         batch_completed=0, cache_hits=0, batch_started_at=None)
         completed = hits = 0
-        for group in groups:
+        for index, group in enumerate(groups):
+            # Earlier reductions can already make the entire remaining input
+            # fit. Preserve the untouched tail rather than compressing it again.
+            remaining = [item for tail in groups[index:] for item in tail]
+            candidate = [*reduced, *remaining]
+            if len(candidate) <= 24 and size(candidate) <= BATCH_CHARS:
+                reduced = candidate
+                progress.update(project_id, batch_total=completed,
+                                batch_completed=completed, cache_hits=hits,
+                                batch_started_at=None)
+                break
             if len(group) == 1 and size(group) <= BATCH_CHARS // 2:
                 reduced.extend(group)
                 continue

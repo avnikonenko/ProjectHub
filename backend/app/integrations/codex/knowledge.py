@@ -2,6 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
+import time
 import re
 
 from sqlalchemy.orm import Session
@@ -376,12 +377,21 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     windows = build_windows(bundle)
     extracted, hits, requests = [], 0, 0
     all_sources = {source['id']: source for source in bundle['sources']}
-    for window in windows:
+    from . import progress
+    from ...models import utcnow
+    progress.update(project_id, batch_phase='knowledge extraction', batch_total=len(windows),
+                    batch_completed=0, cache_hits=0, batch_started_at=None)
+    for index, window in enumerate(windows):
+        progress.check_cancelled()
+        batch_start = time.monotonic()
+        progress.update(project_id, batch_started_at=utcnow())
         all_sources.update((source['id'], source) for source in window['sources'])
         values, cached = extract_batch(engine, project_id, manager, window, configuration)
         extracted.extend(values)
         hits += int(cached)
         requests += int(not cached)
+        progress.update(project_id, batch_completed=index + 1, cache_hits=hits, batch_started_at=None,
+                        last_batch_seconds=round(time.monotonic() - batch_start, 3))
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version)
     # Store only the exact quotations used, while keeping full originals in their

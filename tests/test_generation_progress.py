@@ -25,7 +25,10 @@ def test_progress_is_scoped_and_reads_are_snapshots():
     assert progress.read(project_id + 1, 'brief')['state'] == 'idle'
     progress.finish(project_id, error='Transport failed')
     progress.update(project_id, turns=999)
-    assert progress.read(project_id, 'brief') == {
+    terminal = progress.read(project_id, 'brief')
+    assert terminal.pop('elapsed_seconds') >= 0
+    assert terminal.pop('stage_seconds')
+    assert terminal == {
         'state': 'failed', 'stage': 'Failed', 'error': 'Transport failed', 'turns': 5, 'sessions': 2, 'batches': 0,
         'started_at': started_at, 'budget_seconds': 900}
     progress.begin(project_id, 'qa')
