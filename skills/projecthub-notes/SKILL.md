@@ -51,14 +51,14 @@ Report the returned TODO ID and project. This adds a checklist item; it does not
 ## Add an AI note
 
 1. Run `projecthub projects` to find the requested project. Match its exact name, then use the returned numeric ID. If the intended project is ambiguous, ask which project before submitting.
-2. Write a concise Markdown note with a useful title. Preserve uncertainty: distinguish user choices, observed results, and AI suggestions. Save only the requested material, excluding credentials.
-3. Submit once:
+2. Write the note as a UTF-8 Markdown file ending in `.md`, with a useful title. Use ordinary Markdown paragraphs, lists, headings, and code blocks where appropriate; do not wrap the whole note in a Markdown code fence. Preserve uncertainty: distinguish user choices, observed results, and AI suggestions. Save only the requested material, excluding credentials.
+3. Submit once. ProjectHub stores the Markdown source and renders it in Notes; the input file is only used for submission:
 
    ```bash
    projecthub note add --project-id 1 --title 'Reason for the chosen approach' --file /tmp/project-note.md
    ```
 
-   Replace the ID, title, and path with the actual values. `--content 'text'` and `--stdin` are alternatives. Prefer a file or stdin for generated content; do not interpolate arbitrary note text into shell code. Notes receive the **AI note** kind. The command records `CODEX_THREAD_ID` when present; use `--session` only for the actual originating session ID.
+   Replace the ID, title, and path with the actual values. For AI-authored notes, use `--file` with the `.md` file so Markdown formatting and newlines are preserved. The CLI still supports `--content` and `--stdin`; do not interpolate arbitrary note text into shell code. Notes receive the **AI note** kind. The command records `CODEX_THREAD_ID` when present; use `--session` only for the actual originating session ID.
 
 4. Report the project and returned note ID. If submission fails or times out, do not claim success or blindly resubmit. The write may already have succeeded; check Notes in ProjectHub before retrying.
 

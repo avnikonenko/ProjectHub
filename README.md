@@ -39,7 +39,7 @@ Startup loads only project names and IDs. Open a project to load its workspace. 
 - **Overview / AI Q&A:** generate a compact overview and explanations of choices from conversations. Project status also reads bounded code and documentation excerpts during explicit refreshes and reconstructs architecture from those excerpts and sessions when no diagram is saved.
 - **Knowledge:** search extracted choices, requirements, reasons, and original evidence. Matching knowledge-generated overviews link to important choices. Browsing is read-only; an explicit unpublished preview remains opt-in. See [Project Knowledge](docs/PROJECT_KNOWLEDGE_UI.md).
 - Link a Git repository in **Edit overview** to see its current branch, recent commits, and top-level working-tree status on the dashboard. This is a local read-only snapshot; it does not run tests or inspect changes inside submodules. Expand **Open GitHub issues** to see up to three issues from a public GitHub repository. You can also set its URL in **Git remote**.
-- **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes. Use the trash icon to remove a note from ProjectHub.
+- **TODO / Notes:** capture follow-ups, bulk-add TODOs, and keep longer notes. Notes render Markdown headings, lists, emphasis, code blocks, and links. Use the trash icon to remove a note from ProjectHub.
 - **Reviews:** use Ask Project for cited answers from saved conversations and notes, or ask a Codex session and save useful responses as proposed notes.
 
 Edit [AI_RECOMMENDATIONS.md](AI_RECOMMENDATIONS.md) to adjust shared AI writing instructions.
