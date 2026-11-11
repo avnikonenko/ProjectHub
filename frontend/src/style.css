@@ -1413,3 +1413,48 @@ a:focus-visible {
   flex: 1;
   max-height: none;
 }
+
+/* Notes read as documents; card controls do not flatten Markdown headings. */
+.note-card > .section-title {
+  padding-bottom: 0.8rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--border, #dce4de);
+}
+.note-card > .section-title h2 {
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+.note-card > .markdown {
+  max-width: 76ch;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+.note-card .markdown :is(h1, h2, h3, h4, h5, h6) {
+  margin: 1.4em 0 0.55em;
+  line-height: 1.35;
+  letter-spacing: normal;
+  text-transform: none;
+  color: inherit;
+}
+.note-card .markdown > :first-child { margin-top: 0; }
+.note-card .markdown h1 { font-size: 1.4rem; }
+.note-card .markdown h2 { font-size: 1.2rem; }
+.note-card .markdown h3 { font-size: 1.05rem; }
+.note-card .markdown :is(h4, h5, h6) { font-size: 1rem; }
+.note-card .markdown :is(p, ul, ol, blockquote, pre) { margin-bottom: 1rem; }
+.note-card .markdown :is(ul, ol) { padding-inline-start: 1.5em; }
+.note-card .markdown li + li { margin-top: 0.35em; }
+.note-card .markdown li > p { margin-bottom: 0.4em; }
+.note-card .markdown blockquote {
+  margin-inline: 0;
+  padding-inline-start: 1rem;
+  border-inline-start: 3px solid var(--border, #dce4de);
+}
+.note-card .markdown pre { max-width: 100%; border-radius: 5px; }
+.note-card .markdown pre code { font-size: 0.9rem; }
+.note-card .markdown table { display: block; max-width: 100%; overflow-x: auto; }
+.note-card .markdown hr {
+  border: 0;
+  border-top: 1px solid var(--border, #dce4de);
+  margin-block: 1.5rem;
+}

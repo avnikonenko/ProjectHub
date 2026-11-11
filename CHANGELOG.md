@@ -16,6 +16,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Notes use document-style Markdown typography with distinct headings, readable spacing, and contained code blocks.
+
 - The ProjectHub agent skill submits UTF-8 Markdown note files and avoids wrapping whole notes in code fences, so saved notes render as formatted text.
 
 - Version opt-in knowledge extraction instructions to preserve independently proposed options, concrete scientific checks and clear user selections. Source-pinned recall regressions supplement the existing agreement and cache tests; live quality evaluation remains separate from software checks.
