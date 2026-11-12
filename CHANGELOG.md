@@ -6,6 +6,14 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Reject metal-coordinating-water false positives in the configurable crystallographic-water recall screen. Stop excessive streamed JSON-formatting whitespace with an explicit generation failure while preserving saved results; never accept a partial response.
+
+### Changed
+
+- Compact extraction payload JSON without changing its parsed content or cache identity; measured payload reduction is 0.6%, not an established latency improvement.
+
+### Fixed
+
 - Compact knowledge-brief synthesis JSON and omit only empty optional presentation fields so the evaluated 167-record snapshot fits the existing input limit without discarding knowledge or quotations.
 
 ### Changed
