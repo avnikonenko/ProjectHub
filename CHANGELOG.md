@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Fixed
+
+- Compact knowledge-brief synthesis JSON and omit only empty optional presentation fields so the evaluated 167-record snapshot fits the existing input limit without discarding knowledge or quotations.
+
 ### Changed
 
 - Compact knowledge extraction quotes and explanations while preserving acceptance context and independent claims. Balance coverage across primary messages; raise the bounded per-batch item ceiling to 24 after isolated tests showed important later constraints were omitted at 16. Version instructions/schema to invalidate old extraction caches safely.

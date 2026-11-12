@@ -364,3 +364,71 @@ def test_shared_quotes_do_not_exhaust_synthesis_budget(prepared):
             return super().generate_brief(prompt, schema)
     pilot._synthesize(CompactSynthesis(), candidate, prepared.bundle, {'sources': []})
     assert candidate == before
+
+
+def test_synthesis_omits_only_empty_optional_fields_without_mutating_knowledge(prepared):
+    candidate = _candidate()
+    first = candidate['items'][0]
+    first.update(alternatives='', limitations=None, conflicts_with=[], relationships=[])
+    second = {**deepcopy(first), 'id': 'second-item',
+              'rationale': 'Preserve the original technical reason.',
+              'alternatives': 'A remote database was considered.',
+              'limitations': 'Only local execution has been discussed.',
+              'conflicts_with': ['item-one'],
+              'relationships': [{'kind': 'conflict', 'target': 'item-one', 'status': 'interpretation'}]}
+    candidate['items'].append(second)
+    before = deepcopy(candidate)
+
+    class PreservedSynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('Return only the required structured JSON.\n', 1)[1])
+            views = [source['item'] for source in payload['sources'] if 'item' in source]
+            for field in ('alternatives', 'limitations', 'conflicts_with', 'relationships'):
+                assert field not in views[0]
+            for original, view in zip(candidate['items'], views):
+                for field in ('statement', 'category', 'design_status', 'scope', 'source_state', 'rationale'):
+                    assert view[field] == original[field]
+                assert view['agreement_basis'] == original.get('agreement_basis', 'none')
+                for evidence, retained in zip(original['evidence'], view['evidence']):
+                    assert retained['source_id'] == evidence['source_id']
+                    assert retained['role'] == evidence['role']
+                    assert payload['evidence_excerpts'][retained['excerpt_id']] == evidence['excerpt']
+            for field in ('alternatives', 'limitations', 'conflicts_with', 'relationships'):
+                assert views[1][field] == second[field]
+            return super().generate_brief(prompt, schema)
+
+    pilot._synthesize(PreservedSynthesis(), candidate, prepared.bundle, {'sources': []})
+    assert candidate == before
+
+
+def test_synthesis_input_guard_uses_compact_json_and_still_enforces_limit(prepared, monkeypatch):
+    candidate = _candidate()
+    candidate['items'][0]['limitations'] = 'Préserve the recorded caveat.'
+    before = deepcopy(candidate)
+
+    class CapturedSynthesis(FakeSynthesis):
+        calls = 0
+        serialized = ''
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            self.serialized = prompt.split('Return only the required structured JSON.\n', 1)[1]
+            payload = json.loads(self.serialized)
+            assert self.serialized == json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+            assert 'Préserve' in self.serialized
+            return super().generate_brief(prompt, schema)
+
+    manager = CapturedSynthesis()
+    pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []})
+    compact_size = len(manager.serialized)
+    spaced_size = len(json.dumps(json.loads(manager.serialized), ensure_ascii=False))
+    assert compact_size < spaced_size
+    # The exact compact boundary fits even though ordinary JSON would not.
+    monkeypatch.setattr(pilot, 'MAX_SYNTHESIS_CHARS', compact_size)
+    pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []})
+    assert manager.calls == 2
+    monkeypatch.setattr(pilot, 'MAX_SYNTHESIS_CHARS', compact_size - 1)
+    with pytest.raises(CodexError, match='synthesis input limit'):
+        pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []})
+    assert manager.calls == 2
+    assert candidate == before

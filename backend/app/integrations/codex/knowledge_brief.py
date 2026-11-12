@@ -40,6 +40,10 @@ def _brief_inputs(candidate, bundle, repository):
         view = {key: item.get(key) for key in (
             'statement', 'category', 'design_status', 'scope', 'rationale',
             'alternatives', 'limitations', 'source_state', 'conflicts_with', 'relationships')}
+        # Absent optional details carry no evidence; keep every nonempty value.
+        optional = {'rationale', 'alternatives', 'limitations', 'conflicts_with', 'relationships'}
+        view = {key: value for key, value in view.items()
+                if key not in optional or value not in (None, '', [], {})}
         view['agreement_basis'] = item.get('agreement_basis', 'none')
         view['evidence'] = [{key: evidence.get(key) for key in
                              ('source_id', 'role', 'excerpt', 'conversation_id', 'order')}
@@ -104,7 +108,7 @@ def _synthesize(manager, candidate, bundle, repository):
                 quotes[identifier] = quote
             evidence['excerpt_id'] = quote_ids[quote]
     payload['evidence_excerpts'] = quotes
-    serialized = json.dumps(payload, ensure_ascii=False)
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if len(serialized) > MAX_SYNTHESIS_CHARS:
         raise CodexError('Knowledge brief exceeds the synthesis input limit; the published pair is preserved.')
     prompt = (
