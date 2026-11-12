@@ -286,7 +286,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
             return validate_extraction(cached.evidence[0].get('raw'), window, project_id, version), True
     schema = deepcopy(OUTPUT_SCHEMA)
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
-    raw = manager.generate_brief(PROMPT + json.dumps(payload, ensure_ascii=False), schema)
+    raw = manager.generate_brief(PROMPT + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
     items = validate_extraction(raw, window, project_id, version)
     with Session(engine) as db:
         db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[{'raw': raw}]))
