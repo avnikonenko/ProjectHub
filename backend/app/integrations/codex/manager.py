@@ -27,6 +27,51 @@ from . import progress
 log = logging.getLogger(__name__)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
 
+
+class _JsonFormattingGuard:
+    """Bound formatting runs outside JSON strings without retaining content.
+
+    This is only a failure heuristic. It never parses or accepts a partial result;
+    official item and turn completion remain mandatory.
+    """
+    MAX_FORMATTING_WHITESPACE = 4096
+    _WHITESPACE = ' \t\r\n'
+
+    def __init__(self):
+        self.disabled = self.started = self.quoted = self.escaped = False
+        self.formatting_run = 0
+
+    def feed(self, delta):
+        if self.disabled or not isinstance(delta, str):
+            return False
+        for char in delta:
+            if not self.started:
+                if char in self._WHITESPACE:
+                    continue
+                if char != '{':
+                    self.disabled = True
+                    return False
+                self.started = True
+                continue
+            if self.quoted:
+                if self.escaped:
+                    self.escaped = False
+                elif char == '\\':
+                    self.escaped = True
+                elif char == '"':
+                    self.quoted = False
+                continue
+            if char == '"':
+                self.quoted = True
+                self.formatting_run = 0
+            elif char in self._WHITESPACE:
+                self.formatting_run += 1
+                if self.formatting_run > self.MAX_FORMATTING_WHITESPACE:
+                    return True
+            else:
+                self.formatting_run = 0
+        return False
+
 def generation_timeout():
     try:
         seconds = int(os.environ.get('PROJECTHUB_GENERATION_TIMEOUT', '600'))
@@ -455,6 +500,7 @@ class CodexManager:
         done = threading.Event()
         state = {}
         messages, completed = {}, {}
+        formatting_guards, formatting_errors = {}, {}
         event_lock = threading.Lock()
         thread_id = turn_id = None
 
@@ -465,7 +511,26 @@ class CodexManager:
                 return
             if thread_id is None or params.get('threadId') != thread_id:
                 return
-            if method == 'item/completed':
+            if method == 'item/agentMessage/delta':
+                message_turn, item_id = params.get('turnId'), params.get('itemId')
+                if not isinstance(message_turn, str) or not isinstance(item_id, str) or not item_id:
+                    return
+                with event_lock:
+                    if turn_id is not None and message_turn != turn_id:
+                        return
+                    key = (message_turn, item_id)
+                    if key not in formatting_guards:
+                        if len(formatting_guards) >= 16:
+                            return
+                        formatting_guards[key] = _JsonFormattingGuard()
+                    if formatting_guards[key].feed(params.get('delta')):
+                        error = ('Codex emitted excessive whitespace while formatting a JSON response. '
+                                 'Generation stopped; the previous saved result is unchanged.')
+                        formatting_errors[message_turn] = error
+                        if message_turn == turn_id:
+                            state['error'] = error
+                            done.set()
+            elif method == 'item/completed':
                 item = params.get('item', {})
                 if item.get('type') == 'agentMessage' and item.get('phase') in (None, 'final_answer'):
                     message_turn = params.get('turnId')
@@ -550,6 +615,9 @@ class CodexManager:
                         raise CodexError('Codex did not return a brief turn ID.')
                     if started_turn.get('status') in ('failed', 'interrupted'):
                         completed.setdefault(turn_id, started_turn)
+                    if turn_id in formatting_errors:
+                        state['error'] = formatting_errors[turn_id]
+                        done.set()
                     if turn_id in completed:
                         done.set()
                 wait_for_generation(done, timeout)

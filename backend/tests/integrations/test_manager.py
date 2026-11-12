@@ -659,3 +659,120 @@ def test_interrupt_never_uses_a_foreign_project_delivery(env, has_owned_turn):
                 env.manager.interrupt(session)
     interrupts = [params for method, params in env.manager.clients[sid].calls if method == 'turn/interrupt']
     assert interrupts == ([{'threadId': session.thread_id, 'turnId': 'owned-turn'}] if has_owned_turn else [])
+
+
+@pytest.mark.parametrize('case', ['runaway', 'incomplete-runaway', 'late-runaway', 'boundary', 'incomplete-string', 'other-thread', 'other-turn', 'separate-items'])
+def test_generation_whitespace_guard_respects_strings_and_item_identity(env, case, monkeypatch):
+    clients = []
+    answer = '{"ok":true}'
+
+    class FormattingClient(FakeClient):
+        def __init__(self, **callbacks):
+            super().__init__(**callbacks)
+            clients.append(self)
+
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['thread']['ephemeral'] = True
+            if method == 'turn/start':
+                scope = {'threadId': 'thread-1', 'turnId': 'turn-1', 'itemId': 'item-1'}
+
+                def delta(text, **changes):
+                    self.on_event('item/agentMessage/delta', {**scope, **changes, 'delta': text})
+
+                if case == 'late-runaway':
+                    return result
+                if case in ('runaway', 'incomplete-runaway'):
+                    delta('{' if case == 'incomplete-runaway' else answer)
+                    delta('\n' * 4096)
+                    delta(' ')
+                    # No official completion is fabricated for the failure.
+                    return result
+                if case == 'boundary':
+                    delta(answer)
+                    delta('\n' * 4096)
+                elif case == 'incomplete-string':
+                    delta('{"text":"')
+                    delta(' ' * 6000)
+                    delta('still inside a JSON string"}')
+                elif case == 'other-thread':
+                    delta(answer + '\n' * 5000, threadId='foreign-thread')
+                elif case == 'other-turn':
+                    delta(answer + '\n' * 5000, turnId='foreign-turn')
+                elif case == 'separate-items':
+                    delta('{"text":"')
+                    delta('"}' + '\n' * 5000, itemId='different-item')
+                self.on_event('item/completed', {**scope, 'item': {
+                    'type': 'agentMessage', 'phase': 'final_answer', 'text': answer,
+                }})
+                self.on_event('turn/completed', {'threadId': scope['threadId'],
+                    'turn': {'id': scope['turnId'], 'status': 'completed'}})
+            return result
+
+    env.manager.client_factory = FormattingClient
+    if case == 'late-runaway':
+        def wait(done, timeout):
+            assert not done.is_set()
+            clients[0].on_event('item/agentMessage/delta', {'threadId': 'thread-1',
+                'turnId': 'turn-1', 'itemId': 'item-1', 'delta': answer + '\n' * 4097})
+            assert done.is_set()
+        monkeypatch.setattr(module, 'wait_for_generation', wait)
+    if case in ('runaway', 'incomplete-runaway', 'late-runaway'):
+        with pytest.raises(CodexError, match='excessive whitespace.*previous saved result'):
+            env.manager.generate_brief('Synthetic source', {'type': 'object'})
+    else:
+        assert env.manager.generate_brief('Synthetic source', {'type': 'object'}) == answer
+    assert clients[0].closed
+
+
+def test_generation_streamed_json_never_substitutes_for_official_completion(env, monkeypatch):
+    class IncompleteClient(FakeClient):
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['thread']['ephemeral'] = True
+            if method == 'turn/start':
+                self.on_event('item/agentMessage/delta', {'threadId': 'thread-1',
+                    'turnId': 'turn-1', 'itemId': 'item-1', 'delta': '{"ok":true}  '})
+            return result
+
+    def wait(done, timeout):
+        assert not done.is_set()
+        raise CodexError('Still waiting for official completion')
+
+    monkeypatch.setattr(module, 'wait_for_generation', wait)
+    env.manager.client_factory = IncompleteClient
+    with pytest.raises(CodexError, match='official completion'):
+        env.manager.generate_brief('Synthetic source', {'type': 'object'})
+
+
+def test_json_formatting_guard_has_no_content_size_limit_or_buffer():
+    guard = module._JsonFormattingGuard()
+    large_json = '{"text":"' + 'x' * 70_000 + '"}'
+    assert not guard.feed(large_json)
+    assert not guard.disabled
+    assert all(isinstance(value, (bool, int)) for value in vars(guard).values())
+    assert guard.feed('\n' * 4097)
+
+
+def test_json_formatting_guard_tracks_escaped_quotes_across_chunks():
+    guard = module._JsonFormattingGuard()
+    assert not guard.feed('{"text":"escaped quote: ' + chr(92))
+    assert not guard.feed('"' + ' ' * 6000)
+    assert guard.quoted and not guard.escaped
+    assert not guard.feed('and escaped backslash: ' + chr(92))
+    assert not guard.feed(chr(92) + ' ' * 6000)
+    assert guard.quoted and not guard.escaped
+    assert not guard.feed('end", "next":')
+    assert guard.feed('\t' * 4097)
+
+
+def test_json_formatting_guard_ignores_leading_whitespace_and_nonobject_streams():
+    guard = module._JsonFormattingGuard()
+    assert not guard.feed(' ' * 6000)
+    assert not guard.feed('{"ok":true}')
+    assert guard.feed(' ' * 4097)
+    other = module._JsonFormattingGuard()
+    assert not other.feed('[{}]' + ' ' * 6000)
+    assert other.disabled
