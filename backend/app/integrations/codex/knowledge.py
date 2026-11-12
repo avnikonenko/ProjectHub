@@ -11,12 +11,12 @@ from ...models import ProjectHistoryBatch, ProjectKnowledge
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
-SCHEMA_VERSION = 1
-PROMPT_VERSION = 7
+SCHEMA_VERSION = 2
+PROMPT_VERSION = 10
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
-MAX_ITEMS = 16
+MAX_ITEMS = 24
 
 
 def _string(limit, minimum=0):
@@ -63,6 +63,32 @@ def _maximum_json_chars(schema):
 MAX_RESPONSE_CHARS = _maximum_json_chars(OUTPUT_SCHEMA)
 
 PROMPT = (
+    'Return compact JSON only, with no preamble, commentary or narrated reasoning. '
+    'Compress wording, not project knowledge: retain independently meaningful claims and their distinct '
+    'statuses and scopes. Each statement should usually be one short complete sentence. '
+    'For evidence, copy the shortest exact passage sufficient to support that specific claim, usually '
+    'one sentence or clause rather than an entire paragraph or message. Keep longer quotations only '
+    'when necessary for meaning or unambiguous acceptance. Usually one or two decisive references '
+    'are sufficient; include additional distinct references when required to support the claim. '
+    'Proposal-acceptance items must still quote BOTH the identifiable proposal and user acceptance, '
+    'including the numbered question or option when needed to identify what was accepted. '
+    'Never truncate a quotation or insert an ellipsis; select an exact contiguous passage instead. '
+    'Do not repeat the same evidence reference within an item. Reuse evidence across different items '
+    'only where it supports each independent claim. '
+    'Rationale, alternatives and limitations should briefly preserve distinct source-supported '
+    'information; do not repeat the statement or quotation there. Use an empty string for an absent '
+    'text field, not a generic explanation. Empty relationship fields stay empty unless sources establish '
+    'a revision or conflict. Field lengths and item/evidence counts are ceilings, not targets. '
+    'Plan coverage across ALL primary messages before expanding any one message. Do not spend the '
+    'item budget on a detailed recap of early architecture while omitting concrete restrictions, '
+    'backend limitations, optionality or safety policies in later primary messages. Allocate capacity '
+    'for distinct late-message approaches and caveats. Preserve a coherent approach together with '
+    'its source-supported constraints in rationale or limitations; do not spend separate slots '
+    'on a tool and each caveat of that same tool choice. Keep independently selectable approaches '
+    'and different statuses separate. Prefer material choices and operational constraints over '
+    'assistant restatements of earlier choices that add no new information. '
+    'These compactness preferences must not omit a material decision, reason, constraint, uncertainty '
+    'or acceptance context. '
     'Extract material project choices, requirements, proposals, open questions, and findings '
     'from original messages, preserving reasons, alternatives, limitations and scope. Do not extract every '
     'sentence or create TODOs. Keep each item atomic: do not combine a firm commitment with tentative '
@@ -102,6 +128,10 @@ PROMPT = (
     'it is a terse fragment rather than the words "I agree". Do not downgrade a clear selection '
     'merely because it is brief. Its role as the user\'s own choice must be clear in context; naming '
     'a discussed option, asking a question, or pasting another author\'s proposal does not suffice. '
+    'An exploratory user question asking what could be reused or which approach is suitable remains '
+    'an OPEN_QUESTION/UNRESOLVED unless separate evidence establishes a selection. Do not turn that '
+    'question into an AGREED requirement to investigate or implement its topic. A direct instruction '
+    'to conduct a specified investigation is different from an exploratory question. '
     'A short reply '
     'such as yes, agree, or do needs its unambiguous proposal and user acceptance, both quoted exactly; '
     'use proposal_acceptance. Numbered agreement must match the identifiable numbered questions or '

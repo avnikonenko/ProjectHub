@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Changed
+
+- Compact knowledge extraction quotes and explanations while preserving acceptance context and independent claims. Balance coverage across primary messages; raise the bounded per-batch item ceiling to 24 after isolated tests showed important later constraints were omitted at 16. Version instructions/schema to invalidate old extraction caches safely.
+
 ### Fixed
 
 - Align the knowledge-extraction response guard with schema bounds instead of rejecting valid large responses as invalid JSON. Deduplicate exact evidence references after validating every reference; distinct quotations and source identities remain preserved.
