@@ -40,6 +40,28 @@ OUTPUT_SCHEMA = _object({'items': {'type': 'array', 'maxItems': MAX_ITEMS, 'item
     })},
 })}})
 
+
+def _maximum_json_chars(schema):
+    """Conservative compact-JSON bound, including escaped astral characters.
+
+    Raw output still has a finite input guard; field/array validation remains
+    authoritative. Whitespace beyond this bound is not needed for this schema.
+    """
+    if 'enum' in schema:
+        return max(len(json.dumps(value, ensure_ascii=True)) for value in schema['enum'])
+    kind = schema['type']
+    if kind == 'string':
+        return 2 + 12 * schema['maxLength']
+    if kind == 'array':
+        return 2 + schema['maxItems'] * (_maximum_json_chars(schema['items']) + 1)
+    if kind == 'object':
+        return 2 + sum(len(json.dumps(key)) + 2 + _maximum_json_chars(value)
+                       for key, value in schema['properties'].items())
+    raise ValueError('Unsupported bounded extraction schema type')
+
+
+MAX_RESPONSE_CHARS = _maximum_json_chars(OUTPUT_SCHEMA)
+
 PROMPT = (
     'Extract material project choices, requirements, proposals, open questions, and findings '
     'from original messages, preserving reasons, alternatives, limitations and scope. Do not extract every '
@@ -140,9 +162,11 @@ def read_knowledge(db, project_id):
 
 
 def validate_extraction(raw, window, project_id, extraction_version):
+    if not isinstance(raw, str):
+        raise CodexError('Knowledge extraction returned invalid JSON.')
+    if len(raw) > MAX_RESPONSE_CHARS:
+        raise CodexError('Knowledge extraction response exceeded its size limit.')
     try:
-        if not isinstance(raw, str) or len(raw) > 120_000:
-            raise ValueError('Invalid response size')
         result = json.loads(raw)
     except (ValueError, RecursionError) as exc:
         raise CodexError('Knowledge extraction returned invalid JSON.') from exc
@@ -169,6 +193,7 @@ def validate_extraction(raw, window, project_id, extraction_version):
         if not isinstance(refs, list) or not 1 <= len(refs) <= 6:
             raise CodexError('Knowledge extraction requires original evidence.')
         evidence = []
+        seen_refs = set()
         for ref in refs:
             if not isinstance(ref, dict) or set(ref) != {'source_id', 'role', 'excerpt'}:
                 raise CodexError('Knowledge extraction returned invalid evidence.')
@@ -181,6 +206,10 @@ def validate_extraction(raw, window, project_id, extraction_version):
                     or not isinstance(quote, str) or not quote.strip() or len(quote) > 1600
                     or quote not in source['text']):
                 raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+            identity = (identifier, ref['role'], quote)
+            if identity in seen_refs:
+                continue
+            seen_refs.add(identity)
             evidence.append({**ref, **{key: source.get(key) for key in (
                 'revision', 'conversation_id', 'order', 'source_key', 'timestamp', 'message_revision')},
                 'label': source.get('label', identifier)})

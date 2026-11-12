@@ -6,6 +6,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Align the knowledge-extraction response guard with schema bounds instead of rejecting valid large responses as invalid JSON. Deduplicate exact evidence references after validating every reference; distinct quotations and source identities remain preserved.
+
+### Fixed
+
 - Knowledge previews now expose shared batch progress, time budgets and cancellation controls. Cancellation responses no longer share mutable timing data with internal progress state.
 
 ### Changed
