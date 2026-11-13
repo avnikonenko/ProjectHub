@@ -48,9 +48,12 @@ projecthub todo add --project-id 1 --title 'Verify the backup can be restored'
 
 Report the returned TODO ID and project. This adds a checklist item; it does not execute that work. If the result is uncertain, check `projecthub todo list --project-id 1 --all` before retrying.
 
-## Cross out a TODO
+## Mark a TODO finished or cross it out
 
-When the user asks to cross out or finish an item, resolve the project and inspect
+Treat “mark finished [item] in project X”, “mark [item] finished in project X”,
+“complete [item] in project X”, and “cross out [item] in project X” as TODO
+completion requests. Resolve X by exact project name with `projecthub projects`
+(or use its explicit project ID), then inspect
 `projecthub todo list --project-id 1 --all` to identify its exact TODO ID. Ask if
 multiple items match; do not guess or complete related items.
 
