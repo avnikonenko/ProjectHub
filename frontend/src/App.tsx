@@ -1350,13 +1350,13 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
                 disabled={revisionId !== null || loading || generating || recoveryBusy || revisionLoading || deleting}
                 onClick={() => void removeQuestion(item.question)} />
             </div>
-            <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
+            <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
             {!!item.variants?.length && (
               <details>
                 <summary>Other recorded answers ({item.variants.length})</summary>
                 <p>These sources differ. Review them to determine which answer applies.</p>
                 {item.variants.map((answer, index) => (
-                  <p key={index}>{answer.answer}{briefReferences(answer.source_ids, numbers, base.split('/')[2] + '-qa')}</p>
+                  <p key={index}>{answer.answer}{briefReferences(answer.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
                 ))}
               </details>
             )}

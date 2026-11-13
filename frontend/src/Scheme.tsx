@@ -201,20 +201,20 @@ function CodeStructure({ entries, highlighted }: { entries: TreeEntry[]; highlig
   </details>;
 }
 
-function GraphEvidence({ graph, numbers, prefix }: { graph: SchemeGraph; numbers: Map<string, number>; prefix: string }) {
+function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph; numbers: Map<string, number>; prefix: string; sources: BriefSource[] }) {
   const nodes = new Map(graph.nodes.map((node) => [node.id, node.label]));
   return <details className="scheme-components">
     <summary>Components and relationships ({graph.nodes.length})</summary>
     <ul>{graph.nodes.map((node) => <li key={node.id}>
       <strong>{node.label}</strong> <span className="badge">{label(node.status)}</span>
-      <p>{node.description}{briefReferences(node.source_ids, numbers, prefix)}</p>
+      <p>{node.description}{briefReferences(node.source_ids, numbers, prefix, sources)}</p>
       {!!node.paths.length && <small>{node.paths.join(' · ')}</small>}
     </li>)}</ul>
     {!!graph.edges.length && <details><summary>Relationships ({graph.edges.length})</summary><ul>
       {graph.edges.map((edge, index) => <li key={index}>
         {nodes.get(edge.source)} → {nodes.get(edge.target)}: {edge.label || label(edge.type)}
         {' '}<span className="badge">{label(edge.status)}</span>
-        {briefReferences(edge.source_ids, numbers, prefix)}
+        {briefReferences(edge.source_ids, numbers, prefix, sources)}
       </li>)}
     </ul></details>}
   </details>;
@@ -302,8 +302,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <tbody>{items.map((dependency) => <tr key={dependency.id}>
         <td>{dependency.name}</td><td><code>{dependency.constraint || 'Not specified'}</code></td>
         <td>{label(dependency.category)}</td><td>{dependency.purpose || 'Purpose not explained yet.'}
-          {briefReferences(dependency.purpose_source_ids ?? [], numbers, prefix)}
-          <small>Declaration{briefReferences(dependency.source_ids, numbers, prefix)} · {[...new Set(dependency.source_ids.map((id) => sources.find((source) => source.id === id)?.provenance).filter(Boolean))].map((value) => label(value!)).join(' · ')}</small>
+          {briefReferences(dependency.purpose_source_ids ?? [], numbers, prefix, sources)}
+          <small>Declaration{briefReferences(dependency.source_ids, numbers, prefix, sources)} · {[...new Set(dependency.source_ids.map((id) => sources.find((source) => source.id === id)?.provenance).filter(Boolean))].map((value) => label(value!)).join(' · ')}</small>
         </td>
       </tr>)}</tbody>
     </table></div>;
@@ -347,7 +347,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <p>{graph.explanation}</p>
       {!!graph.nodes.length && <>
         <small>Observed means supported by inspected evidence; it does not establish that the functionality works.</small>
-        <GraphEvidence graph={graph} numbers={numbers} prefix={prefix} />
+        <GraphEvidence graph={graph} numbers={numbers} prefix={prefix} sources={sources} />
       </>}
     </>}
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}

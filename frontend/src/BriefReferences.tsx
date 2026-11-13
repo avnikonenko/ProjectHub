@@ -1,3 +1,4 @@
+import { useId, useState } from 'react';
 import { chatGPTTranscriptHref, historyTurnHref } from './historyLinks';
 
 export type BriefSource = {
@@ -20,27 +21,41 @@ export function citedSources(sources: BriefSource[], ids: string[]) {
   });
 }
 
-export function briefReferences(ids: string[], numbers: Map<string, number>, prefix: string) {
-  return [...new Set(ids)].map((id) => {
-    const number = numbers.get(id);
-    if (!number) return null;
+function CitationGroup({ ids, numbers, prefix, sources = [] }: {
+  ids: string[]; numbers: Map<string, number>; prefix: string; sources?: BriefSource[];
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const controlId = useId();
+  const refs = [...new Set(ids)].filter((id) => numbers.has(id));
+  if (!refs.length) return null;
+  const byId = new Map(sources.map((source) => [source.id, source]));
+  function link(id: string, detailed = false) {
+    const number = numbers.get(id)!;
     const target = `${prefix}-source-${number}`;
-    return (
-      <a
-        className="brief-reference"
-        key={id}
-        href={`#${target}`}
-        aria-label={`Read source ${number}`}
-        onClick={() => {
-          for (let element = document.getElementById(target); element; element = element.parentElement) {
-            if (element instanceof HTMLDetailsElement) element.open = true;
-          }
-        }}
-      >
-        [{number}]
-      </a>
-    );
-  });
+    return <a className={detailed ? 'citation-source' : 'brief-reference'} key={id}
+      href={`#${target}`} aria-label={detailed ? undefined : `Read source ${number}`}
+      onClick={() => {
+        for (let element = document.getElementById(target); element; element = element.parentElement) {
+          if (element instanceof HTMLDetailsElement) element.open = true;
+        }
+      }}>
+      {detailed ? `[${number}] ${byId.get(id)?.label || 'Source ' + number}` : `[${number}]`}
+    </a>;
+  }
+  if (refs.length === 1) return link(refs[0]);
+  return <span className="citation-group">
+    <button type="button" className="quiet brief-reference" aria-expanded={expanded}
+      aria-controls={controlId} onClick={() => setExpanded((value) => !value)}>
+      {refs.length} sources {expanded ? '▴' : '▾'}
+    </button>
+    {expanded && <span id={controlId} className="citation-list">
+      {refs.map((id) => link(id, true))}
+    </span>}
+  </span>;
+}
+
+export function briefReferences(ids: string[], numbers: Map<string, number>, prefix: string, sources?: BriefSource[]) {
+  return <CitationGroup ids={ids} numbers={numbers} prefix={prefix} sources={sources} />;
 }
 
 export function BriefSources({ sources, prefix, openInNewTab = false }: {

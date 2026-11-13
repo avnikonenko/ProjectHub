@@ -1508,3 +1508,19 @@ a:focus-visible {
 .note-preview { max-height: 13rem; overflow: hidden; }
 .note-body .markdown > :last-child { margin-bottom: 0; }
 .note-reading > button { margin-top: 0.65rem; }
+
+.citation-group { margin-inline-start: 0.25em; }
+.citation-group > button { padding-block: 0; font: inherit; font-weight: 550; }
+.citation-list {
+  display: block;
+  margin-block: 0.4rem 0.7rem;
+  padding: 0.6rem 0.8rem;
+  border-inline-start: 2px solid var(--border, #dce4de);
+  font-size: 0.9em;
+}
+.citation-source {
+  display: block;
+  padding-block: 0.2rem;
+  overflow-wrap: anywhere;
+  color: var(--accent, #245c4b);
+}

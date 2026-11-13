@@ -23,6 +23,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Multiple citations collapse into an expandable source count; each supporting source remains linked to its full evidence.
+
 - Sources leads with compact ChatGPT/session add controls and the session list; connection diagnostics are expandable below, with all existing actions retained.
 
 - Run opt-in knowledge extraction with four independent Codex workers by default (configurable from 1–4), preserving batch context, cache identity and reconciliation order. Keep completed caches on failure and stop sibling requests cooperatively; `PROJECTHUB_EXTRACTION_WORKERS=1` restores serial extraction. Record ordered batch timings in generation diagnostics.
