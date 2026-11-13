@@ -261,3 +261,32 @@ def test_session_link_rejects_malformed_session_list(monkeypatch, capsys):
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['session', 'link', '--project-id', '1']) == 1
     assert 'Unexpected session list response' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('action', ['complete', 'done'])
+@pytest.mark.parametrize('status', ['backlog', 'completed'])
+def test_complete_todo_scoped_and_idempotent(monkeypatch, capsys, action, status):
+    calls = []
+    def request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if path == '/projects':
+            return [{'id': 2, 'name': 'Example'}]
+        item = {'id': 7, 'project_id': 2, 'status': status}
+        if method == 'GET':
+            assert path == '/projects/2/tasks'
+            return [item]
+        assert method == 'PATCH' and path == '/projects/2/tasks/7'
+        assert payload == {'status': 'completed'}
+        return {**item, 'status': 'completed'}
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['todo', action, '--project-id', '2', '--todo-id', '7']) == 0
+    assert json.loads(capsys.readouterr().out)['already_completed'] == (status == 'completed')
+    assert len(calls) == (2 if status == 'completed' else 3)
+
+
+def test_complete_missing_todo_never_writes(monkeypatch):
+    def request(method, path, payload=None):
+        assert method == 'GET'
+        return [{'id': 2, 'name': 'Example'}] if path == '/projects' else []
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['todo', 'complete', '--project-id', '2', '--todo-id', '99']) == 1

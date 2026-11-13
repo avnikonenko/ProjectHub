@@ -76,6 +76,9 @@ def parser():
     todo_add = todo_actions.add_parser('add')
     project_arguments(todo_add)
     todo_add.add_argument('--title', required=True)
+    done = todo_actions.add_parser('complete', aliases=['done'], help='Mark an existing TODO completed')
+    project_arguments(done)
+    done.add_argument('--todo-id', type=int, required=True)
     sessions = commands.add_parser('session', help='List or link Codex sessions for reading')
     session_actions = sessions.add_subparsers(dest='action', required=True)
     project_arguments(session_actions.add_parser('list'))
@@ -92,6 +95,26 @@ def main(argv=None):
         if args.command == 'projects':
             projects = request('GET', '/projects')
             print(json.dumps([{'id': p['id'], 'name': p['name']} for p in projects], ensure_ascii=False))
+            return 0
+        if args.command == 'todo' and args.action in ('complete', 'done'):
+            if args.todo_id <= 0:
+                raise ValueError('TODO ID must be a positive integer.')
+            project = resolve_project(request('GET', '/projects'), args)
+            path = f"/projects/{project['id']}/tasks"
+            rows = request('GET', path)
+            if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                raise ValueError('Unexpected TODO list response.')
+            item = next((row for row in rows if row.get('id') == args.todo_id), None)
+            if item is None:
+                raise ValueError('TODO not found in this project. Run projecthub todo list --all.')
+            already_completed = item.get('status') == 'completed'
+            result = item if already_completed else request('PATCH', f"{path}/{args.todo_id}", {'status': 'completed'})
+            if (not isinstance(result, dict) or result.get('id') != args.todo_id
+                    or result.get('project_id') != project['id'] or result.get('status') != 'completed'):
+                raise ValueError('Could not confirm completion. Check projecthub todo list --all before retrying.')
+            print(json.dumps({'todo_id': args.todo_id, 'project_id': project['id'],
+                              'project': project['name'], 'status': 'completed',
+                              'already_completed': already_completed}, ensure_ascii=False))
             return 0
         if args.command == 'session':
             session = None

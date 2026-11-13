@@ -1,6 +1,6 @@
 ---
 name: projecthub-notes
-description: Read project notes and TODOs, add AI-authored notes, add TODO checklist items, or link Codex sessions to a project in local ProjectHub when the user asks to use a specific project's information or save follow-ups there.
+description: Read project notes and TODOs, add AI-authored notes, add or complete TODO checklist items, or link Codex sessions to a project in local ProjectHub when the user asks to use a specific project's information or save follow-ups there.
 ---
 
 # ProjectHub notes
@@ -47,6 +47,21 @@ projecthub todo add --project-id 1 --title 'Verify the backup can be restored'
 ```
 
 Report the returned TODO ID and project. This adds a checklist item; it does not execute that work. If the result is uncertain, check `projecthub todo list --project-id 1 --all` before retrying.
+
+## Cross out a TODO
+
+When the user asks to cross out or finish an item, resolve the project and inspect
+`projecthub todo list --project-id 1 --all` to identify its exact TODO ID. Ask if
+multiple items match; do not guess or complete related items.
+
+```bash
+projecthub todo complete --project-id 1 --todo-id 7
+```
+
+This marks the item completed without deleting its notes or changing its pin.
+Report the project and TODO ID. Already-completed items are left unchanged.
+If the outcome is uncertain, list TODOs again before retrying. Do not mark work
+complete merely because it was proposed or attempted.
 
 ## Add an AI note
 
