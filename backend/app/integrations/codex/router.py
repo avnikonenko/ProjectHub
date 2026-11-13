@@ -23,6 +23,7 @@ from . import progress
 from .revisions import list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
+from ...config import ConfigError, ai_worker_settings, save_ai_worker_settings
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
@@ -30,6 +31,10 @@ settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
 
 class Input(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+
+
+class AIWorkerSettingsInput(Input):
+    extraction_workers: int = Field(strict=True, ge=1, le=4)
 
 
 class SessionInput(Input):
@@ -205,6 +210,28 @@ def register_profile(body: AddAccountInput, db: DB):
 @settings_router.post('/codex-profiles')
 def add_global_account(body: AddAccountInput, db: DB):
     return register_profile(body, db)
+
+
+@settings_router.get('/ai')
+def get_global_ai_settings():
+    try:
+        return ai_worker_settings()
+    except (ConfigError, ValueError, UnicodeError):
+        raise HTTPException(422, 'Could not read ProjectHub AI settings. Check the settings file.')
+    except OSError:
+        raise HTTPException(503, 'ProjectHub AI settings are not accessible.')
+
+
+@settings_router.patch('/ai')
+def update_global_ai_settings(body: AIWorkerSettingsInput):
+    try:
+        return save_ai_worker_settings(body.extraction_workers)
+    except ConfigError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (ValueError, UnicodeError):
+        raise HTTPException(422, 'Could not update ProjectHub AI settings. Check the settings file.')
+    except OSError:
+        raise HTTPException(503, 'Could not save ProjectHub AI settings. The previous setting is unchanged.')
 
 
 @router.post('/accounts')

@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Added
+
+- Main Settings includes a persistent Parallel extraction workers control (1–4), with loading/saving feedback and failed-save recovery. Changes apply to the next generation without restarting or interrupting an active run. Saving preserves unrelated ProjectHub settings and does not invoke Codex.
+
 ### Changed
 
 - Run opt-in knowledge extraction with two independent Codex workers by default (configurable from 1–4), preserving batch context, cache identity and reconciliation order. Keep completed caches on failure and stop sibling requests cooperatively; `PROJECTHUB_EXTRACTION_WORKERS=1` restores serial extraction. Record ordered batch timings in generation diagnostics.

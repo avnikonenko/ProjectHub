@@ -20,6 +20,7 @@ import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { groupSharedHistory } from './sharedHistory';
 import { TextSizeControl } from './TextSizeControl';
+import { ExtractionWorkersControl } from './ExtractionWorkersControl';
 import { PaletteControl } from './PaletteControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
@@ -984,16 +985,18 @@ function useSettingsDismiss() {
 
 function AppSettings() {
   const panel = useSettingsDismiss();
+  const [open, setOpen] = useState(false);
   const [addingProfile, setAddingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   return (
     <>
-      <details ref={panel} className="generation-settings">
+      <details ref={panel} className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary className="button secondary" aria-label="App settings" title="App settings">⚙</summary>
         <div className="generation-options">
           <h3>Settings</h3>
           <PaletteControl />
           <TextSizeControl />
+          <ExtractionWorkersControl active={open} />
           <button type="button" className="secondary"
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
             Add Codex profile

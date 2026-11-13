@@ -1,13 +1,21 @@
 """User-editable local settings, without copying or reading credentials."""
 from dataclasses import dataclass
+from copy import deepcopy
 import os
 from pathlib import Path
+import re
+import stat
+import tempfile
+import threading
 import tomllib
 from typing import Mapping
 
 
 class ConfigError(ValueError):
     pass
+
+
+_settings_write_lock = threading.Lock()
 
 
 TEMPLATE = """# ProjectHub settings. Environment variables override these values.
@@ -140,3 +148,101 @@ def create_config(environ: Mapping[str, str] | None = None):
     with os.fdopen(fd, 'w', encoding='utf-8') as target:
         target.write(TEMPLATE)
     return path
+
+
+def ai_worker_settings():
+    """Expose only non-secret worker settings, without creating a config file."""
+    with _settings_write_lock:
+        configured_env = dict(os.environ)
+        configured_env.pop('PROJECTHUB_EXTRACTION_WORKERS', None)
+        configured = load_settings(configured_env).extraction_workers
+        effective = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured),
+                             'ai.extraction_workers', 1, 4)
+        return {'extraction_workers': effective, 'configured_extraction_workers': configured,
+                'min_extraction_workers': 1, 'max_extraction_workers': 4}
+
+
+def _worker_config_text(original, workers):
+    """Edit one scalar while retaining comments; reject unsupported TOML layouts."""
+    data = tomllib.loads(original)
+    if not isinstance(data.get('ai', {}), dict):
+        raise ConfigError('Invalid configuration section ai.')
+    expected = deepcopy(data)
+    expected.setdefault('ai', {})['extraction_workers'] = workers
+    header = re.search(r'''(?m)^\s*\[\s*(?:ai|"ai"|'ai')\s*\][ \t]*(?:#[^\r\n]*)?\r?$''', original)
+    if header:
+        next_header = re.search(r'(?m)^[ \t]*\[', original[header.end():])
+        stop = header.end() + next_header.start() if next_header else len(original)
+        section = original[header.end():stop]
+        key = re.compile(r'''(?m)^([ \t]*(?:extraction_workers|"extraction_workers"|'extraction_workers')[ \t]*=[ \t]*)([^\r\n]*)(\r?$)''')
+        match = key.search(section)
+        if match:
+            value, marker, comment = match[2].partition('#')
+            trailing = re.search(r'[ \t]*$', value)[0]
+            replacement = match[1] + str(workers) + trailing + marker + comment + match[3]
+            section = section[:match.start()] + replacement + section[match.end():]
+        else:
+            newline = '\r\n' if '\r\n' in original else '\n'
+            # The header may already contain CR from CRLF; its remaining LF
+            # must complete that original terminator before the inserted line.
+            if section.startswith('\n'):
+                section = '\n' + f'extraction_workers = {workers}' + newline + section[1:]
+            else:
+                section = newline + f'extraction_workers = {workers}' + newline + section
+        updated = original[:header.end()] + section + original[stop:]
+    else:
+        updated = original.rstrip('\r\n') + f'\n\n[ai]\nextraction_workers = {workers}\n'
+    try:
+        if tomllib.loads(updated) != expected:
+            raise ConfigError('This settings layout cannot be updated automatically.')
+    except tomllib.TOMLDecodeError as exc:
+        raise ConfigError('This settings layout cannot be updated automatically.') from exc
+    return updated
+
+
+def save_ai_worker_settings(workers):
+    """Persist one ProjectHub setting, then apply it to future generation pools."""
+    workers = _integer(workers, 'ai.extraction_workers', 1, 4)
+    with _settings_write_lock:
+        path = config_path()
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise ConfigError('Settings cannot be changed through a symbolic link.')
+        existed = path.exists()
+        if existed:
+            info = path.stat()
+            if not stat.S_ISREG(info.st_mode) or not info.st_mode & 0o222:
+                raise ConfigError('Settings must be a writable regular file.')
+            original = path.read_bytes().decode('utf-8')
+        else:
+            original = TEMPLATE
+        # A new file uses the trusted template; unrelated existing data is retained.
+        updated = _worker_config_text(original, workers)
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if any(p.is_symlink() for p in (path, *path.parents)):
+            raise ConfigError('Settings cannot be changed through a symbolic link.')
+        fd, temporary = tempfile.mkstemp(prefix='.projecthub-settings-', dir=path.parent)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8', newline='') as output:
+                output.write(original)
+                output.flush()
+                load_settings({'PROJECTHUB_CONFIG': temporary})
+                output.seek(0)
+                output.truncate()
+                output.write(updated)
+                output.flush()
+                os.fsync(output.fileno())
+            # The complete resulting file must be valid before atomic replacement.
+            load_settings({'PROJECTHUB_CONFIG': temporary})
+            if path.is_symlink() or (path.exists() != existed):
+                raise ConfigError('Settings changed while saving; reload and try again.')
+            if existed and not stat.S_ISREG(path.stat().st_mode):
+                raise ConfigError('Settings changed while saving; reload and try again.')
+            if existed and path.read_bytes().decode('utf-8') != original:
+                raise ConfigError('Settings changed while saving; reload and try again.')
+            os.replace(temporary, path)
+            os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return {'extraction_workers': workers, 'configured_extraction_workers': workers,
+                'min_extraction_workers': 1, 'max_extraction_workers': 4}
