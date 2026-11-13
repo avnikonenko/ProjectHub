@@ -6,11 +6,14 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Count successfully cached extraction batches in failed-run progress even when a sibling fails before the coordinator records their completion. Preserve the original failure and stop further dispatch.
 - Require source support for extracted reasons and limitations as well as statements. Knowledge briefs cross-check original excerpts instead of repeating unsupported caveats or interpreting recommendations and missing metadata as proof that work or version pinning is absent.
 - Preserve configurable policies and concrete inspection properties in knowledge statements. After real comparisons exposed mixed-status compression at 24 records, increase the bounded extraction ceiling to 36 and version the instructions/schema; retain earlier caches without reusing obsolete interpretations.
 - Evaluation distinguishes statement-level knowledge, structured details and quotation-only retention, without treating regex matches as semantic-accuracy scores.
 
 ### Added
+
+- Long notes show compact Markdown previews with Expand/Show less; searching reveals full matching notes.
 
 - Search all Notes and TODOs before pagination, including completed TODOs, with match counts and local filtering.
 

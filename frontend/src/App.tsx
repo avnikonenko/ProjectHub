@@ -5,6 +5,7 @@ import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react'
 import { version } from '../package.json';
 import { api, patch, post } from './api';
 import { matchesItemSearch } from './itemSearch';
+import { NoteContent } from './NoteContent';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
@@ -761,7 +762,7 @@ function ProjectWorkspace({
                           <div className="shared-transcript">{n.content}</div>
                         </details>
                       )
-                      : <Markdown>{n.content}</Markdown>}
+                      : <NoteContent content={n.content} reveal={!!noteSearch.trim()} />}
                     {n.reference && (
                       <p>
                         <strong>Reference:</strong>{' '}

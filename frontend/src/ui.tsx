@@ -51,12 +51,13 @@ export function DeleteButton({ label, onClick, disabled }: {
     </button>
   );
 }
-export function Markdown({ children }: { children?: string }) {
+export function Markdown({ children, preview = false }: { children?: string; preview?: boolean }) {
   return children ? (
     <div className="markdown">
       <ReactMarkdown remarkPlugins={[remarkGfm]}
         components={{
           img: ({ alt }) => <span>[Image: {alt || 'image'}]</span>,
+          ...(preview ? { a: ({ children }: { children?: React.ReactNode }) => <span>{children}</span> } : {}),
         }}
       >
         {children}

@@ -1503,3 +1503,8 @@ a:focus-visible {
 .source-link > summary, .source-diagnostics > summary { cursor: pointer; }
 .source-filters label { flex: 1 1 12rem; min-width: 0; margin-block: 0.5rem 1rem; }
 .source-diagnostics[open] > summary { margin-bottom: 1rem; }
+
+.note-reading { max-width: 76ch; min-width: 0; }
+.note-preview { max-height: 13rem; overflow: hidden; }
+.note-body .markdown > :last-child { margin-bottom: 0; }
+.note-reading > button { margin-top: 0.65rem; }
