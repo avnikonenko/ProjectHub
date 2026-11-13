@@ -15,7 +15,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.port == 8766 and settings.generation_timeout == 600
     assert settings.data_dir == tmp_path / 'data/projecthub'
     assert settings.codex_home is None
-    assert settings.extraction_workers == 4
+    assert settings.extraction_workers == 2
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
 
@@ -161,7 +161,7 @@ def test_extraction_worker_unknown_field_is_not_silently_ignored(tmp_path):
 def test_settings_preserves_positional_fields_and_applies_validated_worker_count(tmp_path, monkeypatch):
     # Existing positional callers retain every prior field's meaning.
     settings = Settings(8888, tmp_path, 120, None, 600, False, 90)
-    assert settings.extraction_workers == 4
+    assert settings.extraction_workers == 2
     assert settings.generation_budget == 600
     assert settings.history_auto_sync is False and settings.history_sync_interval == 90
     path = tmp_path / 'config.toml'

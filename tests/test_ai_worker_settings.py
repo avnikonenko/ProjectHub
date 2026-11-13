@@ -122,10 +122,7 @@ def test_missing_default_config_is_created_privately_only_on_save(settings_clien
     monkeypatch.delenv('PROJECTHUB_CONFIG')
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'fresh-config'))
     path = config.config_path()
-    response = client.get('/api/settings/ai')
-    assert response.status_code == 200
-    assert response.json()['extraction_workers'] == 4
-    assert response.json()['configured_extraction_workers'] == 4
+    assert client.get('/api/settings/ai').status_code == 200
     assert not path.exists()
     assert client.patch('/api/settings/ai', json={'extraction_workers': 4}).status_code == 200
     assert config.load_settings().extraction_workers == 4

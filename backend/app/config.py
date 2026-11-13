@@ -29,7 +29,7 @@ generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
 # Independent extraction requests; increase only after measuring account capacity.
-extraction_workers = 4
+extraction_workers = 2
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 
@@ -48,7 +48,7 @@ class Settings:
     generation_budget: int = 900
     history_auto_sync: bool = True
     history_sync_interval: int = 60
-    extraction_workers: int = 4
+    extraction_workers: int = 2
 
     def apply_environment(self):
         workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, 4)
@@ -129,7 +129,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         generation_budget=_integer(env.get('PROJECTHUB_GENERATION_BUDGET', ai.get('generation_budget', 900)),
                                    'ai.generation_budget', 30, 7200),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
-        extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', 4)),
+        extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', 2)),
                                     'ai.extraction_workers', 1, 4),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
