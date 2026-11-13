@@ -599,6 +599,21 @@ def _extract_windows(engine, project_id, manager, windows, configuration):
             raise
         finally:
             pool.shutdown(wait=True, cancel_futures=True)
+            # A sibling can fail after another batch commits its valid cache but
+            # before the coordinator records that completed future. Account for
+            # those successes without dispatching more work or hiding the error.
+            if abort.is_set():
+                for future in sorted(pending, key=lambda value: pending[value][0]):
+                    if future.cancelled() or future.exception() is not None:
+                        continue
+                    index, _ = pending[future]
+                    result, elapsed = future.result()
+                    try:
+                        record(index, result, elapsed)
+                    except CodexError:
+                        # Cancellation or the overall budget can also prevent
+                        # progress updates; preserve the originating exception.
+                        pass
     return [item for batch in results for item in batch], hits, len(windows) - hits, workers, timings
 
 

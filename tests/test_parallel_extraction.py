@@ -184,6 +184,43 @@ def test_completed_batch_cache_survives_failed_sibling(setup, monkeypatch):
     assert hit and len(values) == 1
 
 
+def test_failure_progress_counts_committed_success_before_coordinator_records_it(setup, monkeypatch):
+    engine, bundle, windows = setup
+    monkeypatch.setattr(knowledge_sources, 'build_windows', lambda _: windows[:2])
+    cached = threading.Event()
+    original = knowledge.extract_batch
+
+    def tracked(*args, **kwargs):
+        result = original(*args, **kwargs)
+        cached.set()
+        assert progress.current_abort_event().wait(3), 'Sibling failure was not recorded'
+        return result
+
+    monkeypatch.setattr(knowledge, 'extract_batch', tracked)
+
+    def generate(_, payload, schema):
+        if payload['primary_ids'] == ['source:1']:
+            assert cached.wait(3)
+            raise CodexError('Second batch failed')
+        return response(payload)
+
+    progress.begin(1, 'knowledge')
+    try:
+        with pytest.raises(CodexError, match='Second batch failed'):
+            knowledge.build_candidate(engine, 1, Manager(generate), bundle)
+        progress.finish(1, error='Second batch failed')
+        state = progress.read(1, 'knowledge')
+        assert state['state'] == 'failed'
+        assert state['batch_total'] == 2
+        assert state['batch_completed'] == 1
+        assert state['cache_hits'] == 0
+        with Session(engine) as db:
+            assert len(db.scalars(select(ProjectHistoryBatch)).all()) == 1
+            assert db.get(ProjectKnowledge, 1) is None
+    finally:
+        progress.finish(1)
+
+
 @pytest.mark.parametrize('workers', [2, 4])
 @pytest.mark.parametrize('mode', ['cancel', 'budget'])
 def test_workers_inherit_cancellation_and_budget(setup, monkeypatch, mode, workers):
