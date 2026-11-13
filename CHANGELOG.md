@@ -4,6 +4,12 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Fixed
+
+- Require source support for extracted reasons and limitations as well as statements. Knowledge briefs cross-check original excerpts instead of repeating unsupported caveats or interpreting recommendations and missing metadata as proof that work or version pinning is absent.
+- Preserve configurable policies and concrete inspection properties in knowledge statements. After real comparisons exposed mixed-status compression at 24 records, increase the bounded extraction ceiling to 36 and version the instructions/schema; retain earlier caches without reusing obsolete interpretations.
+- Evaluation distinguishes statement-level knowledge, structured details and quotation-only retention, without treating regex matches as semantic-accuracy scores.
+
 ### Added
 
 - Agents can cross out existing TODOs through the ProjectHub skill using `projecthub todo complete` without deleting notes or pins.

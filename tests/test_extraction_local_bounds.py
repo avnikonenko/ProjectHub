@@ -41,7 +41,7 @@ class Manager:
     def generate_extraction(self, prompt, schema):
         self.calls += 1
         # The helper receives the complete original contract, including numeric bounds.
-        assert schema['properties']['items']['maxItems'] == 24
+        assert schema['properties']['items']['maxItems'] == knowledge.MAX_ITEMS
         fields = schema['properties']['items']['items']['properties']
         assert fields['statement']['maxLength'] == 600
         assert fields['evidence']['maxItems'] == 6
@@ -53,7 +53,7 @@ class Manager:
 
 def modify(case, window, raw):
     value = raw['items'][0]
-    if case == 'items': raw['items'] = [deepcopy(value) for _ in range(25)]
+    if case == 'items': raw['items'] = [deepcopy(value) for _ in range(knowledge.MAX_ITEMS + 1)]
     elif case == 'references': value['evidence'] *= 7
     elif case == 'statement': value['statement'] = 'x' * 601
     elif case == 'empty_statement': value['statement'] = ''

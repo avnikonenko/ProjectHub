@@ -15,12 +15,12 @@ from ...models import ProjectHistoryBatch, ProjectKnowledge
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
-SCHEMA_VERSION = 2
-PROMPT_VERSION = 10
+SCHEMA_VERSION = 3
+PROMPT_VERSION = 12
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
-MAX_ITEMS = 24
+MAX_ITEMS = 36
 
 
 def _string(limit, minimum=0):
@@ -79,16 +79,34 @@ PROMPT = (
     'Never truncate a quotation or insert an ellipsis; select an exact contiguous passage instead. '
     'Do not repeat the same evidence reference within an item. Reuse evidence across different items '
     'only where it supports each independent claim. '
-    'Rationale, alternatives and limitations should briefly preserve distinct source-supported '
-    'information; do not repeat the statement or quotation there. Use an empty string for an absent '
-    'text field, not a generic explanation. Empty relationship fields stay empty unless sources establish '
+    'Every substantive clause in statement, rationale, alternatives and limitations needs support '
+    'from its cited original passages, not merely uncited generalities elsewhere in the context. '
+    'Choose additional exact excerpts when needed to support those clauses. '
+    'Rationale records an expressed reason; limitations record '
+    'an expressed boundary, risk or uncertainty. They are not places to invent missing decisions, '
+    'implementation, validation or configuration. A recommendation to check, select, record or pin '
+    'something does not establish that it is currently absent, undecided or unpinned. Preserve a '
+    'concretely selected identifier or reference rather than replacing it with a generic name; '
+    'an unavailable readable label does not negate that selection or establish missing version control. '
+    'Keep an assistant recommendation as a proposal, not a claim about what the user has never accepted. '
+    'Do not repeat the statement or quotation in optional fields. Use an empty string for an absent '
+    'source-supported detail, not boilerplate about missing evidence. Empty relationship fields stay empty unless sources establish '
     'a revision or conflict. Field lengths and item/evidence counts are ceilings, not targets. '
     'Plan coverage across ALL primary messages before expanding any one message. Do not spend the '
     'item budget on a detailed recap of early architecture while omitting concrete restrictions, '
     'backend limitations, optionality or safety policies in later primary messages. Allocate capacity '
-    'for distinct late-message approaches and caveats. Preserve a coherent approach together with '
-    'its source-supported constraints in rationale or limitations; do not spend separate slots '
-    'on a tool and each caveat of that same tool choice. Keep independently selectable approaches '
+    'for distinct late-message approaches and caveats. Keep a backend choice together with its '
+    'source-described capability boundaries and compatibility cautions; do not spend separate slots '
+    'on a tool and every caveat of that choice. Independently configurable operational policies and '
+    'scientific invariants are substantive project claims, not reasons or limitations of the mechanism '
+    'that implements them. Give such a policy its own statement and scope when it can change '
+    'independently of that mechanism. Name the operative behavior and concrete properties in the '
+    'statement; a coherent inspection checklist may remain one item and may use the full statement '
+    'length budget. Remove introductory filler before removing concrete checks. Instruction example '
+    '(not project evidence): if a source lists record IDs, checksums and timestamps to inspect, '
+    'retain those check names in the statement rather than replacing them with a heading such as '
+    'data quality. Do not extract the example itself. Do not bury a distinct '
+    'instruction in another item\'s rationale or limitations. Keep independently selectable approaches '
     'and different statuses separate. Prefer material choices and operational constraints over '
     'assistant restatements of earlier choices that add no new information. '
     'These compactness preferences must not omit a material decision, reason, constraint, uncertainty '
