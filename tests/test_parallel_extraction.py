@@ -65,7 +65,10 @@ class Manager:
 def test_parallel_bounds_order_context_and_exact_input_cache_reuse(setup, monkeypatch, workers):
     engine, bundle, windows = setup
     lock = threading.Lock()
-    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', str(workers))
+    if workers == 4:
+        monkeypatch.delenv('PROJECTHUB_EXTRACTION_WORKERS', raising=False)
+    else:
+        monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', str(workers))
     first_wave = threading.Barrier(workers)
     release_first = threading.Event()
     running = maximum = 0

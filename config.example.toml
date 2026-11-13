@@ -9,7 +9,7 @@ generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
 # Independent extraction requests; increase only after measuring account capacity.
-extraction_workers = 2
+extraction_workers = 4
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 

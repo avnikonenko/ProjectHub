@@ -98,7 +98,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
         onChange={(event) => { void save(Number(event.target.value)); }}>
         {!settings && <option value="">{loading ? 'Loading…' : 'Unavailable'}</option>}
         {[1, 2, 3, 4].map((count) => <option key={count} value={count}>
-          {count}{count === 1 ? ' (serial)' : count === 2 ? ' (default)' : count === 4 ? ' (higher concurrency)' : ''}
+          {count}{count === 1 ? ' (serial)' : count === 4 ? ' (default)' : ''}
         </option>)}
       </select>
     </label>
