@@ -4,7 +4,6 @@ import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledg
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
-import { matchesItemSearch } from './itemSearch';
 import { NoteContent } from './NoteContent';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
@@ -19,6 +18,7 @@ import { Scheme } from './Scheme';
 import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { AIResultHeader } from './AIResultHeader';
+import { ProjectSearchResults } from './ProjectSearchResults';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { groupSharedHistory } from './sharedHistory';
@@ -257,21 +257,21 @@ function ProjectWorkspace({
   } | null>(null);
   const [report, setReport] = useState<any>(null);
   const [todoTitle, setTodoTitle] = useState('');
-  const [todoSearch, setTodoSearch] = useState('');
-  const [noteSearch, setNoteSearch] = useState('');
   const [bulkTodos, setBulkTodos] = useState(false);
   const [search, setSearch] = useState('');
-  const [results, setResults] = useState<any[] | null>(null);
+  const [results, setResults] = useState<string | null>(null);
+  const [searchTarget, setSearchTarget] = useState<{ kind: string; id: number; question?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
   const recovery = useGenerationRecovery(base);
   useEffect(() => {
-    if (historyLink) {
+    if (historyLink || knowledgeLink) {
       setResults(null);
+      setSearchTarget(null);
       setReport(null);
     }
-  }, [historyLink]);
+  }, [historyLink, knowledgeLink]);
   function leaveHistory() {
     onLeaveHistory();
     setView('History');
@@ -351,11 +351,10 @@ function ProjectWorkspace({
   ].sort((a, b) => (Date.parse(b.time ?? '') || 0) - (Date.parse(a.time ?? '') || 0));
   const todoOrder = (a: RecordData, b: RecordData) =>
     Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.id - a.id;
-  const matchingTodos = tasks.filter((task) => matchesItemSearch(todoSearch, [task.title, task.description]));
+  const matchingTodos = searchTarget?.kind === 'tasks' ? tasks.filter((task) => task.id === searchTarget.id) : tasks;
   const activeTodos = matchingTodos.filter((task) => task.status !== 'completed').sort(todoOrder);
   const completedTodos = matchingTodos.filter((task) => task.status === 'completed').sort(todoOrder);
-  const matchingNotes = notes.filter((note) => matchesItemSearch(noteSearch,
-    [note.title, note.content, note.reference])).reverse();
+  const matchingNotes = (searchTarget?.kind === 'notes' ? notes.filter((note) => note.id === searchTarget.id) : [...notes]).reverse();
   const todoRow = (task: RecordData) => (
     <li className="record-row" key={task.id}>
       <div className="todo-content">
@@ -449,6 +448,7 @@ function ProjectWorkspace({
               if (historyLink || knowledgeLink) onLeaveHistory();
               if (t === 'Knowledge') window.location.hash = knowledgeHref({ projectId });
               setView(t);
+              setSearchTarget(null);
               setReport(null);
               setResults(null);
             }}
@@ -463,20 +463,20 @@ function ProjectWorkspace({
           className="search-bar"
           onSubmit={async (e) => {
             e.preventDefault();
-            await run(async () => {
-              const r = await api(
-                `${base}/search?q=${encodeURIComponent(search)}`,
-              );
-              setResults(Array.isArray(r) ? r : (r.results ?? []));
-            });
+            if (search.trim()) setResults(search.trim());
           }}
         >
           <span aria-hidden="true">⌕</span>
           <input
+            type="search"
+            maxLength={2000}
             aria-label="Search project"
             placeholder="Search this project…"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              if (!e.target.value.trim()) { setResults(null); setSearchTarget(null); }
+            }}
           />
           <button className="secondary" disabled={busy || !search.trim()}>
             Search
@@ -485,12 +485,15 @@ function ProjectWorkspace({
             <button
               type="button"
               className="quiet"
-              onClick={() => setResults(null)}
+              onClick={() => { setResults(null); setSearch(''); setSearchTarget(null); }}
             >
               Clear
             </button>
           )}
         </form>
+        {!results && searchTarget && <p role="status">Showing the selected search result.{' '}
+          <button type="button" className="quiet" onClick={() => setSearchTarget(null)}>Show all</button>
+        </p>}
         {(['brief', 'qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
           <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
@@ -512,6 +515,7 @@ function ProjectWorkspace({
         {(visited.qa || view === 'AI Q&A') && (
           <div hidden={view !== 'AI Q&A' || !!results}>
             <ProjectQA base={base} generation={generation}
+              targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
               recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, qa: active })); }} />
           </div>
@@ -524,20 +528,16 @@ function ProjectWorkspace({
           </div>
         )}
         {results ? (
-          <section className="card">
-            <h2>Search results</h2>
-            {results.length ? (
-              <PagedItems key={search} label="Project search pages">{results.map((r, i) => (
-                <article className="list-item" key={i}>
-                  <small>{r.entity_type ?? r.kind ?? r.type ?? 'Record'}</small>
-                  <h3>{r.title}</h3>
-                  <p>{r.snippet ?? r.content ?? r.description}</p>
-                </article>
-              ))}</PagedItems>
-            ) : (
-              <Empty>No matching records in this project.</Empty>
-            )}
-          </section>
+          <ProjectSearchResults key={results} base={base} query={results}
+            onOpenSource={() => { setResults(null); setSearchTarget(null); }} onOpenRecord={(kind, id, title) => {
+            const targetView: Record<string, string> = { tasks: 'TODO', notes: 'Notes', qa: 'AI Q&A', sessions: 'Sources' };
+            const index = Number(id.split(':').at(-1));
+            if (!targetView[kind] || !Number.isSafeInteger(index) || index < 0) return;
+            onLeaveHistory();
+            setSearchTarget({ kind, id: index, ...(kind === 'qa' ? { question: title } : {}) });
+            setView(targetView[kind]);
+            setResults(null);
+          }} />
         ) : (
           <>
             {view === 'Dashboard' && (
@@ -595,12 +595,6 @@ function ProjectWorkspace({
             {view === 'TODO' && (
               <section className="card">
                 <h2>TODO</h2>
-                <label>
-                  Search all TODOs
-                  <input type="search" value={todoSearch} placeholder="Search titles and notes…"
-                    onChange={(event) => setTodoSearch(event.target.value)} />
-                  {todoSearch.trim() && <small role="status">{matchingTodos.length} of {tasks.length} TODOs match (including completed)</small>}
-                </label>
                 <form className="todo-add" onSubmit={(event) => {
                   event.preventDefault();
                   const title = todoTitle.trim();
@@ -628,10 +622,10 @@ function ProjectWorkspace({
                     }} />
                 )}
                 {activeTodos.length
-                  ? <PagedItems key={todoSearch} label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
-                  : <Empty>{todoSearch.trim() ? 'No matching open TODOs.' : 'No open TODOs.'}</Empty>}
+                  ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
+                  : <Empty>No open TODOs.</Empty>}
                 {!!completedTodos.length && (
-                  <details key={todoSearch} open={todoSearch.trim() ? true : undefined}>
+                  <details open={searchTarget?.kind === 'tasks' ? true : undefined}>
                     <summary>Completed ({completedTodos.length})</summary>
                     <PagedItems label="Completed TODO pages" listClass="todo-list" pageSize={10}>{completedTodos.map(todoRow)}</PagedItems>
                   </details>
@@ -717,14 +711,8 @@ function ProjectWorkspace({
                     Export project JSON
                   </a>
                 </div>
-                <label>
-                  Search all notes
-                  <input type="search" value={noteSearch} placeholder="Search titles, content, and references…"
-                    onChange={(event) => setNoteSearch(event.target.value)} />
-                  {noteSearch.trim() && <small role="status">{matchingNotes.length} of {notes.length} notes match</small>}
-                </label>
-                {!matchingNotes.length && <Empty>{noteSearch.trim() ? 'No matching notes.' : 'No notes yet.'}</Empty>}
-                <PagedItems key={noteSearch} label="Note pages">{matchingNotes.map((n) => (
+                {!matchingNotes.length && <Empty>No notes yet.</Empty>}
+                <PagedItems label="Note pages">{matchingNotes.map((n) => (
                   <section className="card note-card" key={n.id}>
                     <div className="section-title">
                       <h2>{n.title}</h2>
@@ -763,7 +751,7 @@ function ProjectWorkspace({
                           <div className="shared-transcript">{n.content}</div>
                         </details>
                       )
-                      : <NoteContent content={n.content} reveal={!!noteSearch.trim()} />}
+                      : <NoteContent content={n.content} reveal={searchTarget?.kind === 'notes'} />}
                     {n.reference && (
                       <p>
                         <strong>Reference:</strong>{' '}
@@ -782,6 +770,7 @@ function ProjectWorkspace({
             {view === 'Sources' && (
               <>
                 <Codex base={base} onError={setError}
+                  targetSessionId={searchTarget?.kind === 'sessions' ? searchTarget.id : undefined}
                   importControl={<ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} compact />} />
                 <ChatGPTShares base={base} notes={notes} showHistory={false} />
               </>
@@ -1200,7 +1189,7 @@ function isValidQALimit(value: number) {
   return Number.isSafeInteger(value) && value >= 1;
 }
 
-function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -1212,7 +1201,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const [error, setError] = useState('');
   const [cancelled, setCancelled] = useState(false);
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState('');
+  useEffect(() => { setPage(0); }, [targetQuestion]);
   const path = `${base}/codex/qa`;
   const limitStorageKey = `projecthub.qa-max-questions:${base}`;
   const [maxQuestions, setMaxQuestions] = useState(() => {
@@ -1236,7 +1225,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       .catch((e) => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [path, recoveryVersion]);
+  }, [path, recoveryVersion, targetQuestion]);
   const generationDisabled = loading || generating || recoveryBusy || deleting || revisionLoading;
   const validLimit = isValidQALimit(Number(maxQuestions));
   async function generate() {
@@ -1276,11 +1265,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     }
   }
   const pageSize = 5;
-  const terms = filter.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const filtered = (saved?.items ?? []).filter((item) => {
-    const text = [item.question, item.answer, ...(item.variants ?? []).map((answer) => answer.answer)].join(' ').toLocaleLowerCase();
-    return terms.every((term) => text.includes(term));
-  });
+  const filtered = targetQuestion === undefined ? saved?.items ?? [] : (saved?.items ?? []).filter((item) => item.question === targetQuestion);
   const totalPages = Math.ceil(filtered.length / pageSize);
   const currentPage = Math.min(page, Math.max(0, totalPages - 1));
   const items = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -1327,16 +1312,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         {revisionLoading && <p role="status">Loading saved Q&A version…</p>}
         <ErrorBox error={error} />
         {cancelled && <p role="status">{cancelledGenerationMessage}</p>}
-        {!!saved?.items.length && (
-          <label>
-            Search all saved Q&A
-            <input type="search" value={filter} placeholder="Search questions and answers…"
-              onChange={(event) => { setFilter(event.target.value); setPage(0); }} />
-            {terms.length > 0 && <small>{filtered.length} of {saved.items.length} questions match</small>}
-          </label>
-        )}
         {loading && <Empty>Loading saved Q&A…</Empty>}
-        {!loading && !error && !items.length && <Empty>{terms.length ? 'No matching saved Q&A.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
             <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
@@ -1486,7 +1463,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
   }, [base]);
   return (
     <>
-      <HistorySearch base={base} projectId={projectId}
+      <HistorySearch base={base}
         onIndexed={() => setIndexVersion((value) => value + 1)} />
       {historyLink && 'noteId' in historyLink ? (
         <IndexedChatGPTTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
@@ -1519,7 +1496,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
         )}
         {!loading && !error && !sessions.length && <Empty>No sessions associated with this project.</Empty>}
       </section>
-      {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId} searchable
+      {sessionId && <SavedHistory key={sessionId} prefix={`${base}/codex`} sessionId={sessionId}
         passageNotes={passageNotes} sessionTitle={sessions.find((row) => String(row.id) === sessionId)?.title} />}
       </>
       )}
@@ -1636,13 +1613,11 @@ const HISTORY_PAGE_SIZE = 3;
 function SavedHistory({
   prefix,
   sessionId,
-  searchable = false,
   passageNotes,
   sessionTitle,
 }: {
   prefix: string;
   sessionId: string;
-  searchable?: boolean;
   passageNotes: PassageNoteContext;
   sessionTitle?: string;
 }) {
@@ -1651,7 +1626,6 @@ function SavedHistory({
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('');
   const request = useRef<AbortController | null>(null);
 
   const load = useCallback(
@@ -1689,13 +1663,7 @@ function SavedHistory({
     };
   }, [load]);
 
-  const query = filter.trim().toLowerCase();
-  const visibleTurns = query
-    ? turns.filter((turn) => turn.id.toLowerCase().includes(query)
-        || turn.messages.some((message) => message.text.toLowerCase().includes(query)))
-    : turns;
-
-  const historyGroups = groupSharedHistory(visibleTurns, !query);
+  const historyGroups = groupSharedHistory(turns, true);
   const renderTurn = (turn: SavedTurn) => (
     <article className="history-turn" key={turn.id}>
       <div className="section-title">
@@ -1764,15 +1732,6 @@ function SavedHistory({
           </button>
         </nav>
       )}
-      {searchable && turns.length > 0 && (
-        <label>
-          Filter this page
-          <input type="search" value={filter} onChange={(event) => setFilter(event.target.value)} />
-        </label>
-      )}
-      {query && !visibleTurns.length && turns.length > 0 && (
-        <Empty>No matching turns on this page.</Empty>
-      )}
       {historyGroups.map((group) => group.kind === 'shared' ? (
         <details className="history-turn" key={`shared-${sessionId}-${group.turns[0].id}`}>
           <summary>Shared history — {group.turns.length} {group.turns.length === 1 ? 'turn' : 'turns'} on this page</summary>
@@ -1787,17 +1746,18 @@ function SavedHistory({
   );
 }
 
-function Codex({ base, onError, importControl }: {
+function Codex({ base, onError, importControl, targetSessionId }: {
   base: string;
   onError: (message: string) => void;
   importControl?: ReactNode;
+  targetSessionId?: number;
 }) {
   const [status, setStatus] = useState<any>(null);
   const [sessions, setSessions] = useState<RecordData[]>([]);
   const [sessionId, setSessionId] = useState('');
+  useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessions]);
   const [threadId, setThreadId] = useState('');
   const [linkTitle, setLinkTitle] = useState('');
-  const [sessionQuery, setSessionQuery] = useState('');
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
@@ -1810,10 +1770,7 @@ function Codex({ base, onError, importControl }: {
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
   const filteredSessions = [...sessions].filter((session) => {
-    const text = [session.id, session.title, session.topic, session.thread_id, session.codex_account, session.status]
-      .join(' ').toLocaleLowerCase();
-    return text.includes(sessionQuery.trim().toLocaleLowerCase())
-      && (sessionFilter === 'all' || (sessionFilter === 'linked'
+    return (targetSessionId !== undefined ? session.id === targetSessionId : sessionFilter === 'all' || (sessionFilter === 'linked'
         ? session.status === 'linked' : session.status !== 'linked'));
   }).sort((a, b) => (sessionOrder === 'topic' ? (Number(!a.topic) - Number(!b.topic)
     || String(a.topic ?? '').localeCompare(String(b.topic ?? ''), undefined, { sensitivity: 'base' })) : 0)
@@ -1904,11 +1861,6 @@ function Codex({ base, onError, importControl }: {
           </div>
           <div className="source-filters">
           <label>
-            Find a session
-            <input type="search" placeholder="Search name, topic, or ID…" value={sessionQuery}
-              onChange={(e) => setSessionQuery(e.target.value)} />
-          </label>
-          <label>
             Sessions
             <select value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)}>
               <option value="all">All sessions</option>
@@ -1924,7 +1876,7 @@ function Codex({ base, onError, importControl }: {
             </select>
           </label>
           </div>
-          <PagedItems key={JSON.stringify([sessionQuery, sessionFilter, sessionOrder])} label="Project session pages">
+          <PagedItems key={JSON.stringify([sessionFilter, sessionOrder])} label="Project session pages">
             {filteredSessions.map((session) => (
               <article className="list-item session-row" key={session.id}>
                 <div className="record-row">

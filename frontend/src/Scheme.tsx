@@ -234,7 +234,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
-  const [search, setSearch] = useState('');
   const inFlight = useRef(false);
   const alive = useRef(true);
   const path = base + '/codex/scheme';
@@ -297,8 +296,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     ? `${freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}${result.freshness.partial || coverage?.partial ? ' · Partial coverage' : ''}`
     : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
-  const dependencies = (snapshot?.dependencies ?? result?.inspection.dependencies ?? []).filter((dependency) =>
-    [dependency.name, dependency.category, dependency.purpose].join(' ').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
+  const dependencies = snapshot?.dependencies ?? result?.inspection.dependencies ?? [];
   const development = (dependency: Dependency) => /dev|test|build/i.test(dependency.category);
   function dependencyTable(items: Dependency[]) {
     return <div className="scheme-table-scroll"><table className="scheme-dependencies">
@@ -353,8 +351,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}
       highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
     {view === 'Dependencies' && <>
-      <label>Search dependencies<input type="search" value={search} onChange={(event) => setSearch(event.target.value)}
-        placeholder="Name, category, or purpose…" /></label>
       {!dependencies.length && <Empty>No matching direct dependencies in the inspected evidence.</Empty>}
       {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)))}
       {!!dependencies.filter(development).length && <details className="scheme-development">

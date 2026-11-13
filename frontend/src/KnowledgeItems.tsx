@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { evidenceAvailability, filterKnowledge, knowledgeSourceHref, normalizeKnowledgeText, statusOrder,
+import { evidenceAvailability, filterKnowledge, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
 import './knowledge.css';
 
@@ -8,7 +8,6 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   snapshot: KnowledgeSnapshot; availability?: Record<string, string>;
   selectedItemId?: string; onSelectItem?: (id: string) => void;
 }) {
-  const [query, setQuery] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
   const [scope, setScope] = useState('');
@@ -17,7 +16,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   const instanceId = useId();
   const selectedRef = useRef<HTMLDetailsElement | null>(null);
   const identity = `${snapshot.project_id}:${snapshot.publication_id || snapshot.generated_at || ''}`;
-  const reset = () => { setQuery(''); setStatus(''); setCategory(''); setScope(''); setLimits({}); };
+  const reset = () => { setStatus(''); setCategory(''); setScope(''); setLimits({}); };
   useEffect(() => { reset(); setSelected(selectedItemId); }, [identity, selectedItemId]);
   useEffect(() => {
     if (selectedRef.current && selected) {
@@ -27,7 +26,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     }
   }, [selected, identity]);
   function select(id: string) { reset(); setSelected(id); onSelectItem?.(id); }
-  const items = filterKnowledge(snapshot.items, query, status, category, scope, snapshot.sources);
+  const items = filterKnowledge(snapshot.items, '', status, category, scope, snapshot.sources);
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
   const statuses = [...new Set([...statusOrder, ...snapshot.items.map((item) => item.design_status)])];
@@ -44,8 +43,6 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   }
   function itemDetails(item: KnowledgeItem) {
     const current = evidenceAvailability(item, availability);
-    const matchesExcerpt = !!query.trim() && !normalizeKnowledgeText([item.statement, item.rationale, item.scope].filter(Boolean).join(' '))
-      .includes(normalizeKnowledgeText(query));
     return <details key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
       id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`} open={item.id === selected || undefined}>
       <summary><span>{item.statement}</span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references</small></summary>
@@ -70,7 +67,6 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
               ? <button className="quiet" type="button" onClick={() => select(relation.target!)}>{byId.get(relation.target)!.statement}</button>
               : <code>{relation.target}</code>}</>}</li>
         ))}</ul></details>}
-        {matchesExcerpt && <small>Search also includes rationale, metadata and original evidence below.</small>}
         <details className="knowledge-evidence"><summary>Original evidence ({item.evidence.length})</summary>
           {!item.evidence.length && <p>No recorded evidence excerpts.</p>}
           {item.evidence.map((evidence, index) => {
@@ -96,7 +92,6 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   }
   return <div className="knowledge-items">
     <div className="knowledge-filters">
-      <label>Search project knowledge<input type="search" value={query} onChange={(event) => { setQuery(event.target.value); setLimits({}); }} /></label>
       <label>Design status<select value={status} onChange={(event) => { setStatus(event.target.value); setLimits({}); }}><option value="">All statuses</option>
         {statuses.filter((value) => snapshot.items.some((item) => item.design_status === value)).map((value) => <option key={value} value={value}>{display(value)}</option>)}
       </select></label>

@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 from urllib.parse import urlparse
+from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
 from .integrations import chatgpt_share, github_issues
 from .integrations.codex.history_search import search_history
+from .project_search import project_search
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
@@ -281,6 +283,12 @@ def create_app(data_dir=None):
                              offset: int = Query(0, ge=0, le=2_147_483_647), db: Session = db_dep):
         require_project(db, project_id)
         return search_history(db, project_id, q, offset, include_shared=True)
+
+    @app.get('/api/projects/{project_id}/search/all')
+    def search_all(project_id: int, q: str = Query('', max_length=2000),
+                   kind: Literal['all', 'tasks', 'notes', 'conversations', 'qa', 'knowledge', 'sessions', 'other'] = 'all',
+                   offset: int = Query(0, ge=0, le=2_147_483_647), db: Session = db_dep):
+        return project_search(db, project_id, q, kind, offset)
 
     @app.get('/api/projects/{project_id}/search')
     def search(project_id:int,q:str='',db:Session=db_dep):
