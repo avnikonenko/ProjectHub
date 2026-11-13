@@ -12,6 +12,7 @@ import re
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, ProjectKnowledge
+from ...config import MAX_EXTRACTION_WORKERS
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
@@ -500,9 +501,9 @@ def _extraction_workers(manager):
     try:
         workers = int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '4'))
     except ValueError as exc:
-        raise CodexError('PROJECTHUB_EXTRACTION_WORKERS must be from 1 to 4.') from exc
-    if not 1 <= workers <= 4:
-        raise CodexError('PROJECTHUB_EXTRACTION_WORKERS must be from 1 to 4.')
+        raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.') from exc
+    if not 1 <= workers <= MAX_EXTRACTION_WORKERS:
+        raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.')
     return workers if callable(getattr(manager, 'independent_generation', None)) else 1
 
 
@@ -564,7 +565,10 @@ def _extract_windows(engine, project_id, manager, windows, configuration):
                 if failure:
                     raise failure[0]
 
-        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-extraction')
+        try:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-extraction')
+        except (RuntimeError, OSError) as exc:
+            raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
         pending, next_index = {}, 0
         try:
             while next_index < len(windows) or pending:
@@ -576,7 +580,11 @@ def _extract_windows(engine, project_id, manager, windows, configuration):
                     started_at = utcnow()
                     # A Context cannot be entered simultaneously from two threads.
                     context = copy_context()
-                    future = pool.submit(context.run, extract, windows[index])
+                    try:
+                        future = pool.submit(context.run, extract, windows[index])
+                    except (RuntimeError, OSError) as exc:
+                        check_failure()
+                        raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
                     pending[future] = (index, started_at)
                     next_index += 1
                 active = min((value[1] for value in pending.values()), default=None)

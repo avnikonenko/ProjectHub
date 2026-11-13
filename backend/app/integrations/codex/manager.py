@@ -704,8 +704,16 @@ class CodexManager:
                             log.warning('Could not acknowledge generation cancellation; closing its transport.')
                         finally:
                             interrupted.set()
-                    threading.Thread(target=interrupt, daemon=True,
-                                     name='projecthub-generation-cancel').start()
+                    try:
+                        threading.Thread(target=interrupt, daemon=True,
+                                         name='projecthub-generation-cancel').start()
+                    except (RuntimeError, OSError):
+                        log.warning('Could not start generation cancellation helper; closing its transport.')
+                        try:
+                            client.close()
+                        except Exception:
+                            log.warning('Could not close cancelled generation transport.')
+                        interrupted.set()
                     # A disconnected or old server must not turn cancellation
                     # into another full request timeout. Cleanup closes this
                     # private transport whether or not acknowledgement arrives.

@@ -15,6 +15,9 @@ class ConfigError(ValueError):
     pass
 
 
+MAX_EXTRACTION_WORKERS = 2_147_483_647
+
+
 _settings_write_lock = threading.Lock()
 
 
@@ -51,7 +54,7 @@ class Settings:
     extraction_workers: int = 4
 
     def apply_environment(self):
-        workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, 4)
+        workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
         os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(self.generation_budget)
@@ -130,7 +133,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
                                    'ai.generation_budget', 30, 7200),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
         extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', 4)),
-                                    'ai.extraction_workers', 1, 4),
+                                    'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
         history_sync_interval=_integer(env.get('PROJECTHUB_HISTORY_SYNC_INTERVAL', history.get('sync_interval', 60)),
@@ -157,9 +160,9 @@ def ai_worker_settings():
         configured_env.pop('PROJECTHUB_EXTRACTION_WORKERS', None)
         configured = load_settings(configured_env).extraction_workers
         effective = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured),
-                             'ai.extraction_workers', 1, 4)
+                             'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
         return {'extraction_workers': effective, 'configured_extraction_workers': configured,
-                'min_extraction_workers': 1, 'max_extraction_workers': 4}
+                'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS}
 
 
 def _worker_config_text(original, workers):
@@ -202,7 +205,7 @@ def _worker_config_text(original, workers):
 
 def save_ai_worker_settings(workers):
     """Persist one ProjectHub setting, then apply it to future generation pools."""
-    workers = _integer(workers, 'ai.extraction_workers', 1, 4)
+    workers = _integer(workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
     with _settings_write_lock:
         path = config_path()
         if any(p.is_symlink() for p in (path, *path.parents)):
@@ -245,4 +248,4 @@ def save_ai_worker_settings(workers):
             if os.path.exists(temporary):
                 os.unlink(temporary)
         return {'extraction_workers': workers, 'configured_extraction_workers': workers,
-                'min_extraction_workers': 1, 'max_extraction_workers': 4}
+                'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS}

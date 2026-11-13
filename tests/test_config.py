@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from backend.app import cli
-from backend.app.config import ConfigError, Settings, TEMPLATE, config_path, create_config, load_settings
+from backend.app.config import ConfigError, MAX_EXTRACTION_WORKERS, Settings, TEMPLATE, config_path, create_config, load_settings
 
 
 def test_defaults_and_xdg_paths(tmp_path):
@@ -124,7 +124,7 @@ def test_example_template_matches_created_config():
     assert Path('config.example.toml').read_text() == TEMPLATE
 
 
-@pytest.mark.parametrize('workers', [1, 2, 3, 4])
+@pytest.mark.parametrize('workers', [1, 2, 3, 4, 5, 12, MAX_EXTRACTION_WORKERS])
 def test_extraction_workers_file_setting_and_environment_override(tmp_path, workers):
     path = tmp_path / 'config.toml'
     path.write_text(f'[ai]\nextraction_workers = {workers}\n')
@@ -134,20 +134,20 @@ def test_extraction_workers_file_setting_and_environment_override(tmp_path, work
     assert load_settings({**env, 'PROJECTHUB_EXTRACTION_WORKERS': str(override)}).extraction_workers == override
 
 
-@pytest.mark.parametrize('value', ['true', 'false', '0', '5', '1.5', '"unknown"', '"do-not-print-this"'])
+@pytest.mark.parametrize('value', ['true', 'false', '0', str(MAX_EXTRACTION_WORKERS + 1), '1.5', '"unknown"', '"do-not-print-this"'])
 def test_invalid_extraction_worker_config_has_sanitized_error(tmp_path, value):
     path = tmp_path / 'config.toml'
     path.write_text(f'[ai]\nextraction_workers = {value}\n')
-    with pytest.raises(ConfigError, match='ai.extraction_workers must be an integer from 1 to 4') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
         load_settings({'PROJECTHUB_CONFIG': str(path)})
     assert 'do-not-print-this' not in str(exc.value)
 
 
-@pytest.mark.parametrize('value', ['true', '0', '5', 'unknown', 'do-not-print-this', '1.5'])
+@pytest.mark.parametrize('value', ['true', '0', str(MAX_EXTRACTION_WORKERS + 1), 'unknown', 'do-not-print-this', '1.5'])
 def test_invalid_extraction_worker_environment_has_sanitized_error(tmp_path, value):
-    with pytest.raises(ConfigError, match='ai.extraction_workers must be an integer from 1 to 4') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
         load_settings({'XDG_CONFIG_HOME': str(tmp_path), 'PROJECTHUB_EXTRACTION_WORKERS': value})
-    assert str(exc.value) == 'ai.extraction_workers must be an integer from 1 to 4.'
+    assert str(exc.value) == f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}.'
 
 
 def test_extraction_worker_unknown_field_is_not_silently_ignored(tmp_path):
@@ -175,11 +175,11 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '4'
 
 
-@pytest.mark.parametrize('value', [True, 0, 5, 'do-not-print-this'])
+@pytest.mark.parametrize('value', [True, 0, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])
 def test_direct_invalid_settings_worker_value_cannot_enter_environment(tmp_path, monkeypatch, value):
     monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '2')
     settings = Settings(8766, tmp_path, 600, None, extraction_workers=value)
-    with pytest.raises(ConfigError, match='ai.extraction_workers must be an integer from 1 to 4') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
         settings.apply_environment()
     assert 'do-not-print-this' not in str(exc.value)
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '2'

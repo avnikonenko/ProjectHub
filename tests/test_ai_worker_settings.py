@@ -31,10 +31,10 @@ def settings_client(tmp_path, monkeypatch):
 def test_read_is_global_non_mutating_and_shows_effective_override(settings_client, monkeypatch):
     client, path = settings_client
     original = path.read_bytes()
-    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '4')
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '12')
     assert client.get('/api/settings/ai').json() == {
-        'extraction_workers': 4, 'configured_extraction_workers': 2,
-        'min_extraction_workers': 1, 'max_extraction_workers': 4,
+        'extraction_workers': 12, 'configured_extraction_workers': 2,
+        'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
     }
     assert path.read_bytes() == original
     assert client.get('/api/projects').json() == []
@@ -58,7 +58,7 @@ def test_patch_persists_one_field_and_applies_to_future_requests(settings_client
 
 
 @pytest.mark.parametrize('body', [
-    {'extraction_workers': 0}, {'extraction_workers': 5}, {'extraction_workers': True},
+    {'extraction_workers': 0}, {'extraction_workers': config.MAX_EXTRACTION_WORKERS + 1}, {'extraction_workers': True},
     {'extraction_workers': '3'}, {'extraction_workers': 2.0}, {},
     {'extraction_workers': 2, 'another_setting': 'not allowed'},
 ])
@@ -171,3 +171,16 @@ def test_cross_origin_setting_change_is_denied(settings_client):
                             headers={'Origin': 'https://example.com'})
     assert response.status_code == 403
     assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('workers', [5, 12, config.MAX_EXTRACTION_WORKERS])
+def test_worker_counts_above_four_persist_without_invoking_codex(settings_client, workers):
+    client, path = settings_client
+    response = client.patch('/api/settings/ai', json={'extraction_workers': workers})
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        'extraction_workers': workers, 'configured_extraction_workers': workers,
+        'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
+    }
+    assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
+    assert client.get('/api/settings/ai').json() == response.json()

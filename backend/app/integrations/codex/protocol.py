@@ -58,9 +58,12 @@ class AppServerClient:
                                             text=True, encoding='utf-8', bufsize=1)
         except OSError as exc:
             raise CodexError('Unable to start Codex App Server') from exc
-        self.reader = threading.Thread(target=self._read, daemon=True, name='projecthub-codex')
-        self.reader.start()
         try:
+            try:
+                self.reader = threading.Thread(target=self._read, daemon=True, name='projecthub-codex')
+                self.reader.start()
+            except (RuntimeError, OSError) as exc:
+                raise CodexError('Unable to start the Codex reader. Reduce the parallel thread count and retry.') from exc
             self.request('initialize', {'clientInfo': {'name': 'projecthub',
                          'title': 'ProjectHub', 'version': VERSION}})
             self._write({'method': 'initialized', 'params': {}})

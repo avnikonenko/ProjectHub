@@ -150,3 +150,25 @@ def test_billing_environment_keys_are_not_forwarded(fake_server, monkeypatch):
     client.close()
     assert all(name not in observed for name in ('OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL', 'OPENAI_API_BASE'))
     assert 'model_provider="openai"' in server_command('/usr/bin/codex')
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('thread capacity exhausted'), OSError('resource limit')])
+def test_reader_start_failure_closes_spawned_process_and_streams(fake_server, monkeypatch, failure):
+    processes = []
+    spawn = protocol.subprocess.Popen
+
+    def tracked_spawn(*args, **kwargs):
+        process = spawn(*args, **kwargs)
+        processes.append(process)
+        return process
+
+    def fail_start(self):
+        raise failure
+
+    monkeypatch.setattr(protocol.subprocess, 'Popen', tracked_spawn)
+    monkeypatch.setattr(protocol.threading.Thread, 'start', fail_start)
+    with pytest.raises(CodexError, match='Unable to start the Codex reader.*Reduce the parallel thread count'):
+        AppServerClient(executable=sys.executable, timeout=1)
+    assert len(processes) == 1
+    assert processes[0].poll() is not None
+    assert processes[0].stdin.closed and processes[0].stdout.closed

@@ -776,3 +776,40 @@ def test_json_formatting_guard_ignores_leading_whitespace_and_nonobject_streams(
     other = module._JsonFormattingGuard()
     assert not other.feed('[{}]' + ' ' * 6000)
     assert other.disabled
+
+
+def test_cancellation_helper_start_failure_keeps_cancelled_error_and_closes_private_client(env, monkeypatch):
+    from backend.app.integrations.codex import progress
+
+    pid = 93010
+    clients = []
+    progress.begin(pid, 'qa')
+    started = progress.read(pid, 'qa')['started_at']
+
+    class CancelClient(FakeClient):
+        def __init__(self, **callbacks):
+            super().__init__(**callbacks)
+            clients.append(self)
+
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['thread']['ephemeral'] = True
+            if method == 'turn/start':
+                progress.cancel(pid, 'qa', started)
+            return result
+
+    def fail_start(self):
+        raise RuntimeError('thread capacity exhausted')
+
+    monkeypatch.setattr(module.threading.Thread, 'start', fail_start)
+    env.manager.client_factory = CancelClient
+    try:
+        with env.manager.generation_session():
+            with pytest.raises(progress.GenerationCancelled):
+                env.manager.generate_brief('Synthetic request', {'type': 'object'})
+        assert clients[0].closed
+        assert not any(method in ('thread/resume', 'turn/interrupt') for method, _ in clients[0].calls)
+    finally:
+        progress.finish(pid)
+    assert progress.read(pid, 'qa')['state'] == 'cancelled'

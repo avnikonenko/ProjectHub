@@ -23,7 +23,7 @@ from . import progress
 from .revisions import list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
-from ...config import ConfigError, ai_worker_settings, save_ai_worker_settings
+from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_worker_settings
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
@@ -34,7 +34,7 @@ class Input(BaseModel):
 
 
 class AIWorkerSettingsInput(Input):
-    extraction_workers: int = Field(strict=True, ge=1, le=4)
+    extraction_workers: int = Field(strict=True, ge=1, le=MAX_EXTRACTION_WORKERS)
 
 
 class SessionInput(Input):

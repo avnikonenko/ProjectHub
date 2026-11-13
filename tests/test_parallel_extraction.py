@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
+from backend.app.config import MAX_EXTRACTION_WORKERS
 from backend.app.models import Project, ProjectHistoryBatch, ProjectKnowledge
 from backend.app.integrations.codex import knowledge, knowledge_sources, progress
 from backend.app.integrations.codex.ai_instructions import ai_instructions, use_project_instructions
@@ -115,8 +116,8 @@ def test_parallel_bounds_order_context_and_exact_input_cache_reuse(setup, monkey
 
 
 def _six_windows(bundle, windows):
-    # More windows than the maximum worker count prove undispatched work stays
-    # untouched after a failure/cancellation, including the four-worker case.
+    # More windows than the failure/cancellation test worker counts prove
+    # undispatched work stays untouched, including the four-worker case.
     for i in (4, 5):
         source = {**windows[0]['sources'][0], 'id': f'source:{i}',
                   'text': f'Consider independent option {i}.', 'revision': f'extra:{i}', 'order': i}
@@ -257,11 +258,11 @@ def test_workers_inherit_cancellation_and_budget(setup, monkeypatch, mode, worke
     finally: progress.finish(1)
 
 
-@pytest.mark.parametrize('value', ['0', '5', 'wrong'])
+@pytest.mark.parametrize('value', ['0', str(MAX_EXTRACTION_WORKERS + 1), 'wrong'])
 def test_invalid_concurrency_is_explicit(setup, monkeypatch, value):
     engine, bundle, _ = setup
     monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', value)
-    with pytest.raises(CodexError, match='WORKERS must be from 1 to 4'):
+    with pytest.raises(CodexError, match=f'WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}'):
         knowledge.build_candidate(engine, 1, Manager(lambda *_: pytest.fail('No generation expected')), bundle)
 
 
@@ -276,3 +277,88 @@ def test_one_worker_keeps_original_transport_and_order(setup, monkeypatch):
     result = knowledge.build_candidate(engine, 1, Manager(generate), bundle)
     assert seen == [f'source:{i}' for i in range(4)]
     assert result['diagnostics']['extraction_workers'] == 1
+
+
+@pytest.mark.parametrize('requested', [6, MAX_EXTRACTION_WORKERS])
+def test_more_than_four_workers_are_bounded_by_available_windows(setup, monkeypatch, requested):
+    engine, bundle, windows = setup
+    _six_windows(bundle, windows)
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', str(requested))
+    barrier = threading.Barrier(6)
+    lock = threading.Lock()
+    active = maximum = 0
+    pools = []
+    original_pool = knowledge.ThreadPoolExecutor
+
+    def pool(*args, **kwargs):
+        pools.append(kwargs['max_workers'])
+        return original_pool(*args, **kwargs)
+
+    monkeypatch.setattr(knowledge, 'ThreadPoolExecutor', pool)
+
+    def generate(manager, payload, schema):
+        nonlocal active, maximum
+        with lock:
+            active += 1
+            maximum = max(maximum, active)
+        try:
+            barrier.wait(5)
+            return response(payload)
+        finally:
+            with lock:
+                active -= 1
+
+    result = knowledge.build_candidate(engine, 1, Manager(generate), bundle)
+    assert maximum == 6
+    assert pools == [6]
+    assert result['diagnostics']['extraction_workers'] == 6
+    assert result['diagnostics']['ai_requests'] == 6
+    assert len(result['items']) == 6
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('private thread capacity'), OSError('private resource limit')])
+def test_pool_start_resource_failure_is_explicit_and_sanitized(setup, monkeypatch, failure):
+    engine, bundle, _ = setup
+
+    def exhausted_pool(**kwargs):
+        raise failure
+
+    monkeypatch.setattr(knowledge, 'ThreadPoolExecutor', exhausted_pool)
+    with pytest.raises(CodexError, match='Unable to start AI workers.*Reduce the parallel thread count') as exc:
+        knowledge.build_candidate(engine, 1, Manager(lambda *_: pytest.fail('No generation expected')), bundle)
+    assert 'private' not in str(exc.value)
+    with Session(engine) as db:
+        assert list(db.scalars(select(ProjectHistoryBatch))) == []
+
+
+@pytest.mark.parametrize('failure', [RuntimeError('thread startup failed'), OSError('resource limit')])
+def test_submit_resource_failure_shuts_down_pool_and_preserves_completed_cache(setup, monkeypatch, failure):
+    from concurrent.futures import Future
+
+    engine, bundle, _ = setup
+    pools = []
+
+    class ExhaustedPool:
+        def __init__(self, **kwargs):
+            self.submissions = 0
+            self.shutdown_args = None
+            pools.append(self)
+
+        def submit(self, function, *args):
+            self.submissions += 1
+            if self.submissions == 2:
+                raise failure
+            future = Future()
+            future.set_result(function(*args))
+            return future
+
+        def shutdown(self, **kwargs):
+            self.shutdown_args = kwargs
+
+    monkeypatch.setattr(knowledge, 'ThreadPoolExecutor', ExhaustedPool)
+    with pytest.raises(CodexError, match='Unable to start AI workers.*Reduce the parallel thread count'):
+        knowledge.build_candidate(engine, 1, Manager(lambda _, payload, schema: response(payload)), bundle)
+    assert pools[0].submissions == 2
+    assert pools[0].shutdown_args == {'wait': True, 'cancel_futures': True}
+    with Session(engine) as db:
+        assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 1
