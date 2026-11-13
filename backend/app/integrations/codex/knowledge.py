@@ -245,8 +245,15 @@ def validate_extraction(raw, window, project_id, extraction_version):
         result = json.loads(raw)
     except (ValueError, RecursionError) as exc:
         raise CodexError('Knowledge extraction returned invalid JSON.') from exc
-    if not isinstance(result, dict) or set(result) != {'items'} or not isinstance(result['items'], list) or len(result['items']) > MAX_ITEMS:
-        raise CodexError('Knowledge extraction returned an invalid structure.')
+    if not isinstance(result, dict):
+        raise CodexError('Knowledge extraction returned an invalid structure: expected a JSON object.')
+    if set(result) != {'items'}:
+        raise CodexError('Knowledge extraction returned an invalid structure: expected only the items field.')
+    if not isinstance(result['items'], list):
+        raise CodexError('Knowledge extraction returned an invalid structure: items must be an array.')
+    if len(result['items']) > MAX_ITEMS:
+        raise CodexError('Knowledge extraction returned an invalid structure: '
+                         f'{len(result["items"])} items exceeds the limit of {MAX_ITEMS}.')
     indexed = {source['id']: source for source in window['sources']}
     primary = set(window['primary_ids'])
     expected = set(OUTPUT_SCHEMA['properties']['items']['items']['properties'])
