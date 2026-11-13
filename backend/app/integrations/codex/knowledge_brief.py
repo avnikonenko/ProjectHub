@@ -141,6 +141,25 @@ def _apply_interpretation_defaults(wire_sources):
     return defaults
 
 
+def _apply_interpretation_item_defaults(wire_sources):
+    """Remove repeated item values from a wire copy, with explicit defaults.
+
+    A default is usable only when every item originally contains that field;
+    missing and explicit empty/null values must not acquire new meaning. Code
+    and project records without item never inherit these defaults.
+    """
+    items = [source['item'] for source in wire_sources if 'item' in source]
+    defaults = {'source_state': 'valid', 'agreement_basis': 'none',
+                'category': 'PROPOSAL', 'design_status': 'PROPOSED'}
+    defaults = {key: value for key, value in defaults.items()
+                if items and all(key in item for item in items)}
+    for item in items:
+        for key, value in defaults.items():
+            if item[key] == value:
+                del item[key]
+    return defaults
+
+
 def _synthesize(manager, candidate, bundle, repository):
     sources, groups = _brief_inputs(candidate, bundle, repository)
     wire_sources, quotes, evidence_sources = _compact_evidence(sources)
@@ -153,6 +172,9 @@ def _synthesize(manager, candidate, bundle, repository):
                'interpretation_source_defaults': interpretation_defaults}
     serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if len(serialized) > MAX_SYNTHESIS_CHARS:
+        payload['interpretation_item_defaults'] = _apply_interpretation_item_defaults(wire_sources)
+        serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+    if len(serialized) > MAX_SYNTHESIS_CHARS:
         raise CodexError('Knowledge brief exceeds the synthesis input limit; the published pair is preserved.')
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
@@ -160,6 +182,10 @@ def _synthesize(manager, candidate, bundle, repository):
         'For source records containing item, interpretation_source_defaults supplies omitted kind and '
         'classification fields. Explicit source fields override these defaults; defaults never apply to '
         'project metadata or code records without item. This encoding does not change design status. '
+        'When present, interpretation_item_defaults supplies omitted fields only inside source.item. '
+        'Explicit item values override those defaults, including empty or null values. Item defaults '
+        'never apply to outer source fields, project metadata or code records without item, and do not '
+        'derive category from design status or change any claim. '
         'Check every substantive clause against the cited original excerpts, including clauses drawn '
         'from rationale, alternatives and limitations. All extracted fields are replaceable '
         'interpretations, not independent evidence. Do not repeat an unsupported caveat merely '

@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Fit larger knowledge previews using explicit defaults for repeated item fields in the synthesis request. Preserve every record, status, rationale and quotation, with the synthesis size limit unchanged.
 - Explain malformed knowledge-extraction responses precisely, including the returned item count when it exceeds the bound, while preserving successful batch caches and withholding source content from errors.
 - Keep words intact in Markdown table cells so short headers such as Priority do not split across lines; wide tables scroll locally.
 - Restore named imported ChatGPT conversations in Sources with paged links to saved transcripts and original shared chats.
