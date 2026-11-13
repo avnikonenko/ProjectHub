@@ -782,6 +782,7 @@ function ProjectWorkspace({
               <>
                 <Codex base={base} onError={setError}
                   importControl={<ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} compact />} />
+                <ChatGPTShares base={base} notes={notes} showHistory={false} />
               </>
             )}
             {view === 'Reviews' && (
@@ -1418,7 +1419,21 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
       </div>
       {importForm}
       {!shares.length && <Empty>No shared chats imported.</Empty>}
-      {!showHistory && !!shares.length && <p>{shares.length} saved · Browse in History</p>}
+      {!showHistory && !!shares.length && (
+        <PagedItems label="Shared conversation pages">
+          {shares.map((share) => (
+            <article className="list-item" key={share.id}>
+              <strong>{share.title || 'Untitled conversation'}</strong>
+              <div className="actions left">
+                <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: share.id })}>
+                  Read saved transcript
+                </a>
+                <a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a>
+              </div>
+            </article>
+          ))}
+        </PagedItems>
+      )}
       {showHistory && pageCount > 1 && (
         <nav className="pagination" aria-label="Shared chat pages">
           <button className="secondary" disabled={currentPage === 0}

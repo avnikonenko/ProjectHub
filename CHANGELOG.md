@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Restore named imported ChatGPT conversations in Sources with paged links to saved transcripts and original shared chats.
 - Count successfully cached extraction batches in failed-run progress even when a sibling fails before the coordinator records their completion. Preserve the original failure and stop further dispatch.
 - Require source support for extracted reasons and limitations as well as statements. Knowledge briefs cross-check original excerpts instead of repeating unsupported caveats or interpreting recommendations and missing metadata as proof that work or version pinning is absent.
 - Preserve configurable policies and concrete inspection properties in knowledge statements. After real comparisons exposed mixed-status compression at 24 records, increase the bounded extraction ceiling to 36 and version the instructions/schema; retain earlier caches without reusing obsolete interpretations.
