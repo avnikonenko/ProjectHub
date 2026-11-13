@@ -1380,10 +1380,17 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
   if (compact) return (
     <div className="source-import">
       <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
-      <small>{shares.length ? `${shares.length} shared chats saved · Browse in History` : 'No shared chats imported.'}</small>
+      <small>{shares.length ? `${shares.length} shared chats saved · Browse in History` : 'No shared chats yet.'}</small>
       {importForm}
     </div>
   );
+  if (!shares.length) return onImported ? (
+    <div className="source-import">
+      <span className="muted">No shared chats yet.</span>
+      <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
+      {importForm}
+    </div>
+  ) : showHistory ? <p className="empty">No shared chats yet. Add conversations in Sources.</p> : null;
   return (
     <section className="card">
       <div className="section-title">
@@ -1396,7 +1403,6 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
         {onImported && <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>}
       </div>
       {importForm}
-      {!shares.length && <Empty>No shared chats imported.</Empty>}
       {!showHistory && !!shares.length && (
         <PagedItems label="Shared conversation pages">
           {shares.map((share) => (

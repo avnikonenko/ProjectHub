@@ -25,6 +25,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Use compact, left-aligned empty messages; omit the empty shared-conversation card in Sources and show a short inline message in History, preserving import actions and saved lists.
 - Use one project-wide search at the top, with paged result-type filters for TODOs, notes, conversations, Q&A, knowledge and sessions. Remove duplicate search fields from individual tabs; search reads saved data without invoking AI.
 - Standardize Overview, AI Q&A and Scheme result headers with saved time, available freshness information and one generation action; keep secondary Q&A and Scheme controls in expandable details.
 - Multiple citations collapse into an expandable source count; each supporting source remains linked to its full evidence.

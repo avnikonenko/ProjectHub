@@ -632,8 +632,8 @@ main {
   color: #a2aaa6;
 }
 .empty {
-  padding: 35px 16px;
-  text-align: center;
+  padding: 0.6rem 0;
+  text-align: left;
   color: #98a49b;
   font-size: 0.928571rem;
 }
