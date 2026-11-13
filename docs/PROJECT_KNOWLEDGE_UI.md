@@ -7,9 +7,10 @@ extraction or reconciliation system. Scheme stays separate and unchanged.
 ## Use
 
 Open a project and select **Knowledge**. Published knowledge loads when that view
-opens; returning to it refreshes the read-only snapshot. Search matches statements,
-reasons, scopes, categories, statuses, source titles and saved evidence excerpts.
-Status/category/scope filters combine and Reset filters clears them. Records group
+opens; returning to it refreshes the read-only snapshot. Use the single project-wide
+search bar to find saved knowledge and its evidence alongside other project records.
+The Knowledge view has status/category/scope filters; these combine, and **Reset
+filters** clears them. It does not have a separate text-search field. Records group
 by design status and expand to show reasons, exact evidence, recorded relationships,
 and current source availability. Show more exposes every record in large groups.
 
@@ -40,8 +41,9 @@ The configured project account, model, effort and instructions use the existing
 Codex integration. It sends `confirmed:true,publish:false` to the existing endpoint.
 There is no publication or editing control in this UI.
 
-The preview renders its own paired brief, sources and searchable knowledge using
-the same components as published records. It is labelled unpublished and cannot
+The preview renders its own paired brief, sources and filterable knowledge using
+the same components as published records. The project-wide search covers saved
+project records; it does not index the in-memory unpublished preview. It is labelled unpublished and cannot
 replace the saved brief or snapshot. Project/publication identities are validated.
 Progress and elapsed time appear during generation; failed previews display an
 error. A second click cannot submit another request while one is pending.
@@ -59,10 +61,9 @@ The existing published data remains available independently.
 - `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: preview progress.
 - Existing conversation/transcript hash resolvers open original evidence.
 
-The only backend adjustment rejects missing, empty or whitespace publication IDs
-when calculating `paired_with_current_brief`. No schema, migration, extraction,
-reconciliation, authentication or Scheme change is required. The legacy Overview
-refresh still uses `/codex/brief`; the knowledge pipeline remains opt-in.
+Publication pairing rejects missing, empty or whitespace publication IDs when
+calculating `paired_with_current_brief`. The legacy Overview refresh still uses
+`/codex/brief`; the knowledge pipeline remains opt-in.
 
 | File | Responsibility |
 |---|---|
@@ -75,7 +76,7 @@ refresh still uses `/codex/brief`; the knowledge pipeline remains opt-in.
 | `frontend/src/KnowledgePage.tsx` | Published loading, mismatch handling and separate preview workflow. |
 | `frontend/src/knowledge.css` | Responsive filters/details and keyboard focus styling. |
 | `frontend/tests/knowledge.test.ts` | Helper regressions for filtering, identity, status preservation and source links. |
-| `backend/app/integrations/codex/router.py` | Minimal publication identity pairing correction. |
+| `backend/app/integrations/codex/router.py` | Project knowledge API and publication identity pairing. |
 | `backend/tests/integrations/test_knowledge_api.py` | Missing/blank/mismatched/matching publication cases. |
 
 README, changelog and pipeline documentation describe the interface. No new
@@ -83,64 +84,24 @@ dependencies or global state library were introduced. Abort controllers and keye
 render state prevent late responses from a previous project/publication appearing
 under the current project.
 
-## Evaluation
+## Evaluation reports
 
-Automated checks executed:
-
-- **413 Python tests passed**, including seven added publication-pairing cases.
-- **26 frontend tests passed**, including eight new knowledge helper/preview regressions.
-- TypeScript check and Vite production build passed. The existing large Mermaid
-  chunk warning remains; no bundling infrastructure was added.
-
-Real headless Chrome was used with a private SQLite copy, the existing 69-item
-Example Research preview installed only in that copy, history auto-sync disabled,
-and additional synthetic edge records. Preview generation was mocked at the
-existing backend boundary. These are real browser/API tests, not real new Codex
-generation or new extraction-accuracy measurements. Browser checks passed for:
-
-- Matching highlights and direct item expansion; exact original excerpt equality.
-- Example Research search and accepted-status filtering.
-- Explicit preview isolation and failures preserving the published list.
-- Publication mismatch protection and explicit current-snapshot access.
-- Delayed project-switch responses and legacy/empty-state compatibility.
-- Recorded conflicts, supersession, unavailable sources and escaped source scripts.
-- Show more exposing all 25 synthetic records, and a 390px viewport without
-  horizontal overflow.
-
-Example Research retrieval results from the exact stored snapshot:
-
-| Query | Matches |
-|---|---:|
-| Gemmi | 15 |
-| protonation | 17 |
-| ligand | 20 |
-| metal | 10 |
-| validation | 13 |
-| stereochemistry | 0 |
-
-The missing stereochemistry match is a source-extraction coverage limitation in
-this snapshot, not a frontend failure; the UI does not invent a requirement.
-The accepted docking/MD scope, unresolved first-release scope, tentative script
-reuse and unverified Gemmi adoption retain the stored statuses and reasoning.
-Original acceptance excerpts were compared exactly with the source fixture.
-
-A local helper benchmark ran 100 filter passes over 500 cloned realistic records
-in 544.37 ms (about 5.44 ms/pass). This measures filtering only, not browser rendering
-or performance on every machine. It supports client-side filtering at this scale;
-no search index or virtualization was added.
+Historical automated checks, browser scenarios, retrieval counts and filtering
+measurements are preserved in the [UI evaluation report](experiments/KNOWLEDGE_UI_EVALUATION.md).
+Those results are scoped to the tested snapshots and implementation, rather than
+a claim about the current build or extraction accuracy.
 
 ## Remaining limits
 
 - Extraction accuracy, human reference confirmation and scientific validity remain
   outside this frontend task. A readable interface does not validate an interpretation.
-- Search is case-insensitive substring search over loaded data, with exact scope
-  filters. It provides no semantic retrieval or scope equivalence inference.
+- Knowledge dropdowns use exact status/category/scope values. Project-wide search
+  is separate and provides no semantic retrieval or scope equivalence inference.
 - The current published snapshot is browsable; historical mismatches are reported
   rather than automatically resolving historical knowledge revisions.
 - Preview failures discard the previous in-memory preview; published data is preserved.
 - Source navigation depends on stored descriptors and current availability. Saved
   excerpts remain accessible when original navigation cannot be offered.
 
-Development uses `feature/project-knowledge-ui`; no merge or production-data
-publication is part of this implementation. Run with an isolated data directory
-and port as described in [the pipeline guide](KNOWLEDGE_PIPELINE.md#isolated-testing).
+Use an isolated data directory and port for development as described in
+[the pipeline guide](KNOWLEDGE_PIPELINE.md#isolated-testing).

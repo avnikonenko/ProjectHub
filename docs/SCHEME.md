@@ -80,11 +80,7 @@ No external code-intelligence engine is required. Manual overrides and export ar
 Use the README's existing install/start commands; startup applies migration 0019. Back up
 the application data directory before upgrading. No new dependencies or API key are needed.
 
-## Implementation review
+## Historical reports
 
-Separate agents implemented evidence collection, backend graph/storage services, and the UI.
-An independent QA agent reviewed source privacy, bounds, project isolation, and graph security;
-the coordinator integrated routes/revisions/progress, ran regressions, and exercised Chrome.
-Review fixes omit private initializer/import values, report bounded note omissions, hash long
-source IDs, and preserve diagram text without enabling HTML labels. Validation results are
-recorded in TEST_REPORT.md. Real Codex output quality/latency was not measured for this feature.
+The [Scheme implementation review and validation results](experiments/TEST_REPORT.md#scheme-implementation-review)
+are preserved separately from this usage and architecture guide.

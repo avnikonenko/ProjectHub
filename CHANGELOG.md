@@ -26,6 +26,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Separate current usage/configuration guides from historical experiment methods and results in `docs/experiments/`; preserve reports and link both collections from the README.
 - Make parallel AI reading threads an editable count in Settings instead of a 1–4 dropdown. Keep the default at 4, limit actual concurrency to available batches, and document resource/usage risks.
 - Use compact, left-aligned empty messages; omit the empty shared-conversation card in Sources and show a short inline message in History, preserving import actions and saved lists.
 - Use one project-wide search at the top, with paged result-type filters for TODOs, notes, conversations, Q&A, knowledge and sessions. Remove duplicate search fields from individual tabs; search reads saved data without invoking AI.

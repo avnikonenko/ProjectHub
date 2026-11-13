@@ -53,11 +53,11 @@ A later legacy refresh can create a newer legacy brief; the pairing flag then be
 GET /api/projects/{id}/codex/generation/status?kind=knowledge exposes pilot progress.
 The ordinary /codex/brief endpoint remains the default for the Overview refresh button.
 The Knowledge tab exposes published snapshots and a separate opt-in unpublished preview.
-See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for UI behavior and evaluation limits.
+See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for current UI behavior and limitations.
 
 ## Isolated testing
 
-Do not restart this branch against the production data directory just to try it.
+Do not use the production data directory just to try the pilot.
 Start with disposable data and a different port:
 
 ```bash
@@ -88,18 +88,7 @@ baseline_brief, candidate brief, and knowledge items before considering publish:
 Run automated checks with .venv/bin/python -m pytest. Tests use disposable SQLite databases
 and mocked extraction/synthesis, not real Codex model inference.
 
-## Evaluation and known limitations
-
-The initial ten reference cases are in tests/fixtures/knowledge/Example Research_reference.json
-and described in KNOWLEDGE_REFERENCE_CASES.md. Their excerpts/roles/offsets were source-checked
-by an agent; human confirmation is still pending. They are not established scientific ground
-truth or a measured extraction-accuracy benchmark.
-
-A read-only sizing check found four original Example Research documents, 103,110 message
-characters, 33 fragments and 9 extraction windows. Initial extraction therefore needs nine
-requests plus synthesis; later unchanged windows can hit caches. This is a sizing observation,
-not a token/latency or accuracy result. Structured extraction may cost more initially than the
-legacy summary path. The two pipelines are not run automatically together.
+## Known limitations
 
 For reproducible comparisons, specify model and effort. If Codex inherits externally configured
 defaults, changes to those defaults are not discoverable from the requested configuration alone;
@@ -112,12 +101,17 @@ import dates are never cross-session chronology. Source limits and exclusions ar
 The adapter reads bounded local originals to compare hashes; it does not provide network-level
 incremental syncing beyond the existing indexer.
 
-An initial live qualitative comparison is recorded in KNOWLEDGE_PILOT_EVALUATION.md.
-Decision precision/recall, actual token cost, and scientific validity remain unmeasured. Before promotion, review the ten cases plus synthetic
-supersession/failure cases, score false agreements and missed decisions separately, verify older
-reasons survive new discussions, and repeat with changed/unavailable sources. Q&A/Scheme integration,
-manual corrections, and advanced semantic merging remain deferred.
+Decision precision/recall, actual token cost and scientific validity are not established
+by source attribution or a readable overview. Human review and supported reference
+cases remain necessary before promoting the pilot. Q&A/Scheme integration, manual
+corrections and advanced semantic merging remain deferred.
 
-Human confirmation status and the review rubric are in KNOWLEDGE_HUMAN_REVIEW.md. The complete
-v4 run and a controlled incremental update are recorded in KNOWLEDGE_PILOT_EVALUATION.md;
-request counts and timings are observations, not token costs or accuracy scores.
+## Evaluation reports
+
+The [initial pipeline evaluation](experiments/KNOWLEDGE_PIPELINE_EVALUATION.md)
+preserves reference-review qualifications, the original project-specific sizing
+observation and pilot follow-up notes. See also the
+[reference cases](experiments/KNOWLEDGE_REFERENCE_CASES.md),
+[human review rubric](experiments/KNOWLEDGE_HUMAN_REVIEW.md), and
+[live pilot evaluation](experiments/KNOWLEDGE_PILOT_EVALUATION.md). Recorded request
+counts and timings are observations, not token costs or accuracy scores.
