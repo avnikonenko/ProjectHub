@@ -205,7 +205,10 @@ def test_unavailable_historical_choices_are_retained_with_visible_coverage(prepa
         def generate_brief(self, prompt, schema):
             assert 'historical or conflicting interpretations need rechecking' in prompt
             sources = schema['properties']['sections']['properties']['overview']['items']['properties']['source_ids']['items']['enum']
-            assert sources == ['project:metadata']
+            payload = json.loads(prompt.split('Return only the required structured JSON.\n', 1)[1])
+            assert sources == [payload['sources'][0]['id']]
+            assert len(payload['sources']) == 1
+            assert payload['sources'][0]['label'] == 'User-maintained project metadata'
             sections = {name: [] for name in SECTION_NAMES}
             for name in ('overview', 'architecture', 'current_status'):
                 sections[name] = [{'text': 'Source evidence needs checking.', 'source_ids': sources, 'classification': 'reported'}]
@@ -274,7 +277,7 @@ def test_synthesis_receives_acceptance_evidence_and_scope(prepared):
             assert item['agreement_basis'] == 'direct_user'
             quote_id = item['evidence'][0]['excerpt_id']
             assert payload['evidence_excerpts'][quote_id] == 'Use SQLite.'
-            assert item['evidence'][0]['role'] == 'user'
+            assert payload['evidence_sources'][item['evidence'][0]['source_ref']]['role'] == 'user'
             assert 'Never call an initial scope accepted' in prompt
             return super().generate_brief(prompt, schema)
     pilot._synthesize(EvidenceSynthesis(), candidate, prepared.bundle, {'sources': []})
@@ -317,7 +320,7 @@ def test_compound_agreements_keep_each_proposal_and_acceptance(prepared):
     class CompoundSynthesis(FakeSynthesis):
         def generate_brief(self, prompt, schema):
             result = json.loads(super().generate_brief(prompt, schema))
-            refs = ['knowledge:item-' + str(index) for index in range(3)]
+            refs = schema['properties']['sections']['properties']['overview']['items']['properties']['source_ids']['items']['enum'][:3]
             result['sections']['overview'][0]['source_ids'] = refs
             return json.dumps(result)
     sections, _, cited = pilot._synthesize(CompoundSynthesis(), candidate, prepared.bundle, {'sources': []})
@@ -390,8 +393,9 @@ def test_synthesis_omits_only_empty_optional_fields_without_mutating_knowledge(p
                     assert view[field] == original[field]
                 assert view['agreement_basis'] == original.get('agreement_basis', 'none')
                 for evidence, retained in zip(original['evidence'], view['evidence']):
-                    assert retained['source_id'] == evidence['source_id']
-                    assert retained['role'] == evidence['role']
+                    metadata = payload['evidence_sources'][retained['source_ref']]
+                    assert metadata['source_id'] == evidence['source_id']
+                    assert metadata['role'] == evidence['role']
                     assert payload['evidence_excerpts'][retained['excerpt_id']] == evidence['excerpt']
             for field in ('alternatives', 'limitations', 'conflicts_with', 'relationships'):
                 assert views[1][field] == second[field]

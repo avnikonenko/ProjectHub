@@ -4,6 +4,18 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Changed
+
+- Run opt-in knowledge extraction with two independent Codex workers by default (configurable from 1–4), preserving batch context, cache identity and reconciliation order. Keep completed caches on failure and stop sibling requests cooperatively; `PROJECTHUB_EXTRACTION_WORKERS=1` restores serial extraction. Record ordered batch timings in generation diagnostics.
+
+- Persist extraction concurrency in ProjectHub's `[ai] extraction_workers` setting, with an environment override and a default of two workers.
+
+### Fixed
+
+- Keep knowledge extraction's numeric output bounds in its prompt and local validator while constraining JSON structure and source IDs on the server, following an isolated successful probe of a repeatedly stalled dense batch. Resolve unique whitespace-only quotation selectors to exact original source spans; reject changed content, ambiguous matches and wrong speakers.
+
+- Fit larger knowledge briefs through lossless evidence dictionaries, explicit repeated-metadata defaults and temporary citation aliases. Restore original IDs before resolving citations, preserve proposal–acceptance evidence, and keep the synthesis limit unchanged. Cache corrected source spans as literal original text for rollback compatibility.
+
 ### Fixed
 
 - Reject metal-coordinating-water false positives in the configurable crystallographic-water recall screen. Stop excessive streamed JSON-formatting whitespace with an explicit generation failure while preserving saved results; never accept a partial response.

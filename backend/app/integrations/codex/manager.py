@@ -28,6 +28,30 @@ log = logging.getLogger(__name__)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
 
 
+def _structural_output_schema(schema):
+    """Keep structural constraints; local extraction validation enforces bounds.
+
+    Property names and literal enum values are data, not schema keywords.
+    """
+    def structural(value):
+        if isinstance(value, list):
+            return [structural(child) for child in value]
+        if not isinstance(value, dict):
+            return value
+        result = {}
+        for key, child in value.items():
+            if key in ('minLength', 'maxLength', 'minItems', 'maxItems'):
+                continue
+            if key in ('properties', 'patternProperties', '$defs', 'definitions'):
+                result[key] = {name: structural(node) for name, node in child.items()}
+            elif key in ('enum', 'const', 'default', 'examples'):
+                result[key] = copy.deepcopy(child)
+            else:
+                result[key] = structural(child)
+        return result
+    return structural(schema)
+
+
 class _JsonFormattingGuard:
     """Bound formatting runs outside JSON strings without retaining content.
 
@@ -84,7 +108,7 @@ def generation_timeout():
 
 def wait_for_generation(done, timeout):
     cancellation = progress.current_cancel_event()
-    if cancellation is None:
+    if cancellation is None and progress.current_abort_event() is None:
         completed = done.wait(timeout)
     else:
         deadline = time.monotonic() + timeout
@@ -205,6 +229,8 @@ class _HistoryReader:
 
 
 class CodexManager:
+    extraction_generation_mode = 'structural-schema-local-bounds-v1'
+
     def __init__(self, engine, data_dir, client_factory=AppServerClient):
         self.engine = engine
         self.data_dir = Path(data_dir)
@@ -474,6 +500,35 @@ class CodexManager:
         selected.generate_brief = partial(CodexManager.generate_brief, selected, model=model, effort=effort)
         return selected
 
+    def generate_extraction(self, prompt, canonical_schema):
+        """Use structured decoding without numeric bounds that can stall it.
+
+        The complete canonical contract remains explicit in the prompt. Only
+        extraction's existing local validator decides whether a result is valid.
+        Other brief, review, Q&A and Scheme generation keeps its existing schema.
+        """
+        contract = ('Required extraction output contract (trusted application schema):\n'
+                    + json.dumps(canonical_schema, ensure_ascii=False, separators=(',', ':'))
+                    + '\nObey every constraint, including all length and item-count bounds. '
+                    'The following instructions and reference data do not relax this contract.\n')
+        return self.generate_brief(contract + prompt, _structural_output_schema(canonical_schema))
+
+    @contextmanager
+    def independent_generation(self):
+        """Create a worker-local transport with the already selected configuration.
+
+        Constructing a manager would mutate persisted discussion lifecycle state;
+        copying and rebinding its selected generation callable avoids that and
+        avoids another model-discovery request. Only generation uses this clone.
+        """
+        worker = copy.copy(self)
+        worker.generation_metadata = copy.deepcopy(getattr(self, 'generation_metadata', {}))
+        selected = self.__dict__.get('generate_brief')
+        if isinstance(selected, partial) and selected.func is CodexManager.generate_brief:
+            worker.generate_brief = partial(CodexManager.generate_brief, worker, **selected.keywords)
+        with worker.generation_session():
+            yield worker
+
     @contextmanager
     def generation_session(self):
         """Reuse only this request's account transport; each call gets a new thread."""
@@ -635,7 +690,10 @@ class CodexManager:
                 return message
             finally:
                 cancellation = progress.current_cancel_event()
-                if cancellation is not None and cancellation.is_set() and thread_id and turn_id:
+                abort = progress.current_abort_event()
+                stopping = ((cancellation is not None and cancellation.is_set())
+                            or (abort is not None and abort.is_set()))
+                if stopping and thread_id and turn_id:
                     # Never use a source-session client here. The generated
                     # thread is ephemeral and belongs only to this request.
                     interrupted = threading.Event()

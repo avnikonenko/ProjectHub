@@ -1,5 +1,9 @@
 """Replaceable source-backed interpretations; publication belongs to the brief caller."""
 from copy import deepcopy
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import copy_context
+import os
+import threading
 import hashlib
 import json
 import time
@@ -191,6 +195,28 @@ def read_knowledge(db, project_id):
     return None if row is None else row.snapshot
 
 
+def _source_excerpt(quote, text):
+    """Resolve a whitespace-only selector to a unique original contiguous span.
+
+    Model formatting is never stored as a quotation. Exact quotations retain
+    their existing behavior; the fallback changes neither words nor punctuation
+    and rejects ambiguous matches, including overlapping occurrences.
+    """
+    if not isinstance(quote, str) or not quote.strip() or len(quote) > 1600:
+        raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+    if quote in text:
+        return quote
+    parts = re.split(r'(\s+)', quote)
+    pattern = ''.join(r'\s+' if part.isspace() else re.escape(part) for part in parts)
+    # Lookahead includes overlapping matches; silently choosing one would lose
+    # source-location fidelity. Retain at most one bounded original span.
+    matches = re.finditer('(?=(' + pattern + '))', text)
+    first = next(matches, None)
+    if first is None or len(first[1]) > 1600 or next(matches, None) is not None:
+        raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+    return first[1]
+
+
 def validate_extraction(raw, window, project_id, extraction_version):
     if not isinstance(raw, str):
         raise CodexError('Knowledge extraction returned invalid JSON.')
@@ -228,19 +254,17 @@ def validate_extraction(raw, window, project_id, extraction_version):
             if not isinstance(ref, dict) or set(ref) != {'source_id', 'role', 'excerpt'}:
                 raise CodexError('Knowledge extraction returned invalid evidence.')
             identifier = ref['source_id']
-            if not isinstance(identifier, str) or identifier not in indexed:
+            if not isinstance(identifier, str) or len(identifier) > 240 or identifier not in indexed:
                 raise CodexError('Knowledge extraction cited missing or foreign evidence.')
             source = indexed[identifier]
-            quote = ref['excerpt']
-            if (ref['role'] not in ('user', 'assistant') or ref['role'] != source['role']
-                    or not isinstance(quote, str) or not quote.strip() or len(quote) > 1600
-                    or quote not in source['text']):
+            if ref['role'] not in ('user', 'assistant') or ref['role'] != source['role']:
                 raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+            quote = _source_excerpt(ref['excerpt'], source['text'])
             identity = (identifier, ref['role'], quote)
             if identity in seen_refs:
                 continue
             seen_refs.add(identity)
-            evidence.append({**ref, **{key: source.get(key) for key in (
+            evidence.append({**ref, 'excerpt': quote, **{key: source.get(key) for key in (
                 'revision', 'conversation_id', 'order', 'source_key', 'timestamp', 'message_revision')},
                 'label': source.get('label', identifier)})
         if not any(ref['source_id'] in primary for ref in evidence):
@@ -268,6 +292,27 @@ def validate_extraction(raw, window, project_id, extraction_version):
     return validated
 
 
+def _cache_response(raw, window):
+    """Cache literal quotations so earlier validators can read restored results.
+
+    Called only after complete validation. Keep unchanged responses byte-for-byte;
+    when a selector was restored, retain only its original model wording as
+    provenance outside the canonical schema response.
+    """
+    response = json.loads(raw)
+    sources = {source['id']: source['text'] for source in window['sources']}
+    adjustments = []
+    for item_index, item in enumerate(response['items']):
+        for ref_index, ref in enumerate(item['evidence']):
+            text = sources[ref['source_id']]
+            if ref['excerpt'] not in text:
+                original = ref['excerpt']
+                ref['excerpt'] = _source_excerpt(original, text)
+                adjustments.append({'item': item_index, 'evidence': ref_index,
+                                    'original_excerpt': original})
+    return (json.dumps(response, ensure_ascii=False, separators=(',', ':')) if adjustments else raw), adjustments
+
+
 def extract_batch(engine, project_id, manager, window, configuration):
     version = _digest(configuration)
     # Exclude parent-conversation revisions: appending messages should not invalidate
@@ -286,10 +331,17 @@ def extract_batch(engine, project_id, manager, window, configuration):
             return validate_extraction(cached.evidence[0].get('raw'), window, project_id, version), True
     schema = deepcopy(OUTPUT_SCHEMA)
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
-    raw = manager.generate_brief(PROMPT + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
+    generate = getattr(manager, 'generate_extraction', None)
+    if not callable(generate):
+        generate = manager.generate_brief
+    raw = generate(PROMPT + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
     items = validate_extraction(raw, window, project_id, version)
+    cached_raw, adjustments = _cache_response(raw, window)
+    envelope = {'raw': cached_raw, 'generation_mode': getattr(manager, 'extraction_generation_mode', 'full-schema')}
+    if adjustments:
+        envelope['selector_adjustments'] = adjustments
     with Session(engine) as db:
-        db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[{'raw': raw}]))
+        db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[envelope]))
         db.commit()
     return items, False
 
@@ -426,6 +478,112 @@ def reconcile(previous, extracted, bundle, extraction_version):
     return list(items.values())
 
 
+def _extraction_workers(manager):
+    try:
+        workers = int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '2'))
+    except ValueError as exc:
+        raise CodexError('PROJECTHUB_EXTRACTION_WORKERS must be from 1 to 4.') from exc
+    if not 1 <= workers <= 4:
+        raise CodexError('PROJECTHUB_EXTRACTION_WORKERS must be from 1 to 4.')
+    return workers if callable(getattr(manager, 'independent_generation', None)) else 1
+
+
+def _extract_windows(engine, project_id, manager, windows, configuration):
+    """Independent requests overlap; interpretation and source order never change.
+
+    Each worker owns a transport and a copied context, but shares this request's
+    cancellation event and deadline. A batch failure aborts siblings without
+    marking the project as user-cancelled. Successfully validated caches survive.
+    """
+    from . import progress
+    from ...models import utcnow
+    workers = min(_extraction_workers(manager), max(1, len(windows)))
+    results = [None] * len(windows)
+    timings = [None] * len(windows)
+    hits = completed = 0
+    progress.update(project_id, batch_phase='knowledge extraction', batch_total=len(windows),
+                    batch_completed=0, cache_hits=0, batch_started_at=None)
+
+    def record(index, result, elapsed, active=None):
+        nonlocal completed, hits
+        values, cached = result
+        results[index] = values
+        timings[index] = {'batch': index + 1, 'seconds': round(elapsed, 3), 'cached': cached}
+        completed += 1
+        hits += int(cached)
+        progress.update(project_id, batch_completed=completed, cache_hits=hits,
+                        batch_started_at=active, last_batch_seconds=round(elapsed, 3))
+
+    if workers == 1:
+        for index, window in enumerate(windows):
+            progress.check_cancelled()
+            start = time.monotonic()
+            progress.update(project_id, batch_started_at=utcnow())
+            result = extract_batch(engine, project_id, manager, window, configuration)
+            record(index, result, time.monotonic() - start)
+    else:
+        abort = threading.Event()
+        failure, failure_lock = [], threading.Lock()
+
+        def extract(window):
+            try:
+                with progress.abort_on(abort):
+                    progress.check_cancelled()
+                    start = time.monotonic()
+                    with manager.independent_generation() as selected:
+                        result = extract_batch(engine, project_id, selected, window, configuration)
+                    return result, time.monotonic() - start
+            except BaseException as exc:
+                # Preserve the originating error, not a sibling's abort message.
+                with failure_lock:
+                    if not failure:
+                        failure.append(exc)
+                    abort.set()
+                raise
+
+        def check_failure():
+            with failure_lock:
+                if failure:
+                    raise failure[0]
+
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-extraction')
+        pending, next_index = {}, 0
+        try:
+            while next_index < len(windows) or pending:
+                progress.check_cancelled()
+                check_failure()
+                while next_index < len(windows) and len(pending) < workers:
+                    check_failure()
+                    index = next_index
+                    started_at = utcnow()
+                    # A Context cannot be entered simultaneously from two threads.
+                    context = copy_context()
+                    future = pool.submit(context.run, extract, windows[index])
+                    pending[future] = (index, started_at)
+                    next_index += 1
+                active = min((value[1] for value in pending.values()), default=None)
+                progress.update(project_id, batch_started_at=active)
+                ready, _ = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                check_failure()
+                # Check all ready failures before dispatching any replacement work.
+                for future in ready:
+                    if future.exception() is not None:
+                        future.result()
+                for future in sorted(ready, key=lambda value: pending[value][0]):
+                    index, _ = pending.pop(future)
+                    result, elapsed = future.result()
+                    active = min((value[1] for value in pending.values()), default=None)
+                    record(index, result, elapsed, active)
+        except BaseException:
+            abort.set()
+            for future in pending:
+                future.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+    return [item for batch in results for item in batch], hits, len(windows) - hits, workers, timings
+
+
 def build_candidate(engine, project_id, manager, bundle, previous=None):
     from .knowledge_sources import build_windows
     if (bundle.get('project', {}).get('id') != project_id
@@ -434,23 +592,11 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     configuration = extraction_configuration(manager)
     version = _digest(configuration)
     windows = build_windows(bundle)
-    extracted, hits, requests = [], 0, 0
     all_sources = {source['id']: source for source in bundle['sources']}
-    from . import progress
-    from ...models import utcnow
-    progress.update(project_id, batch_phase='knowledge extraction', batch_total=len(windows),
-                    batch_completed=0, cache_hits=0, batch_started_at=None)
-    for index, window in enumerate(windows):
-        progress.check_cancelled()
-        batch_start = time.monotonic()
-        progress.update(project_id, batch_started_at=utcnow())
+    for window in windows:
         all_sources.update((source['id'], source) for source in window['sources'])
-        values, cached = extract_batch(engine, project_id, manager, window, configuration)
-        extracted.extend(values)
-        hits += int(cached)
-        requests += int(not cached)
-        progress.update(project_id, batch_completed=index + 1, cache_hits=hits, batch_started_at=None,
-                        last_batch_seconds=round(time.monotonic() - batch_start, 3))
+    extracted, hits, requests, workers, timings = _extract_windows(
+        engine, project_id, manager, windows, configuration)
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version)
     # Store only the exact quotations used, while keeping full originals in their
@@ -476,4 +622,5 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'fingerprint': bundle['manifest']['fingerprint'], 'coverage': deepcopy(bundle['coverage']),
             'extraction_version': version,
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
+                            'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default'}}

@@ -1,5 +1,6 @@
 """Project-scoped generation progress and cooperative cancellation."""
 from contextvars import ContextVar
+from contextlib import contextmanager
 import threading
 import time
 import os
@@ -16,6 +17,7 @@ _clocks = {}
 _stage_clocks = {}
 log = logging.getLogger('uvicorn.error')
 _current = ContextVar('projecthub_active_generation', default=None)
+_abort = ContextVar('projecthub_extraction_abort', default=None)
 
 
 class GenerationCancelled(CodexError):
@@ -63,6 +65,20 @@ def current_cancel_event():
     return current[1] if current is not None else None
 
 
+def current_abort_event():
+    return _abort.get()
+
+
+@contextmanager
+def abort_on(event):
+    """Stop sibling work without misrepresenting a failure as user cancellation."""
+    token = _abort.set(event)
+    try:
+        yield
+    finally:
+        _abort.reset(token)
+
+
 def check_cancelled():
     event = current_cancel_event()
     if event is not None and event.is_set():
@@ -70,6 +86,9 @@ def check_cancelled():
     current = _current.get()
     if current is not None:
         _check_budget(current[0])
+    abort = current_abort_event()
+    if abort is not None and abort.is_set():
+        raise CodexError('Another extraction batch failed.')
 
 
 def cancel(project_id, kind, started_at):
