@@ -1476,6 +1476,8 @@ a:focus-visible {
   padding: 0.65em 0.85em;
   border-color: var(--border, #dfe6e0);
   line-height: 1.5;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 .markdown tbody tr:nth-child(even) {
   background: var(--surface-subtle, #f6f8f6);

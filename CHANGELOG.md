@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep words intact in Markdown table cells so short headers such as Priority do not split across lines; wide tables scroll locally.
 - Restore named imported ChatGPT conversations in Sources with paged links to saved transcripts and original shared chats.
 - Count successfully cached extraction batches in failed-run progress even when a sibling fails before the coordinator records their completion. Preserve the original failure and stop further dispatch.
 - Require source support for extracted reasons and limitations as well as statements. Knowledge briefs cross-check original excerpts instead of repeating unsupported caveats or interpreting recommendations and missing metadata as proof that work or version pinning is absent.
