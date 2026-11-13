@@ -12,6 +12,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Search all Notes and TODOs before pagination, including completed TODOs, with match counts and local filtering.
+
 - Agents can cross out existing TODOs through the ProjectHub skill using `projecthub todo complete` without deleting notes or pins.
 
 - Main Settings includes a persistent Parallel extraction workers control (1–4), with loading/saving feedback and failed-save recovery. Changes apply to the next generation without restarting or interrupting an active run. Saving preserves unrelated ProjectHub settings and does not invoke Codex.

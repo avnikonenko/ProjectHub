@@ -4,6 +4,7 @@ import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledg
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
+import { matchesItemSearch } from './itemSearch';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
@@ -254,6 +255,8 @@ function ProjectWorkspace({
   } | null>(null);
   const [report, setReport] = useState<any>(null);
   const [todoTitle, setTodoTitle] = useState('');
+  const [todoSearch, setTodoSearch] = useState('');
+  const [noteSearch, setNoteSearch] = useState('');
   const [bulkTodos, setBulkTodos] = useState(false);
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<any[] | null>(null);
@@ -346,8 +349,11 @@ function ProjectWorkspace({
   ].sort((a, b) => (Date.parse(b.time ?? '') || 0) - (Date.parse(a.time ?? '') || 0));
   const todoOrder = (a: RecordData, b: RecordData) =>
     Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.id - a.id;
-  const activeTodos = tasks.filter((task) => task.status !== 'completed').sort(todoOrder);
-  const completedTodos = tasks.filter((task) => task.status === 'completed').sort(todoOrder);
+  const matchingTodos = tasks.filter((task) => matchesItemSearch(todoSearch, [task.title, task.description]));
+  const activeTodos = matchingTodos.filter((task) => task.status !== 'completed').sort(todoOrder);
+  const completedTodos = matchingTodos.filter((task) => task.status === 'completed').sort(todoOrder);
+  const matchingNotes = notes.filter((note) => matchesItemSearch(noteSearch,
+    [note.title, note.content, note.reference])).reverse();
   const todoRow = (task: RecordData) => (
     <li className="record-row" key={task.id}>
       <div className="todo-content">
@@ -587,6 +593,12 @@ function ProjectWorkspace({
             {view === 'TODO' && (
               <section className="card">
                 <h2>TODO</h2>
+                <label>
+                  Search all TODOs
+                  <input type="search" value={todoSearch} placeholder="Search titles and notes…"
+                    onChange={(event) => setTodoSearch(event.target.value)} />
+                  {todoSearch.trim() && <small role="status">{matchingTodos.length} of {tasks.length} TODOs match (including completed)</small>}
+                </label>
                 <form className="todo-add" onSubmit={(event) => {
                   event.preventDefault();
                   const title = todoTitle.trim();
@@ -614,10 +626,10 @@ function ProjectWorkspace({
                     }} />
                 )}
                 {activeTodos.length
-                  ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
-                  : <Empty>No open TODOs.</Empty>}
+                  ? <PagedItems key={todoSearch} label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
+                  : <Empty>{todoSearch.trim() ? 'No matching open TODOs.' : 'No open TODOs.'}</Empty>}
                 {!!completedTodos.length && (
-                  <details>
+                  <details key={todoSearch} open={todoSearch.trim() ? true : undefined}>
                     <summary>Completed ({completedTodos.length})</summary>
                     <PagedItems label="Completed TODO pages" listClass="todo-list" pageSize={10}>{completedTodos.map(todoRow)}</PagedItems>
                   </details>
@@ -703,8 +715,14 @@ function ProjectWorkspace({
                     Export project JSON
                   </a>
                 </div>
-                {!notes.length && <Empty>No notes yet.</Empty>}
-                <PagedItems label="Note pages">{[...notes].reverse().map((n) => (
+                <label>
+                  Search all notes
+                  <input type="search" value={noteSearch} placeholder="Search titles, content, and references…"
+                    onChange={(event) => setNoteSearch(event.target.value)} />
+                  {noteSearch.trim() && <small role="status">{matchingNotes.length} of {notes.length} notes match</small>}
+                </label>
+                {!matchingNotes.length && <Empty>{noteSearch.trim() ? 'No matching notes.' : 'No notes yet.'}</Empty>}
+                <PagedItems key={noteSearch} label="Note pages">{matchingNotes.map((n) => (
                   <section className="card note-card" key={n.id}>
                     <div className="section-title">
                       <h2>{n.title}</h2>
