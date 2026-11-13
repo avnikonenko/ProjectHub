@@ -1,7 +1,7 @@
 import { KnowledgePage } from './KnowledgePage';
 import { BriefPreview, type Brief } from './BriefContent';
 import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
 import { completedMessages } from './codex';
@@ -761,8 +761,8 @@ function ProjectWorkspace({
             )}
             {view === 'Sources' && (
               <>
-                <ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} />
-                <Codex base={base} onError={setError} />
+                <Codex base={base} onError={setError}
+                  importControl={<ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} compact />} />
               </>
             )}
             {view === 'Reviews' && (
@@ -1354,11 +1354,12 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   );
 }
 
-function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNotes }: {
+function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNotes, compact = false }: {
   base: string;
   notes: RecordData[];
   onImported?: () => Promise<void>;
   showHistory?: boolean;
+  compact?: boolean;
   passageNotes?: PassageNoteContext;
 }) {
   const [adding, setAdding] = useState(false);
@@ -1367,6 +1368,24 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
   const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const start = currentPage * HISTORY_PAGE_SIZE;
+  const importForm = adding && onImported && (
+        <Form title="Import shared chat"
+          fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
+          saveLabel="Import" savingLabel="Importing…" onClose={() => setAdding(false)}
+          onSave={async ({ url }) => {
+            await post(`${base}/notes/chatgpt-share`, { url: url.trim() });
+            await onImported();
+            setPage(0);
+          }}
+        />
+      );
+  if (compact) return (
+    <div className="source-import">
+      <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
+      <small>{shares.length ? `${shares.length} shared chats saved · Browse in History` : 'No shared chats imported.'}</small>
+      {importForm}
+    </div>
+  );
   return (
     <section className="card">
       <div className="section-title">
@@ -1378,17 +1397,7 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
         </div>
         {onImported && <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>}
       </div>
-      {adding && onImported && (
-        <Form title="Import shared chat"
-          fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
-          saveLabel="Import" savingLabel="Importing…" onClose={() => setAdding(false)}
-          onSave={async ({ url }) => {
-            await post(`${base}/notes/chatgpt-share`, { url: url.trim() });
-            await onImported();
-            setPage(0);
-          }}
-        />
-      )}
+      {importForm}
       {!shares.length && <Empty>No shared chats imported.</Empty>}
       {!showHistory && !!shares.length && <p>{shares.length} saved · Browse in History</p>}
       {showHistory && pageCount > 1 && (
@@ -1743,9 +1752,10 @@ function SavedHistory({
   );
 }
 
-function Codex({ base, onError }: {
+function Codex({ base, onError, importControl }: {
   base: string;
   onError: (message: string) => void;
+  importControl?: ReactNode;
 }) {
   const [status, setStatus] = useState<any>(null);
   const [sessions, setSessions] = useState<RecordData[]>([]);
@@ -1812,49 +1822,52 @@ function Codex({ base, onError }: {
   }
   return (
     <>
-      <section className="card">
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">CODEX CONNECTION</p>
-            <h2>Manage Codex sessions</h2>
-          </div>
-          <Badge
-            value={
-              available ? 'available' : status ? 'unavailable' : 'checking'
-            }
-          />
-        </div>
-        <p>
-          Sessions use the official local Codex App Server and existing ChatGPT
-          authentication. Requests are sent to OpenAI and use your account
-          limits. This MVP permits read-only work; code modification approvals
-          are unavailable.
-        </p>
-        {status && (
-          <div className="compact-row">
-            <p>
-              Codex {status.version || 'version unknown'} ·{' '}
-              {status.installed ? 'Installed' : 'Not installed'} ·{' '}
-              {status.authenticated
-                ? 'ChatGPT authentication available'
-                : 'Authentication unavailable'}
-            </p>
-            {status.error && <ErrorBox error={status.error} />}
-          </div>
-        )}
-        <button
-          className="secondary"
-          disabled={busy}
-          onClick={() =>
-            action(async () => setStatus(await api(`${prefix}/status`)))
-          }
-        >
-          Check connection
-        </button>
-      </section>
       <div>
         <section className="card">
-          <h2>Project sessions</h2>
+          <div className="section-title">
+            <h2>Project sessions</h2>
+            <Badge value={available ? 'available' : status ? 'unavailable' : 'checking'} />
+          </div>
+          <div className="source-toolbar">
+            {importControl}
+            <details className="source-link">
+              <summary className="button secondary">Add session</summary>
+          <label>
+            Session name (optional)
+            <input value={linkTitle} maxLength={200} disabled={busy}
+              onChange={(event) => setLinkTitle(event.target.value)}
+              placeholder="Use the Codex session name" />
+          </label>
+          <label>
+            Existing thread ID (optional)
+            <input
+              value={threadId}
+              onChange={(e) => setThreadId(e.target.value)}
+              placeholder="Thread ID to read saved conversation history"
+            />
+          </label>
+          <button
+            className="secondary"
+            disabled={busy || !threadId.trim()}
+            onClick={() =>
+              action(async () => {
+                const session = await post(`${prefix}/sessions`, {
+                  thread_id: threadId.trim(),
+                  ...(linkTitle.trim() ? { title: linkTitle.trim() } : {}),
+                });
+                if (mounted.current) {
+                  setSessionId(String(session.id));
+                  setThreadId('');
+                  setLinkTitle('');
+                }
+              })
+            }
+          >
+            Add session for reading
+          </button>
+            </details>
+          </div>
+          <div className="source-filters">
           <label>
             Find a session
             <input type="search" placeholder="Search name, topic, or ID…" value={sessionQuery}
@@ -1875,6 +1888,7 @@ function Codex({ base, onError }: {
               <option value="topic">Topic, then recent activity</option>
             </select>
           </label>
+          </div>
           <PagedItems key={JSON.stringify([sessionQuery, sessionFilter, sessionOrder])} label="Project session pages">
             {filteredSessions.map((session) => (
               <article className="list-item session-row" key={session.id}>
@@ -1929,6 +1943,8 @@ function Codex({ base, onError }: {
               to ask it a question in Reviews.
             </p>
           )}
+
+
           <div className="actions left">
             <button
               disabled={busy || !available}
@@ -1951,41 +1967,49 @@ function Codex({ base, onError }: {
               Resume selected
             </button>
           </div>
-          <label>
-            Session name (optional)
-            <input value={linkTitle} maxLength={200} disabled={busy}
-              onChange={(event) => setLinkTitle(event.target.value)}
-              placeholder="Use the Codex session name" />
-          </label>
-          <label>
-            Existing thread ID (optional)
-            <input
-              value={threadId}
-              onChange={(e) => setThreadId(e.target.value)}
-              placeholder="Thread ID to read saved conversation history"
-            />
-          </label>
-          <button
-            className="secondary"
-            disabled={busy || !threadId.trim()}
-            onClick={() =>
-              action(async () => {
-                const session = await post(`${prefix}/sessions`, {
-                  thread_id: threadId.trim(),
-                  ...(linkTitle.trim() ? { title: linkTitle.trim() } : {}),
-                });
-                if (mounted.current) {
-                  setSessionId(String(session.id));
-                  setThreadId('');
-                  setLinkTitle('');
-                }
-              })
-            }
-          >
-            Add session for reading
-          </button>
         </section>
       </div>
+      <details className="card source-diagnostics">
+        <summary>Codex connection details</summary>
+        <div className="section-title">
+          <div>
+            <p className="eyebrow">CODEX CONNECTION</p>
+            <h2>Manage Codex sessions</h2>
+          </div>
+          <Badge
+            value={
+              available ? 'available' : status ? 'unavailable' : 'checking'
+            }
+          />
+        </div>
+        <p>
+          Sessions use the official local Codex App Server and existing ChatGPT
+          authentication. Requests are sent to OpenAI and use your account
+          limits. This MVP permits read-only work; code modification approvals
+          are unavailable.
+        </p>
+        {status && (
+          <div className="compact-row">
+            <p>
+              Codex {status.version || 'version unknown'} ·{' '}
+              {status.installed ? 'Installed' : 'Not installed'} ·{' '}
+              {status.authenticated
+                ? 'ChatGPT authentication available'
+                : 'Authentication unavailable'}
+            </p>
+            {status.error && <ErrorBox error={status.error} />}
+          </div>
+        )}
+        <button
+          className="secondary"
+          disabled={busy}
+          onClick={() =>
+            action(async () => setStatus(await api(`${prefix}/status`)))
+          }
+        >
+          Check connection
+        </button>
+      </details>
     </>
   );
 }
