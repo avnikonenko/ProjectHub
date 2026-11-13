@@ -407,6 +407,20 @@ main {
 .section-title h2 {
   margin: 0;
 }
+.ai-result-header {
+  align-items: flex-start;
+}
+.ai-result-header > div {
+  flex: 1 1 16rem;
+  min-width: 0;
+}
+.ai-result-header small {
+  display: block;
+  margin-top: 0.35rem;
+}
+.ai-result-header + .brief-refresh-note + .brief-details {
+  margin-bottom: 1rem;
+}
 .section-title p {
   margin: 5px 0 0;
 }

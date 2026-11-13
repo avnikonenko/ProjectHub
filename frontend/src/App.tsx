@@ -18,6 +18,7 @@ import { ProjectBrief } from './ProjectBrief';
 import { Scheme } from './Scheme';
 import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
+import { AIResultHeader } from './AIResultHeader';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { groupSharedHistory } from './sharedHistory';
@@ -1289,13 +1290,17 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   return (
     <>
       <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || deleting}>
-        <div className="section-title">
-          <div>
-            <h2>AI Q&A</h2>
-            {saved && <small>Saved {new Date(saved.generated_at).toLocaleString()}</small>}
-            {saved && <SavedGeneration generation={saved.generation} />}
-          </div>
-          <div className="toolbar" style={{ marginBottom: 0 }}>
+        <AIResultHeader title="AI Q&A" savedAt={saved?.generated_at} previous={revisionId !== null}
+          freshness={saved && revisionId === null ? 'Freshness not checked' : undefined}
+          action={<button disabled={generationDisabled || !validLimit} onClick={generate}>
+            {generating || recoveryBusy ? 'Generating…' : saved ? 'Refresh Q&A' : 'Generate Q&A'}
+          </button>} />
+        <small className="brief-refresh-note">Generating sends saved conversations and project evidence to OpenAI.</small>
+        {!validLimit && <small role="status">Enter a positive whole number in Q&A details & options.</small>}
+        <details className="brief-details">
+          <summary>Q&A details & options</summary>
+          {saved && <SavedGeneration generation={saved.generation} />}
+          <div className="toolbar">
             <label className="inline" style={{ margin: 0 }}>
               Max questions
               <input type="number" min={1} step={1} value={maxQuestions} disabled={generationDisabled}
@@ -1308,13 +1313,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
                   }
                 }} />
             </label>
-            <button disabled={generationDisabled || !validLimit} onClick={generate}>
-              {generating ? 'Generating…' : saved ? 'Refresh Q&A with OpenAI' : 'Generate Q&A with OpenAI'}
-            </button>
-            {!validLimit && <small role="status">Enter a positive whole number.</small>}
           </div>
-        </div>
-        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generating sends that evidence to OpenAI and may return fewer questions.</p>
+        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
           disabled={loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {
@@ -1323,6 +1323,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             setPage(0);
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
+        </details>
         {revisionLoading && <p role="status">Loading saved Q&A version…</p>}
         <ErrorBox error={error} />
         {cancelled && <p role="status">{cancelledGenerationMessage}</p>}

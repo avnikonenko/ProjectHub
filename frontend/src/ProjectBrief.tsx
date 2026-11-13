@@ -3,6 +3,7 @@ import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
+import { AIResultHeader } from './AIResultHeader';
 import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
@@ -105,22 +106,16 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
   return (
     <>
       <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
-        <div className="section-title">
-          <div>
-            <h2>Project status</h2>
-            {brief && <small>{revisionId === null ? 'AI summary' : 'Previous version'} · {new Date(brief.generated_at).toLocaleString()}</small>}
-          </div>
-          <button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
-            {generating ? 'Generating…' : brief ? 'Refresh project status' : 'Generate project status'}
-          </button>
-        </div>
+        <AIResultHeader title="Project status" savedAt={brief?.generated_at} previous={revisionId !== null}
+          freshness={brief && revisionId === null ? evidence?.stale === true ? 'Project changes detected. Refresh to include them.'
+            : evidence?.stale === false ? 'No changes detected in checked evidence' : 'Freshness not checked' : undefined}
+          action={<button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
+            {generating || recoveryBusy ? 'Generating…' : brief ? 'Refresh project status' : 'Generate project status'}
+          </button>} />
         <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         <ErrorBox error={error} />
         {notice && <p role="status">{notice}</p>}
         {revisionLoading && <p role="status">Loading saved version…</p>}
-        {brief && revisionId === null && evidence?.stale === true && (
-          <p role="status">Project changes detected. Refresh to include them.</p>
-        )}
         {loading && <Empty>Loading saved project status…</Empty>}
         {!loading && !brief && <Empty>No saved project status yet.</Empty>}
         {brief && (

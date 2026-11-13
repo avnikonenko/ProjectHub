@@ -5,6 +5,7 @@ import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage, typ
 import { Empty, ErrorBox, label } from './ui';
 import { RevisionHistory } from './RevisionHistory';
 import { decodeSchemeText } from './SchemeText';
+import { AIResultHeader } from './AIResultHeader';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -292,6 +293,9 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const prefix = base.split('/')[2] + '-scheme';
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   const coverage = snapshot?.coverage ?? result?.inspection.coverage;
+  const freshness = revisionId !== null ? undefined : result
+    ? `${freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}${result.freshness.partial || coverage?.partial ? ' · Partial coverage' : ''}`
+    : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
   const dependencies = (snapshot?.dependencies ?? result?.inspection.dependencies ?? []).filter((dependency) =>
     [dependency.name, dependency.category, dependency.purpose].join(' ').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()));
@@ -309,30 +313,26 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     </table></div>;
   }
   return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
-    <div className="section-title">
-      <div><h2>Scheme</h2>
-        {snapshot && <small>Generated {new Date(snapshot.generated_at).toLocaleString()}</small>}
-        {snapshot && <SavedGeneration generation={snapshot.generation} />}
-      </div>
-      <button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={() => void generate()}>
+    <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
+      freshness={freshness} action={<button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={() => void generate()}>
         {generating || recoveryBusy ? 'Generating…' : snapshot ? 'Refresh Scheme' : 'Generate Scheme'}
-      </button>
-    </div>
-    <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
-    {result && <div className="scheme-freshness">
-      <span>{revisionId !== null ? 'Previous saved version' : freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}</span>
-      {(result.freshness.partial || coverage?.partial) && <span className="badge">Partial coverage</span>}
-      <details><summary>Coverage</summary>
-        {coverage && <p>{coverage.files_inspected} files inspected · {coverage.conversation_excerpts} conversation excerpts included</p>}
-        <ul>{[...new Set([...(coverage?.limitations ?? []), ...result.freshness.limitations])].map((item) => <li key={item}>{item}</li>)}</ul>
-      </details>
-    </div>}
-    <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
-      disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
-      onSelect={(selected, id) => {
-        setResult((previous) => previous ? { ...previous, snapshot: selected } : previous);
-        setRevisionId(id);
-      }} />
+      </button>} />
+    <small className="brief-refresh-note">Refreshing sends project evidence to Codex.</small>
+    <details className="brief-details">
+      <summary>Scheme details</summary>
+      {snapshot && <SavedGeneration generation={snapshot.generation} />}
+      <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
+      {result && <details><summary>Coverage</summary>
+          {coverage && <p>{coverage.files_inspected} files inspected · {coverage.conversation_excerpts} conversation excerpts included</p>}
+          <ul>{[...new Set([...(coverage?.limitations ?? []), ...result.freshness.limitations])].map((item) => <li key={item}>{item}</li>)}</ul>
+        </details>}
+      <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
+        disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+        onSelect={(selected, id) => {
+          setResult((previous) => previous ? { ...previous, snapshot: selected } : previous);
+          setRevisionId(id);
+        }} />
+    </details>
     <ErrorBox error={error} />
     {notice && <p role="status">{notice}</p>}
     <nav className="tabs scheme-tabs" aria-label="Scheme views">

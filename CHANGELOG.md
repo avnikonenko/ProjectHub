@@ -25,6 +25,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Standardize Overview, AI Q&A and Scheme result headers with saved time, available freshness information and one generation action; keep secondary Q&A and Scheme controls in expandable details.
 - Multiple citations collapse into an expandable source count; each supporting source remains linked to its full evidence.
 
 - Sources leads with compact ChatGPT/session add controls and the session list; connection diagnostics are expandable below, with all existing actions retained.
