@@ -480,7 +480,7 @@ def reconcile(previous, extracted, bundle, extraction_version):
 
 def _extraction_workers(manager):
     try:
-        workers = int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '2'))
+        workers = int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '4'))
     except ValueError as exc:
         raise CodexError('PROJECTHUB_EXTRACTION_WORKERS must be from 1 to 4.') from exc
     if not 1 <= workers <= 4:
