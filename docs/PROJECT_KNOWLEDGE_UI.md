@@ -56,11 +56,15 @@ Progress and elapsed time appear during generation; failed previews display an
 error. A second click cannot submit another request while one is pending.
 
 Successful previews are retained separately in existing generation revisions.
-Reopening Knowledge, using **Reload knowledge**, or refreshing the browser recovers
+Reopening Knowledge, using **Reload saved results**, or refreshing the browser recovers
 the last successful preview without invoking Codex. A running preview restores
 progress while the same server process continues; a failed or cancelled replacement
 keeps the earlier successful preview. A server restart ends active work but retains
 saved previews. Project switching aborts browser requests, not backend work.
+An explicit reload shows loading and completion feedback after both saved-result
+reads succeed. If only a saved preview exists, it opens that preview. Read failures
+show an error and retain the previous preview rather than claiming success.
+Reload does not generate or publish knowledge.
 Use **Download preview JSON** to export the paired brief, structured knowledge and
 original evidence. Published data remains available independently.
 
