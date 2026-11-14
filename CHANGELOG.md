@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve material eligibility, state guards and explicitly named outcome subsets in each extracted Knowledge statement. Keep retained-charge rules separate from permission to release capacity, and version the extraction instructions so older cached overgeneralizations are not reused as corrected results.
 - Keep later same-turn completion reports with selected earlier requests in oversized Overviews, so reported completed work is not presented as still pending. Budget exact context excerpts with their Knowledge records and reject stale or unavailable supporting evidence.
 - Keep overflow-specific Overview instructions out of normal synthesis prompts; restore the pre-fallback instructions for both small and fully compacted inputs.
 - Preserve normal Overview generation and automatically select whole evidence-backed records only when its input exceeds the limit. Improve accepted-decision coverage, remove alphabetical scope bias, and strengthen clause-specific citation instructions for the fallback.

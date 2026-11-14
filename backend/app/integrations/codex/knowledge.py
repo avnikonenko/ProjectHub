@@ -17,7 +17,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 3
-PROMPT_VERSION = 14
+PROMPT_VERSION = 17
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -83,6 +83,22 @@ PROMPT = (
     'Every substantive clause in statement, rationale, alternatives and limitations needs support '
     'from its cited original passages, not merely uncited generalities elsewhere in the context. '
     'Choose additional exact excerpts when needed to support those clauses. '
+    'Preserve an action\'s explicit eligibility, state and preconditions in the atomic statement '
+    'itself, not only in limitations or supporting quotations. Never broaden a conditional rule '
+    'into unconditional behavior. State-transition diagrams also constrain which states permit '
+    'an action; retain that boundary without inventing additional transitions. Quote the '
+    'precondition and operative action together, using multiple exact excerpts when needed. '
+    'Cross-check every repeated action against ALL supplied passages about that same scoped policy, '
+    'including neighboring numbered points and overlapping context. A separate clause about '
+    'retained records or charges does not establish eligibility to release capacity. Extract that '
+    'retention rule independently instead of restating the action without its guard. An applicable '
+    'guard must survive in EVERY statement that asserts the action, even when another item already '
+    'states it correctly. Preserve genuine conflicting conditions as uncertainty rather than '
+    'silently broadening either rule. Illustrative instruction, not project evidence: if only queued '
+    'jobs release reservations, a separate requirement to keep audit records supports "audit records '
+    'remain after cancellation", not the unqualified "cancellation releases capacity". '
+    'Preserve explicitly named subsets of states, events or outcomes; never replace a finite '
+    'list with an umbrella term that also includes cases the source did not authorize. '
     'Rationale records an expressed reason; limitations record '
     'an expressed boundary, risk or uncertainty. They are not places to invent missing decisions, '
     'implementation, validation or configuration. A recommendation to check, select, record or pin '

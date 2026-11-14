@@ -156,6 +156,14 @@ regeneration for repository-backed projects. No repository files are modified.
 
 ## Bounded Overview inputs
 
+Extraction instruction version 17 requires every action statement to retain its
+material eligibility and state guards, including restrictions supplied in nearby
+numbered policy clauses. A rule preserving records or charges does not establish
+permission to release a reservation. Explicitly enumerated chargeable outcomes
+must not become broader umbrella categories. The schema is unchanged. Earlier
+cache entries remain intact, but their interpretation version is not reused for
+new v17 extraction; the first full refresh must reread sources under that rule.
+
 When all active Knowledge fits the 240,000-character compacted synthesis budget,
 behavior is unchanged. Larger projects use a deterministic selection of complete
 records across design status, category and exact scope. Supported agreements,
