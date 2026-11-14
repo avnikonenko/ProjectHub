@@ -9,10 +9,11 @@ from copy import deepcopy
 import hashlib
 import json
 import threading
+import time
 
 from sqlalchemy.orm import Session
 
-from ...models import Project, ProjectHistoryBatch
+from ...models import Project, ProjectHistoryBatch, utcnow
 from . import progress
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
@@ -170,6 +171,7 @@ def group_records(engine, project_id, manager, records, *, previous=None):
     ``previous`` is the prior complete Knowledge snapshot (or this function's
     result). Reuse is exact per compact record and generation configuration.
     """
+    progress.check_cancelled()
     if type(project_id) is not int or project_id < 1:
         raise CodexError('Knowledge topic grouping requires the selected project identity.')
     with Session(engine) as db:
@@ -222,6 +224,32 @@ def group_records(engine, project_id, manager, records, *, previous=None):
     pending = [record for record in compact if record['id'] not in memberships]
     batches = list(_batches(pending))
     fixed_taxonomy = deepcopy(taxonomy)
+    progress.check_cancelled()
+    progress.update(project_id, stage='Organizing AI tags', batch_phase='AI tagging',
+                    batch_total=len(batches), batch_completed=0, cache_hits=0,
+                    batch_started_at=None, last_batch_seconds=None)
+    completion_lock = threading.Lock()
+    active_batches, batch_timings = {}, [None] * len(batches)
+    completed = cache_hits = 0
+
+    def tracked_classify(index, batch):
+        nonlocal completed, cache_hits
+        progress.check_cancelled()
+        start = time.monotonic()
+        with completion_lock:
+            active_batches[index] = utcnow()
+            progress.update(project_id, batch_started_at=min(active_batches.values()))
+        result = classify(batch)
+        elapsed = round(time.monotonic() - start, 3)
+        with completion_lock:
+            active_batches.pop(index)
+            completed += 1
+            cache_hits += int(result[2])
+            batch_timings[index] = {'batch': index + 1, 'seconds': elapsed, 'cached': result[2]}
+            progress.update(project_id, batch_completed=completed, cache_hits=cache_hits,
+                            batch_started_at=min(active_batches.values(), default=None),
+                            last_batch_seconds=elapsed)
+        return result
 
     def classify(batch):
         progress.check_cancelled()
@@ -259,15 +287,15 @@ def group_records(engine, project_id, manager, records, *, previous=None):
     from .knowledge import _extraction_workers
     workers = min(_extraction_workers(manager), max(1, len(batches)))
     if workers == 1 or not batches:
-        results = [classify(batch) for batch in batches]
+        results = [tracked_classify(index, batch) for index, batch in enumerate(batches)]
     else:
         abort = threading.Event()
         failure, failure_lock = [], threading.Lock()
 
-        def run(batch):
+        def run(index, batch):
             try:
                 with progress.abort_on(abort):
-                    return classify(batch)
+                    return tracked_classify(index, batch)
             except BaseException as exc:
                 with failure_lock:
                     if not failure:
@@ -276,7 +304,8 @@ def group_records(engine, project_id, manager, records, *, previous=None):
                 raise
 
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-topics') as pool:
-            futures = [pool.submit(copy_context().run, run, batch) for batch in batches]
+            futures = [pool.submit(copy_context().run, run, index, batch)
+                       for index, batch in enumerate(batches)]
             try:
                 results = [future.result() for future in futures]
             except BaseException:
@@ -286,6 +315,7 @@ def group_records(engine, project_id, manager, records, *, previous=None):
                 if failure:
                     raise failure[0]
                 raise
+    progress.check_cancelled()
     requests = hits = 0
     catalog = {group['id']: group for group in taxonomy}
     for batch_taxonomy, assigned, cached in results:
@@ -307,4 +337,4 @@ def group_records(engine, project_id, manager, records, *, previous=None):
                                'configuration_fingerprint': configuration_fingerprint,
                                'record_fingerprints': fingerprints, 'taxonomy': taxonomy,
                                'ai_requests': requests, 'cache_hits': hits, 'reused_items': reused,
-                               'workers': workers}}
+                               'workers': workers, 'batch_timings': batch_timings}}

@@ -13,6 +13,7 @@ from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
+from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import read_scheme, refresh_scheme
 from .knowledge import read_knowledge, reconcile
 from .knowledge_sources import load_sources
@@ -100,8 +101,23 @@ class QAGenerationInput(GenerationInput):
     max_items: int = Field(default=DEFAULT_QA_MAX_ITEMS, ge=1, strict=True)
 
 
+class TagGenerationInput(GenerationInput):
+    target: Literal['knowledge_preview', 'knowledge', 'qa']
+    publication_id: str | None = Field(default=None, min_length=1, max_length=200, strict=True)
+    generated_at: str | None = Field(default=None, min_length=1, max_length=100, strict=True)
+
+    @model_validator(mode='after')
+    def exact_target(self):
+        if self.target == 'qa':
+            if self.generated_at is None or self.publication_id is not None:
+                raise ValueError('Q&A tags require generated_at and no publication_id.')
+        elif self.publication_id is None or self.generated_at is not None:
+            raise ValueError('Knowledge tags require publication_id and no generated_at.')
+        return self
+
+
 class CancelGenerationInput(Input):
-    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask']
+    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags']
     started_at: str = Field(min_length=1, max_length=100)
 
 
@@ -338,7 +354,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags'):
         raise HTTPException(422, 'Unknown generation kind.')
     return progress.read(project_id, kind)
 
@@ -546,6 +562,25 @@ def delete_qa_item(project_id: int, db: DB,
         return read_qa(db, project_id)
     finally:
         generation_lock.release()
+
+
+@router.post('/tags')
+def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Explicitly confirm AI generation before generating tags.')
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return generate_tags(request.app.state.engine, project_id, selected, target=body.target,
+                                 publication_id=body.publication_id, generated_at=body.generated_at)
+    except (BriefBusy, TagGenerationConflict) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.post('/qa')

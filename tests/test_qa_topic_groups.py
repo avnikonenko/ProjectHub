@@ -71,39 +71,16 @@ def test_question_identity_is_normalized_and_legacy_reads_do_not_write(prepared)
         assert qa.read_qa(db, 2) is None
 
 
-def test_refresh_groups_actual_records_and_reuses_previous_memberships(prepared):
+def test_refresh_never_generates_topics(prepared):
     engine, item, original = prepared
-    generator = TopicGenerator()
+    generator = TopicGenerator(invalid=True)
     saved = qa.refresh_qa(engine, 1, generator)
     identifier = qa.question_id(item['question'])
-    assert len(generator.calls) == 1
+    assert generator.calls == []
     assert saved['items'] == [{**original, 'id': identifier}]
     assert item == original
-    assert saved['topic_groups'][0]['item_ids'] == [identifier]
-    assert saved['generation']['topic_groups'] == saved['topic_groups']
-    record = generator.calls[0]['records'][0]
-    assert record['id'] == identifier
-    assert all(text in record['statement'] for text in
-               (item['question'], item['answer'], item['variants'][0]['answer']))
-    assert saved['topic_grouping']['ai_requests'] == 1
-    assert identifier in saved['topic_grouping']['record_fingerprints']
-    again = qa.refresh_qa(engine, 1, generator)
-    assert len(generator.calls) == 1
-    assert again['topic_grouping']['reused_items'] == 1
-    with Session(engine) as db:
-        assert qa.read_qa(db, 1) == again
-        assert qa.read_qa(db, 2) is None
-        revisions = list(db.scalars(select(GenerationRevision).where(
-            GenerationRevision.project_id == 1)))
-        assert len(revisions) == 2
-
-
-def test_grouping_failure_preserves_saved_qa_and_revisions(prepared):
-    engine, item, _ = prepared
-    saved = qa.refresh_qa(engine, 1, TopicGenerator())
-    item['answer'] = 'Changed answer requires new topic classification.'
-    with pytest.raises(CodexError, match='foreign'):
-        qa.refresh_qa(engine, 1, TopicGenerator(invalid=True))
+    assert saved['topic_groups'] == []
+    assert saved['topic_grouping'] == {}
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert len(list(db.scalars(select(GenerationRevision)))) == 1

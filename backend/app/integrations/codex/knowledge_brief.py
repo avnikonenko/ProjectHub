@@ -18,7 +18,6 @@ from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, ge
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
-from .topic_groups import group_records
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview, stage_knowledge_preview
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
@@ -526,8 +525,6 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                 candidate = deepcopy(candidate)
                 candidate['coverage'].setdefault('limitations', []).append(
                     f'{historical} historical or conflicting interpretations need rechecking; their recorded design status is preserved.')
-            progress.update(project_id, stage='Organizing Knowledge topics')
-            candidate.update(group_records(engine, project_id, manager, candidate['items'], previous=previous))
             repository = {'sources': [], 'coverage': ['No repository registered; implementation is not inspected.']}
             if bundle['project'].get('repository_path'):
                 repository = collect_repository_code(bundle['project']['repository_path'])

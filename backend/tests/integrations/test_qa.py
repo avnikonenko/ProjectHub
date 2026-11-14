@@ -11,14 +11,6 @@ from backend.app.models import Answer, Decision, Project, Note, Question, Task, 
 from sqlalchemy import select
 
 
-@pytest.fixture(autouse=True)
-def isolate_topic_grouping(monkeypatch):
-    # These tests exercise draft extraction/consolidation with fake generators.
-    # Real topic classification is covered in test_qa_topic_groups.py.
-    monkeypatch.setattr(qa, 'group_records', lambda *args, **kwargs: {
-        'topic_groups': [], 'topic_grouping': {},
-    })
-
 
 def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
@@ -134,8 +126,7 @@ def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, 
                                           'answer': 'Glass jars were suggested.', 'source_ids': ['1']}]})
     saved = qa.refresh_qa(engine, 1, Generator())
     assert saved['items'][0]['source_ids'] == ['note:1:1']
-    assert saved['generation'] == {**Generator.generation_metadata,
-                                   'topic_groups': [], 'topic_grouping': {}}
+    assert saved['generation'] == Generator.generation_metadata
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
     engine.dispose()
