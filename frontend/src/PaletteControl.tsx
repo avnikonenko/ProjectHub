@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { SettingsHelp } from './SettingsHelp';
 
 const palettes = [
   { value: 'green', label: 'Green (original)' },
@@ -25,7 +24,6 @@ export function applySavedPalette() {
 export function PaletteControl() {
   const [palette, setPalette] = useState(savedPalette);
   return (
-    <>
     <label>
       Colour palette
       <select aria-label="Colour palette" value={palette} onChange={(event) => {
@@ -38,9 +36,5 @@ export function PaletteControl() {
         {palettes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
       </select>
     </label>
-    <SettingsHelp title="About colour palettes">
-      <p>Changes the app's colours immediately and remembers your choice in this browser.</p>
-    </SettingsHelp>
-    </>
   );
 }

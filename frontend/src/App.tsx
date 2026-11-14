@@ -1009,6 +1009,9 @@ function AppSettings() {
           <h3>Settings</h3>
           <PaletteControl />
           <TextSizeControl />
+          <SettingsHelp title="About appearance">
+            <p>Colour palette and text size apply throughout ProjectHub immediately. Your choices are saved in this browser.</p>
+          </SettingsHelp>
           <ExtractionWorkersControl active={open} />
           <button type="button" className="secondary"
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
