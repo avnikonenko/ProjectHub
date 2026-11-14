@@ -19,9 +19,9 @@ Progress recovery requires the same ProjectHub server process to remain running.
 
 Knowledge previews also recover their active progress after a browser refresh.
 The last successful unpublished preview is saved separately from published
-knowledge and the project overview. Opening Knowledge or using **Reload knowledge**
-loads that preview without calling Codex; a failed or cancelled replacement keeps
-the previous preview. Use **Download preview JSON** to inspect or share its complete
+knowledge and the project overview. Opening Knowledge loads the saved result
+without calling Codex; a failed or cancelled replacement keeps
+the previous result. Use **Download JSON** to inspect or share its complete
 brief, knowledge and source references. A server restart stops active work but
 does not erase a successfully saved preview.
 
@@ -79,13 +79,19 @@ not counted again when their results are reused.
 
 ## Parallel reading
 
-Opt-in knowledge extraction runs four independent batches concurrently by default,
+The shared setting applies to opt-in Knowledge extraction and the history/evidence
+batches used by legacy Project status and AI Q&A, across all projects. It defaults
+to four concurrent independent batches,
 using separate read-only Codex transports with the selected account, model and
 reasoning effort. Set `[ai] extraction_workers = N` to choose the maximum concurrent
-reading threads (`1` restores serial extraction). N must be a whole number from 1
+reading threads (`1` restores serial batch processing). N must be a whole number from 1
 to 2,147,483,647; actual concurrency never exceeds the available extraction batches.
-`PROJECTHUB_EXTRACTION_WORKERS` overrides the file. Final synthesis remains a
-single request.
+`PROJECTHUB_EXTRACTION_WORKERS` overrides the file. Each complete job captures its
+worker limit when it starts; saving a new value affects the next job. Independent
+legacy reduction groups overlap within a round, while dependent rounds retain
+their original order. A group is dispatched only when it is guaranteed necessary,
+so parallelism does not summarize a tail that could already fit unchanged.
+Final synthesis and Scheme generation remain single requests.
 
 You can also enter N in **Settings → Parallel AI reading threads**, then click
 **Save thread count**. It saves the value in your local ProjectHub settings and
@@ -103,7 +109,11 @@ the control shows when the effective and saved values differ.
 Parallelism preserves batch inputs, cache identities and reconciliation order.
 Successful batch caches survive failures; cancellation and the overall budget
 apply to all workers. Diagnostics include `extraction_workers` and ordered
-`batch_timings`.
+`batch_timings`. Legacy status/Q&A progress additionally retains `archive_workers`
+(the configured limit), `archive_generated_batches`, `archive_cache_hits` and
+`archive_batch_timings`. Generated batches count successful validated work; failed
+request attempts are not included in that count. These diagnostics do not assert
+that a large cold project will always finish within the overall time budget.
 
 ## History sync and reuse
 
@@ -118,8 +128,8 @@ snapshots. To disable sync or change the interval, add `[history]` with
 Project status and AI Q&A can reuse a session's indexed text after checking current
 Codex metadata, avoiding another turn-by-turn history read. Old, missing, or incomplete
 indexes fall back to the history reader. A session reader stays connected to its
-own profile across history pages. AI batches within one refresh share a connection
-while retaining separate ephemeral threads. Unchanged note chunks retain their cache
+own profile across history pages. Parallel AI batches use isolated read-only
+transports and separate ephemeral threads. Unchanged note chunks retain their cache
 after small edits. The first uncached analysis of long history can still take time,
 and changing the model or instructions may require new AI summaries.
 

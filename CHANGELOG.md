@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Apply the shared parallel AI worker setting to legacy Project status and AI Q&A history processing and independent evidence-reduction groups. Capture settings per job, preserve source order and existing caches, retain completed work on failure, and avoid unnecessary reduction calls when the tail already fits.
 - Preserve complete Scheme workflow passages and diagrams instead of cutting notes at a fixed prefix. Retrieve relevant later sections with exact spans and speaker context, keep fenced diagrams intact, and deduplicate shared turns before applying the existing evidence budget. Distinguish proposed sequence from unknown validation criteria or implementation.
 - Match thread-count and generation-profile help text to the other Settings explanations, using the same font size and theme colour.
 - Make Knowledge reload explicit: reread saved published results and the saved preview, show loading/success/error feedback, and open the saved preview when no published snapshot exists. Preserve saved results on read failures and keep reload separate from generation/publication.
