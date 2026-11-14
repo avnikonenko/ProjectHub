@@ -2,19 +2,25 @@
 
 <img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
 
-A local workspace that helps you return to a project without reconstructing its history. ProjectHub brings together Codex sessions, shared ChatGPT conversations, repository evidence, notes, and follow-ups to explain what the project does, what changed, and what to work on next.
+**Keep the context of a project across long AI conversations.**
 
-## Features
+When work is spread across several Codex sessions and ChatGPT chats, returning to a project means remembering what you tried, which approach you chose, and what still needs doing. ProjectHub collects that history in one local workspace and helps turn it into a useful project overview, searchable explanations, and diagrams.
 
-- **Project overview:** generate a concise current-state analysis with source references, freshness indicators, and previous versions.
-- **Conversations:** link terminal Codex sessions, import public ChatGPT share links, and browse saved history. Shared history from forked sessions collapses without deleting messages.
-- **Search:** find conversations, notes, TODOs, and generated information locally, with filters and paginated results.
-- **Knowledge and AI Q&A:** extract requirements, choices, and supporting evidence; generate project-specific answers and review saved results before activating them.
-- **Scheme:** visualize architecture and workflows, inspect dependencies, and browse repository structure.
-- **Notes and TODOs:** write Markdown notes, save conversation passages, bulk-add tasks, and pin important follow-ups.
-- **Git:** inspect branches, recent commits, tracked changes, untracked files, and public GitHub issues without modifying the repository.
-- **Reviews and continuity:** ask questions about the project, save useful responses, and preview context before sending it to a Codex session.
-- **Customization:** choose Codex profiles, models, reasoning effort, and project AI instructions; adjust colors and text size.
+Use it for software, research, or other projects with a growing conversation history.
+
+## What you can do
+
+- **Connect your project history.** Link terminal Codex sessions and import public ChatGPT shared conversations. Browse saved messages; inherited messages in forked sessions are collapsed without deleting the originals.
+- **Understand where the project stands.** Generate an overview of its purpose, architecture, current work, unresolved problems, and suggested next steps. Follow source references and revisit previous versions.
+- **Remember choices and their reasons.** Extract requirements, approaches, and decisions discussed in conversations into searchable Knowledge and AI Q&A. Ask questions such as “Why did we choose this approach?” or “What have we already tried?”
+- **See how the project works.** Generate architecture and workflow diagrams in Scheme, inspect dependencies, and browse the code structure. Diagrams distinguish observed, proposed, and uncertain components.
+- **Find information and keep follow-ups.** Search conversations, notes, tasks, and generated information. Save useful passages as Markdown notes; bulk-add, pin, complete, or mark TODOs as not planned.
+- **Connect the history to the code.** Link a local Git repository to inspect branch, recent commits, tracked changes, and untracked files. View public GitHub issues. Repository inspection is read-only.
+- **Continue with context.** Review project questions and prepare a context preview to send to a Codex session after confirmation.
+
+Choose the Codex account, model, reasoning effort, and response instructions for each project. Adjust text size and color theme for comfortable reading.
+
+**AI runs when you request it.** Opening projects and searching saved information do not trigger model requests. Overviews and diagrams use selected, bounded evidence; they are interpretations, not proof that code works or a complete reconstruction of every conversation.
 
 ![ProjectHub dashboard with example data](docs/images/projecthub-dashboard.png)
 
