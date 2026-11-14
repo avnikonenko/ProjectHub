@@ -2,11 +2,19 @@
 
 <img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
 
-A local workspace for understanding and continuing projects across Codex sessions and shared ChatGPT conversations.
+A local workspace that helps you return to a project without reconstructing its history. ProjectHub brings together Codex sessions, shared ChatGPT conversations, repository evidence, notes, and follow-ups to explain what the project does, what changed, and what to work on next.
 
-- Search saved conversations and keep Markdown notes and TODOs.
-- Generate cited project overviews, Q&A, architecture, and workflow diagrams.
-- Inspect read-only Git status and resume work with relevant project context.
+## Features
+
+- **Project overview:** generate a concise current-state analysis with source references, freshness indicators, and previous versions.
+- **Conversations:** link terminal Codex sessions, import public ChatGPT share links, and browse saved history. Shared history from forked sessions collapses without deleting messages.
+- **Search:** find conversations, notes, TODOs, and generated information locally, with filters and paginated results.
+- **Knowledge and AI Q&A:** extract requirements, choices, and supporting evidence; generate project-specific answers and review saved results before activating them.
+- **Scheme:** visualize architecture and workflows, inspect dependencies, and browse repository structure.
+- **Notes and TODOs:** write Markdown notes, save conversation passages, bulk-add tasks, and pin important follow-ups.
+- **Git:** inspect branches, recent commits, tracked changes, untracked files, and public GitHub issues without modifying the repository.
+- **Reviews and continuity:** ask questions about the project, save useful responses, and preview context before sending it to a Codex session.
+- **Customization:** choose Codex profiles, models, reasoning effort, and project AI instructions; adjust colors and text size.
 
 ![ProjectHub dashboard with example data](docs/images/projecthub-dashboard.png)
 
