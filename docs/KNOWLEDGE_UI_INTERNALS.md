@@ -49,3 +49,12 @@ project/publication appearing under the current project.
 
 Use an isolated data directory and port for development as described in
 [the pipeline guide](KNOWLEDGE_PIPELINE.md#isolated-testing).
+
+## Topic metadata
+
+Tag generation uses project/configuration-scoped caches and bounded batches,
+separate from extraction caches and Overview selection. Unchanged memberships
+can be reused; successful batch caches survive later failures. Memberships are
+validated against existing record IDs. Q&A deletion prunes current memberships
+while preserving historical revisions. The taxonomy is bounded to 40 topics;
+excess topics cause explicit failure rather than silent assignment truncation.

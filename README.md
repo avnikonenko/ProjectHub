@@ -13,6 +13,7 @@ Use it for software, research, or other projects with a growing conversation his
 - **Connect your project history.** Link terminal Codex sessions and import public ChatGPT shared conversations. Browse saved messages; inherited messages in forked sessions are collapsed without deleting the originals.
 - **Understand where the project stands.** Generate an overview of its purpose, architecture, current work, unresolved problems, and suggested next steps. Follow source references and revisit previous versions.
 - **Remember choices and their reasons.** Extract requirements, approaches, and decisions discussed in conversations into searchable Knowledge and AI Q&A. Ask questions such as “Why did we choose this approach?” or “What have we already tried?”
+- **Browse by topic.** AI-generated tags organize Knowledge and Q&A by project-specific subjects. Type a tag or browse descriptions and item counts; combine tags with other filters.
 - **See how the project works.** Generate architecture and workflow diagrams in Scheme, inspect dependencies, and browse the code structure. Diagrams distinguish observed, proposed, and uncertain components.
 - **Find information and keep follow-ups.** Search conversations, notes, tasks, and generated information. Save useful passages as Markdown notes; bulk-add, pin, complete, or mark TODOs as not planned.
 - **Connect the history to the code.** Link a local Git repository to inspect branch, recent commits, tracked changes, and untracked files. View public GitHub issues. Repository inspection is read-only.

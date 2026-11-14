@@ -91,29 +91,19 @@ For API details and interface architecture, see the
 
 ## AI topic tags
 
-Knowledge and AI Q&A generate project-specific tags from their saved interpretations
-and answers. Tags are navigation metadata, not evidence or acceptance labels.
-Each item may have several tags. The AI tags control beside the filters accepts
-text, or opens a browsable list with descriptions and unique item counts. Knowledge
-tags additionally show design-status counts. All items and Untagged remain
-available; tag filtering intersects existing filters without merging records.
+Knowledge and AI Q&A can organize results with project-specific **AI tags**.
+An item can appear under several tags without being duplicated or merged.
 
-Tags are generated during explicit Knowledge preview/refresh or Q&A generation.
-Existing saved results remain readable without tags. Browsing, typing, filtering
-and opening evidence make no AI calls. No existing production results are
-retroactively modified by this feature.
+- Type in **AI tags** to filter by matching tag names.
+- Open **Browse tags** to see descriptions and item counts, then select a tag.
+  Knowledge also shows counts by design status.
+- Choose **All items** to clear tag selection, or **Untagged** to find items without tags.
+- Combine tag selection with the view's other filters. Counts describe tag membership;
+  additional filters can reduce the visible results.
 
-Grouping has its own project/configuration-scoped cache and bounded parallel
-batches. It does not invalidate extraction caches or alter Overview selection,
-Knowledge claims, status, rationale, evidence or Q&A source references. Unchanged
-memberships can be reused from the previous snapshot; successful batch caches
-survive a later failure. Generation failure preserves the previous saved result.
-Q&A deletion prunes current memberships while historical revisions remain intact.
+Tags are generated with the next Knowledge or Q&A generation. Older saved results
+remain usable without tags. Browsing or filtering tags makes no AI request.
 
-Labels and descriptions are AI interpretations. Synonymous tags may remain
-separate; no unsupported semantic merging is performed. The current implementation
-bounds the taxonomy to 40 topics and validates every membership against existing
-item IDs. Large initial runs with independently proposed vocabularies may exceed
-that bound and fail explicitly rather than truncate assignments. The limit and
-large-project taxonomy consolidation require further evaluation before making
-claims about complete grouping of very large projects.
+Tags help navigation; they do not change the underlying claims, decisions, evidence,
+or source references. Similar tags may overlap. The current limit is 40 topics;
+a generation that exceeds it fails without replacing the previous saved result.
