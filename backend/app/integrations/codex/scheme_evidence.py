@@ -20,6 +20,7 @@ from ...project_evidence import (
     _excluded, _exclusions, _git, _repository_root,
 )
 from ...services import require_project
+from .scheme_passages import READ_CHARS, EXCERPT_CHARS, select_passages
 
 _MAX_PATHS = 300
 _MAX_FILES = 24
@@ -515,27 +516,61 @@ def _records(db, project):
            or not row['codex_activity_at'] or row['history_indexed_activity'] != row['codex_activity_at']
            for row in sessions):
         limitations.append('Some linked conversations have no current saved index; no live Codex history was read.')
-    turns = db.execute(text('SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,1600) AS excerpt,length(h.content) AS content_length '
+    turns = db.execute(text('SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS excerpt,length(h.content) AS content_length '
         'FROM codex_history_turns h JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
         "WHERE h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' ORDER BY h.id DESC LIMIT 12"),
-        {'pid': project.id}).mappings().all()
-    if any(row['content_length'] > 1600 for row in turns):
-        limitations.append('Some indexed conversation excerpts were truncated to 1,600 characters.')
-    for row in turns:
-        sources.append(_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
-            f"Session #{row['session_id']}, turn {row['turn_id']}", row['excerpt'], 'Codex conversation',
-            session_id=row['session_id'], turn_id=row['turn_id']))
-    sources = deduplicate_sources(db, project.id, sources)
-    notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,1200) AS content,kind,updated_at, '
+        {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,:read_chars) AS content,kind,updated_at, '
                            'length(content) AS content_length,length(title) AS title_length '
-                           'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'), {'pid': project.id}).mappings().all()
+                           'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'),
+                       {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    # Bound discussion context independently so larger notes cannot crowd out all
+    # repository evidence from the existing 40,000-character source package.
+    turn_budget = 12_000 if notes else 24_000
+    note_budget = 12_000 if turns else 24_000
+
+    def passage(value, original_length, remaining):
+        complete = value
+        if original_length > len(value):
+            # SQL's bounded read can end inside a paragraph or diagram. That
+            # suffix is not a complete passage merely because it is end-of-input.
+            boundaries = list(re.finditer(r'\n[ \t]*\n', value))
+            complete = value[:boundaries[-1].end()] if boundaries else ''
+        selected = select_passages(complete, min(EXCERPT_CHARS, max(0, remaining)))
+        if selected['omitted']:
+            limitations.append('Some discussion sections were omitted from bounded whole-passage selection; omitted text is not evidence of absence.')
+        if original_length > len(value):
+            limitations.append('Some discussions exceeded the 65,536-character inspection bound; later content was not inspected.')
+        return selected, {'excerpt_spans': selected['spans'],
+                          'inspected_hash': hashlib.sha256(value.encode()).hexdigest(),
+                          'inspected_chars': len(value), 'original_chars': original_length}
+
+    turn_sources = [_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
+        f"Session #{row['session_id']}, turn {row['turn_id']}", row['excerpt'], 'Codex conversation',
+        session_id=row['session_id'], turn_id=row['turn_id'], original_chars=row['content_length'])
+        for row in turns]
+    # Confirm shared-prefix identity before charging the context budget; repeated
+    # forks must not crowd out complementary turns that follow them.
+    turn_sources = deduplicate_sources(db, project.id, turn_sources)
+    excerpt_count = 0
+    for source in turn_sources:
+        selected, metadata = passage(source['text'], source['original_chars'], turn_budget)
+        if selected['text']:
+            sources.append({**source, **metadata, 'text': selected['text'],
+                            'content_hash': hashlib.sha256(selected['text'].encode()).hexdigest()})
+            turn_budget -= len(selected['text'])
+            excerpt_count += 1
     if len(notes) > 6:
         limitations.append('Only the six most recent notes or imported documents were included.')
-    if any(row['content_length'] > 1200 or row['title_length'] > 160 for row in notes[:6]):
-        limitations.append('Some note titles or contents were truncated to bounded excerpts.')
+    if any(row['title_length'] > 160 for row in notes[:6]):
+        limitations.append('Some note titles were truncated to 160 characters.')
     for row in notes[:6]:
-        sources.append(_source(f"note:{row['id']}", row['title'], row['content'],
-                               'imported discussion' if row['kind'] == 'document' else 'project note', date=row['updated_at']))
+        selected, metadata = passage(row['content'], row['content_length'], note_budget)
+        if selected['text']:
+            sources.append(_source(f"note:{row['id']}", row['title'], selected['text'],
+                'imported discussion' if row['kind'] == 'document' else 'project note',
+                date=row['updated_at'], **metadata))
+            note_budget -= len(selected['text'])
     brief = db.execute(text('SELECT substr(sections,1,1800),generated_at,length(sections) FROM project_briefs WHERE project_id=:pid'),
                        {'pid': project.id}).first()
     if brief:
@@ -543,7 +578,7 @@ def _records(db, project):
             limitations.append('The previous AI summary was truncated to a 1,800-character excerpt.')
         sources.append(_source('brief:previous', 'Previous AI project summary (interpretation)', brief[0],
                                'prior AI interpretation', date=brief[1]))
-    return sources, markers, limitations, len(turns)
+    return sources, markers, limitations, excerpt_count
 
 
 def collect_evidence(engine, project_id):
@@ -585,7 +620,7 @@ def collect_evidence(engine, project_id):
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
         markers = _markers(root_fd, paths) if root_fd is not None else []
-        key = _digest({'namespace': 'scheme-inspection-v4', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v5', 'project_id': project_id,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
             'freshness_unknown': freshness_unknown})
