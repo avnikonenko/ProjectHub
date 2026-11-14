@@ -19,3 +19,6 @@ config.toml
 *.pem
 *.key
 auth.json
+
+# Local project backlog
+/todo.md
