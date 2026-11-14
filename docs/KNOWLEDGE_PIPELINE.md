@@ -144,8 +144,10 @@ regeneration for repository-backed projects. No repository files are modified.
 When all active Knowledge fits the 240,000-character compacted synthesis budget,
 behavior is unchanged. Larger projects use a deterministic selection of complete
 records across design status, category and exact scope. Supported agreements,
-requirements and unresolved issues lead the selection lanes; stable IDs provide
-a fallback, not an importance score or inferred chronology. Connected conflicts
+requirements receive most selection opportunities, while unresolved issues,
+proposals and context retain smaller shares. Sparse exact scopes go first;
+stable hashes break ties without alphabetical bias. This is a presentation
+policy, not an importance score or inferred chronology. Connected conflicts
 and recorded relationships stay together. Evidence, rationale and limitations
 are never shortened to fit. Project metadata and bounded code excerpts remain.
 
@@ -155,6 +157,13 @@ counts; diagnostics retain selected/omitted IDs, oversized components and unavai
 relationships independently of extraction coverage. The actual compacted payload
 is measured in final source order, followed by a hard size check before generation.
 No intermediate AI summaries or additional model-selection calls are introduced.
+
+Fallback happens only after the complete compacted input exceeds the limit,
+before a model request. Normal-sized inputs keep their existing prompt and path.
+Diagnostics record `fallback_reason: input_limit` and the original input size.
+Authentication, timeout and output-validation errors do not trigger this fallback.
+Bounded synthesis additionally instructs the model to support every substantive
+clause with its own exact citations; this does not guarantee semantic accuracy.
 
 Selection can omit an important record: the Overview is explicitly selective,
 while the full Knowledge remains inspectable. AI-defined topic grouping is a

@@ -141,3 +141,34 @@ def test_foreign_alias_cannot_replace_original_claim_evidence(claim_context):
     with pytest.raises(CodexError, match='foreign sources'):
         _synthesize(CaptureSynthesis([0], foreign=True), candidate, bundle, {})
     assert candidate == before
+
+
+def test_adjacent_same_scope_claims_keep_independent_alias_bindings(claim_context):
+    """Routing honors model bindings; it cannot verify their semantic correctness."""
+    candidate, bundle = claim_context
+    candidate['items'] = candidate['items'][:2]
+    candidate['items'][0]['scope'] = candidate['items'][1]['scope'] = 'Dataset reproducibility'
+    before = deepcopy(candidate)
+
+    class SeparateClaims(CaptureSynthesis):
+        def generate_brief(self, prompt, schema):
+            response = json.loads(super().generate_brief(prompt, schema))
+            sources = self.payload['sources']
+            response['sections']['next_steps'] = [
+                {'text': 'Use the selected record as the first dataset.',
+                 'classification': 'reported', 'source_ids': [sources[0]['id']]},
+                {'text': 'Record the exact release label.',
+                 'classification': 'reported', 'source_ids': [sources[1]['id']]},
+            ]
+            return json.dumps(response)
+
+    manager = SeparateClaims([0, 1])
+    sections, _, cited = _synthesize(manager, candidate, bundle, {})
+    selection, recommendation = sections['next_steps']
+    assert selection['source_ids'] == ['original-user-selection']
+    assert recommendation['source_ids'] == ['original-assistant-recommendation']
+    assert all('supporting_source_ids' not in point for point in sections['next_steps'])
+    originals = {source['id']: source for source in cited}
+    assert originals[selection['source_ids'][0]]['text'] == candidate['sources'][0]['text']
+    assert originals[recommendation['source_ids'][0]]['text'] == candidate['sources'][1]['text']
+    assert candidate == before

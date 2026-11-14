@@ -60,3 +60,44 @@ def test_budget_measurement_uses_the_same_source_order_as_final_encoding():
         return len(json.dumps(values))
     selected, _ = select_overview_sources(sources, measure, 1000)
     assert selected == sources and len(calls) > 1
+
+
+def test_accepted_requirements_outweigh_reported_noise_without_erasing_diversity():
+    def record(identifier, status, category, scope):
+        return {'id': identifier, 'item': {'statement': 'A complete supported statement.',
+                'design_status': status, 'category': category, 'scope': scope,
+                'rationale': 'Preserve the original reason.', 'evidence': [{'excerpt': 'Exact evidence.'}]}}
+    sources = [record(f'noise:{i}', 'UNKNOWN', 'FINDING', f'context {i}') for i in range(500)]
+    sources += [record(f'constraint:{i}', 'AGREED', 'REQUIREMENT', f'policy {i}') for i in range(100)]
+    sources += [record(f'decision:{i}', 'AGREED', 'DECISION', f'component {i}') for i in range(30)]
+    sources += [record(f'question:{i}', 'UNRESOLVED', 'OPEN_QUESTION', f'question {i}') for i in range(30)]
+    sources += [record(f'proposal:{i}', 'PROPOSED', 'PROPOSAL', f'proposal {i}') for i in range(30)]
+    before = deepcopy(sources)
+    result, info = select_overview_sources(sources, len, 68)
+    counts = info['selected_by_status']
+    assert counts['AGREED'] >= 45
+    assert 0 < counts['UNKNOWN'] < 10
+    assert counts['UNRESOLVED'] >= 6
+    assert counts['PROPOSED'] >= 3
+    assert info['selected_by_category']['REQUIREMENT'] >= 30
+    assert info['available_by_status']['UNKNOWN'] == 500
+    assert len(result) == 68 and sources == before
+
+
+def test_sparse_scopes_get_a_turn_before_prolific_scope_repeats():
+    sources = [{'id': f'large:{i}', 'item': {'statement': 'Constraint', 'category': 'REQUIREMENT',
+                'design_status': 'AGREED', 'scope': 'A large scope'}} for i in range(100)]
+    sources += [{'id': f'sparse:{i}', 'item': {'statement': 'Another constraint', 'category': 'REQUIREMENT',
+                 'design_status': 'AGREED', 'scope': f'Z sparse scope {i}'}} for i in range(4)]
+    result, _ = select_overview_sources(sources, len, 4)
+    assert {s['id'] for s in result} == {f'sparse:{i}' for i in range(4)}
+
+
+def test_equal_scope_ties_are_stable_hash_order_not_alphabetical():
+    from hashlib import sha256
+    sources = [{'id': str(i), 'item': {'statement': 'Constraint', 'category': 'REQUIREMENT',
+                'design_status': 'AGREED', 'scope': f'Scope {i:02}'}} for i in range(20)]
+    expected = sorted(sources, key=lambda s: sha256(s['item']['scope'].encode()).digest())[:5]
+    selected, _ = select_overview_sources(sources, len, 5)
+    assert {s['id'] for s in selected} == {s['id'] for s in expected}
+    assert {s['id'] for s in selected} != {str(i) for i in range(5)}

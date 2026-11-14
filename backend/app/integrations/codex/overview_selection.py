@@ -1,5 +1,6 @@
 """Bounded presentation selection; original knowledge and evidence are never changed."""
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
+from hashlib import sha256
 
 from .protocol import CodexError
 
@@ -37,32 +38,40 @@ def select_overview_sources(sources, measure, limit):
     def priority(source):
         item = source['item']
         if item.get('design_status') == 'AGREED':
-            return 0
+            return 0 if item.get('category') == 'REQUIREMENT' else 1
         if item.get('category') == 'REQUIREMENT':
-            return 1
-        if item.get('design_status') in ('UNRESOLVED', 'UNDER_EVALUATION') or item.get('category') == 'OPEN_QUESTION':
             return 2
-        return 3
+        if item.get('design_status') in ('UNRESOLVED', 'UNDER_EVALUATION') or item.get('category') == 'OPEN_QUESTION':
+            return 3
+        if item.get('design_status') == 'PROPOSED':
+            return 4
+        return 5
 
-    # Round-robin status/category lanes; each lane rotates exact scopes. This is
-    # a stable display policy, not a chronology or a semantic importance score.
+    # Weighted classes reserve most opportunities for accepted choices and
+    # requirements, while retaining questions, proposals and reported context.
+    # Weights count whole relationship units, not bytes or semantic importance.
+    # Within each class, give every exact scope a turn before revisiting it.
+    # Sparse scopes go first; a stable hash breaks ties without making spelling
+    # or alphabetical position an implicit importance ranking.
     lanes = defaultdict(lambda: defaultdict(deque))
     for unit in sorted(components.values(), key=lambda unit: unit[0]['id']):
         representative = min(unit, key=lambda source: (priority(source), source['id']))
-        item = representative['item']
-        lanes[(priority(representative), item.get('design_status', ''), item.get('category', ''))][item.get('scope', '')].append(unit)
-    queues = []
-    for lane in sorted(lanes):
-        scopes = lanes[lane]
+        lanes[priority(representative)][representative['item'].get('scope', '')].append(unit)
+    queues = {}
+    for lane, scopes in lanes.items():
+        order = sorted(scopes, key=lambda scope: (
+            len(scopes[scope]), sha256(scope.encode('utf-8')).digest(), scope))
         queue = deque()
         while any(scopes.values()):
-            for scope in sorted(scopes):
+            for scope in order:
                 if scopes[scope]:
                     queue.append(scopes[scope].popleft())
-        queues.append(queue)
+        queues[lane] = queue
+    schedule = (0, 1, 0, 2, 0, 3, 0, 1, 0, 4, 0, 2, 0, 3, 0, 1, 5)
     selected, oversized = [], []
-    while any(queues):
-        for queue in queues:
+    while any(queues.values()):
+        for lane in schedule:
+            queue = queues.get(lane)
             if not queue:
                 continue
             unit = queue.popleft()
@@ -76,8 +85,12 @@ def select_overview_sources(sources, measure, limit):
         raise CodexError('Overview synthesis input limit: No complete knowledge item or related conflict group fits; evidence was not truncated.')
     chosen = {source['id'] for source in selected}
     result = [source for source in sources if 'item' not in source or source['id'] in chosen]
-    return result, {'policy': 'balanced_whole_records_v1', 'partial': True,
+    return result, {'policy': 'accepted_requirements_whole_records_v2', 'partial': True,
                     'available_items': len(items), 'selected_items': len(chosen),
+                    'available_by_status': dict(Counter(s['item'].get('design_status', 'UNKNOWN') for s in items.values())),
+                    'selected_by_status': dict(Counter(s['item'].get('design_status', 'UNKNOWN') for s in selected)),
+                    'available_by_category': dict(Counter(s['item'].get('category', 'UNKNOWN') for s in items.values())),
+                    'selected_by_category': dict(Counter(s['item'].get('category', 'UNKNOWN') for s in selected)),
                     'selected_ids': sorted(chosen), 'omitted_ids': sorted(set(items) - chosen),
                     'omitted_items': len(items) - len(chosen),
                     'oversized_component_ids': oversized,

@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve normal Overview generation and automatically select whole evidence-backed records only when its input exceeds the limit. Improve accepted-decision coverage, remove alphabetical scope bias, and strengthen clause-specific citation instructions for the fallback.
 - Fit large Knowledge-generated Overviews through a disclosed, balanced selection of complete evidence-backed records. Keep the full Knowledge snapshot intact, preserve conflict groups and original quotations, and enforce the actual compacted input limit before generation.
 - Explain oversized Knowledge overview inputs with the actual compacted character count, limit, overage and included item/code counts; distinguish size limits from timeouts and name the preserved saved results.
 - Apply the shared parallel AI worker setting to legacy Project status and AI Q&A history processing and independent evidence-reduction groups. Capture settings per job, preserve source order and existing caches, retain completed work on failure, and avoid unnecessary reduction calls when the tail already fits.

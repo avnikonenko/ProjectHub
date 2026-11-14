@@ -34,6 +34,7 @@ class Capture:
         self.encoded_size = None
 
     def generate_brief(self, prompt, schema):
+        self.instructions = prompt.split('\n', 1)[0]
         encoded = prompt.split('\n', 1)[1]
         self.encoded_size, self.payload = len(encoded), json.loads(encoded)
         sections = {name: [] for name in SECTION_NAMES}
@@ -53,6 +54,7 @@ def test_larger_complete_project_fits_without_new_codecs_or_losing_fields(monkey
     assert module.SYNTHESIS_COMPACTION_CHARS == 180_000
     assert 180_000 < manager.encoded_size <= module.MAX_SYNTHESIS_CHARS
     assert len(payload['sources']) == 339
+    assert 'For this bounded Overview' not in manager.instructions
     defaults = payload['interpretation_item_defaults']
     for original, wire in zip(sources, payload['sources']):
         assert isinstance(wire, dict) and set(wire) == {'id', 'item'}
@@ -99,7 +101,11 @@ def test_project_above_new_bound_selects_whole_records_before_model_call(monkeyp
                        selection_diagnostics=selection)
     assert manager.encoded_size <= module.MAX_SYNTHESIS_CHARS
     assert selection['available_items'] == 600
+    assert selection['fallback_reason'] == 'input_limit'
+    assert selection['full_input_chars'] > module.MAX_SYNTHESIS_CHARS
+    assert selection['input_chars'] == manager.encoded_size
     assert selection['selected_items'] < 600
     assert selection['omitted_items'] + selection['selected_items'] == 600
+    assert 'For this bounded Overview' in manager.instructions
     assert any(source.get('kind') == 'inspected_repository' for source in manager.payload['sources'])
     assert sources == before
