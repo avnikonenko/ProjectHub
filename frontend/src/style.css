@@ -1587,3 +1587,8 @@ a:focus-visible {
   overflow-wrap: anywhere;
   color: var(--accent, #245c4b);
 }
+
+.scheme-color-key { display: flex; flex-wrap: wrap; gap: .5rem 1rem; font-size: .85rem; margin: .5rem 0; }
+.scheme-color-key span::before { content: ""; display: inline-block; width: .65em; height: .65em; border-radius: 50%; margin-right: .4em; background: #497ba5; }
+.scheme-color-key .scheme-key-start::before { background: #357a62; }
+.scheme-color-key .scheme-key-end::before { background: #80549f; }

@@ -13,6 +13,9 @@ dependency information load without an AI request.
 
 Components are labeled observed, proposed, or uncertain according to their sources.
 A view can be empty when the available information does not support a diagram.
+Green blocks mark entries, purple blocks mark outputs, and blue blocks mark
+intermediate components. Colors follow connections, not list order; isolated
+components and cycles use blue. Evidence-status labels and border styles remain.
 
 ## Generate or refresh
 
