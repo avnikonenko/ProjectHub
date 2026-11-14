@@ -20,7 +20,7 @@ Use it for software, research, or other projects with a growing conversation his
 
 Choose the Codex account, model, reasoning effort, and response instructions for each project. Adjust text size and color theme for comfortable reading.
 
-**AI runs when you request it.** Opening projects and searching saved information do not trigger model requests. Overviews and diagrams use selected, bounded evidence; they are interpretations, not proof that code works or a complete reconstruction of every conversation.
+**AI runs when you request it.** Opening projects and searching saved information do not trigger model requests.
 
 ![ProjectHub dashboard with example data](docs/images/projecthub-dashboard.png)
 
@@ -41,16 +41,10 @@ Run `projecthub config` to locate your editable configuration. See [config.examp
 
 AI features use your existing **Codex ChatGPT sign-in**: install Codex separately and run `codex login`. No OpenAI API key is required. Choose an existing profile, model, and reasoning effort in Settings; edit project AI instructions there too.
 
-Browsing and search stay local. Requested AI generation sends selected project context to OpenAI. Generated claims need review; source references do not establish correctness. Higher parallel-reading settings can hit account or memory limits. See [AI generation and limits](docs/AI_GENERATION.md).
+ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
 
-## Data and safety
+## Your data
 
-Settings default to `~/.config/projecthub/config.toml`; project data to `~/.local/share/projecthub`. **Back up the data directory and keep credentials out of Git.**
+Settings default to `~/.config/projecthub/config.toml`; project data to `~/.local/share/projecthub`. Back up the data directory to preserve saved history, notes, and tasks.
 
-Single-user, local-only application. Do not expose it publicly without authentication and a security review.
-
-## Development
-
-Run `projecthub check` or `bash scripts/check.sh` for tests and the frontend build.
-
-[Documentation](docs/README.md) · [Validation](docs/TEST_REPORT.md) · [Security](docs/SECURITY_REVIEW.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+[User guides and developer documentation](docs/README.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
