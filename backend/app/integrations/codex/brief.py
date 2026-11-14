@@ -19,6 +19,7 @@ SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decis
 SECTION_LIMITS = dict(zip(SECTION_NAMES, (1, 3, 3, 3, 3, 3, 2, 3, 2, 3, 2, 3)))
 CLASSIFICATIONS = ('verified', 'reported', 'inferred', 'unresolved')
 MAX_POINT_CHARS = 420
+MAP_LABEL_LIMIT = 100
 SECTION_TEXT_LIMITS = {name: (1000 if name == 'overview' else 600 if name in ('architecture', 'current_status') else MAX_POINT_CHARS)
                        for name in SECTION_NAMES}
 generation_lock = threading.Lock()
@@ -40,9 +41,11 @@ OUTPUT_SCHEMA = {
     }}
 }
 MAP_FIELDS = {
-    'nodes': {'id': {'type': 'string'}, 'label': {'type': 'string'}},
+    'nodes': {'id': {'type': 'string'},
+              'label': {'type': 'string', 'minLength': 1, 'maxLength': MAP_LABEL_LIMIT}},
     'edges': {'from': {'type': 'string'}, 'to': {'type': 'string'},
-              'label': {'type': 'string'}, 'inferred': {'type': 'boolean'}},
+              'label': {'type': 'string', 'minLength': 1, 'maxLength': MAP_LABEL_LIMIT},
+              'inferred': {'type': 'boolean'}},
 }
 MAP_LIMITS = {'nodes': 12, 'edges': 18}
 OUTPUT_SCHEMA['properties']['project_map'] = {
@@ -165,7 +168,7 @@ def validate_sections(raw, sources):
             if (not isinstance(refs, list) or not 1 <= len(refs) <= 3
                     or any(not isinstance(ref, str) or ref not in allowed for ref in refs)):
                 raise CodexError('Project map cited missing or foreign sources.')
-            if not isinstance(row['label'], str) or not row['label'].strip() or len(row['label']) > 100:
+            if not isinstance(row['label'], str) or not row['label'].strip() or len(row['label']) > MAP_LABEL_LIMIT:
                 raise CodexError('Project map returned an invalid label.')
             if name == 'nodes':
                 node_id = row['id']
