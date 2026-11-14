@@ -2,7 +2,7 @@
 
 These guides describe installation, current behavior, settings, and engineering
 contracts. Historical methods, measurements, and observed results live separately
-under [Experiments](experiments/README.md).
+under Experiments (private local reports; not distributed).
 
 ## Use and configuration
 
@@ -26,4 +26,4 @@ under [Experiments](experiments/README.md).
 - [Implementation plan](IMPLEMENTATION_PLAN.md) and [Scheme implementation contract](scheme-implementation.md)
 
 For historical test counts, model comparisons, timing tables, reference annotations,
-and evaluation findings, use the [experiment index](experiments/README.md).
+and evaluation findings, use the experiment index (private local reports; not distributed).

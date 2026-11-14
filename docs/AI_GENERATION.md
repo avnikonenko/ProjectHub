@@ -1,7 +1,7 @@
 # AI generation and parallel reading
 
 This guide describes current settings and behavior. Historical measurements and
-comparisons are kept separately in [experiments](experiments/README.md).
+comparisons are kept separately in experiments (private local reports; not distributed).
 
 ## Progress, cancellation, and timeouts
 

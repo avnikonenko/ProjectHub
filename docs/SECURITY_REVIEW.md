@@ -1,8 +1,8 @@
 # ProjectHub security review
 
-**Historical review:** the dated findings below describe the initial implementation, not current validation status. Subsequent HTTP, database, frontend build, and targeted real App Server checks are summarized in [historical validation results](experiments/TEST_REPORT.md). This is not an independent release security certification.
+**Historical review:** the dated findings below describe the initial implementation, not current validation status. Subsequent HTTP, database, frontend build, and targeted real App Server checks are summarized in historical validation results (private local reports; not distributed). This is not an independent release security certification.
 
-Date: 2026-11-05. Reviewer: independent QA agent, with coordinator integration review. Scope: new backend, database/migration, frontend, startup scripts and Codex integration. Assumption: one trusted local OS user, loopback binding, private application data directory. This is a code and targeted-test review; full HTTP/browser and real Codex sandbox validation remain blocked as described in [historical validation results](experiments/TEST_REPORT.md).
+Date: 2026-11-05. Reviewer: independent QA agent, with coordinator integration review. Scope: new backend, database/migration, frontend, startup scripts and Codex integration. Assumption: one trusted local OS user, loopback binding, private application data directory. This is a code and targeted-test review; full HTTP/browser and real Codex sandbox validation remain blocked as described in historical validation results (private local reports; not distributed).
 
 ## Controls present in source
 

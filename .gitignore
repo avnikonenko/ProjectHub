@@ -22,3 +22,6 @@ auth.json
 
 # Local project backlog
 /todo.md
+
+# Private local experiment reports
+/docs/experiments/

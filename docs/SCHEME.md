@@ -97,7 +97,7 @@ the application data directory before upgrading. No new dependencies or API key 
 
 ## Historical reports
 
-The [Scheme implementation review and validation results](experiments/TEST_REPORT.md#scheme-implementation-review)
+The Scheme implementation review and validation results (private local reports; not distributed)
 are preserved separately from this usage and architecture guide.
 
 

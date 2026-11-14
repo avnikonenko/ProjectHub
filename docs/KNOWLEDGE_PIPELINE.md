@@ -134,12 +134,12 @@ corrections and advanced semantic merging remain deferred.
 
 ## Evaluation reports
 
-The [initial pipeline evaluation](experiments/KNOWLEDGE_PIPELINE_EVALUATION.md)
+The initial pipeline evaluation (private local reports; not distributed)
 preserves reference-review qualifications, the original project-specific sizing
 observation and pilot follow-up notes. See also the
-[reference cases](experiments/KNOWLEDGE_REFERENCE_CASES.md),
-[human review rubric](experiments/KNOWLEDGE_HUMAN_REVIEW.md), and
-[live pilot evaluation](experiments/KNOWLEDGE_PILOT_EVALUATION.md). Recorded request
+reference cases (private local reports; not distributed),
+human review rubric (private local reports; not distributed), and
+live pilot evaluation (private local reports; not distributed). Recorded request
 counts and timings are observations, not token costs or accuracy scores.
 
 
