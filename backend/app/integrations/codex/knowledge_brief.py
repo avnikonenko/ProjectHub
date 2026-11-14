@@ -166,8 +166,7 @@ def _apply_interpretation_item_defaults(wire_sources):
     return defaults
 
 
-def _synthesize(manager, candidate, bundle, repository):
-    sources, groups = _brief_inputs(candidate, bundle, repository)
+def _encode_synthesis(sources, candidate, bundle, repository, overview_coverage=None):
     wire_sources, quotes, evidence_sources = _compact_evidence(sources)
     canonical_ids = _alias_source_ids(wire_sources)
     interpretation_defaults = _apply_interpretation_defaults(wire_sources)
@@ -176,25 +175,34 @@ def _synthesize(manager, candidate, bundle, repository):
                'repository_coverage': repository.get('coverage', []),
                'evidence_excerpts': quotes, 'evidence_sources': evidence_sources,
                'interpretation_source_defaults': interpretation_defaults}
+    if overview_coverage is not None:
+        payload['overview_selection'] = {**overview_coverage, 'selected_items': sum('item' in source for source in sources)}
     serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if len(serialized) > min(SYNTHESIS_COMPACTION_CHARS, MAX_SYNTHESIS_CHARS):
         payload['interpretation_item_defaults'] = _apply_interpretation_item_defaults(wire_sources)
         serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+    return wire_sources, canonical_ids, serialized
+
+
+def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics=None):
+    from .overview_selection import select_overview_sources
+    sources, groups = _brief_inputs(candidate, bundle, repository)
+    wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository)
     if len(serialized) > MAX_SYNTHESIS_CHARS:
-        size = len(serialized)
-        items = sum('item' in source for source in sources)
-        code = sum(source.get('kind') == 'inspected_repository' for source in sources)
-        raise CodexError(
-            f'Overview synthesis input limit exceeded after compaction: {size:,} characters; '
-            f'limit {MAX_SYNTHESIS_CHARS:,} ({size - MAX_SYNTHESIS_CHARS:,} over).\n'
-            f'Included: {items:,} knowledge {"item" if items == 1 else "items"} '
-            f'and {code:,} repository {"excerpt" if code == 1 else "excerpts"}. '
-            'Increasing the time budget or reading threads will not fix this size limit.\n'
-            'Saved Knowledge and Overview are unchanged; completed reading batches remain cached. '
-            'Full coverage needs support for a larger input or multi-stage overview generation.'
-        )
+        overview_coverage = {'partial': True, 'available_items': sum('item' in source for source in sources)}
+        def measure(selected):
+            return len(_encode_synthesis(selected, candidate, bundle, repository, overview_coverage)[2])
+        sources, selection = select_overview_sources(sources, measure, MAX_SYNTHESIS_CHARS)
+        wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository, overview_coverage)
+        if len(serialized) > MAX_SYNTHESIS_CHARS:
+            raise CodexError('Selected Overview synthesis input exceeds its limit; saved results are preserved.')
+        selection['input_chars'] = len(serialized)
+        if selection_diagnostics is not None:
+            selection_diagnostics.update(selection)
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
+        'When overview_selection is present, evidence is a bounded selection from the complete Knowledge snapshot. '
+        'Do not claim exhaustive coverage or infer absence from unselected material. '
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '
         'For source records containing item, interpretation_source_defaults supplies omitted kind and '
         'classification fields. Explicit source fields override these defaults; defaults never apply to '
@@ -491,17 +499,20 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             if bundle['project'].get('repository_path'):
                 repository = collect_repository_code(bundle['project']['repository_path'])
             progress.update(project_id, stage='Generating knowledge-based brief')
-            sections, graph, cited = _synthesize(manager, candidate, bundle, repository)
+            overview_selection = {}
+            sections, graph, cited = _synthesize(manager, candidate, bundle, repository, selection_diagnostics=overview_selection)
             publication_id, generated_at = str(uuid4()), utcnow()
             candidate = {**candidate, 'publication_id': publication_id, 'generated_at': generated_at}
             baseline = collect_project_evidence(engine, project_id)
             state = {key: baseline.get(key) for key in ('fingerprint', 'git_checked_at', 'history_indexed_at', 'validation')}
             state.update(publication_id=publication_id, pipeline='knowledge-v1')
             brief = {'generated_at': generated_at, 'sections': sections, 'sources': cited,
-                     'coverage': [*candidate['coverage'].get('limitations', []), *repository.get('coverage', [])],
+                     'coverage': [*candidate['coverage'].get('limitations', []), *repository.get('coverage', []),
+                                  *([f"Overview uses {overview_selection['selected_items']} of {overview_selection['available_items']} active Knowledge items; all records remain in Knowledge."] if overview_selection else [])],
                      'project_map': graph, 'generation': generation_metadata(manager), 'project_state': state}
             profile_info['effective_effort'] = brief['generation'].get('effort') or profile_info['effective_effort']
-            run_diagnostics = {**diagnostics(), 'synthesis_requests': 1}
+            run_diagnostics = {**diagnostics(), 'synthesis_requests': 1,
+                               **({'overview_selection': overview_selection} if overview_selection else {})}
             candidate['diagnostics'] = deepcopy(run_diagnostics)
             progress.record_diagnostics(project_id, run_diagnostics)
             if publish:

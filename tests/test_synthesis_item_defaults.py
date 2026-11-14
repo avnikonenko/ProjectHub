@@ -123,7 +123,7 @@ def test_still_oversized_payload_fails_without_calling_model_or_mutating_data(mo
     sources = setup_synthesis(monkeypatch, count=module.MAX_SYNTHESIS_CHARS // 400 + 1)
     before = deepcopy(sources)
     manager = CaptureSynthesis()
-    with pytest.raises(CodexError, match='synthesis input limit'):
-        module._synthesize(manager, {'coverage': {}}, {'project': {}}, {})
+    with pytest.raises(CodexError, match='input limit'):
+        module._synthesize(manager, {'coverage': {'limitations': ['x' * module.MAX_SYNTHESIS_CHARS]}}, {'project': {}}, {})
     assert manager.payload is None
     assert sources == before

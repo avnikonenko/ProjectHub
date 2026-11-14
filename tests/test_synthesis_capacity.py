@@ -79,7 +79,7 @@ def test_compaction_still_starts_at_old_threshold_even_below_new_maximum(monkeyp
     assert manager.encoded_size < uncompressed
 
 
-def test_project_above_new_bound_still_fails_before_model_call(monkeypatch):
+def test_project_above_new_bound_selects_whole_records_before_model_call(monkeypatch):
     sources = source_views(monkeypatch, count=600, statement_chars=450)
     sources.append({'id': 'code:1', 'kind': 'inspected_repository', 'text': 'PRIVATE_CODE_MARKER'})
     before = deepcopy(sources)
@@ -94,17 +94,12 @@ def test_project_above_new_bound_still_fails_before_model_call(monkeypatch):
 
     monkeypatch.setattr(module.json, 'dumps', measure)
     manager = Capture()
-    with pytest.raises(CodexError, match='synthesis input limit') as failure:
-        module._synthesize(manager, {'coverage': {}}, {'project': {'name': 'PRIVATE_PROJECT_MARKER'}}, {})
-    message = str(failure.value)
-    assert f'{sizes[-1]:,} characters' in message
-    assert f'limit {module.MAX_SYNTHESIS_CHARS:,}' in message
-    assert f'{sizes[-1] - module.MAX_SYNTHESIS_CHARS:,} over' in message
-    assert sizes[-1] < sizes[0]  # Report the actual compacted size, not the raw input.
-    assert '600 knowledge items and 1 repository excerpt' in message
-    assert 'time budget or reading threads will not fix' in message
-    assert 'Saved Knowledge and Overview are unchanged' in message
-    assert 'reading batches remain cached' in message
-    assert 'PRIVATE_' not in message
-    assert manager.payload is None
+    selection = {}
+    module._synthesize(manager, {'coverage': {}}, {'project': {'name': 'PRIVATE_PROJECT_MARKER'}}, {},
+                       selection_diagnostics=selection)
+    assert manager.encoded_size <= module.MAX_SYNTHESIS_CHARS
+    assert selection['available_items'] == 600
+    assert selection['selected_items'] < 600
+    assert selection['omitted_items'] + selection['selected_items'] == 600
+    assert any(source.get('kind') == 'inspected_repository' for source in manager.payload['sources'])
     assert sources == before

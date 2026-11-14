@@ -70,10 +70,12 @@ export function briefSections(brief: Brief | null) {
 }
 
 export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }) {
+  const selectionNotice = brief.coverage.find(item => item.startsWith('Overview uses '));
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief.sources ?? [], visibleSections.flatMap(({ entries }) => entries.flatMap((entry) => entry.source_ids)));
   const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return <>
+    {selectionNotice && <p className="muted" role="status">{selectionNotice}</p>}
     {visibleSections.map(({ key, title, collapsed, entries }) => {
       const points = (
         <ul className="brief-points">

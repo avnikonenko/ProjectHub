@@ -137,3 +137,35 @@ baseline, source manifest, literal evidence and project ownership before publish
 both current records and revisions. Exact retries are idempotent. New generated
 results retain a repository inspection signature; older results without it require
 regeneration for repository-backed projects. No repository files are modified.
+
+
+## Bounded Overview inputs
+
+When all active Knowledge fits the 240,000-character compacted synthesis budget,
+behavior is unchanged. Larger projects use a deterministic selection of complete
+records across design status, category and exact scope. Supported agreements,
+requirements and unresolved issues lead the selection lanes; stable IDs provide
+a fallback, not an importance score or inferred chronology. Connected conflicts
+and recorded relationships stay together. Evidence, rationale and limitations
+are never shortened to fit. Project metadata and bounded code excerpts remain.
+
+The full Knowledge snapshot is retained and published atomically with the Overview.
+Only Overview evidence is selected. Its coverage notice gives selected/available
+counts; diagnostics retain selected/omitted IDs, oversized components and unavailable
+relationships independently of extraction coverage. The actual compacted payload
+is measured in final source order, followed by a hard size check before generation.
+No intermediate AI summaries or additional model-selection calls are introduced.
+
+Selection can omit an important record: the Overview is explicitly selective,
+while the full Knowledge remains inspectable. AI-defined topic grouping is a
+separate planned improvement, not implemented by this selection policy.
+
+Validation on the previously failing project preserved all 3,009 Knowledge items,
+reused 234 extraction caches, and generated an unpublished Overview using 303 whole
+records and 12 repository excerpts in 239,854 compacted characters. One actual
+Codex synthesis request completed the run in 51.7 seconds. An initial trial exposed
+an order-dependent 41-character overrun; canonical-order measurement and a final
+guard fixed it before release. All evaluation writes stayed in a private database.
+Final checks: 833 backend tests, 58 frontend tests and the production build passed.
+An unrelated settings-test environment leak was also corrected without changing
+application settings or timeout behavior.

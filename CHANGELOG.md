@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Fit large Knowledge-generated Overviews through a disclosed, balanced selection of complete evidence-backed records. Keep the full Knowledge snapshot intact, preserve conflict groups and original quotations, and enforce the actual compacted input limit before generation.
 - Explain oversized Knowledge overview inputs with the actual compacted character count, limit, overage and included item/code counts; distinguish size limits from timeouts and name the preserved saved results.
 - Apply the shared parallel AI worker setting to legacy Project status and AI Q&A history processing and independent evidence-reduction groups. Capture settings per job, preserve source order and existing caches, retain completed work on failure, and avoid unnecessary reduction calls when the tail already fits.
 - Preserve complete Scheme workflow passages and diagrams instead of cutting notes at a fixed prefix. Retrieve relevant later sections with exact spans and speaker context, keep fenced diagrams intact, and deduplicate shared turns before applying the existing evidence budget. Distinguish proposed sequence from unknown validation criteria or implementation.
