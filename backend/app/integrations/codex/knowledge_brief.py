@@ -204,6 +204,8 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         if selection_diagnostics is not None:
             selection_diagnostics.update(selection)
         bounded_guidance = (
+            'When overview_selection is present, evidence is a bounded selection from the complete Knowledge snapshot. '
+            'Do not claim exhaustive coverage or infer absence from unselected material. '
             'For this bounded Overview, keep each point to one independently supported proposition. '
             'Bind every substantive clause to the exact supplied source alias whose original excerpts '
             'support it. Related records about the same experiment or component are not interchangeable '
@@ -217,8 +219,6 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         )
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
-        'When overview_selection is present, evidence is a bounded selection from the complete Knowledge snapshot. '
-        'Do not claim exhaustive coverage or infer absence from unselected material. '
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '
         'For source records containing item, interpretation_source_defaults supplies omitted kind and '
         'classification fields. Explicit source fields override these defaults; defaults never apply to '

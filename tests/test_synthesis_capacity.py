@@ -1,5 +1,6 @@
 """The measured larger-project budget keeps plain, complete synthesis records."""
 from copy import deepcopy
+from hashlib import sha256
 import json
 
 import pytest
@@ -42,6 +43,56 @@ class Capture:
             sections[name] = [{'text': 'A synthetic citation-routing point.', 'classification': 'reported',
                                'source_ids': ['k1']}]
         return json.dumps({'sections': sections, 'project_map': {'nodes': [], 'edges': []}})
+
+
+@pytest.mark.parametrize('count', [8, 339])
+def test_normal_synthesis_keeps_pre_fallback_prompt_and_no_selection_metadata(monkeypatch, count):
+    """Compatibility snapshot of the instructions at ea0eea1 (before fallback).
+
+    Deliberately independent of Git at test runtime. This checks both ordinary
+    and compacted complete inputs, not model compliance with the instructions.
+    """
+    sources = source_views(monkeypatch, count=count)
+    before = deepcopy(sources)
+    manager, diagnostics = Capture(), {}
+    module._synthesize(manager, {'coverage': {}}, {'project': {}}, {},
+                       selection_diagnostics=diagnostics)
+    assert sha256((manager.instructions + '\n').encode()).hexdigest() == (
+        'f8580ba885694a13129783ea1ac969eab82ffc48dbca4181f843ddadeb677f71')
+    assert 'overview_selection' not in manager.payload
+    assert diagnostics == {}
+    assert len(manager.payload['sources']) == count
+    assert sources == before
+
+
+@pytest.mark.parametrize('invalid_output', ['{invalid json', 'foreign-reference'])
+def test_model_output_errors_do_not_trigger_overflow_fallback(monkeypatch, invalid_output):
+    from backend.app.integrations.codex import overview_selection
+    sources = source_views(monkeypatch, count=8)
+    before = deepcopy(sources)
+
+    def unexpected_fallback(*args):
+        pytest.fail('Model output errors must not select a different evidence set or retry.')
+
+    monkeypatch.setattr(overview_selection, 'select_overview_sources', unexpected_fallback)
+
+    class InvalidCapture(Capture):
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            output = super().generate_brief(prompt, schema)
+            if invalid_output == 'foreign-reference':
+                return output.replace('k1', 'foreign-reference')
+            return invalid_output
+
+    manager, diagnostics = InvalidCapture(), {}
+    with pytest.raises(CodexError):
+        module._synthesize(manager, {'coverage': {}}, {'project': {}}, {},
+                           selection_diagnostics=diagnostics)
+    assert manager.calls == 1
+    assert diagnostics == {}
+    assert sources == before
 
 
 def test_larger_complete_project_fits_without_new_codecs_or_losing_fields(monkeypatch):
