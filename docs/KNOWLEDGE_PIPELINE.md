@@ -62,7 +62,8 @@ A later legacy refresh can create a newer legacy brief; the pairing flag then be
 
 GET /api/projects/{id}/codex/generation/status?kind=knowledge exposes pilot progress.
 The ordinary /codex/brief endpoint remains the default for the Overview refresh button.
-The Knowledge tab exposes published snapshots and a separate opt-in unpublished preview.
+The Knowledge tab shows saved results directly. Generate/Regenerate creates an opt-in
+candidate; **Use this result** activates its matching Knowledge and Overview.
 See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for current UI behavior and limitations.
 
 ## Isolated testing
@@ -125,3 +126,14 @@ observation and pilot follow-up notes. See also the
 [human review rubric](experiments/KNOWLEDGE_HUMAN_REVIEW.md), and
 [live pilot evaluation](experiments/KNOWLEDGE_PILOT_EVALUATION.md). Recorded request
 counts and timings are observations, not token costs or accuracy scores.
+
+
+## Activating a saved result
+
+`POST /api/projects/{id}/codex/knowledge/preview/publish` accepts only a saved
+`publication_id`. It invokes no Codex manager or model request. The existing pair
+publication transaction verifies the latest stored result, unchanged Overview
+baseline, source manifest, literal evidence and project ownership before publishing
+both current records and revisions. Exact retries are idempotent. New generated
+results retain a repository inspection signature; older results without it require
+regeneration for repository-backed projects. No repository files are modified.

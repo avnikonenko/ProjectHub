@@ -40,39 +40,48 @@ view. Missing item IDs are reported. Historical knowledge is not silently replac
 with the latest snapshot, and unrelated knowledge is never attached to legacy briefs.
 An unavailable project link displays an error rather than another project's data.
 
-## Unpublished previews
+## Generate and use a result
 
-Expand **Try an unpublished knowledge preview**, review the data-transfer notice,
-and click **Generate unpublished preview**. This is the only new generation action.
-The configured project account, model, effort and instructions use the existing
-Codex integration. It sends `confirmed:true,publish:false` to the existing endpoint.
-There is no publication or editing control in this UI.
+Saved knowledge loads automatically when Knowledge opens. If no active snapshot
+exists, the saved generated result appears directly, with its brief and all records.
+There is no separate reload button or collapsed preview workflow.
 
-The preview renders its own paired brief, sources and filterable knowledge using
-the same components as published records. The project-wide search covers saved
-project records; it does not index the unpublished preview. It is labelled unpublished and cannot
-replace the saved brief or snapshot. Project/publication identities are validated.
-Progress and elapsed time appear during generation; failed previews display an
-error. A second click cannot submit another request while one is pending.
+Click **Generate** or **Regenerate** to create a new candidate using the configured
+project account, model, effort and instructions. The existing Codex integration
+receives `confirmed:true,publish:false`. Generation remains opt-in; browsing does
+not invoke AI. Progress, elapsed time, cancellation, diagnostics and JSON download
+remain available. Failed generation preserves the last successful result.
 
-Successful previews are retained separately in existing generation revisions.
-Reopening Knowledge, using **Reload saved results**, or refreshing the browser recovers
-the last successful preview without invoking Codex. A running preview restores
-progress while the same server process continues; a failed or cancelled replacement
-keeps the earlier successful preview. A server restart ends active work but retains
-saved previews. Project switching aborts browser requests, not backend work.
-An explicit reload shows loading and completion feedback after both saved-result
-reads succeed. If only a saved preview exists, it opens that preview. Read failures
-show an error and retain the previous preview rather than claiming success.
-Reload does not generate or publish knowledge.
-Use **Download preview JSON** to export the paired brief, structured knowledge and
-original evidence. Published data remains available independently.
+Click **Use this result** to activate the reviewed result. This makes its Knowledge
+and matching Overview current together, without another model request. The browser
+sends only the saved publication ID; it cannot upload substitute interpretations.
+The server checks that the saved result, primary sources, inspected repository and
+current Overview baseline have not changed. A conflict preserves current data and
+asks for a new result. Old results without repository freshness metadata need
+regeneration if a repository is linked; older discussion-only results remain usable.
+
+The current Knowledge and Overview, plus both revisions, update atomically. Retrying
+the exact active pair creates no duplicate revisions. An already-mounted Overview
+refreshes after activation. When the saved result is active, the page displays it
+once rather than repeating it as a candidate. New candidates remain separate from
+the current snapshot until explicitly used.
+
+Successful generated results remain in existing project-scoped revisions and
+recover after refresh/restart. Returning to Knowledge refreshes saved results.
+Project switching aborts browser requests, not backend work, and late responses
+cannot replace another project's state. Original evidence and all recorded design
+statuses remain unchanged by activation.
+
+The project-wide search indexes active saved project knowledge, while an unused
+generated candidate remains inspectable through its own records and filters.
 
 ## API and implementation
 
 - `GET /api/projects/{id}/codex/knowledge`: published snapshot plus current evidence
   availability and current coverage. No model call.
-- `POST /api/projects/{id}/codex/knowledge/brief`: explicit unpublished preview.
+- `POST /api/projects/{id}/codex/knowledge/brief`: explicitly generate a saved candidate.
+- `POST /api/projects/{id}/codex/knowledge/preview/publish`: activate the selected saved
+  publication ID without generation; return 409 for stale/conflicting results.
 - `GET /api/projects/{id}/codex/knowledge/preview`: last successful unpublished
   result, or null. Read-only and project-scoped; no model call.
 - `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: preview progress.
@@ -90,7 +99,7 @@ calculating `paired_with_current_brief`. The legacy Overview refresh still uses
 | `frontend/src/ImportantKnowledge.tsx` | Read-only publication-checked Overview highlights. |
 | `frontend/src/knowledge.ts` | API types/validation, filtering, highlight selection, links and publication matching. |
 | `frontend/src/KnowledgeItems.tsx` | Shared read-only record browser, evidence and relationships. |
-| `frontend/src/KnowledgePage.tsx` | Published loading, mismatch handling and separate preview workflow. |
+| `frontend/src/KnowledgePage.tsx` | Current and generated results, explicit activation and project-scoped recovery. |
 | `frontend/src/knowledge.css` | Responsive filters/details and keyboard focus styling. |
 | `frontend/tests/knowledge.test.ts` | Helper regressions for filtering, identity, status preservation and source links. |
 | `backend/app/integrations/codex/router.py` | Project knowledge API and publication identity pairing. |

@@ -26,6 +26,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Activate a reviewed saved Knowledge result with **Use this result**, updating its matching Overview atomically without another AI call. Reject changed sources, repository evidence or Overview baselines and preserve existing results on failure.
 - Add persistent Quality, Balanced and Economy profiles for opt-in knowledge generation. Keep Quality and its matching caches unchanged; mark alternate profiles experimental, preserve explicit model/effort choices, and disclose Economy's bounded partial coverage.
 - Show per-run profile, duration, requests, extraction-cache reuse, coverage and actual Codex-reported tokens in expandable preview details and JSON exports. Missing usage remains unavailable; repeated events are deduplicated and partial reports are labelled.
 - Recover successful unpublished knowledge previews after refresh/restart through project-scoped revision storage. Restore active progress, preserve the previous preview after failure, and download its complete JSON without invoking AI or publishing it.
@@ -39,6 +40,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Show saved Knowledge results directly with Generate/Regenerate actions. Remove manual reload controls and preview-only explanatory panels; refresh saved data on returning to the page and refresh Overview after activation.
 - Put main and project AI settings explanations in collapsed, keyboard-accessible help sections. Keep controls, save feedback, errors and active override notices visible.
 - Separate current usage/configuration guides from historical experiment methods and results in `docs/experiments/`; preserve reports and link both collections from the README.
 - Make parallel AI reading threads an editable count in Settings instead of a 1–4 dropdown. Keep the default at 4, limit actual concurrency to available batches, and document resource/usage risks.
