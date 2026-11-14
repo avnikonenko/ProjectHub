@@ -170,7 +170,7 @@ def summary(db, project_id):
     p = data['project']
     decisions = [d for d in data['decisions'] if d['status'] == 'accepted']
     questions = [q for q in data['questions'] if q['status'] != 'resolved']
-    tasks = [t for t in data['tasks'] if t['status'] != 'completed']
+    tasks = [t for t in data['tasks'] if t['status'] not in ('completed', 'not_planned')]
     limitations = [n['content'] for n in data['notes'] if n['kind'] == 'limitation'] + [d['limitations'] for d in decisions if d['limitations']]
     next_actions = [f"Resolve question #{q['id']}: {q['title']}" for q in questions] + [f"Task #{t['id']}: {t['title']} ({t['status']})" for t in tasks]
     sections = {
@@ -195,7 +195,7 @@ def review(db, project_id):
     findings = []
     def finding(category, message, entity_id=None): findings.append({'category':category, 'message':message, 'entity_id':entity_id, 'status':'unverified'})
     for t in data['tasks']:
-        if t['status']!='completed': finding('incomplete_task',f"Task #{t['id']} is {t['status']}: {t['title']}",t['id'])
+        if t['status'] not in ('completed', 'not_planned'): finding('incomplete_task',f"Task #{t['id']} is {t['status']}: {t['title']}",t['id'])
     for n in data['notes']:
         if n['kind']=='limitation': finding('limitation',n['content'],n['id'])
     return {'project_id':project_id,'source':'deterministic','findings':findings,'limitations':['Rule-based checks flag gaps in recorded information; they do not verify claims or detect contradictions in meaning.']}

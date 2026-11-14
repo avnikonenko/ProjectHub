@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 Priority = Literal['low', 'medium', 'high', 'critical']
 QuestionStatus = Literal['open', 'under_discussion', 'awaiting_validation', 'resolved', 'reopened']
 DecisionStatus = Literal['proposed', 'accepted', 'superseded', 'rejected']
-TaskStatus = Literal['backlog', 'ready', 'in_progress', 'blocked', 'completed']
+TaskStatus = Literal['backlog', 'ready', 'in_progress', 'blocked', 'completed', 'not_planned']
 
 
 class Input(BaseModel):

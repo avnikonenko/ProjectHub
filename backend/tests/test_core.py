@@ -508,3 +508,19 @@ def test_task_pin_migration_preserves_legacy_tasks(tmp_path):
         command.upgrade(cfg, 'head')
         assert connection.execute(text('SELECT title,pinned FROM tasks')).one() == ('Keep me', 0)
     engine.dispose()
+
+
+def test_not_planned_tasks_are_retained_but_not_recommended(client):
+    pid = project(client)['id']
+    other = project(client, 'Other')['id']
+    base = f'/api/projects/{pid}'
+    task = client.post(f'{base}/tasks', json={'title': 'Deferred idea'}).json()
+    url = f"{base}/tasks/{task['id']}"
+    assert client.patch(f"/api/projects/{other}/tasks/{task['id']}", json={'status': 'not_planned'}).status_code == 404
+    result = client.patch(url, json={'status': 'not_planned'})
+    assert result.status_code == 200 and result.json()['status'] == 'not_planned'
+    assert any(t['id'] == task['id'] and t['status'] == 'not_planned' for t in client.get(f'{base}/tasks').json())
+    assert not any(f['entity_id'] == task['id'] for f in client.get(f'{base}/review').json()['findings'])
+    assert 'Deferred idea' not in client.get(f'{base}/summary').json()['markdown']
+    assert client.patch(url, json={'status': 'backlog'}).status_code == 200
+    assert any(f['entity_id'] == task['id'] for f in client.get(f'{base}/review').json()['findings'])

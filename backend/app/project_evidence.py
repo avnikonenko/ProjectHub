@@ -592,7 +592,7 @@ def collect_project_evidence(engine, project_id):
                              'classification': 'reported', 'note_id': note['id'],
                              'share': bool(_SHARE.fullmatch(note['reference']))})
         tasks = db.execute(text('SELECT id,title,status,priority,substr(description,1,900) AS description '
-                               'FROM tasks WHERE project_id=:pid '
+                               "FROM tasks WHERE project_id=:pid AND status!='not_planned' "
                                "ORDER BY status='completed',id DESC LIMIT 6"), {'pid': project_id}).mappings()
         for task in tasks:
             reported.append({'id': f"task:{task['id']}", 'label': f"TODO #{task['id']} · {task['title'][:160]}",

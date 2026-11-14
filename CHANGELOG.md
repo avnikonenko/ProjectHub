@@ -41,6 +41,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- A collapsible Not planned TODO category with an icon to mark items or return them to open work; items remain saved and searchable.
+
 - Automatic staged synthesis for large Knowledge overviews: process every eligible input in bounded requests, preserve original-evidence citations, cache validated stages for retry, and report stage progress without publishing partial replacements.
 - An editable Overall time budget in Settings (30–7200 seconds, default 900), saved locally and applied to the next generation without changing active requests.
 - Activate a reviewed saved Knowledge result with **Use this result**, updating its matching Overview atomically without another AI call. Reject changed sources, repository evidence or Overview baselines and preserve existing results on failure.

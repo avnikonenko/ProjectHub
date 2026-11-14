@@ -30,6 +30,7 @@ class ContextIsolationTests(unittest.TestCase):
                 Question(project_id=b.id, title='PRIVATE QUESTION', status='open'),
                 Task(project_id=a.id, title='Incomplete task'),
                 Task(project_id=a.id, title='Completed task', status='completed'),
+                Task(project_id=a.id, title='Not planned task', status='not_planned'),
             ])
             db.commit()
 
@@ -39,6 +40,7 @@ class ContextIsolationTests(unittest.TestCase):
             self.assertNotIn('PRIVATE', preview['content'])
             self.assertNotIn('Unaccepted idea', preview['content'])
             self.assertNotIn('Completed task', preview['content'])
+            self.assertNotIn('Not planned task', preview['content'])
             data = json.loads(preview['content'])
             self.assertEqual([d['title'] for d in data['accepted_decisions']], ['Accepted A'])
             self.assertEqual([q['title'] for q in data['unresolved_questions']], ['Open question'])

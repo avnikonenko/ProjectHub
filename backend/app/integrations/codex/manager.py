@@ -195,7 +195,7 @@ def context_preview(db, project_id):
                                   ('id', 'title', 'description', 'rationale', 'evidence', 'limitations')),
         'unresolved_questions': rows(Question, Question.status != 'resolved',
                                     ('id', 'title', 'description', 'status')),
-        'incomplete_tasks': rows(Task, Task.status != 'completed',
+        'incomplete_tasks': rows(Task, Task.status.notin_(['completed', 'not_planned']),
                                 ('id', 'title', 'description', 'status')),
         'selection': 'First 30 records per category in stable ID order; full history and imported documents excluded.'
     }, sort_keys=True, ensure_ascii=False, indent=2)

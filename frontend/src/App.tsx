@@ -355,7 +355,8 @@ function ProjectWorkspace({
   const todoOrder = (a: RecordData, b: RecordData) =>
     Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || b.id - a.id;
   const matchingTodos = searchTarget?.kind === 'tasks' ? tasks.filter((task) => task.id === searchTarget.id) : tasks;
-  const activeTodos = matchingTodos.filter((task) => task.status !== 'completed').sort(todoOrder);
+  const activeTodos = matchingTodos.filter((task) => task.status !== 'completed' && task.status !== 'not_planned').sort(todoOrder);
+  const notPlannedTodos = matchingTodos.filter((task) => task.status === 'not_planned').sort(todoOrder);
   const completedTodos = matchingTodos.filter((task) => task.status === 'completed').sort(todoOrder);
   const matchingNotes = (searchTarget?.kind === 'notes' ? notes.filter((note) => note.id === searchTarget.id) : [...notes]).reverse();
   const todoRow = (task: RecordData) => (
@@ -385,6 +386,20 @@ function ProjectWorkspace({
             fill={task.pinned ? 'currentColor' : 'none'} stroke="currentColor"
             strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-3-5.6 3 1-6.2L3 9.6l6.2-.9L12 3Z" />
+          </svg>
+        </button>
+        <button type="button" className="icon-edit"
+          aria-label={`${task.status === 'not_planned' ? 'Move to open TODOs' : 'Mark not planned'}: ${task.title}`}
+          title={task.status === 'not_planned' ? 'Move to open TODOs' : 'Mark not planned'}
+          aria-pressed={task.status === 'not_planned'} disabled={busy}
+          onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, {
+            status: task.status === 'not_planned' ? 'backlog' : 'not_planned',
+          })); }}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+            strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {task.status === 'not_planned'
+              ? <><path d="M3 10h11a6 6 0 0 1 0 12" /><path d="m7 6-4 4 4 4" /></>
+              : <><circle cx="12" cy="12" r="9" /><path d="m6 6 12 12" /></>}
           </svg>
         </button>
         <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
@@ -628,6 +643,12 @@ function ProjectWorkspace({
                 {activeTodos.length
                   ? <PagedItems label="Open TODO pages" listClass="todo-list" pageSize={10}>{activeTodos.map(todoRow)}</PagedItems>
                   : <Empty>No open TODOs.</Empty>}
+                {!!notPlannedTodos.length && (
+                  <details open={searchTarget?.kind === 'tasks' ? true : undefined}>
+                    <summary>Not planned ({notPlannedTodos.length})</summary>
+                    <PagedItems label="Not planned TODO pages" listClass="todo-list" pageSize={10}>{notPlannedTodos.map(todoRow)}</PagedItems>
+                  </details>
+                )}
                 {!!completedTodos.length && (
                   <details open={searchTarget?.kind === 'tasks' ? true : undefined}>
                     <summary>Completed ({completedTodos.length})</summary>

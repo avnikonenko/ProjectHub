@@ -359,3 +359,12 @@ def test_code_collection_includes_deep_route_declarations_instead_of_only_import
     assert 'def list_projects' in indexed['main.py']
     assert '"Dashboard"' in indexed['App.tsx']
     assert len(indexed['main.py']) <= 2000
+
+
+def test_not_planned_tasks_do_not_enter_analysis_evidence(env):
+    with Session(env) as db:
+        db.add(Task(project_id=1, title='Abandoned idea', status='not_planned'))
+        db.commit()
+    result = evidence.collect_project_evidence(env, 1)
+    assert 'Abandoned idea' not in json.dumps(result['sources'])
+    assert 'Prepare beds' in json.dumps(result['sources'])
