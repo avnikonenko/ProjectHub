@@ -9,5 +9,3 @@ Every entity lookup and related-record assignment must enforce project ownership
 Codex integration uses verified official App Server protocol. Default to read-only execution; deny tool approvals and unsupported server requests. No automatic decision delivery or code modification. Report transport and generation failures explicitly.
 
 Use actual specialized subagents for independent development when available, with separate file ownership and a coordinator. Define API contracts before dependent work. Run meaningful tests, review modified and adjacent paths, and distinguish real protocol tests from mocked tests. Make functional groups of commits when Git is writable.
-
-At session start, check whether a __codex_resume*.md file contains the exact CODEX_THREAD_ID. If not, write a UTC timestamped __codex_resume_YYYYMMDDTHHMMSSZ.md containing exactly `codex resume $CODEX_THREAD_ID` and a newline. Preserve older notes. If unavailable or unwritable, report briefly.

@@ -25,3 +25,6 @@ auth.json
 
 # Private local experiment reports
 /docs/experiments/
+
+# Local IDE settings
+.idea/
