@@ -155,3 +155,70 @@ def test_capacity_can_omit_forward_view_but_heading_only_claim_still_requires_re
     result = k.reconcile({'items': [old]}, [], bundle(refs), 'v1')[0]
     assert result['reconciliation_state'] == 'unresolved'
     assert result['design_status'] == 'PROPOSED' and 'holo complex' in result['reconciliation_note']
+
+
+def heading_item(refs):
+    return {'id': 'knowledge:old', 'statement': 'Keep the ligand during protonation assessment.',
+            'category': 'PROPOSAL', 'design_status': 'PROPOSED', 'scope': 'Protonation environment',
+            'extraction_version': 'v1', 'source_state': 'valid', 'relationships': [],
+            'evidence': [{'source_id': refs[0]['id'], 'role': 'assistant',
+                          'revision': refs[0]['revision'],
+                          'excerpt': '4. Keep the ligand during protonation assessment'}]}
+
+
+@pytest.mark.parametrize('legacy_note', [False, True])
+def test_fresh_continuation_support_clears_only_heading_guard_and_restores_brief_input(legacy_note):
+    from backend.app.integrations.codex.knowledge_brief import _brief_inputs
+
+    refs = sources()
+    original = heading_item(refs)
+    guarded = k.reconcile({'items': [original]}, [], bundle(refs), 'v1')[0]
+    if legacy_note:
+        guarded.pop('reconciliation_reason')  # Previous release had only this note.
+    before = deepcopy(guarded)
+    fresh = deepcopy(original)
+    fresh['evidence'].append({'source_id': refs[1]['id'], 'role': 'assistant',
+                             'revision': refs[1]['revision'],
+                             'excerpt': refs[1]['text'].split('\n\n')[0]})
+    result = k.reconcile({'items': [guarded]}, [fresh], bundle(refs), 'v1')[0]
+    assert result.get('reconciliation_state') != 'unresolved'
+    assert 'reconciliation_note' not in result and 'reconciliation_reason' not in result
+    assert result['statement'] == original['statement'] and result['design_status'] == 'PROPOSED'
+    assert result['evidence'] == fresh['evidence'] and guarded == before
+    inputs, _ = _brief_inputs({'items': [result], 'sources': refs}, bundle(refs), {'coverage': []})
+    assert any(source.get('item', {}).get('statement') == original['statement'] for source in inputs)
+
+
+def test_repaired_heading_keeps_independent_conflict_and_unrelated_warnings():
+    refs = sources()
+    old = heading_item(refs)
+    guarded = k.reconcile({'items': [old]}, [], bundle(refs), 'v1')[0]
+    guarded['conflicts_with'] = ['another-claim']
+    fresh = deepcopy(old)
+    fresh['evidence'].append({'source_id': refs[1]['id'], 'role': 'assistant',
+                             'revision': refs[1]['revision'],
+                             'excerpt': refs[1]['text'].split('\n\n')[0]})
+    repaired = k.reconcile({'items': [guarded]}, [fresh], bundle(refs), 'v1')[0]
+    assert repaired['reconciliation_state'] == 'unresolved'
+    assert repaired['conflicts_with'] == ['another-claim']
+    assert 'reconciliation_note' not in repaired
+    unrelated = {**old, 'reconciliation_state': 'unresolved',
+                 'reconciliation_note': 'A different unresolved interpretation.'}
+    result = k.reconcile({'items': [unrelated]}, [], bundle(refs), 'v1')[0]
+    assert result['reconciliation_note'] == unrelated['reconciliation_note']
+    assert 'reconciliation_reason' not in result
+
+
+def test_oversized_continuation_still_flags_heading_without_truncating_source_text():
+    refs = sources()
+    refs[1]['text'] = 'Scientific qualification. ' * 60 + '\n\nAdditional discussion.'
+    refs[1]['revision'] = hashlib.sha256(refs[1]['text'].encode()).hexdigest()
+    assert heading_continuation(*refs) is None
+    old = heading_item(refs)
+    result = k.reconcile({'items': [old]}, [], bundle(refs), 'v1')[0]
+    assert result['reconciliation_state'] == 'unresolved'
+    assert result['reconciliation_reason'] == 'incomplete_heading'
+    assert 'exceeds the context limit' in result['reconciliation_note']
+    assert refs[1]['id'] in result['reconciliation_note']
+    assert 'Scientific qualification.' not in result['reconciliation_note']
+    assert result['statement'] == old['statement'] and result['evidence'] == old['evidence']

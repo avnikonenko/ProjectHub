@@ -540,24 +540,56 @@ def reconcile(previous, extracted, bundle, extraction_version):
     # A previous cache may have interpreted a fragment-ending heading without its
     # qualification. Preserve that historical interpretation, but do not present
     # it as a complete current claim or silently invent a scientific correction.
-    from .knowledge_sources import heading_continuation
+    from .knowledge_sources import has_heading_continuation, heading_continuation
     ordered = bundle['sources']
-    continuations = {source['id']: view for source, following in zip(ordered, ordered[1:])
-                     if (view := heading_continuation(source, following)) is not None}
+    continuations = {source['id']: following for source, following in zip(ordered, ordered[1:])
+                     if has_heading_continuation(source, following)}
+    heading_note = 'The supporting quotation is an incomplete heading.'
     for item in items.values():
         refs = item.get('evidence', [])
-        if refs and all(ref.get('role') == 'assistant'
+        heading_refs = [ref for ref in refs if ref.get('role') == 'assistant'
                         and ref.get('source_id') in continuations
                         and ref.get('revision') == current[ref['source_id']]['revision']
                         and _normalized(ref.get('excerpt', '')) == _normalized(
-                            current[ref['source_id']]['text'].rstrip().split('\n')[-1])
-                        for ref in refs):
+                            current[ref['source_id']]['text'].rstrip().split('\n')[-1])]
+        # Recognize the previous release's application-authored note as well as
+        # the explicit marker. Neither comes from the model extraction schema.
+        owns_review = (item.get('reconciliation_reason') == 'incomplete_heading'
+                       or item.get('reconciliation_note', '').startswith(heading_note))
+        if refs and len(heading_refs) == len(refs):
+            # Do not overwrite an unrelated reconciliation warning or its reason.
+            if item.get('reconciliation_state') == 'unresolved' and not owns_review:
+                continue
             item['reconciliation_state'] = 'unresolved'
+            item['reconciliation_reason'] = 'incomplete_heading'
+            context = []
+            for ref in heading_refs:
+                following = continuations[ref['source_id']]
+                view = heading_continuation(current[ref['source_id']], following)
+                context.append(f"Continuation ({following['id']}): " + (
+                    view['text'].strip() if view else
+                    'The paragraph exceeds the context limit; inspect the original passage.'))
             item['reconciliation_note'] = (
-                'The supporting quotation is an incomplete heading. Its continuation supplies '
+                heading_note + ' Its continuation supplies '
                 'scope or qualifications; review the original passage before using this interpretation. '
-                + ' '.join(f"Continuation ({continuations[ref['source_id']]['id']}): "
-                           + continuations[ref['source_id']]['text'].strip() for ref in refs))
+                + ' '.join(context))
+        elif (owns_review and item['id'] in fresh_ids and item.get('source_state') == 'valid'
+              and any(ref.get('role') == following['role']
+                      and ref.get('source_id') == following['id']
+                      and ref.get('revision') == following['revision']
+                      and ref.get('excerpt', '').strip()
+                      and ref['excerpt'] in following['text']
+                      for heading in heading_refs
+                      for following in [continuations[heading['source_id']]] for ref in refs)):
+            # A fresh extraction has repaired this guard's specific evidence gap.
+            # Conflicts and identity cycles still independently block synthesis.
+            item.pop('reconciliation_reason', None)
+            item.pop('reconciliation_note', None)
+            unrelated = item.get('conflicts_with') or any(
+                str(relation.get('status', '')).startswith('unresolved')
+                for relation in item.get('relationships', []))
+            if not unrelated and item.get('reconciliation_state') == 'unresolved':
+                item.pop('reconciliation_state', None)
     return list(items.values())
 
 

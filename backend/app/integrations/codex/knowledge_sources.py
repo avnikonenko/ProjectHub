@@ -237,23 +237,30 @@ def load_sources(engine, project_id, previous_manifest=None):
     return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage}
 
 
-def heading_continuation(source, following):
-    """Return a literal, bounded continuation of an incomplete assistant heading.
-
-    Revision identifies the original fragment; the explicit view marker describes
-    the smaller text sent for context. Never follow a heading into another message.
-    """
+def has_heading_continuation(source, following):
+    """Detect a heading continued in the same message, independently of size limits."""
     if not source.get('partial_message') or source.get('role') != 'assistant':
-        return None
+        return False
     tail = source['text'].rstrip().split('\n')[-1].strip()
     if not re.fullmatch(r'(?:#{1,6}\s+|\d+[.)]\s+)\S.{0,198}[^.!?;:]', tail):
-        return None
+        return False
     if (following.get('role') != 'assistant'
             or not source.get('message_revision')
             or any(source.get(key) != following.get(key) for key in (
                 'conversation_id', 'message_revision', 'message_order'))
             or type(source.get('offset_end')) is not int
             or following.get('offset_start') != source['offset_end']):
+        return False
+    return True
+
+
+def heading_continuation(source, following):
+    """Return a literal, bounded continuation of an incomplete assistant heading.
+
+    Revision identifies the original fragment; the explicit view marker describes
+    the smaller text sent for context. Never follow a heading into another message.
+    """
+    if not has_heading_continuation(source, following):
         return None
     text = following['text']
     # Include leading whitespace so offsets and exact-source quotation remain true.
