@@ -239,6 +239,7 @@ function ProjectWorkspace({
   const view = historyLink ? 'History' : knowledgeLink ? 'Knowledge' : selectedView;
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
+  const [knowledgePublicationVersion, setKnowledgePublicationVersion] = useState(0);
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
@@ -503,13 +504,14 @@ function ProjectWorkspace({
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results}
-              recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
+              recoveryVersion={recovery.version.brief + knowledgePublicationVersion} recoveryBusy={recovery.checking || recovery.running.brief}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, brief: active })); }} />
           </div>
         )}
         {(visited.knowledge || view === 'Knowledge') && (
           <div hidden={view !== 'Knowledge' || !!results}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink} visible={view === 'Knowledge' && !results}
+              onPublished={() => setKnowledgePublicationVersion(value => value + 1)}
               renderBrief={(candidate) => <BriefPreview brief={candidate as Brief} prefix={`${projectId}-knowledge-preview`} />} />
           </div>
         )}
