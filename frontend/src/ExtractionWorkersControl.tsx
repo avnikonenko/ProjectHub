@@ -148,10 +148,10 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       </select>
     </label>
     <SettingsHelp title="Profile explanation">
-      {profile && <p><small>{profile.description}</small></p>}
-      {profile?.experimental && <p role="note"><small>Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</small></p>}
-      <p><small>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
-        {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</small></p>
+      {profile && <p>{profile.description}</p>}
+      {profile?.experimental && <p role="note">Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</p>}
+      <p>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
+        {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</p>
     </SettingsHelp>
     <div className="actions left">
       <button type="button" className="secondary" disabled={loading || saving || !profile || unchangedProfile}
@@ -175,8 +175,8 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
         onClick={() => void save(count)}>Save thread count</button>
     </div>
     <SettingsHelp title="Thread-count explanation" id={helpId}>
-      <p><small>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
-        {' '}More threads use more memory and may hit account limits.</small></p>
+      <p>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
+        {' '}More threads use more memory and may hit account limits.</p>
     </SettingsHelp>
     {settings && !valid && <p role="status"><small>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</small></p>}
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
