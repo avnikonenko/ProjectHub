@@ -41,6 +41,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Make list action icons quieter at rest, with consistent square targets and matching hover/keyboard-focus highlights. Pinned TODOs stay prominent; touch targets remain larger.
 - Merge colour-palette and text-size help into one About appearance section in Settings.
 - Show saved Knowledge results directly with Generate/Regenerate actions. Remove manual reload controls and preview-only explanatory panels; refresh saved data on returning to the page and refresh Overview after activation.
 - Put main and project AI settings explanations in collapsed, keyboard-accessible help sections. Keep controls, save feedback, errors and active override notices visible.

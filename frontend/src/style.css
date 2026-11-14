@@ -909,15 +909,35 @@ a:focus-visible {
   place-items: center;
   flex: none;
   padding: 0;
-  width: 2rem;
-  height: 2rem;
+  width: 2.25rem;
+  height: 2.25rem;
+  min-width: 32px;
+  min-height: 32px;
   color: #245c4b;
   background: transparent;
   border: 1px solid transparent;
 }
-.icon-edit:hover:not(:disabled) {
+.icon-edit:is(:hover, :focus-visible):not(:disabled) {
   background: #edf5f0;
   border-color: #dce6df;
+}
+.icon-edit svg {
+  width: 1.1rem;
+  height: 1.1rem;
+  opacity: 0.68;
+  transition: opacity 120ms ease;
+}
+.icon-edit:is(:hover, :focus-visible, [aria-pressed="true"], :disabled) svg {
+  opacity: 1;
+}
+@media (pointer: coarse) {
+  .icon-edit {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon-edit svg { transition: none; }
 }
 .todo-list label {
   font-size: 1rem;
@@ -1179,7 +1199,7 @@ a:focus-visible {
 }
 [data-theme='dark'] .project-option.selected,
 [data-theme='dark'] .theme-toggle:hover,
-[data-theme='dark'] .icon-edit:hover:not(:disabled) {
+[data-theme='dark'] .icon-edit:is(:hover, :focus-visible):not(:disabled) {
   background: #2d493a;
   color: var(--accent);
 }
@@ -1293,7 +1313,7 @@ a:focus-visible {
 [data-theme='dark'] .history-turn,
 [data-theme='dark'] .history-message,
 [data-theme='dark'] .list-item,
-[data-theme='dark'] .icon-edit:hover:not(:disabled) {
+[data-theme='dark'] .icon-edit:is(:hover, :focus-visible):not(:disabled) {
   border-color: var(--border);
 }
 [data-theme='dark'] .todo-list input {

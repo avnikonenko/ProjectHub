@@ -127,7 +127,7 @@
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
-:root[data-palette]:not([data-palette='green']) :is(.project-option.selected, .theme-toggle:hover, .icon-edit:hover:not(:disabled)) {
+:root[data-palette]:not([data-palette='green']) :is(.project-option.selected, .theme-toggle:hover, .icon-edit:is(:hover, :focus-visible):not(:disabled)) {
   background: var(--palette-selected);
   color: var(--accent);
 }
