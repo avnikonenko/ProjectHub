@@ -16,6 +16,7 @@ from .brief import note_evidence, recorded_evidence, generation_metadata
 from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
+from .topic_groups import group_records
 
 _FIELDS = {'question': 180, 'answer': 800}
 DEFAULT_QA_MAX_ITEMS = 25
@@ -40,8 +41,10 @@ _SCHEMA = {
 def read_qa(db, project_id):
     row = db.get(ProjectQA, project_id)
     return None if row is None else {
-        'generated_at': row.generated_at, 'items': row.items, 'sources': row.sources,
+        'generated_at': row.generated_at, 'items': [with_question_id(item) for item in row.items], 'sources': row.sources,
         'generation': row.generation,
+        'topic_groups': (row.generation or {}).get('topic_groups', []),
+        'topic_grouping': (row.generation or {}).get('topic_grouping', {}),
     }
 
 
@@ -159,6 +162,15 @@ def _validate_items(raw, indexed, limit=8):
 def normalized_text(value):
     text = ' '.join(unicodedata.normalize('NFKC', value).casefold().split())
     return re.sub(r'[?!。？！]+$', '', text).strip()
+
+
+def question_id(question):
+    """Keep Q&A identity stable across formatting and capitalization changes."""
+    return 'qa-' + hashlib.sha256(normalized_text(question).encode('utf-8')).hexdigest()
+
+
+def with_question_id(item):
+    return {**item, 'id': question_id(item['question'])}
 
 
 def _answer_text(value):
@@ -297,6 +309,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
             project = db.get(Project, project_id)
             if project is None:
                 raise CodexError('Project not found.')
+            previous = read_qa(db, project_id)
             evidence.extend(note_evidence(db, project_id, shared_only=True))
             evidence.extend(recorded_evidence(db, project, include_notes=False))
             accepted = db.execute(select(Answer, Question.title).join(
@@ -323,6 +336,14 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                 sources.update(cited)
         progress.update(project_id, stage='Consolidating and ranking Q&A')
         items = consolidate_items(manager, items, max_items)
+        items = [with_question_id(item) for item in items]
+        progress.update(project_id, stage='Grouping Q&A by topic')
+        grouping = group_records(engine, project_id, manager, [{
+            'id': item['id'],
+            'category': 'Q&A', 'design_status': 'UNKNOWN', 'scope': 'Project',
+            'statement': '\n'.join([item['question'], item['answer'],
+                                    *[variant['answer'] for variant in item.get('variants', [])]]),
+        } for item in items], previous=previous)
         cited_ids = dict.fromkeys(source_id for item in items for answer in (item, *item.get('variants', []))
                                  for source_id in answer['source_ids'])
         with Session(engine) as db:
@@ -331,7 +352,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                 row = ProjectQA(project_id=project_id)
                 db.add(row)
             row.generated_at, row.items, row.sources = utcnow(), items, [sources[source_id] for source_id in cited_ids]
-            row.generation = generation_metadata(manager)
+            row.generation = {**generation_metadata(manager), **grouping}
             db.flush()
             save_revision(db, project_id, 'qa', read_qa(db, project_id))
             progress.complete(project_id, db.commit)

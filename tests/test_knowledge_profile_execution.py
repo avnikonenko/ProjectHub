@@ -138,8 +138,8 @@ def test_saved_preview_run_diagnostics_are_detached_and_do_not_change_published_
     result = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
     expected = deepcopy(result['diagnostics'])
     assert expected['profile']['id'] == 'quality'
-    assert expected['model_requests'] == 1
-    assert expected['token_usage']['total_tokens'] == 120
+    assert expected['model_requests'] == 2  # Independent grouping and Overview synthesis.
+    assert expected['token_usage']['total_tokens'] == 240
     assert expected['token_usage']['status'] == 'complete'
     result['diagnostics']['token_usage']['total_tokens'] = 9000
     result['diagnostics']['profile']['notes'].append('caller mutation')

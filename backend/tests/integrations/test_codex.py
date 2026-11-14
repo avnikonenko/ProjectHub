@@ -525,6 +525,7 @@ def test_codex_directory_rejects_missing_and_unlogged_profiles_before_registerin
 
 def test_delete_current_qa_entry_preserves_revisions_and_shared_sources(setup):
     from backend.app.models import GenerationRevision, ProjectQA
+    from backend.app.integrations.codex.qa import question_id
 
     items = [
         {'question': 'Remove?', 'answer': 'Old', 'source_ids': ['a', 'shared']},
@@ -543,7 +544,7 @@ def test_delete_current_qa_entry_preserves_revisions_and_shared_sources(setup):
     assert setup.client.delete(route, params={**params, 'generated_at': 'old'}).status_code == 409
     result = setup.client.delete(route, params=params)
     assert result.status_code == 200
-    assert result.json()['items'] == items[1:]
+    assert result.json()['items'] == [{**items[1], 'id': question_id(items[1]['question'])}]
     assert result.json()['sources'] == sources[1:]
     assert setup.client.delete(route, params=params).status_code == 404
     with Session(setup.engine) as db:

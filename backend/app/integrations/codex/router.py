@@ -524,6 +524,24 @@ def delete_qa_item(project_id: int, db: DB,
                  for source_id in answer['source_ids']}
         row.items = remaining
         row.sources = [source for source in row.sources if source['id'] in cited]
+        if row.generation and 'topic_groups' in row.generation:
+            from .qa import question_id
+            identifiers = {question_id(item['question']) for item in remaining}
+            groups = [{**group, 'item_ids': [identifier for identifier in group['item_ids']
+                                            if identifier in identifiers]}
+                      for group in row.generation['topic_groups']]
+            groups = [group for group in groups if group['item_ids']]
+            active_topics = {group['id'] for group in groups}
+            metadata = dict(row.generation.get('topic_grouping', {}))
+            if 'record_fingerprints' in metadata:
+                metadata['record_fingerprints'] = {
+                    identifier: fingerprint
+                    for identifier, fingerprint in metadata['record_fingerprints'].items()
+                    if identifier in identifiers}
+            if 'taxonomy' in metadata:
+                metadata['taxonomy'] = [topic for topic in metadata['taxonomy']
+                                        if topic['id'] in active_topics]
+            row.generation = {**row.generation, 'topic_groups': groups, 'topic_grouping': metadata}
         db.commit()
         return read_qa(db, project_id)
     finally:

@@ -15,6 +15,8 @@ def _combining(payload):
 
 class ScopeInspect(StagedModel):
     def generate_brief(self, prompt, schema):
+        if 'groups' in schema['properties']:
+            return super().generate_brief(prompt, schema)
         payload = json.loads(prompt.rsplit('\n', 1)[1])
         guard = 'compare configuration modes, lifecycle phases and populations'
         assert (guard in prompt) == _combining(payload)

@@ -18,7 +18,7 @@ from backend.app.integrations.codex.brief import SECTION_NAMES
 from backend.app.integrations.codex.knowledge_previews import read_knowledge_preview, stage_knowledge_preview
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import ProjectHistoryBatch
-from backend.tests.integrations.test_knowledge_brief import prepared, _candidate, _stored
+from backend.tests.integrations.test_knowledge_brief import prepared, _candidate, _stored, _topic_reply
 
 
 def _large_candidate(project_id, count=520):
@@ -49,9 +49,11 @@ def _saved_preview(engine, project_id=1):
 
 def _stage_rows(engine, project_id=1):
     with Session(engine) as db:
-        return list(db.scalars(select(ProjectHistoryBatch).where(
+        rows = list(db.scalars(select(ProjectHistoryBatch).where(
             ProjectHistoryBatch.project_id == project_id,
             ProjectHistoryBatch.fingerprint != 'successful-extraction').order_by(ProjectHistoryBatch.fingerprint)))
+        return [row for row in rows if isinstance(row.evidence, list) and row.evidence
+                and 'stage_response' in row.evidence[0]]
 
 
 @pytest.fixture
@@ -90,6 +92,7 @@ class StagedModel:
 
     def __init__(self, *, fail_at=None, cancel_at=None, foreign_at=None, project_id=1, model='model-a'):
         self.calls = []
+        self.grouping_calls = 0
         self.seen = set()
         self.fail_at, self.cancel_at, self.foreign_at = fail_at, cancel_at, foreign_at
         self.project_id = project_id
@@ -98,6 +101,10 @@ class StagedModel:
         self.generation_metadata = {**self.generation_metadata, 'model': model}
 
     def generate_brief(self, prompt, schema):
+        topic_reply = _topic_reply(prompt, schema)
+        if topic_reply is not None:
+            self.grouping_calls += 1
+            return topic_reply
         # Production prompts end with their serialized evidence object.
         encoded = prompt.rsplit('\n', 1)[-1]
         payload = json.loads(encoded)
@@ -235,6 +242,8 @@ def test_expanding_intermediate_responses_fail_finitely_without_data_loss(staged
 
     class ExpandingModel(StagedModel):
         def generate_brief(self, prompt, schema):
+            if 'groups' in schema['properties']:
+                return super().generate_brief(prompt, schema)
             response = json.loads(super().generate_brief(prompt, schema))
             for section, definition in schema['properties']['sections']['properties'].items():
                 allowed = definition['items']['properties']['source_ids']['items']['enum']
@@ -311,6 +320,8 @@ def test_later_context_uses_exact_excerpt_records_across_stages(staged_state, mo
         context_seen = False
 
         def generate_brief(self, prompt, schema):
+            if 'groups' in schema['properties']:
+                return super().generate_brief(prompt, schema)
             response = json.loads(super().generate_brief(prompt, schema))
             contexts = [source for source in self.calls[-1]['sources']
                         if source.get('kind') == 'original_conversation_context']

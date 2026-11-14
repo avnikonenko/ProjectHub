@@ -78,6 +78,21 @@ def _stored(engine, project_id=1):
     return knowledge, brief, revisions
 
 
+def _topic_reply(prompt, schema):
+    """Mock the separate semantic grouping request, never a protocol exchange."""
+    if set(schema['properties']) != {'groups', 'assignments'}:
+        return None
+    payload = json.loads(prompt.rsplit('\n', 1)[1])
+    existing = payload['topics']
+    identifier = existing[0]['id'] if existing else 'storage'
+    return json.dumps({
+        'groups': [] if existing else [{'id': identifier, 'label': 'Storage',
+                                       'description': 'Project storage choices.'}],
+        'assignments': [{'item_id': item['id'], 'group_ids': [identifier]}
+                        for item in payload['records']],
+    })
+
+
 class FakeSynthesis:
     generation_metadata = {'account': 'mock', 'model': 'mock', 'effort': 'low'}
     fail = False
@@ -85,6 +100,9 @@ class FakeSynthesis:
     def generate_brief(self, prompt, schema):
         if self.fail:
             raise CodexError('Mock synthesis unavailable')
+        topic_reply = _topic_reply(prompt, schema)
+        if topic_reply is not None:
+            return topic_reply
         assert 'Local operation without another service.' in prompt
         reference = schema['properties']['sections']['properties']['overview']['items']['properties']['source_ids']['items']['enum'][0]
         sections = {key: [] for key in SECTION_NAMES}
@@ -205,6 +223,9 @@ def test_unavailable_historical_choices_are_retained_with_visible_coverage(prepa
     monkeypatch.setattr(pilot, 'build_candidate', candidate)
     class Synthesis:
         def generate_brief(self, prompt, schema):
+            topic_reply = _topic_reply(prompt, schema)
+            if topic_reply is not None:
+                return topic_reply
             assert 'historical or conflicting interpretations need rechecking' in prompt
             sources = schema['properties']['sections']['properties']['overview']['items']['properties']['source_ids']['items']['enum']
             payload = json.loads(prompt.split('Return only the required structured JSON.\n', 1)[1])
