@@ -20,6 +20,11 @@ have been reviewed. Q&A and Scheme are unchanged.
 - Successful batches commit independently to the existing project-scoped cache.
   Keys include source/context text and revisions, schema/prompt/instructions, and requested
   account/model/effort. Whole-document append timestamps do not invalidate unchanged windows.
+- When a window ends with an incomplete assistant heading, include the exact next
+  paragraph from the same message as bounded context when it fits. This is source
+  text, not an intermediate summary. Only affected cache keys change. Heading-only
+  historical interpretations are retained with a context-review note during
+  reconciliation; this does not rewrite previously saved previews retroactively.
 - Conservative reconciliation preserves scope and historical design status. Exact matching
   claims can aggregate reasons and evidence. Semantic variants remain separate. Supported
   chronological supersession requires the same scope and conversation; conflicts retain

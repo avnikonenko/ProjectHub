@@ -6,6 +6,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve the qualifying continuation when an extraction window ends at an assistant heading. Reuse unaffected caches; flag older heading-only interpretations for context review without rewriting their status or evidence.
+- Keep knowledge briefs focused on project meaning instead of repeating citation-processing details.
+- Reduce repeated preference cards through expandable interpretations from the same user passage, preserving every record, filter result and direct link.
 - Preserve independent tentative proposals and clearly requested preferences during extraction. Treat tool tables repeated as question context conservatively rather than adopting every listed backend; version the extraction instructions and use smaller context-preserving windows.
 - Generate briefs around project workflow, integrity/retention policies and reasons, keeping design agreement separate from implementation evidence and avoiding repeated evidence-label prefixes.
 - Keep lossless compaction at 180,000 characters and bound synthesis to 240,000 so the evaluated detailed knowledge fits without dropping records. Cached extraction remains reusable.

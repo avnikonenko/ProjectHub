@@ -1,5 +1,12 @@
 # Project Overview and Knowledge
 
+Matching direct-user choices supported by the same exact passage may appear under
+an expandable **Interpretations from the same passage** group. The grouping is a
+presentation aid, not a semantic merge: all records, statuses, evidence and filter
+counts remain available. Numbered proposal acceptances, different scopes and
+conflicting or stale records remain separate. Direct links reveal related records.
+Context-review notes are shown separately from historical design status.
+
 The Overview keeps the existing project brief and revision/source controls. The
 Knowledge tab exposes the existing structured snapshot without creating another
 extraction or reconciliation system. Scheme stays separate and unchanged.
