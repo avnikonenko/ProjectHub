@@ -1,3 +1,4 @@
+import { GenerationDetails } from './GenerationDetails';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
@@ -198,6 +199,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           <p>This saved preview is separate from published project knowledge.
             {busy && ' The previous successful preview remains available while the new generation runs.'}</p>
           <button className="secondary" onClick={downloadPreview}>Download preview JSON</button>
+          <GenerationDetails diagnostics={currentPreview.result.diagnostics} />
           {renderBrief(currentPreview.result.brief)}
           <h3>Preview knowledge</h3>
           <KnowledgeItems key={`${base}:preview:${currentPreview.result.knowledge.publication_id}`}

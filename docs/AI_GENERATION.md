@@ -30,6 +30,53 @@ Generation status includes elapsed time and completed-stage durations
 prompts or source excerpts. Knowledge extraction reports batch timing/cache reuse.
 These diagnostics describe the current request; they are not a performance guarantee.
 
+## Quality and usage profiles
+
+Open **Settings → Knowledge generation profile** and save one of these presets:
+
+| Profile | Conversation context | Reasoning |
+|---|---|---|
+| Quality — default | 14,000-character batches; all available primary fragments within the existing source safety limits. | Your selected model and effort. |
+| Balanced — experimental | 18,000-character batches; full available coverage, with fewer repeated context packages where possible. | Your selected model and effort. |
+| Economy — experimental | 24,000-character batches; at most 60,000 distinct source characters, selected as whole context-preserving windows across conversations. | Low by default only with an explicitly selected model that advertises low effort and no explicit effort selection. |
+
+Explicit model and reasoning choices take precedence. Codex default model keeps
+its default reasoning; the profile never silently selects a different model.
+Economy reports omitted primary fragments and partial coverage. Its source budget
+is not a token ceiling: repeated context, instructions and final synthesis also
+consume tokens. Larger batches can omit details even when all available source
+fragments were sent. Neither experimental profile guarantees lower consumption or
+equivalent recall.
+
+Profiles affect the opt-in knowledge pipeline, including its generated brief.
+Legacy Overview refresh, Q&A and Scheme keep their existing settings. Evidence
+validation, agreement rules and project isolation are identical across profiles.
+Worker count is independent: parallelism changes resource use and latency, not the
+amount of source text or number of requests required by a selected profile.
+
+The setting is `[ai] generation_profile = "quality"` in ProjectHub's local TOML;
+`PROJECTHUB_GENERATION_PROFILE` is the environment override. Saving applies to the
+next generation. An active request retains its captured profile and worker count.
+Changing profile, model or effort can require fresh extraction; returning to
+Quality reuses matching pre-profile caches when source/configuration inputs match.
+Changing settings does not invoke Codex or rewrite saved results.
+
+Expand **Generation details** under a new knowledge preview for its effective
+profile/effort, elapsed time, request counts, extraction-cache hits, source coverage
+and reported token usage. JSON downloads retain these diagnostics. Older results
+without usage remain readable and show unavailable values rather than invented
+zeros. Failed/cancelled run diagnostics are also retained in generation status
+while that server process remains running.
+
+Token counts come from the official App Server
+[`thread/tokenUsage/updated` notifications](https://learn.chatgpt.com/docs/app-server).
+Repeated updates replace earlier samples for that request rather than being
+summed. Partial reports identify missing requests/fields. Cached input and
+reasoning output are breakdowns of the total, not additional tokens. Requests
+count `turn/start` attempts; these figures are not an invoice, account balance or
+measurement of plan quota. Extraction-cache creation costs from earlier runs are
+not counted again when their results are reused.
+
 ## Parallel reading
 
 Opt-in knowledge extraction runs four independent batches concurrently by default,

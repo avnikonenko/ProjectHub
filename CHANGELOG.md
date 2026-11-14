@@ -20,6 +20,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Add persistent Quality, Balanced and Economy profiles for opt-in knowledge generation. Keep Quality and its matching caches unchanged; mark alternate profiles experimental, preserve explicit model/effort choices, and disclose Economy's bounded partial coverage.
+- Show per-run profile, duration, requests, extraction-cache reuse, coverage and actual Codex-reported tokens in expandable preview details and JSON exports. Missing usage remains unavailable; repeated events are deduplicated and partial reports are labelled.
 - Recover successful unpublished knowledge previews after refresh/restart through project-scoped revision storage. Restore active progress, preserve the previous preview after failure, and download its complete JSON without invoking AI or publishing it.
 - Long notes show compact Markdown previews with Expand/Show less; searching reveals full matching notes.
 

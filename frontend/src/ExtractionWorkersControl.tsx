@@ -1,12 +1,14 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, patch } from './api';
 import { ErrorBox } from './ui';
+import { generationProfilePatch, parseGenerationProfileSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
 type WorkerSettings = {
   extraction_workers: number;
   configured_extraction_workers: number;
   min_extraction_workers: number;
   max_extraction_workers: number;
+  profileSettings?: GenerationProfileSettings | null;
 };
 
 function settingsResponse(value: unknown): WorkerSettings {
@@ -20,7 +22,7 @@ function settingsResponse(value: unknown): WorkerSettings {
     || settings.configured_extraction_workers! > settings.max_extraction_workers!) {
     throw new Error('AI settings returned an unsupported worker count.');
   }
-  return settings as WorkerSettings;
+  return { ...settings, profileSettings: parseGenerationProfileSettings(value) } as WorkerSettings;
 }
 
 export function ExtractionWorkersControl({ active }: { active: boolean }) {
@@ -29,6 +31,8 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState('');
+  const [profileDraft, setProfileDraft] = useState('');
+  const [savedField, setSavedField] = useState<'workers' | 'profile'>('workers');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [reload, setReload] = useState(0);
@@ -55,6 +59,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
           const result = settingsResponse(value);
           setSettings(result);
           setDraft(String(result.extraction_workers));
+          setProfileDraft(result.profileSettings?.generation_profile ?? '');
         }
       })
       .catch((failure: unknown) => {
@@ -73,6 +78,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     if (savingRef.current || !settings || !Number.isSafeInteger(count)
       || count < settings.min_extraction_workers || count > settings.max_extraction_workers) return;
     savingRef.current = true;
+    setSavedField('workers');
     setSaving(true);
     setError('');
     setSaved(false);
@@ -95,11 +101,61 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     }
   }
 
+  async function saveProfile() {
+    if (savingRef.current || !settings?.profileSettings) return;
+    savingRef.current = true;
+    setSavedField('profile');
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const result = settingsResponse(await patch('/settings/ai', generationProfilePatch(profileDraft)));
+      if (!result.profileSettings) throw new Error('The server did not return the saved generation profile.');
+      if (mounted.current) {
+        ++loadVersion.current;
+        setSettings(result);
+        setProfileDraft(result.profileSettings.generation_profile);
+        setSaved(true);
+      }
+    } catch (failure: unknown) {
+      if (mounted.current) {
+        setProfileDraft(settings.profileSettings.generation_profile);
+        setError(failure instanceof Error ? failure.message : 'Could not save generation profile.');
+      }
+    } finally {
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  }
+
+  const profileSettings = settings?.profileSettings;
+  const profile = profileSettings?.generation_profiles.find((value) => value.id === profileDraft);
+  const unchangedProfile = profileDraft === profileSettings?.generation_profile
+    && profileDraft === profileSettings?.configured_generation_profile;
   const count = Number(draft);
   const valid = !!settings && Number.isSafeInteger(count)
     && count >= settings.min_extraction_workers && count <= settings.max_extraction_workers;
   const unchanged = count === settings?.extraction_workers && count === settings?.configured_extraction_workers;
   return <div>
+    <label>
+      Knowledge generation profile
+      <select aria-label="Knowledge generation profile" value={profileDraft}
+        disabled={loading || saving || !profileSettings}
+        onChange={(event) => { setProfileDraft(event.target.value); setSaved(false); }}>
+        {!profileSettings && <option value="">{loading ? 'Loading…' : 'Profiles unavailable'}</option>}
+        {profileSettings?.generation_profiles.map((option) => <option key={option.id} value={option.id}>
+          {option.label}{option.id === 'quality' ? ' (default)' : ''}
+        </option>)}
+      </select>
+    </label>
+    {profile && <p><small>{profile.description}</small></p>}
+    {profile?.experimental && <p role="note"><small>Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</small></p>}
+    <p><small>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
+      {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</small></p>
+    <div className="actions left">
+      <button type="button" className="secondary" disabled={loading || saving || !profile || unchangedProfile}
+        onClick={() => void saveProfile()}>Save generation profile</button>
+    </div>
+    {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile
+      && <p><small>Startup environment overrides the saved profile ({profileSettings.configured_generation_profile}).</small></p>}
     <label>
       Parallel AI reading threads
       <input type="number" min={settings?.min_extraction_workers ?? 1}
@@ -124,6 +180,6 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     {error && !saving && <button type="button" className="secondary" onClick={() => setReload((value) => value + 1)}>
       Reload setting
     </button>}
-    {(loading || saving || saved) && <p role="status"><small>{saving ? 'Saving…' : loading ? 'Loading AI settings…' : 'Saved.'}</small></p>}
+    {(loading || saving || saved) && <p role="status"><small>{saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : 'Thread count saved.'}</small></p>}
   </div>;
 }

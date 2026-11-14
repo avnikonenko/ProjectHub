@@ -78,7 +78,8 @@ export function knowledgePreviewExport(result: KnowledgePreview, projectId: numb
   if (result.knowledge.project_id !== projectId) throw new Error('Preview belongs to another project.');
   const publication = result.knowledge.publication_id;
   const data = { published: false, publication_id: publication,
-    knowledge: result.knowledge, brief: result.brief };
+    knowledge: result.knowledge, brief: result.brief,
+    ...(result.diagnostics === undefined ? {} : { diagnostics: result.diagnostics }) };
   // Export has the same identity checks as generation and recovery.
   parseKnowledgePreview(data, projectId);
   return { filename: `project-${projectId}-knowledge-preview.json`, text: JSON.stringify(data, null, 2) + '\n' };

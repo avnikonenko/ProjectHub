@@ -1,3 +1,4 @@
+import { parseGenerationDiagnostics, type GenerationDiagnostics } from './generationDiagnostics.ts';
 import { chatGPTTranscriptHref, historyTurnHref } from './historyLinks.ts';
 import type { Brief } from './BriefContent';
 
@@ -131,7 +132,7 @@ export function knowledgeSourceHref(projectId: number, source: KnowledgeSource |
   return null;
 }
 
-export function parseKnowledgePreview(raw: unknown, projectId: number): { knowledge: KnowledgeSnapshot; brief: Brief } {
+export function parseKnowledgePreview(raw: unknown, projectId: number): { knowledge: KnowledgeSnapshot; brief: Brief; diagnostics?: GenerationDiagnostics } {
   if (!raw || typeof raw !== 'object') throw new Error('The preview response is invalid.');
   const result = raw as Record<string, any>;
   const brief = result.brief;
@@ -159,6 +160,7 @@ export function parseKnowledgePreview(raw: unknown, projectId: number): { knowle
       || typeof brief.generated_at !== 'string') {
     throw new Error('The preview brief is incomplete. Published knowledge has not changed.');
   }
-  return { knowledge: parsed.snapshot, brief };
+  const diagnostics = parseGenerationDiagnostics(result.diagnostics);
+  return { knowledge: parsed.snapshot, brief, ...(diagnostics === undefined ? {} : { diagnostics }) };
 }
 

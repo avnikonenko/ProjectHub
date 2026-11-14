@@ -59,6 +59,11 @@ The dashboard checks brief freshness locally without calling AI. A successful re
 For progress, cancellation, history sync, caching and parallel-reading settings, see
 [AI generation](docs/AI_GENERATION.md). Higher thread counts can exhaust local resources
 or encounter account limits; read the [parallel-reading warning](docs/AI_GENERATION.md#parallel-reading).
+For opt-in knowledge generation, **Settings → Knowledge generation profile** offers
+Quality (default), Balanced and Economy (experimental). New previews show reported
+tokens, request/cache counts and coverage under **Generation details**. Economy can
+omit source windows; review its partial-coverage warning. See
+[profiles and usage](docs/AI_GENERATION.md#quality-and-usage-profiles).
 
 ## Development
 
