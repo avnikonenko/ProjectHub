@@ -21,6 +21,7 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     monkeypatch.delenv('PROJECTHUB_EXTRACTION_WORKERS', raising=False)
+    monkeypatch.delenv('PROJECTHUB_GENERATION_PROFILE', raising=False)
     monkeypatch.setattr(CodexManager, '_new_client', lambda *args, **kwargs: pytest.fail('Settings invoked Codex'))
     app = create_app(tmp_path / 'data')
     with TestClient(app) as client:
@@ -35,6 +36,8 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
     assert client.get('/api/settings/ai').json() == {
         'extraction_workers': 12, 'configured_extraction_workers': 2,
         'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
+        'generation_profile': 'quality', 'configured_generation_profile': 'quality',
+        'generation_profiles': config.list_generation_profiles(),
     }
     assert path.read_bytes() == original
     assert client.get('/api/projects').json() == []
@@ -181,6 +184,8 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
     assert response.json() == {
         'extraction_workers': workers, 'configured_extraction_workers': workers,
         'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
+        'generation_profile': 'quality', 'configured_generation_profile': 'quality',
+        'generation_profiles': config.list_generation_profiles(),
     }
     assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
     assert client.get('/api/settings/ai').json() == response.json()

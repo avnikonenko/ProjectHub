@@ -24,7 +24,7 @@ from . import progress
 from .revisions import list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
-from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_worker_settings
+from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_settings
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
@@ -35,7 +35,14 @@ class Input(BaseModel):
 
 
 class AIWorkerSettingsInput(Input):
-    extraction_workers: int = Field(strict=True, ge=1, le=MAX_EXTRACTION_WORKERS)
+    extraction_workers: int | None = Field(default=None, strict=True, ge=1, le=MAX_EXTRACTION_WORKERS)
+    generation_profile: Literal['quality', 'balanced', 'economy'] | None = None
+
+    @model_validator(mode='after')
+    def nonempty_settings(self):
+        if not self.model_fields_set or any(getattr(self, key) is None for key in self.model_fields_set):
+            raise ValueError('Provide extraction_workers or generation_profile with a non-null value.')
+        return self
 
 
 class SessionInput(Input):
@@ -226,7 +233,7 @@ def get_global_ai_settings():
 @settings_router.patch('/ai')
 def update_global_ai_settings(body: AIWorkerSettingsInput):
     try:
-        return save_ai_worker_settings(body.extraction_workers)
+        return save_ai_settings(**body.model_dump(exclude_unset=True))
     except ConfigError as exc:
         raise HTTPException(422, str(exc)) from exc
     except (ValueError, UnicodeError):

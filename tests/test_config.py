@@ -16,6 +16,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.data_dir == tmp_path / 'data/projecthub'
     assert settings.codex_home is None
     assert settings.extraction_workers == 4
+    assert settings.generation_profile == 'quality'
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
 
@@ -96,7 +97,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     path = tmp_path / 'config.toml'
     path.write_text(f'[server]\nport = 8888\ndata_dir = "{tmp_path}/data"\n[ai]\ngeneration_timeout = 120')
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
-    for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'CODEX_HOME'):
+    for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
     calls = []
     def run(*args, **kwargs):
@@ -169,6 +170,7 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     loaded = load_settings({'PROJECTHUB_CONFIG': str(path)})
     for name in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_BUDGET',
                  'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS',
+                 'PROJECTHUB_GENERATION_PROFILE',
                  'PROJECTHUB_HISTORY_AUTO_SYNC', 'PROJECTHUB_HISTORY_SYNC_INTERVAL'):
         monkeypatch.delenv(name, raising=False)
     loaded.apply_environment()

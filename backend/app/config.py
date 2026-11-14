@@ -10,6 +10,8 @@ import threading
 import tomllib
 from typing import Mapping
 
+from .generation_profiles import get_generation_profile, list_generation_profiles
+
 
 class ConfigError(ValueError):
     pass
@@ -33,6 +35,8 @@ generation_timeout = 600
 generation_budget = 900
 # Independent extraction requests; increase only after measuring account capacity.
 extraction_workers = 4
+# Knowledge-generation quality/cost trade-off: quality, balanced, or economy.
+generation_profile = "quality"
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 
@@ -52,14 +56,17 @@ class Settings:
     history_auto_sync: bool = True
     history_sync_interval: int = 60
     extraction_workers: int = 4
+    generation_profile: str = 'quality'
 
     def apply_environment(self):
         workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+        profile = _profile(self.generation_profile)
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
         os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(self.generation_budget)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
+        os.environ['PROJECTHUB_GENERATION_PROFILE'] = profile
         os.environ['PROJECTHUB_HISTORY_AUTO_SYNC'] = str(self.history_auto_sync).lower()
         os.environ['PROJECTHUB_HISTORY_SYNC_INTERVAL'] = str(self.history_sync_interval)
         if self.codex_home is not None:
@@ -99,6 +106,15 @@ def _boolean(value, name):
     return value
 
 
+def _profile(value):
+    if not isinstance(value, str):
+        raise ConfigError('ai.generation_profile must be quality, balanced or economy.')
+    try:
+        return get_generation_profile(value).id
+    except ValueError as exc:
+        raise ConfigError('ai.generation_profile must be quality, balanced or economy.') from exc
+
+
 def load_settings(environ: Mapping[str, str] | None = None):
     env = os.environ if environ is None else environ
     path = config_path(env)
@@ -111,7 +127,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         data = {}
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
-    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers'},
+    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile'},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -134,6 +150,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
         extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', 4)),
                                     'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS),
+        generation_profile=_profile(env.get('PROJECTHUB_GENERATION_PROFILE', ai.get('generation_profile', 'quality'))),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
         history_sync_interval=_integer(env.get('PROJECTHUB_HISTORY_SYNC_INTERVAL', history.get('sync_interval', 60)),
@@ -153,48 +170,74 @@ def create_config(environ: Mapping[str, str] | None = None):
     return path
 
 
+def _ai_settings_response(configured, *, workers=None, profile=None):
+    effective_workers = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers)
+                                 if workers is None else workers,
+                                 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+    effective_profile = _profile(os.environ.get('PROJECTHUB_GENERATION_PROFILE', configured.generation_profile)
+                                 if profile is None else profile)
+    return {'extraction_workers': effective_workers,
+            'configured_extraction_workers': configured.extraction_workers,
+            'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
+            'generation_profile': effective_profile,
+            'configured_generation_profile': configured.generation_profile,
+            'generation_profiles': list_generation_profiles()}
+
+
 def ai_worker_settings():
-    """Expose only non-secret worker settings, without creating a config file."""
+    """Expose only non-secret AI settings, without creating a config file."""
     with _settings_write_lock:
         configured_env = dict(os.environ)
-        configured_env.pop('PROJECTHUB_EXTRACTION_WORKERS', None)
-        configured = load_settings(configured_env).extraction_workers
-        effective = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured),
-                             'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
-        return {'extraction_workers': effective, 'configured_extraction_workers': configured,
-                'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS}
+        for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE'):
+            configured_env.pop(key, None)
+        return _ai_settings_response(load_settings(configured_env))
 
 
 def _worker_config_text(original, workers):
     """Edit one scalar while retaining comments; reject unsupported TOML layouts."""
+    return _ai_config_text(original, {'extraction_workers': workers})
+
+
+def _ai_config_text(original, changes):
+    for name, value in changes.items():
+        original = _ai_scalar_text(original, name, value)
+    return original
+
+
+def _ai_scalar_text(original, name, value):
+    """Edit an application-owned scalar; comparison protects unsupported layouts."""
+    if name not in ('extraction_workers', 'generation_profile'):
+        raise ConfigError('Unsupported AI setting.')
+    encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
     if not isinstance(data.get('ai', {}), dict):
         raise ConfigError('Invalid configuration section ai.')
     expected = deepcopy(data)
-    expected.setdefault('ai', {})['extraction_workers'] = workers
+    expected.setdefault('ai', {})[name] = value
     header = re.search(r'''(?m)^\s*\[\s*(?:ai|"ai"|'ai')\s*\][ \t]*(?:#[^\r\n]*)?\r?$''', original)
     if header:
         next_header = re.search(r'(?m)^[ \t]*\[', original[header.end():])
         stop = header.end() + next_header.start() if next_header else len(original)
         section = original[header.end():stop]
-        key = re.compile(r'''(?m)^([ \t]*(?:extraction_workers|"extraction_workers"|'extraction_workers')[ \t]*=[ \t]*)([^\r\n]*)(\r?$)''')
+        escaped = re.escape(name)
+        key = re.compile(r'''(?m)^([ \t]*(?:''' + escaped + '|"' + escaped + '"|\'' + escaped + r'''\')[ \t]*=[ \t]*)([^\r\n]*)(\r?$)''')
         match = key.search(section)
         if match:
             value, marker, comment = match[2].partition('#')
             trailing = re.search(r'[ \t]*$', value)[0]
-            replacement = match[1] + str(workers) + trailing + marker + comment + match[3]
+            replacement = match[1] + encoded + trailing + marker + comment + match[3]
             section = section[:match.start()] + replacement + section[match.end():]
         else:
             newline = '\r\n' if '\r\n' in original else '\n'
             # The header may already contain CR from CRLF; its remaining LF
             # must complete that original terminator before the inserted line.
             if section.startswith('\n'):
-                section = '\n' + f'extraction_workers = {workers}' + newline + section[1:]
+                section = '\n' + f'{name} = {encoded}' + newline + section[1:]
             else:
-                section = newline + f'extraction_workers = {workers}' + newline + section
+                section = newline + f'{name} = {encoded}' + newline + section
         updated = original[:header.end()] + section + original[stop:]
     else:
-        updated = original.rstrip('\r\n') + f'\n\n[ai]\nextraction_workers = {workers}\n'
+        updated = original.rstrip('\r\n') + f'\n\n[ai]\n{name} = {encoded}\n'
     try:
         if tomllib.loads(updated) != expected:
             raise ConfigError('This settings layout cannot be updated automatically.')
@@ -203,9 +246,23 @@ def _worker_config_text(original, workers):
     return updated
 
 
+_UNSET = object()
+
+
 def save_ai_worker_settings(workers):
-    """Persist one ProjectHub setting, then apply it to future generation pools."""
-    workers = _integer(workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+    """Compatibility entry point for existing worker-only callers."""
+    return save_ai_settings(extraction_workers=workers)
+
+
+def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET):
+    """Persist all requested scalars atomically, then update the next-run defaults."""
+    changes = {}
+    if extraction_workers is not _UNSET:
+        changes['extraction_workers'] = _integer(extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+    if generation_profile is not _UNSET:
+        changes['generation_profile'] = _profile(generation_profile)
+    if not changes:
+        raise ConfigError('Provide extraction_workers or generation_profile.')
     with _settings_write_lock:
         path = config_path()
         if any(p.is_symlink() for p in (path, *path.parents)):
@@ -219,7 +276,7 @@ def save_ai_worker_settings(workers):
         else:
             original = TEMPLATE
         # A new file uses the trusted template; unrelated existing data is retained.
-        updated = _worker_config_text(original, workers)
+        updated = _ai_config_text(original, changes)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if any(p.is_symlink() for p in (path, *path.parents)):
             raise ConfigError('Settings cannot be changed through a symbolic link.')
@@ -235,7 +292,10 @@ def save_ai_worker_settings(workers):
                 output.flush()
                 os.fsync(output.fileno())
             # The complete resulting file must be valid before atomic replacement.
-            load_settings({'PROJECTHUB_CONFIG': temporary})
+            configured = load_settings({'PROJECTHUB_CONFIG': temporary})
+            # Validate unmodified runtime overrides before changing the file too.
+            result = _ai_settings_response(configured, workers=changes.get('extraction_workers'),
+                                           profile=changes.get('generation_profile'))
             if path.is_symlink() or (path.exists() != existed):
                 raise ConfigError('Settings changed while saving; reload and try again.')
             if existed and not stat.S_ISREG(path.stat().st_mode):
@@ -243,9 +303,11 @@ def save_ai_worker_settings(workers):
             if existed and path.read_bytes().decode('utf-8') != original:
                 raise ConfigError('Settings changed while saving; reload and try again.')
             os.replace(temporary, path)
-            os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
+            if 'extraction_workers' in changes:
+                os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(changes['extraction_workers'])
+            if 'generation_profile' in changes:
+                os.environ['PROJECTHUB_GENERATION_PROFILE'] = changes['generation_profile']
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
-        return {'extraction_workers': workers, 'configured_extraction_workers': workers,
-                'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS}
+        return result
