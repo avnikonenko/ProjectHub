@@ -49,6 +49,21 @@ bounded metadata, saved architecture, and previous brief context. It never invok
 full-history AI summarization pipeline. Sources and omissions are recorded. Unchanged
 extraction is reused after safe file-stat and bounded stored-record checks.
 
+Discussions are inspected up to 65,536 characters each. Deterministic selection retains
+complete relevant paragraphs, numbered workflows and diagrams rather than fixed-length
+note prefixes. Manageable discussions fit in full; longer ones contribute up to 6,000
+characters of selected passages, within a shared 24,000-character discussion budget.
+Confirmed shared turns are deduplicated before budget accounting. Fenced diagrams stay
+atomic; passages cut by the inspection boundary are omitted. There is no intermediate
+AI summary or additional knowledge store.
+
+Selected excerpts retain exact original spans, available speaker/message boundaries,
+explicit gap markers, inspection hashes and omission coverage. The collector cache is
+versioned, and changes within inspected text invalidate its selection. The unchanged
+40,000-character total source budget leaves space for repository evidence. An explicit
+discussion sequence supports a proposed workflow independently of user acceptance,
+runtime evidence or precise validation criteria.
+
 Generation makes one Codex request for both graphs and dependency explanations, with no
 automatic repair loop. Each graph is limited to 20 nodes and 40 edges. Dependency names
 and constraints remain deterministic; AI can explain only known dependency IDs.
@@ -84,3 +99,48 @@ the application data directory before upgrading. No new dependencies or API key 
 
 The [Scheme implementation review and validation results](experiments/TEST_REPORT.md#scheme-implementation-review)
 are preserved separately from this usage and architecture guide.
+
+
+## Release validation — 2026-11-14
+
+The Example Research reference excerpt previously stopped at 1,200 characters,
+before Preparation and Validation & Reporting. The revised selection includes the
+complete 4,809-character discussion and its original input → analysis →
+classification → planning → preparation → validation/reporting → output sequence.
+The complete selected package contains six sources and 21,599 source-text
+characters, within the unchanged 40,000-character limit.
+
+A final actual Codex run on an isolated copy used `gpt-6.1-sol`, medium reasoning
+and the existing local account. One request completed in 101.6 seconds with
+25,604 reported tokens. Its 27 nodes and 28 edges remain proposed, all 99 graph
+citation occurrences resolve, and saved sources exactly match supplied evidence.
+Independent review verified the workflow against original passages and the
+architecture's supported preparation-to-validation/reporting handoffs. No accepted
+Gemmi adoption, implemented integration or scientific success was inferred.
+
+An earlier 92.6-second isolated run (25,515 tokens) restored the workflow but left
+an architecture handoff implicit. The final prompt requests supported component
+handoffs explicitly; no automatic repair loop was added. Final evidence text and
+source metadata match the independently reviewed first selection. These two
+requests are real protocol/model execution, distinct from mocked generation tests.
+
+Validation passed: 791 backend tests, 58 frontend tests, production build and
+whitespace checks. Focused regressions include the original diagram, relevant
+later sections, exact spans and speaker boundaries, source/project isolation,
+cache invalidation, shared-turn budget reuse, retained coverage counts, fenced
+diagrams and partial read-boundary omissions. Existing deprecation and bundle-size
+warnings remain.
+
+Real Firefox checks rendered Architecture and Workflow SVGs, verified all workflow
+labels after whitespace normalization, and checked the Dependencies empty state.
+Browser interaction issued zero generation requests. All evaluation writes were
+confined to private database copies; the normal saved Scheme was not replaced.
+Raw results and source-rich artifacts remain outside Git. The source fixture in
+`tests/fixtures/Example Research_scheme_workflow.txt` preserves the original
+reference diagram without personal filesystem paths.
+
+Limits remain explicit: six recent notes, twelve recent indexed turns and bounded
+inspection do not establish complete history coverage. Discussion-based graphs
+are conceptual; runtime correctness, precise release thresholds and downstream
+compatibility remain unverified. Refresh Scheme explicitly to use the new evidence
+selection; old saved diagrams are preserved until that action succeeds.

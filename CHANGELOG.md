@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve complete Scheme workflow passages and diagrams instead of cutting notes at a fixed prefix. Retrieve relevant later sections with exact spans and speaker context, keep fenced diagrams intact, and deduplicate shared turns before applying the existing evidence budget. Distinguish proposed sequence from unknown validation criteria or implementation.
 - Match thread-count and generation-profile help text to the other Settings explanations, using the same font size and theme colour.
 - Make Knowledge reload explicit: reread saved published results and the saved preview, show loading/success/error feedback, and open the saved preview when no published snapshot exists. Preserve saved results on read failures and keep reload separate from generation/publication.
 - Clear heading-specific context warnings when fresh extraction supplies the missing continuation, while preserving independent conflicts. Keep incomplete-heading warnings when the continuation exceeds the bounded context size.
