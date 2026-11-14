@@ -1,3 +1,5 @@
+import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './topicGroups';
+import { TopicPicker } from './TopicPicker';
 import { KnowledgePage } from './KnowledgePage';
 import { BriefPreview, type Brief } from './BriefContent';
 import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
@@ -907,7 +909,8 @@ function Report({ value }: { value: any }) {
 type SavedQA = {
   generated_at: string;
   generation?: GenerationProvenance | null;
-  items: { question: string; answer: string; source_ids: string[];
+  topic_groups?: TopicGroup[];
+  items: { id?: string; question: string; answer: string; source_ids: string[];
     variants?: { answer: string; source_ids: string[] }[] }[];
   sources: BriefSource[];
 };
@@ -1243,6 +1246,9 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const [cancelled, setCancelled] = useState(false);
   const [page, setPage] = useState(0);
   useEffect(() => { setPage(0); }, [targetQuestion]);
+  const [topic, setTopic] = useState(ALL_TOPICS);
+  const [tagSearch, setTagSearch] = useState('');
+  useEffect(() => { setTopic(ALL_TOPICS); setTagSearch(''); setPage(0); }, [base, saved?.generated_at, revisionId, targetQuestion]);
   const path = `${base}/codex/qa`;
   const limitStorageKey = `projecthub.qa-max-questions:${base}`;
   const [maxQuestions, setMaxQuestions] = useState(() => {
@@ -1306,7 +1312,11 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     }
   }
   const pageSize = 5;
-  const filtered = targetQuestion === undefined ? saved?.items ?? [] : (saved?.items ?? []).filter((item) => item.question === targetQuestion);
+  const qaId = (item: SavedQA['items'][number]) => item.id ?? item.question;
+  const topics = topicChoices(saved?.items ?? [], saved?.topic_groups, qaId);
+  const topicItems = targetQuestion === undefined
+    ? filterTopicItems(saved?.items ?? [], topic, topics, qaId, tagSearch) : saved?.items ?? [];
+  const filtered = targetQuestion === undefined ? topicItems : topicItems.filter(item => item.question === targetQuestion);
   const totalPages = Math.ceil(filtered.length / pageSize);
   const currentPage = Math.min(page, Math.max(0, totalPages - 1));
   const items = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -1353,8 +1363,13 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
+        {!!saved && <div className="knowledge-filters">
+          <TopicPicker choices={topics} selected={topic} search={tagSearch} onSearch={value => { setTagSearch(value); setPage(0); }}
+            ariaLabel="AI Q&A tags" onSelect={id => { setTopic(id); setPage(0); }} />
+          <button className="secondary" type="button" onClick={() => { setTopic(ALL_TOPICS); setTagSearch(''); setPage(0); }}>Reset filters</button>
+        </div>}
         {loading && <Feedback>Loading saved Q&A…</Feedback>}
-        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
             <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>

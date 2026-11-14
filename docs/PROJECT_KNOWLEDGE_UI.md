@@ -125,3 +125,33 @@ under the current project.
 
 Use an isolated data directory and port for development as described in
 [the pipeline guide](KNOWLEDGE_PIPELINE.md#isolated-testing).
+
+
+## AI topic tags
+
+Knowledge and AI Q&A generate project-specific tags from their saved interpretations
+and answers. Tags are navigation metadata, not evidence or acceptance labels.
+Each item may have several tags. The AI tags control beside the filters accepts
+text, or opens a browsable list with descriptions and unique item counts. Knowledge
+tags additionally show design-status counts. All items and Untagged remain
+available; tag filtering intersects existing filters without merging records.
+
+Tags are generated during explicit Knowledge preview/refresh or Q&A generation.
+Existing saved results remain readable without tags. Browsing, typing, filtering
+and opening evidence make no AI calls. No existing production results are
+retroactively modified by this feature.
+
+Grouping has its own project/configuration-scoped cache and bounded parallel
+batches. It does not invalidate extraction caches or alter Overview selection,
+Knowledge claims, status, rationale, evidence or Q&A source references. Unchanged
+memberships can be reused from the previous snapshot; successful batch caches
+survive a later failure. Generation failure preserves the previous saved result.
+Q&A deletion prunes current memberships while historical revisions remain intact.
+
+Labels and descriptions are AI interpretations. Synonymous tags may remain
+separate; no unsupported semantic merging is performed. The current implementation
+bounds the taxonomy to 40 topics and validates every membership against existing
+item IDs. Large initial runs with independently proposed vocabularies may exceed
+that bound and fail explicitly rather than truncate assignments. The limit and
+large-project taxonomy consolidation require further evaluation before making
+claims about complete grouping of very large projects.

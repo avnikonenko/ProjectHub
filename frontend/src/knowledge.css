@@ -1,4 +1,4 @@
-.knowledge-filters { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(3, minmax(8rem, 1fr)); gap: 12px; align-items: end; }
+.knowledge-filters { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(4, minmax(8rem, 1fr)); gap: 12px; align-items: end; }
 .knowledge-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .knowledge-filters input, .knowledge-filters select { width: 100%; min-width: 0; }
 .knowledge-filters button { justify-self: start; }
@@ -26,3 +26,11 @@
   .knowledge-fields dd { margin-bottom: 10px; }
   .knowledge-item-body { padding-left: 4px; }
 }
+.topic-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.topic-list > summary { cursor: pointer; font-size: .85rem; }
+.topic-list[open] { min-width: 0; }
+.topic-list ul { list-style: none; padding: 0; margin: 8px 0; max-height: 20rem; overflow: auto; }
+.topic-list li { padding: 8px 0; border-top: 1px solid var(--border, #70827955); overflow-wrap: anywhere; }
+.topic-list li p { margin: 4px 0; font-size: .85rem; }
+.topic-list button { text-align: left; white-space: normal; }
+.topic-list button[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }

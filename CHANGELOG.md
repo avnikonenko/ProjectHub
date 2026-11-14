@@ -4,6 +4,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+### Added
+
+- AI-generated, project-specific tags for Knowledge and AI Q&A. Browse all tags or type to filter alongside existing controls; retain overlapping memberships, original records and citations, with incremental assignment reuse and project-scoped caches.
+
 ### Fixed
 
 - Preserve configuration, phase and population scopes when combining Overview stages, instead of inventing policy conflicts from different explicitly defined rules. Keep original source stages and normal-sized synthesis unchanged.

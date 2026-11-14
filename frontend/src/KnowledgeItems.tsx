@@ -1,6 +1,8 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
+import { ALL_TOPICS, filterTopicItems, topicChoices } from './topicGroups';
+import { TopicPicker } from './TopicPicker';
 import './knowledge.css';
 
 const display = (value: string) => value.replaceAll('_', ' ');
@@ -8,6 +10,9 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   snapshot: KnowledgeSnapshot; availability?: Record<string, string>;
   selectedItemId?: string; onSelectItem?: (id: string) => void;
 }) {
+  const [query, setQuery] = useState('');
+  const [topic, setTopic] = useState(ALL_TOPICS);
+  const [tagSearch, setTagSearch] = useState('');
   const [status, setStatus] = useState('');
   const [category, setCategory] = useState('');
   const [scope, setScope] = useState('');
@@ -17,7 +22,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   const instanceId = useId();
   const selectedRef = useRef<HTMLDetailsElement | null>(null);
   const identity = `${snapshot.project_id}:${snapshot.publication_id || snapshot.generated_at || ''}`;
-  const reset = () => { setStatus(''); setCategory(''); setScope(''); setLimits({}); };
+  const reset = () => { setQuery(''); setTagSearch(''); setTopic(ALL_TOPICS); setStatus(''); setCategory(''); setScope(''); setLimits({}); };
   useEffect(() => { reset(); setSelected(selectedItemId); }, [identity, selectedItemId]);
   useEffect(() => {
     if (selectedRef.current && selected) {
@@ -29,7 +34,9 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   function select(id: string) {
     reset(); setSelected(id); setSelectionRequest((value) => value + 1); onSelectItem?.(id);
   }
-  const items = filterKnowledge(snapshot.items, '', status, category, scope, snapshot.sources);
+  const topics = topicChoices(snapshot.items, snapshot.topic_groups, item => item.id, item => item.design_status);
+  const items = filterTopicItems(filterKnowledge(snapshot.items, query, status, category, scope, snapshot.sources),
+    topic, topics, item => item.id, tagSearch);
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
   const statuses = [...new Set([...statusOrder, ...snapshot.items.map((item) => item.design_status)])];
@@ -97,6 +104,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   }
   return <div className="knowledge-items">
     <div className="knowledge-filters">
+      <label>Search knowledge<input type="search" value={query} onChange={event => { setQuery(event.target.value); setLimits({}); }} /></label>
       <label>Design status<select value={status} onChange={(event) => { setStatus(event.target.value); setLimits({}); }}><option value="">All statuses</option>
         {statuses.filter((value) => snapshot.items.some((item) => item.design_status === value)).map((value) => <option key={value} value={value}>{display(value)}</option>)}
       </select></label>
@@ -106,6 +114,9 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
       <label>Scope<select value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
         {[...new Set(snapshot.items.map((item) => item.scope))].sort().map((value) => <option key={value} value={value}>{value}</option>)}
       </select></label>
+      <TopicPicker choices={topics} selected={topic} search={tagSearch} ariaLabel="Knowledge tags"
+        onSearch={value => { setTagSearch(value); setLimits({}); }}
+        onSelect={id => { setTopic(id); setLimits({}); }} />
       <button className="secondary" type="button" onClick={reset}>Reset filters</button>
     </div>
     <p role="status">{items.length} of {snapshot.items.length} knowledge items</p>

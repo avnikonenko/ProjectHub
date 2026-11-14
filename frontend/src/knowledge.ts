@@ -1,3 +1,4 @@
+import { parseTopicGroups, type TopicGroup } from './topicGroups.ts';
 import { parseGenerationDiagnostics, type GenerationDiagnostics } from './generationDiagnostics.ts';
 import { chatGPTTranscriptHref, historyTurnHref } from './historyLinks.ts';
 import type { Brief } from './BriefContent';
@@ -24,6 +25,7 @@ export type KnowledgeSnapshot = {
   project_id: number; publication_id?: string; generated_at?: string;
   items: KnowledgeItem[]; sources: KnowledgeSource[]; coverage?: KnowledgeCoverage;
   extraction_version?: string; source_manifest?: unknown;
+  topic_groups?: TopicGroup[]; topic_grouping?: Record<string, unknown>;
 };
 export type KnowledgeResponse = {
   snapshot: KnowledgeSnapshot | null; paired_with_current_brief?: boolean;
@@ -70,7 +72,9 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
     })
         || ['publication_id', 'generated_at', 'extraction_version'].some((key) => value[key] !== undefined && typeof value[key] !== 'string'))
       throw new Error('Invalid knowledge source metadata.');
-    snapshot = { ...value, coverage: coverage(value.coverage) } as KnowledgeSnapshot;
+    snapshot = { ...value, coverage: coverage(value.coverage),
+      ...(value.topic_groups !== undefined ? { topic_groups: parseTopicGroups(value.topic_groups, ids) } : {}),
+    } as KnowledgeSnapshot;
   }
   const availability = object(raw.current_evidence_availability)
     ? Object.fromEntries(Object.entries(raw.current_evidence_availability).filter(([, value]) => typeof value === 'string')) as Record<string, string> : {};
