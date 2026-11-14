@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import Answer, Project, ProjectQA, ProjectHistoryBatch, Question, utcnow
-from .archive import archive_history
+from .archive import archive_history, archive_worker_scope
 from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, recorded_evidence, generation_metadata
 from . import progress
@@ -288,6 +288,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
     transport_scope = ExitStack()
     try:
         progress.begin(project_id, 'qa')
+        transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())

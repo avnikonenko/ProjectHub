@@ -3,13 +3,18 @@ import hashlib
 import json
 import tempfile
 import time
+import threading
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import ContextVar, copy_context
 from pathlib import Path
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
+from sqlalchemy.dialects.sqlite import insert
 
 from ...models import Project, CodexSession, ProjectHistoryBatch, utcnow
+from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings
 from .protocol import CodexError
 from . import progress
 from .shared_history import SharedPrefixIndex
@@ -18,6 +23,50 @@ CHUNK_CHARS = 4000
 BATCH_CHARS = 24_000
 MAX_SUMMARY_CHARS = 600
 CACHE_VERSION = 1
+_archive_run = ContextVar('projecthub_archive_run', default=None)
+_coordinated_summary = ContextVar('projecthub_archive_coordinated_summary', default=False)
+
+
+@contextmanager
+def archive_worker_scope(workers=None):
+    """Capture the saved worker limit once for the complete legacy generation."""
+    existing = _archive_run.get()
+    if existing is not None and workers is None:
+        yield
+        return
+    try:
+        selected = ai_worker_settings()['extraction_workers'] if workers is None else workers
+    except (ConfigError, ValueError) as exc:
+        raise CodexError('Could not read the parallel AI worker setting.') from exc
+    if type(selected) is not int or not 1 <= selected <= MAX_EXTRACTION_WORKERS:
+        raise CodexError(f'Parallel AI workers must be from 1 to {MAX_EXTRACTION_WORKERS}.')
+    token = _archive_run.set({'workers': selected, 'phases': 0, 'timings': []})
+    try:
+        yield
+    finally:
+        _archive_run.reset(token)
+
+
+def _diagnostics(state):
+    return {'archive_workers': state['workers'],
+            'archive_generated_batches': sum(not row['cached'] for row in state['timings']),
+            'archive_cache_hits': sum(row['cached'] for row in state['timings']),
+            'archive_batch_timings': [dict(row) for row in state['timings']]}
+
+
+def archive_diagnostics():
+    state = _archive_run.get()
+    return _diagnostics(state) if state is not None else {}
+
+
+def _worker_count(manager):
+    if not callable(getattr(manager, 'independent_generation', None)):
+        return 1
+    state = _archive_run.get()
+    if state is not None:
+        return state['workers']
+    with archive_worker_scope():
+        return _archive_run.get()['workers']
 
 
 def _schema(limit, source_ids=None):
@@ -96,11 +145,15 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
                 raise CodexError('Saved history summary has invalid citation data.') from exc
             result = _validated(raw, sources, limit)
             if legacy:
-                db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=fingerprint, evidence=result))
+                db.execute(insert(ProjectHistoryBatch).values(
+                    project_id=project_id, fingerprint=fingerprint, evidence=result).on_conflict_do_nothing(
+                        index_elements=['project_id', 'fingerprint']))
                 db.commit()
-            progress.update(project_id, stage='Reusing cached evidence batch')
+            if not _coordinated_summary.get():
+                progress.update(project_id, stage='Reusing cached evidence batch')
             return result, True
-    progress.update(project_id, stage='Summarizing history batch' if stage == 'history' else 'Combining evidence')
+    if not _coordinated_summary.get():
+        progress.update(project_id, stage='Summarizing history batch' if stage == 'history' else 'Combining evidence')
     prompt = ('Summarize the supplied project discussion evidence into compact, concrete facts useful for '
               'a later project handoff. Preserve outcomes, unresolved questions, corrections, decisions, '
               'and uncertainty. Plans are not proof of completion. Do not infer chronology across sessions. '
@@ -113,8 +166,20 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8):
     result = _validated(manager.generate_brief(prompt, _schema(limit, tuple(dict.fromkeys(
         source['id'] for source in sources)))), sources, limit)
     with Session(engine) as db:
-        db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=fingerprint, evidence=result))
+        # Identical reduction groups can finish concurrently. Both responses
+        # were requested and validated; keep the first cache without treating
+        # the other request as a cache hit or swallowing unrelated SQL errors.
+        inserted = db.execute(insert(ProjectHistoryBatch).values(
+            project_id=project_id, fingerprint=fingerprint, evidence=result).on_conflict_do_nothing(
+                index_elements=['project_id', 'fingerprint']))
         db.commit()
+        if inserted.rowcount == 0:
+            # Use the winning cache interpretation so a later replay produces
+            # the same evidence even when equivalent groups raced on a miss.
+            saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
+            result = _validated(json.dumps({'evidence': [
+                {'text': item['text'], 'source_ids': [source['id'] for source in item['sources']]}
+                for item in saved.evidence]}), sources, limit)
     return result, False
 
 
@@ -126,6 +191,138 @@ def _timed_summary(engine, project_id, manager, payload, sources, stage, limit=8
     progress.update(project_id, batch_started_at=None,
                     last_batch_seconds=round(time.monotonic() - started, 3))
     return result
+
+
+def _summary_jobs(engine, project_id, manager, count, job_for, stage, needed=None):
+    """Run independent batches in source order with bounded, abortable workers.
+
+    needed(index, results) may defer a reduction until earlier calls finish.
+    This avoids speculative summaries of a tail that may already fit unchanged.
+    Input batches stay on disk until their bounded dispatch slot is available.
+    """
+    workers = min(_worker_count(manager), max(1, count))
+    state = _archive_run.get() or {'workers': workers, 'phases': 0, 'timings': []}
+    state['phases'] += 1
+    phase_run = state['phases']
+    results, timings = [None] * count, [None] * count
+    completed = hits = 0
+    stage_label = 'Summarizing history batch' if stage == 'history' else 'Combining evidence'
+    progress.update(project_id, stage=stage_label, batch_phase=stage, batch_total=count,
+                    batch_completed=0, cache_hits=0, batch_started_at=None)
+
+    def record(index, value, elapsed, active=None):
+        nonlocal completed, hits
+        results[index] = value
+        completed += 1
+        hits += int(value[1])
+        row = {'phase': stage, 'phase_run': phase_run, 'batch': index + 1,
+               'seconds': round(elapsed, 3), 'cached': bool(value[1])}
+        timings[index] = row
+        state['timings'].append(row)
+        # Diagnostics survive cancellation or deadline errors even when the
+        # normal progress update is no longer permitted.
+        progress.record_diagnostics(project_id, _diagnostics(state))
+        progress.update(project_id, **({'batches': completed} if stage == 'history' else {}), batch_completed=completed,
+                        cache_hits=hits, batch_started_at=active,
+                        last_batch_seconds=row['seconds'])
+
+    def run(selected, index):
+        payload, sources, limit = job_for(index)
+        start = time.monotonic()
+        token = _coordinated_summary.set(True)
+        try:
+            result = _summarize(engine, project_id, selected, payload, sources, stage, limit)
+        finally:
+            _coordinated_summary.reset(token)
+        return result, time.monotonic() - start
+
+    if workers == 1:
+        for index in range(count):
+            progress.check_cancelled()
+            if needed is not None and not needed(index, results):
+                break
+            progress.update(project_id, stage=stage_label, batch_started_at=utcnow())
+            value, elapsed = run(manager, index)
+            record(index, value, elapsed)
+    else:
+        abort = threading.Event()
+        failures, failure_lock = [], threading.Lock()
+
+        def work(index):
+            try:
+                with progress.abort_on(abort):
+                    progress.check_cancelled()
+                    with manager.independent_generation() as selected:
+                        return run(selected, index)
+            except BaseException as exc:
+                with failure_lock:
+                    if not failures:
+                        failures.append(exc)
+                    abort.set()
+                raise
+
+        def check_failure():
+            with failure_lock:
+                if failures:
+                    raise failures[0]
+
+        try:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-archive')
+        except (RuntimeError, OSError) as exc:
+            raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+        pending, next_index = {}, 0
+        try:
+            while next_index < count or pending:
+                progress.check_cancelled()
+                check_failure()
+                while next_index < count and len(pending) < workers:
+                    check_failure()
+                    if needed is not None and not needed(next_index, results):
+                        break
+                    index = next_index
+                    context = copy_context()
+                    try:
+                        future = pool.submit(context.run, work, index)
+                    except (RuntimeError, OSError) as exc:
+                        check_failure()
+                        raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+                    pending[future] = (index, utcnow())
+                    next_index += 1
+                if not pending:
+                    break  # The complete remaining tail already fits.
+                progress.update(project_id, batch_started_at=min(start for _, start in pending.values()))
+                ready, _ = wait(pending, timeout=0.05, return_when=FIRST_COMPLETED)
+                check_failure()
+                for future in ready:
+                    if future.exception() is not None:
+                        future.result()
+                for future in sorted(ready, key=lambda value: pending[value][0]):
+                    index, _ = pending.pop(future)
+                    value, elapsed = future.result()
+                    active = min((start for _, start in pending.values()), default=None)
+                    record(index, value, elapsed, active)
+        except BaseException:
+            abort.set()
+            for future in pending:
+                future.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+            if abort.is_set():
+                for future in sorted(pending, key=lambda value: pending[value][0]):
+                    if future.cancelled() or future.exception() is not None:
+                        continue
+                    index, _ = pending[future]
+                    value, elapsed = future.result()
+                    try:
+                        record(index, value, elapsed)
+                    except CodexError:
+                        pass  # Keep the originating failure/cancellation.
+    progress.update(project_id, **({'stage': 'Reusing cached evidence batch'}
+                                  if completed and hits == completed else {}),
+                    batch_total=completed, batch_completed=completed,
+                    cache_hits=hits, batch_started_at=None)
+    return results, hits, completed - hits
 
 
 def _live_pages(manager, session, client, stage):
@@ -285,19 +482,13 @@ def archive_history(engine, project_id, manager):
                         batch.append(source)
                         fragments += 1
             flush()
-        progress.update(project_id, batch_phase='history', batch_total=batch_total,
-                        batch_completed=0, cache_hits=0, batch_started_at=None)
-        for batch_index in range(batch_total):
-            progress.check_cancelled()
+        def history_job(batch_index):
             batch = json.loads((Path(directory) / f'batch-{batch_index}.json').read_text(encoding='utf-8'))
-            summarized, cached = _timed_summary(
-                engine, project_id, manager, {'sources': batch}, batch, 'history')
-            evidence.extend(summarized)
-            reused += cached
-            generated += not cached
-            progress.update(project_id, batches=generated + reused,
-                            batch_completed=batch_index + 1, cache_hits=reused)
-            batch = []
+            return {'sources': batch}, batch, 8
+
+        results, reused, generated = _summary_jobs(
+            engine, project_id, manager, batch_total, history_job, 'history')
+        evidence = [item for result in results for item in result[0]]
     titles = {session.id: session.title for session in sessions}
     for entry in evidence:
         for source in entry['sources']:
@@ -346,33 +537,37 @@ def summarize_evidence(engine, project_id, manager, evidence):
             current.append(item)
         if current:
             groups.append(current)
-        reduced = []
-        pending = [group for group in groups
+        pending = [index for index, group in enumerate(groups)
                    if not (len(group) == 1 and size(group) <= BATCH_CHARS // 2)]
-        progress.update(project_id, batch_phase='reduction', batch_total=len(pending),
-                        batch_completed=0, cache_hits=0, batch_started_at=None)
-        completed = hits = 0
-        for index, group in enumerate(groups):
-            # Earlier reductions can already make the entire remaining input
-            # fit. Preserve the untouched tail rather than compressing it again.
-            remaining = [item for tail in groups[index:] for item in tail]
-            candidate = [*reduced, *remaining]
-            if len(candidate) <= 24 and size(candidate) <= BATCH_CHARS:
-                reduced = candidate
-                progress.update(project_id, batch_total=completed,
-                                batch_completed=completed, cache_hits=hits,
-                                batch_started_at=None)
-                break
-            if len(group) == 1 and size(group) <= BATCH_CHARS // 2:
-                reduced.extend(group)
-                continue
+        by_group = {group_index: job_index for job_index, group_index in enumerate(pending)}
+
+        def reduction_job(index):
+            group = groups[pending[index]]
             sources = {source['id']: source for item in group for source in item['sources']}
-            summarized, cached = _timed_summary(engine, project_id, manager, payload_for(group), list(sources.values()),
-                                       'reduction', limit=max(1, min(8, len(group) // 2)))
-            reduced.extend(summarized)
-            completed += 1
-            hits += cached
-            progress.update(project_id, batch_completed=completed, cache_hits=hits)
+            return payload_for(group), list(sources.values()), max(1, min(8, len(group) // 2))
+
+        def needed(index, results):
+            # Ignore earlier in-flight outputs as if they returned zero points.
+            # If even this lower bound does not fit, reducing the next group is
+            # definitely required. Otherwise wait for prior results, preserving
+            # the exact serial early-fit tail without speculative AI calls.
+            lower_bound = []
+            for group_index, group in enumerate(groups):
+                job_index = by_group.get(group_index)
+                if job_index is not None and job_index < index:
+                    if results[job_index] is not None:
+                        lower_bound.extend(results[job_index][0])
+                else:
+                    lower_bound.extend(group)
+            return len(lower_bound) > 24 or size(lower_bound) > BATCH_CHARS
+
+        results, _, _ = _summary_jobs(engine, project_id, manager, len(pending), reduction_job,
+                                      'reduction', needed)
+        reduced = []
+        for group_index, group in enumerate(groups):
+            job_index = by_group.get(group_index)
+            result = results[job_index] if job_index is not None else None
+            reduced.extend(result[0] if result is not None else group)
         if len(reduced) >= len(evidence) and size(reduced) >= old_size:
             raise CodexError('History evidence could not be reduced within the input limit.')
         evidence = reduced

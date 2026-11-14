@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
-from .archive import archive_history, summarize_evidence
+from .archive import archive_history, summarize_evidence, archive_worker_scope
 from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
@@ -230,6 +230,7 @@ def refresh_brief(engine, project_id, manager):
     transport_scope = ExitStack()
     try:
         progress.begin(project_id, 'brief')
+        transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
