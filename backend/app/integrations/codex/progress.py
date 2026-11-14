@@ -1,6 +1,7 @@
 """Project-scoped generation progress and cooperative cancellation."""
 from contextvars import ContextVar
 from contextlib import contextmanager
+from copy import deepcopy
 import threading
 import time
 import os
@@ -101,7 +102,18 @@ def cancel(project_id, kind, started_at):
         _events[project_id].set()
         _record_stage(project_id, snapshot)
         snapshot.update(stage='Cancelling', cancel_requested=True)
-        return {**snapshot, 'stage_seconds': dict(snapshot.get('stage_seconds', {}))}
+        return deepcopy(snapshot)
+
+
+def record_diagnostics(project_id, diagnostics):
+    """Retain trusted numeric run diagnostics even when a request has failed.
+
+    This does not clear a cancellation or budget failure and cannot publish data.
+    """
+    with _lock:
+        kind = _active.get(project_id)
+        if kind is not None:
+            _snapshots[project_id, kind]['diagnostics'] = deepcopy(diagnostics)
 
 
 def _record_stage(project_id, snapshot):
@@ -175,9 +187,7 @@ def complete(project_id, save):
 
 def read(project_id, kind):
     with _lock:
-        result = dict(_snapshots.get((project_id, kind), _idle()))
-        if 'stage_seconds' in result:
-            result['stage_seconds'] = dict(result['stage_seconds'])
+        result = deepcopy(_snapshots.get((project_id, kind), _idle()))
         if _active.get(project_id) == kind:
             result['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[project_id][0]), 3)
         return result

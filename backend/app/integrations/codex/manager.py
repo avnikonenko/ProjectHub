@@ -22,6 +22,7 @@ from ...models import (Project, Question, Decision, Task, CodexSession,
                        ContextPackage, Delivery, CodexEvent)
 from .protocol import AppServerClient, CodexError
 from .ai_instructions import ai_instructions, read_project_instructions
+from .generation_metrics import begin_model_request
 from . import progress
 
 log = logging.getLogger(__name__)
@@ -558,6 +559,7 @@ class CodexManager:
         formatting_guards, formatting_errors = {}, {}
         event_lock = threading.Lock()
         thread_id = turn_id = None
+        usage_request = None
 
         def event(method, params):
             if method == 'projecthub/approvalDenied':
@@ -566,7 +568,10 @@ class CodexManager:
                 return
             if thread_id is None or params.get('threadId') != thread_id:
                 return
-            if method == 'item/agentMessage/delta':
+            if method == 'thread/tokenUsage/updated':
+                if usage_request is not None:
+                    usage_request.record(params)
+            elif method == 'item/agentMessage/delta':
                 message_turn, item_id = params.get('turnId'), params.get('itemId')
                 if not isinstance(message_turn, str) or not isinstance(item_id, str) or not item_id:
                     return
@@ -656,6 +661,7 @@ class CodexManager:
                 if verify_connectors:
                     self._assert_no_connectors(client, thread_id)
                 progress.check_cancelled()
+                usage_request = begin_model_request(thread_id)
                 result = client.request('turn/start', {
                     'threadId': thread_id, 'input': [{'type': 'text', 'text': prompt}],
                     **({'effort': effort} if effort is not None else {}),
@@ -668,6 +674,8 @@ class CodexManager:
                     turn_id = started_turn.get('id')
                     if not isinstance(turn_id, str) or not turn_id:
                         raise CodexError('Codex did not return a brief turn ID.')
+                    if usage_request is not None:
+                        usage_request.bind_turn(turn_id)
                     if started_turn.get('status') in ('failed', 'interrupted'):
                         completed.setdefault(turn_id, started_turn)
                     if turn_id in formatting_errors:

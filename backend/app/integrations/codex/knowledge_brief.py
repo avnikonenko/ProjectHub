@@ -9,6 +9,8 @@ from uuid import uuid4
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from ...config import ConfigError, ai_worker_settings
+from ...generation_profiles import get_generation_profile
 from ...models import ProjectBrief, ProjectKnowledge, utcnow
 from ...project_evidence import collect_project_evidence, collect_repository_code
 from . import progress
@@ -17,6 +19,8 @@ from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, ge
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
 from .knowledge_previews import stage_knowledge_preview
+from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
+from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from .protocol import CodexError
 from .revisions import save_revision
 
@@ -358,9 +362,26 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation is running.')
     started = time.monotonic()
+    metrics = GenerationMetrics()
+    profile_info = None
+    candidate = None
+
+    def diagnostics():
+        return {**((candidate or {}).get('diagnostics', {})),
+                'duration_seconds': round(time.monotonic() - started, 3),
+                'profile': deepcopy(profile_info), **metrics.snapshot()}
+
     try:
+        try:
+            settings = ai_worker_settings()
+            profile = get_generation_profile(settings['generation_profile'])
+        except (ConfigError, ValueError) as exc:
+            raise CodexError('Could not read the knowledge generation profile and worker settings.') from exc
         progress.begin(project_id, 'knowledge')
         with ExitStack() as scope:
+            scope.enter_context(collect_generation_metrics(metrics))
+            scope.enter_context(use_knowledge_profile(profile, settings['extraction_workers']))
+            manager, profile_info = configure_profile_manager(manager, profile)
             session = getattr(manager, 'generation_session', None)
             if callable(session):
                 scope.enter_context(session())
@@ -389,6 +410,10 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             brief = {'generated_at': generated_at, 'sections': sections, 'sources': cited,
                      'coverage': [*candidate['coverage'].get('limitations', []), *repository.get('coverage', [])],
                      'project_map': graph, 'generation': generation_metadata(manager), 'project_state': state}
+            profile_info['effective_effort'] = brief['generation'].get('effort') or profile_info['effective_effort']
+            run_diagnostics = {**diagnostics(), 'synthesis_requests': 1}
+            candidate['diagnostics'] = deepcopy(run_diagnostics)
+            progress.record_diagnostics(project_id, run_diagnostics)
             if publish:
                 publish_pair(engine, project_id, candidate, brief, bundle['manifest'],
                              repository_path=bundle['project'].get('repository_path'),
@@ -402,8 +427,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                     raise CodexError('Sources changed during preview generation; cached extraction is preserved.')
             result = {'published': publish, 'publication_id': publication_id, 'knowledge': candidate,
                       'brief': brief, 'baseline_brief': baseline_brief,
-                      'diagnostics': {'duration_seconds': round(time.monotonic() - started, 3),
-                                      'synthesis_requests': 1, **candidate.get('diagnostics', {})}}
+                      'diagnostics': run_diagnostics}
             if not publish:
                 with Session(engine) as db:
                     stage_knowledge_preview(db, project_id, result)
@@ -411,6 +435,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             progress.finish(project_id)
             return result
     except Exception as exc:
+        progress.record_diagnostics(project_id, diagnostics())
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)
                         else 'Knowledge generation failed. The last published pair is preserved.')
         raise

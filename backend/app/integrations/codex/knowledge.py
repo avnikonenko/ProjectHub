@@ -225,10 +225,15 @@ def _short_acceptance(text):
 
 
 def extraction_configuration(manager):
-    return {'schema': SCHEMA_VERSION, 'prompt': PROMPT_VERSION, 'instructions': ai_instructions(),
+    from .knowledge_profiles import current_knowledge_profile, profile_cache_settings
+    configuration = {'schema': SCHEMA_VERSION, 'prompt': PROMPT_VERSION, 'instructions': ai_instructions(),
             **{name: str(getattr(manager, 'generation_' + name, None) or
                           (getattr(manager, 'account_key', None) if name == 'account' else '') or 'default')
                for name in ('account', 'model', 'effort')}}
+    selected = profile_cache_settings(current_knowledge_profile())
+    if selected is not None:
+        configuration['generation_profile'] = selected
+    return configuration
 
 
 def read_knowledge(db, project_id):
@@ -527,8 +532,10 @@ def reconcile(previous, extracted, bundle, extraction_version):
 
 
 def _extraction_workers(manager):
+    from .knowledge_profiles import captured_knowledge_workers
     try:
-        workers = int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '4'))
+        captured = captured_knowledge_workers()
+        workers = captured if captured is not None else int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '4'))
     except ValueError as exc:
         raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.') from exc
     if not 1 <= workers <= MAX_EXTRACTION_WORKERS:
@@ -656,12 +663,18 @@ def _extract_windows(engine, project_id, manager, windows, configuration):
 
 def build_candidate(engine, project_id, manager, bundle, previous=None):
     from .knowledge_sources import build_windows
+    from .knowledge_profiles import current_knowledge_profile, select_profile_windows
     if (bundle.get('project', {}).get('id') != project_id
             or (previous is not None and previous.get('project_id') != project_id)):
         raise CodexError('Knowledge sources or previous snapshot do not belong to this project.')
     configuration = extraction_configuration(manager)
     version = _digest(configuration)
-    windows = build_windows(bundle)
+    profile = current_knowledge_profile()
+    if profile.id == 'quality':
+        windows = build_windows(bundle)
+    else:
+        windows = build_windows(bundle, max_chars=profile.window_chars)
+    windows, coverage, selection = select_profile_windows(bundle, windows, profile)
     all_sources = {source['id']: source for source in bundle['sources']}
     for window in windows:
         all_sources.update((source['id'], source) for source in window['sources'])
@@ -689,8 +702,9 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
                 compact[identifier]['excerpts'].append(ref['excerpt'])
                 compact[identifier]['text'] = '\n…\n'.join(compact[identifier]['excerpts'])
     return {'project_id': project_id, 'items': items, 'sources': list(compact.values()), 'source_manifest': bundle['manifest'],
-            'fingerprint': bundle['manifest']['fingerprint'], 'coverage': deepcopy(bundle['coverage']),
+            'fingerprint': bundle['manifest']['fingerprint'], 'coverage': coverage,
             'extraction_version': version,
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
                             'extraction_workers': workers, 'batch_timings': timings,
-                            'default_generation_configuration': configuration['model'] == 'default'}}
+                            'default_generation_configuration': configuration['model'] == 'default',
+                            'source_selection': selection}}
