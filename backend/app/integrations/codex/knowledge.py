@@ -374,6 +374,9 @@ def extract_batch(engine, project_id, manager, window, configuration):
         'id', 'role', 'text', 'revision', 'conversation_id', 'order', 'partial_message',
         'message_revision', 'message_order', 'offset_start', 'offset_end')} for source in window['sources']],
         'primary_ids': window['primary_ids']}
+    for value, source in zip(payload['sources'], window['sources']):
+        if source.get('context_view'):
+            value['context_view'] = source['context_view']
     key = _digest({'namespace': 'knowledge-extraction-v1', 'project_id': project_id,
                    'configuration': configuration, 'payload': payload})
     with Session(engine) as db:
@@ -387,7 +390,13 @@ def extract_batch(engine, project_id, manager, window, configuration):
     generate = getattr(manager, 'generate_extraction', None)
     if not callable(generate):
         generate = manager.generate_brief
-    raw = generate(PROMPT + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
+    continuation_instruction = (
+        'A context_view marked heading-continuation-v1 is the exact next paragraph of the same '
+        'assistant message. A trailing heading is incomplete evidence: preserve the continuation\'s '
+        'scope and qualifications, and cite it when extracting that claim. Do not turn a heading '
+        'alone into an unconditional policy. Context-only passages cannot independently create items.\n'
+        if any(source.get('context_view') for source in window['sources']) else '')
+    raw = generate(PROMPT + continuation_instruction + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
     items = validate_extraction(raw, window, project_id, version)
     cached_raw, adjustments = _cache_response(raw, window)
     envelope = {'raw': cached_raw, 'generation_mode': getattr(manager, 'extraction_generation_mode', 'full-schema')}
@@ -528,6 +537,27 @@ def reconcile(previous, extracted, bundle, extraction_version):
                                 'source_ids': [ref['source_id'] for ref in item['evidence']]}
                 if relationship not in item['relationships']:
                     item['relationships'].append(relationship)
+    # A previous cache may have interpreted a fragment-ending heading without its
+    # qualification. Preserve that historical interpretation, but do not present
+    # it as a complete current claim or silently invent a scientific correction.
+    from .knowledge_sources import heading_continuation
+    ordered = bundle['sources']
+    continuations = {source['id']: view for source, following in zip(ordered, ordered[1:])
+                     if (view := heading_continuation(source, following)) is not None}
+    for item in items.values():
+        refs = item.get('evidence', [])
+        if refs and all(ref.get('role') == 'assistant'
+                        and ref.get('source_id') in continuations
+                        and ref.get('revision') == current[ref['source_id']]['revision']
+                        and _normalized(ref.get('excerpt', '')) == _normalized(
+                            current[ref['source_id']]['text'].rstrip().split('\n')[-1])
+                        for ref in refs):
+            item['reconciliation_state'] = 'unresolved'
+            item['reconciliation_note'] = (
+                'The supporting quotation is an incomplete heading. Its continuation supplies '
+                'scope or qualifications; review the original passage before using this interpretation. '
+                + ' '.join(f"Continuation ({continuations[ref['source_id']]['id']}): "
+                           + continuations[ref['source_id']]['text'].strip() for ref in refs))
     return list(items.values())
 
 
@@ -677,7 +707,8 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     windows, coverage, selection = select_profile_windows(bundle, windows, profile)
     all_sources = {source['id']: source for source in bundle['sources']}
     for window in windows:
-        all_sources.update((source['id'], source) for source in window['sources'])
+        for source in window['sources']:
+            all_sources.setdefault(source['id'], source)
     extracted, hits, requests, workers, timings = _extract_windows(
         engine, project_id, manager, windows, configuration)
     full_bundle = {**bundle, 'sources': list(all_sources.values())}

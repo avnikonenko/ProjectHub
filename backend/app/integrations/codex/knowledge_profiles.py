@@ -62,19 +62,24 @@ def select_profile_windows(bundle, windows, profile):
             for queue in conversations.values():
                 if queue:
                     order.append(queue.popleft())
-        selected, included, characters = [], set(), 0
+        selected, included, characters = [], {}, 0
         for index in order:
-            added = {source['id']: source for source in windows[index]['sources']
-                     if source['id'] not in included}
-            cost = sum(len(source['text']) for source in added.values())
+            added = {source['id']: len(source['text']) for source in windows[index]['sources']}
+            cost = sum(max(0, length - included.get(identifier, 0))
+                       for identifier, length in added.items())
             if characters + cost <= profile.source_budget_chars:
                 selected.append(index)
-                included.update(added)
+                for identifier, length in added.items():
+                    included[identifier] = max(length, included.get(identifier, 0))
                 characters += cost
         selected.sort()  # Interpretation/reconciliation order remains source order.
     chosen = [windows[index] for index in selected]
     primary = {identifier for window in chosen for identifier in window['primary_ids']}
-    used = {source['id']: source for window in chosen for source in window['sources']}
+    used = {}
+    for window in chosen:
+        for source in window['sources']:
+            if len(source['text']) > len(used.get(source['id'], {}).get('text', '')):
+                used[source['id']] = source
     available = list(dict.fromkeys(identifier for window in windows for identifier in window['primary_ids']))
     omitted = [identifier for identifier in available if identifier not in primary]
     coverage = deepcopy(bundle['coverage'])

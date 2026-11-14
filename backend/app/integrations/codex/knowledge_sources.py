@@ -237,6 +237,36 @@ def load_sources(engine, project_id, previous_manifest=None):
     return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage}
 
 
+def heading_continuation(source, following):
+    """Return a literal, bounded continuation of an incomplete assistant heading.
+
+    Revision identifies the original fragment; the explicit view marker describes
+    the smaller text sent for context. Never follow a heading into another message.
+    """
+    if not source.get('partial_message') or source.get('role') != 'assistant':
+        return None
+    tail = source['text'].rstrip().split('\n')[-1].strip()
+    if not re.fullmatch(r'(?:#{1,6}\s+|\d+[.)]\s+)\S.{0,198}[^.!?;:]', tail):
+        return None
+    if (following.get('role') != 'assistant'
+            or not source.get('message_revision')
+            or any(source.get(key) != following.get(key) for key in (
+                'conversation_id', 'message_revision', 'message_order'))
+            or type(source.get('offset_end')) is not int
+            or following.get('offset_start') != source['offset_end']):
+        return None
+    text = following['text']
+    # Include leading whitespace so offsets and exact-source quotation remain true.
+    leading = len(text) - len(text.lstrip())
+    boundary = re.search(r'\n\s*\n', text[leading:])
+    end = leading + boundary.start() if boundary else len(text)
+    if not text[:end].strip() or end > 1000:
+        return None
+    return {**following, 'text': text[:end],
+            'offset_end': following['offset_start'] + end,
+            'context_view': 'heading-continuation-v1'}
+
+
 def build_windows(bundle, max_chars=14000):
     """Pack stable forward primary groups with previous same-conversation context.
 
@@ -287,4 +317,19 @@ def build_windows(bundle, max_chars=14000):
         group.append(source)
         previous = source
     flush()
+    positions = {source['id']: index for index, source in enumerate(bundle['sources'])}
+    for value in windows:
+        last = next(source for source in reversed(value['sources'])
+                    if source['id'] == value['primary_ids'][-1])
+        index = positions[last['id']] + 1
+        if index >= len(bundle['sources']):
+            continue
+        view = heading_continuation(last, bundle['sources'][index])
+        if view is None or view['id'] in {source['id'] for source in value['sources']}:
+            continue
+        amended = {**value, 'sources': [*value['sources'], view],
+                   'context_ids': [*value['context_ids'], view['id']]}
+        if len(json.dumps(amended, ensure_ascii=False)) <= max_chars:
+            amended['fingerprint'] = _hash({key: item for key, item in amended.items() if key != 'fingerprint'})
+            value.update(amended)
     return windows
