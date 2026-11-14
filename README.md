@@ -63,3 +63,5 @@ Once the skill is available to your agent, ask, for example:
 Settings default to `~/.config/projecthub/config.toml`; project data to `~/.local/share/projecthub`. Back up the data directory to preserve saved history, notes, and tasks.
 
 [User guides and developer documentation](docs/README.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+
+Made with Codex :)
