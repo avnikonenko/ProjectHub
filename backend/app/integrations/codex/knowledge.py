@@ -17,7 +17,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 3
-PROMPT_VERSION = 12
+PROMPT_VERSION = 14
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -94,6 +94,12 @@ PROMPT = (
     'source-supported detail, not boilerplate about missing evidence. Empty relationship fields stay empty unless sources establish '
     'a revision or conflict. Field lengths and item/evidence counts are ceilings, not targets. '
     'Plan coverage across ALL primary messages before expanding any one message. Do not spend the '
+    'item budget on assistant detail before preserving independently meaningful user proposals, '
+    'including tentative operations, optional approaches and preferences. Preserve independent '
+    'operational and reproducibility policies as statements even when they occur beside a longer '
+    'architecture description; listing supporting details elsewhere is not a substitute. This '
+    'priority must not discard material assistant-described constraints or their uncertainty. '
+    'Do not spend the '
     'item budget on a detailed recap of early architecture while omitting concrete restrictions, '
     'backend limitations, optionality or safety policies in later primary messages. Allocate capacity '
     'for distinct late-message approaches and caveats. Keep a backend choice together with its '
@@ -151,10 +157,26 @@ PROMPT = (
     'it is a terse fragment rather than the words "I agree". Do not downgrade a clear selection '
     'merely because it is brief. Its role as the user\'s own choice must be clear in context; naming '
     'a discussed option, asking a question, or pasting another author\'s proposal does not suffice. '
+    'Determine the communicative intent of the COMPLETE user message before assigning direct_user. '
+    'A table, list or declarative passage supplied as reference alongside a question is not an '
+    'instruction to adopt every entry. Do not isolate an unhedged row from that question context '
+    'and promote it to AGREED. A question about why one component was chosen does not accept the '
+    'other listed components or their assigned responsibilities. Unless an identifiable user '
+    'instruction or unambiguous declaration adopts those roles as the user\'s own plan, preserve '
+    'them as proposals or reported/unknown choices with agreement_basis none. Do not infer that '
+    'they were rejected or never adopted. Conversely, an explicit instruction to use a supplied '
+    'table as the chosen plan can establish agreement for its clearly scoped entries. '
     'An exploratory user question asking what could be reused or which approach is suitable remains '
     'an OPEN_QUESTION/UNRESOLVED unless separate evidence establishes a selection. Do not turn that '
     'question into an AGREED requirement to investigate or implement its topic. A direct instruction '
     'to conduct a specified investigation is different from an exploratory question. '
+    'Also distinguish an exploratory choice question from a polite request expressing a clear '
+    'preference or constraint. Question grammar alone does not make an expressed preference '
+    'unresolved. Retain that preference as a REQUIREMENT; AGREED may apply to the preference '
+    'itself when the user is clearly requesting it, without accepting any individual suggested '
+    'tool or establishing that a tool meets the requested criterion. Preserve a separately '
+    'expressed concern as its own uncertainty rather than replacing the preference with a '
+    'question about selecting or rejecting the concerned option. '
     'A short reply '
     'such as yes, agree, or do needs its unambiguous proposal and user acceptance, both quoted exactly; '
     'use proposal_acceptance. Numbered agreement must match the identifiable numbered questions or '

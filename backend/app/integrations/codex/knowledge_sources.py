@@ -237,7 +237,7 @@ def load_sources(engine, project_id, previous_manifest=None):
     return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage}
 
 
-def build_windows(bundle, max_chars=24000):
+def build_windows(bundle, max_chars=14000):
     """Pack stable forward primary groups with previous same-conversation context.
 
     Context-only fragments must not produce duplicate extracted items. Serialized
