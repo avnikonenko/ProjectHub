@@ -181,7 +181,18 @@ def _synthesize(manager, candidate, bundle, repository):
         payload['interpretation_item_defaults'] = _apply_interpretation_item_defaults(wire_sources)
         serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if len(serialized) > MAX_SYNTHESIS_CHARS:
-        raise CodexError('Knowledge brief exceeds the synthesis input limit; the published pair is preserved.')
+        size = len(serialized)
+        items = sum('item' in source for source in sources)
+        code = sum(source.get('kind') == 'inspected_repository' for source in sources)
+        raise CodexError(
+            f'Overview synthesis input limit exceeded after compaction: {size:,} characters; '
+            f'limit {MAX_SYNTHESIS_CHARS:,} ({size - MAX_SYNTHESIS_CHARS:,} over).\n'
+            f'Included: {items:,} knowledge {"item" if items == 1 else "items"} '
+            f'and {code:,} repository {"excerpt" if code == 1 else "excerpts"}. '
+            'Increasing the time budget or reading threads will not fix this size limit.\n'
+            'Saved Knowledge and Overview are unchanged; completed reading batches remain cached. '
+            'Full coverage needs support for a larger input or multi-stage overview generation.'
+        )
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '

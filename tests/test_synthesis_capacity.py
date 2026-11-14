@@ -81,9 +81,30 @@ def test_compaction_still_starts_at_old_threshold_even_below_new_maximum(monkeyp
 
 def test_project_above_new_bound_still_fails_before_model_call(monkeypatch):
     sources = source_views(monkeypatch, count=600, statement_chars=450)
+    sources.append({'id': 'code:1', 'kind': 'inspected_repository', 'text': 'PRIVATE_CODE_MARKER'})
     before = deepcopy(sources)
+    sizes = []
+    encode = json.dumps
+
+    def measure(value, *args, **kwargs):
+        serialized = encode(value, *args, **kwargs)
+        if isinstance(value, dict) and 'project' in value and 'sources' in value:
+            sizes.append(len(serialized))
+        return serialized
+
+    monkeypatch.setattr(module.json, 'dumps', measure)
     manager = Capture()
-    with pytest.raises(CodexError, match='synthesis input limit'):
-        module._synthesize(manager, {'coverage': {}}, {'project': {}}, {})
+    with pytest.raises(CodexError, match='synthesis input limit') as failure:
+        module._synthesize(manager, {'coverage': {}}, {'project': {'name': 'PRIVATE_PROJECT_MARKER'}}, {})
+    message = str(failure.value)
+    assert f'{sizes[-1]:,} characters' in message
+    assert f'limit {module.MAX_SYNTHESIS_CHARS:,}' in message
+    assert f'{sizes[-1] - module.MAX_SYNTHESIS_CHARS:,} over' in message
+    assert sizes[-1] < sizes[0]  # Report the actual compacted size, not the raw input.
+    assert '600 knowledge items and 1 repository excerpt' in message
+    assert 'time budget or reading threads will not fix' in message
+    assert 'Saved Knowledge and Overview are unchanged' in message
+    assert 'reading batches remain cached' in message
+    assert 'PRIVATE_' not in message
     assert manager.payload is None
     assert sources == before

@@ -171,3 +171,24 @@ compaction starts at 180,000. Retaining more source-backed knowledge can increas
 input consumption. This limit remains finite and oversized requests fail before
 calling the model, preserving saved results and successful batch caches.
 See [the pipeline guide](KNOWLEDGE_PIPELINE.md) for its contracts and limitations.
+
+### Oversized overview input
+
+An error mentioning the **synthesis input limit** means the prepared evidence JSON
+is too large after lossless compaction. It is a character limit enforced by
+ProjectHub, not a model-token limit or a timeout. The error reports the compacted
+size, allowed size, overage, and the knowledge items and repository excerpts
+actually included. The final overview model request has not been sent.
+
+Increasing the time budget or parallel reading count will not fix this check, and
+retrying unchanged inputs with the same settings will reach the same limit. Saved
+Knowledge, Overview, and previous previews remain unchanged; completed reading
+batches remain cached.
+
+There is currently no per-run source picker or multi-stage overview control.
+Full coverage for an oversized input needs improved input packaging, a larger
+supported allowance, or multi-stage synthesis in the application. The experimental
+Economy profile may produce a smaller preview with partial coverage, but can require
+fresh reading and does not guarantee that synthesis will fit. Keep the full source
+history when complete coverage matters rather than deleting conversations to bypass
+the limit.
