@@ -81,6 +81,8 @@ function describeProgress(stage: string, kind: GenerationKind) {
   switch (stage) {
     case 'Reading project sessions': return 'Finding linked conversations';
     case 'Summarizing history batch': return 'Summarizing conversations';
+    case 'Summarizing overview batch': return 'Summarizing part of the overview';
+    case 'Combining overview batches': return 'Combining overview sections';
     case 'Reusing cached evidence batch': return 'Reusing a previously saved summary';
     case 'Combining evidence': return 'Waiting for Codex to combine the evidence';
     case 'Summarizing project notes and decisions': return 'Gathering project notes and decisions';
@@ -210,7 +212,8 @@ export function GenerationStatus({
   const batchElapsed = Number.isFinite(batchStarted) ? Math.max(0, (Date.now() - batchStarted) / 1000) : null;
   const batchPhase = progress?.batch_phase === 'history' ? 'Conversation summaries'
     : progress?.batch_phase === 'reduction' ? 'Evidence reduction'
-      : progress?.batch_phase === 'knowledge extraction' ? 'Knowledge extraction' : 'Batches';
+      : progress?.batch_phase === 'knowledge extraction' ? 'Knowledge extraction'
+        : progress?.batch_phase === 'overview synthesis' ? 'Overview synthesis' : 'Batches';
   const hasBatchTotal = Number.isFinite(progress?.batch_total) && (progress?.batch_total ?? 0) > 0;
   const budget = progress?.budget_seconds;
   const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;

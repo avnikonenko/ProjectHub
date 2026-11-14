@@ -25,7 +25,22 @@ def source_views(monkeypatch, count=339, statement_chars=420):
     groups = {source['id']: [{'id': evidence['source_id'], 'role': 'assistant',
                               'text': evidence['excerpt'], 'classification': 'reported'}]
               for source in sources}
-    monkeypatch.setattr(module, '_brief_inputs', lambda *args: (sources, groups))
+    def inputs(candidate, *args):
+        complete = deepcopy(groups)
+        originals = {source['id']: source for source in candidate.get('sources', [])}
+        for source in sources:
+            if source['id'] in complete:
+                continue
+            if 'item' not in source:
+                complete[source['id']] = [deepcopy(source)]
+            else:
+                complete[source['id']] = [{**deepcopy(originals.get(ref['source_id'], {
+                    'id': ref['source_id'], 'role': ref.get('role'), 'text': ref['excerpt'],
+                    'classification': 'reported',
+                })), 'classification': 'reported'} for ref in source['item']['evidence']]
+        return sources, complete
+
+    monkeypatch.setattr(module, '_brief_inputs', inputs)
     return sources
 
 
@@ -132,31 +147,37 @@ def test_compaction_still_starts_at_old_threshold_even_below_new_maximum(monkeyp
     assert manager.encoded_size < uncompressed
 
 
-def test_project_above_new_bound_selects_whole_records_before_model_call(monkeypatch):
+def test_project_above_bound_processes_every_item_in_bounded_stages(monkeypatch):
     sources = source_views(monkeypatch, count=600, statement_chars=450)
     sources.append({'id': 'code:1', 'kind': 'inspected_repository', 'text': 'PRIVATE_CODE_MARKER'})
     before = deepcopy(sources)
-    sizes = []
-    encode = json.dumps
 
-    def measure(value, *args, **kwargs):
-        serialized = encode(value, *args, **kwargs)
-        if isinstance(value, dict) and 'project' in value and 'sources' in value:
-            sizes.append(len(serialized))
-        return serialized
+    class EveryInput(Capture):
+        def __init__(self):
+            super().__init__()
+            self.inputs = []
 
-    monkeypatch.setattr(module.json, 'dumps', measure)
-    manager = Capture()
-    selection = {}
+        def generate_brief(self, prompt, schema):
+            response = super().generate_brief(prompt, schema)
+            self.inputs.append((deepcopy(self.payload), self.encoded_size))
+            return response
+
+    manager, diagnostics = EveryInput(), {}
     module._synthesize(manager, {'coverage': {}}, {'project': {'name': 'PRIVATE_PROJECT_MARKER'}}, {},
-                       selection_diagnostics=selection)
-    assert manager.encoded_size <= module.MAX_SYNTHESIS_CHARS
-    assert selection['available_items'] == 600
-    assert selection['fallback_reason'] == 'input_limit'
-    assert selection['full_input_chars'] > module.MAX_SYNTHESIS_CHARS
-    assert selection['input_chars'] == manager.encoded_size
-    assert selection['selected_items'] < 600
-    assert selection['omitted_items'] + selection['selected_items'] == 600
-    assert 'For this bounded Overview' in manager.instructions
-    assert any(source.get('kind') == 'inspected_repository' for source in manager.payload['sources'])
+                       selection_diagnostics=diagnostics)
+    seen = {source['item']['statement'].split(':', 1)[0]
+            for payload, _ in manager.inputs for source in payload['sources']
+            if source.get('item', {}).get('statement', '').startswith('Independent claim ')}
+    assert seen == {f'Independent claim {index}' for index in range(600)}
+    assert len(manager.inputs) > 1
+    assert all(size <= module.MAX_SYNTHESIS_CHARS for _, size in manager.inputs)
+    assert diagnostics['staged_synthesis'] is True
+    assert diagnostics['partial'] is False
+    assert diagnostics['available_items'] == diagnostics['selected_items'] == 600
+    assert diagnostics['omitted_items'] == 0
+    assert diagnostics['full_input_chars'] > module.MAX_SYNTHESIS_CHARS
+    assert diagnostics['input_chars'] == max(size for _, size in manager.inputs)
+    assert diagnostics['synthesis_requests'] == len(manager.inputs)
+    assert any(source.get('kind') == 'inspected_repository'
+               for payload, _ in manager.inputs for source in payload['sources'])
     assert sources == before

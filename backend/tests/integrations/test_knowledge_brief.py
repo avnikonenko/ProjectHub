@@ -407,7 +407,7 @@ def test_synthesis_omits_only_empty_optional_fields_without_mutating_knowledge(p
     assert candidate == before
 
 
-def test_synthesis_input_guard_uses_compact_json_and_still_enforces_limit(prepared, monkeypatch):
+def test_single_request_input_guard_uses_compact_json_and_still_enforces_limit(prepared, monkeypatch):
     candidate = _candidate()
     candidate['items'][0]['limitations'] = 'Préserve the recorded caveat.'
     before = deepcopy(candidate)
@@ -434,7 +434,9 @@ def test_synthesis_input_guard_uses_compact_json_and_still_enforces_limit(prepar
     pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []})
     assert manager.calls == 2
     monkeypatch.setattr(pilot, 'MAX_SYNTHESIS_CHARS', compact_size - 1)
-    with pytest.raises(CodexError, match='synthesis input limit'):
-        pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []})
+    # Each individual request still enforces the exact boundary. Oversized public
+    # generation is covered separately by the complete staged-pipeline tests.
+    with pytest.raises(CodexError, match='Overview synthesis batch exceeds its input limit'):
+        pilot._synthesize(manager, candidate, prepared.bundle, {'sources': []}, _stage=True)
     assert manager.calls == 2
     assert candidate == before

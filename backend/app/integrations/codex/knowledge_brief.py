@@ -184,49 +184,30 @@ def _encode_synthesis(sources, candidate, bundle, repository, overview_coverage=
     return wire_sources, canonical_ids, serialized
 
 
-def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics=None):
-    from .overview_selection import select_overview_sources
-    sources, groups = _brief_inputs(candidate, bundle, repository)
+def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics=None,
+                engine=None, project_id=None, _sources=None, _groups=None, _stage=False, _stage_references=None):
+    sources, groups = _brief_inputs(candidate, bundle, repository) if _sources is None else (_sources, _groups)
     wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository)
     bounded_guidance = ''
     if len(serialized) > MAX_SYNTHESIS_CHARS:
-        from .overview_context import build_overview_companions
-        full_input_chars = len(serialized)
-        companions, context_groups = build_overview_companions(candidate, sources)
-        groups.update(context_groups)
-        overview_coverage = {'partial': True, 'available_items': sum('item' in source for source in sources)}
-        def measure(selected):
-            return len(_encode_synthesis(selected, candidate, bundle, repository, overview_coverage)[2])
-        sources, selection = select_overview_sources(
-            sources, measure, MAX_SYNTHESIS_CHARS, companions=companions)
-        wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository, overview_coverage)
-        if len(serialized) > MAX_SYNTHESIS_CHARS:
-            raise CodexError('Selected Overview synthesis input exceeds its limit; saved results are preserved.')
-        selection['input_chars'] = len(serialized)
-        selection['fallback_reason'] = 'input_limit'
-        selection['full_input_chars'] = full_input_chars
-        if selection_diagnostics is not None:
-            selection_diagnostics.update(selection)
+        if _stage:
+            raise CodexError('One Overview synthesis batch exceeds its input limit; saved results are preserved.')
+        from .staged_overview import staged_synthesis
+        return staged_synthesis(manager, candidate, bundle, repository, sources, groups,
+                                engine=engine, project_id=project_id,
+                                diagnostics=selection_diagnostics, full_input_chars=len(serialized))
+    if _stage:
         bounded_guidance = (
-            'When overview_selection is present, evidence is a bounded selection from the complete Knowledge snapshot. '
-            'Do not claim exhaustive coverage or infer absence from unselected material. '
-            'For this bounded Overview, keep each point to one independently supported proposition. '
-            'Bind every substantive clause to the exact supplied source alias whose original excerpts '
-            'support it. Related records about the same experiment or component are not interchangeable '
-            'evidence. If a recommendation and its rationale require different records, cite both or '
-            'split them into separate points; omit a clause when its supporting record cannot be cited. '
-            'Before returning, check each point against its own cited aliases, not against uncited '
-            'information elsewhere in the input. A recorded question does not prove it is still '
-            'unanswered: later answers may be outside this selection. Describe such entries as '
-            'historically raised questions with current resolution not established here; never '
-            'claim that an answer or decision does not exist based on this partial selection. '
-            'Original conversation context records supply exact saved excerpts from a later '
-            'assistant message in the same conversation turn. Check that context before calling '
-            'an earlier request pending or a question unresolved. Preserve the distinction between '
-            'reported completion, independently verified execution and any remaining live validation; '
-            'a later assistant report does not itself establish user acceptance or supersession. '
-            'Retain material preconditions and exceptions in safety or resource-accounting claims; '
-            'never shorten a conditional permission into an unconditional behavior. '
+            'This is one stage of a complete-input Overview synthesis. Summarize only the supplied '
+            'batch; preserve project-specific choices, rationale, constraints and unresolved conflicts. '
+            'A partial batch cannot establish that an unmentioned answer or implementation does not exist. '
+            'Original conversation context records supply exact later-message excerpts; check them before '
+            'describing an earlier request as still pending. Reported completion does not prove validation '
+            'or user acceptance. Staged interpretation records are earlier summaries, never original '
+            'evidence: verify every substantive clause against their attached exact original excerpts. '
+            'Preserve proposals and their later acceptance together. Do not infer supersession or '
+            'resolution merely from adjacency or summary wording. Keep one independently supported '
+            'proposition per point. Preserve important policies, preconditions and distinct scopes. '
         )
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
@@ -322,6 +303,10 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         for entry in entries:
             entry['source_ids'] = [canonical_ids[identifier] for identifier in entry['source_ids']]
     sections = suppress_repeated_points(sections)
+    if _stage_references is not None:
+        for entries in (*sections.values(), *graph.values()):
+            for entry in entries:
+                _stage_references[id(entry)] = list(entry['source_ids'])
     # Prefer three visible references, but never discard the proposal behind a
     # short acceptance just to meet that presentation target. Compound claims
     # may need more than three references to preserve each acceptance pair.
@@ -336,6 +321,8 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
                 if group:
                     required.append(group[0]['id'])
                 item = interpretations.get(ref, {})
+                if item.get('staged_support'):
+                    required.extend(source['id'] for source in group)
                 if item.get('agreement_basis') == 'proposal_acceptance':
                     evidence = item.get('evidence', [])
                     pairs = [(proposal, acceptance) for proposal in evidence for acceptance in evidence
@@ -490,11 +477,16 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
     metrics = GenerationMetrics()
     profile_info = None
     candidate = None
+    overview_selection = {}
 
     def diagnostics():
         return {**((candidate or {}).get('diagnostics', {})),
                 'duration_seconds': round(time.monotonic() - started, 3),
-                'profile': deepcopy(profile_info), **metrics.snapshot()}
+                'profile': deepcopy(profile_info), **metrics.snapshot(),
+                **({'overview_selection': deepcopy(overview_selection),
+                    'synthesis_requests': overview_selection.get('synthesis_requests', 0),
+                    'synthesis_cache_hits': overview_selection.get('synthesis_cache_hits', 0)}
+                   if overview_selection else {})}
 
     try:
         try:
@@ -526,8 +518,9 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             if bundle['project'].get('repository_path'):
                 repository = collect_repository_code(bundle['project']['repository_path'])
             progress.update(project_id, stage='Generating knowledge-based brief')
-            overview_selection = {}
-            sections, graph, cited = _synthesize(manager, candidate, bundle, repository, selection_diagnostics=overview_selection)
+            sections, graph, cited = _synthesize(manager, candidate, bundle, repository,
+                                                 selection_diagnostics=overview_selection,
+                                                 engine=engine, project_id=project_id)
             publication_id, generated_at = str(uuid4()), utcnow()
             candidate = {**candidate, 'publication_id': publication_id, 'generated_at': generated_at}
             baseline = collect_project_evidence(engine, project_id)
@@ -535,10 +528,12 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             state.update(publication_id=publication_id, pipeline='knowledge-v1')
             brief = {'generated_at': generated_at, 'sections': sections, 'sources': cited,
                      'coverage': [*candidate['coverage'].get('limitations', []), *repository.get('coverage', []),
-                                  *([f"Overview uses {overview_selection['selected_items']} of {overview_selection['available_items']} active Knowledge items; all records remain in Knowledge."] if overview_selection else [])],
+                                  *([f"Overview synthesis considered all {overview_selection['available_items']} eligible active Knowledge items in bounded stages; complete records remain in Knowledge."] if overview_selection else [])],
                      'project_map': graph, 'generation': generation_metadata(manager), 'project_state': state}
             profile_info['effective_effort'] = brief['generation'].get('effort') or profile_info['effective_effort']
-            run_diagnostics = {**diagnostics(), 'synthesis_requests': 1,
+            run_diagnostics = {**diagnostics(),
+                               'synthesis_requests': overview_selection.get('synthesis_requests', 1),
+                               'synthesis_cache_hits': overview_selection.get('synthesis_cache_hits', 0),
                                **({'overview_selection': overview_selection} if overview_selection else {})}
             candidate['diagnostics'] = deepcopy(run_diagnostics)
             progress.record_diagnostics(project_id, run_diagnostics)

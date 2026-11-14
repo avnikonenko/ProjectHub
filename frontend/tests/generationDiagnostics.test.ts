@@ -125,3 +125,45 @@ test('malformed batch and coverage diagnostics are omitted without making up zer
   assert.deepEqual(result.batch_timings, [{ batch: 3, seconds: 0, cached: false }]);
   assert.deepEqual(result.source_selection, { context_only_fragments: 0 });
 });
+
+test('staged overview diagnostics preserve processed inputs, real calls and reused stages through preview export', () => {
+  const diagnostics = {
+    model_requests: 4, synthesis_requests: 3, synthesis_cache_hits: 2,
+    overview_selection: { available_items: 120, selected_items: 120, omitted_items: 0,
+      partial: false, staged_synthesis: true, synthesis_requests: 3, synthesis_cache_hits: 2,
+      synthesis_batches_total: 5, synthesis_batches_completed: 5, synthesis_levels: 2,
+      full_input_chars: 350000, input_chars: 110000 },
+  };
+  const raw = rawPreview(diagnostics); const before = structuredClone(raw);
+  const parsed = parseKnowledgePreview(raw, 2);
+  assert.deepEqual(parsed.diagnostics, diagnostics);
+  assert.deepEqual(JSON.parse(knowledgePreviewExport(parsed, 2).text).diagnostics, diagnostics);
+  assert.equal(parsed.diagnostics!.overview_selection!.omitted_items, 0);
+  assert.equal(parsed.diagnostics!.overview_selection!.partial, false);
+  assert.equal(parsed.diagnostics!.model_requests, 4);
+  assert.equal(parsed.diagnostics!.synthesis_requests, 3);
+  assert.equal(parsed.diagnostics!.synthesis_cache_hits, 2);
+  assert.deepEqual(raw, before);
+});
+
+test('malformed overview measurements are ignored without inventing counts or coercing staged flags', () => {
+  const parsed = parseGenerationDiagnostics({ synthesis_cache_hits: -1,
+    overview_selection: { available_items: '120', selected_items: true, omitted_items: -1,
+      partial: 'false', staged_synthesis: 1, synthesis_requests: Infinity, synthesis_cache_hits: 0,
+      synthesis_batches_total: 0.5, synthesis_batches_completed: Number.MAX_SAFE_INTEGER + 1,
+      synthesis_levels: null, full_input_chars: NaN, input_chars: -100 } })!;
+  assert.equal(parsed.synthesis_cache_hits, undefined);
+  assert.deepEqual(parsed.overview_selection, { synthesis_cache_hits: 0 });
+  for (const value of [null, [], 'staged'])
+    assert.equal(parseGenerationDiagnostics({ overview_selection: value })!.overview_selection, undefined);
+});
+
+test('legacy bounded and single-pass overview diagnostics do not imply staged synthesis or full input', () => {
+  const bounded = { overview_selection: { available_items: 80, selected_items: 35, omitted_items: 45, partial: true } };
+  assert.deepEqual(parseGenerationDiagnostics(bounded), bounded);
+  assert.equal(parseGenerationDiagnostics(bounded)!.overview_selection!.staged_synthesis, undefined);
+  const singlePass = parseGenerationDiagnostics({ synthesis_requests: 1 })!;
+  assert.equal(singlePass.synthesis_cache_hits, undefined);
+  assert.equal(singlePass.overview_selection, undefined);
+  assert.deepEqual(singlePass, { synthesis_requests: 1 });
+});

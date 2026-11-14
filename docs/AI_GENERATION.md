@@ -166,29 +166,45 @@ Final synthesis uses lossless dictionaries for repeated evidence and request-loc
 citation aliases. Original identities are restored before citation resolution;
 saved knowledge and citation URLs retain their original IDs. This reduces
 transmitted context without dropping records.
-The current synthesis input is bounded to 240,000 characters; lossless repeated-item
-compaction starts at 180,000. Retaining more source-backed knowledge can increase
-input consumption. This limit remains finite and oversized requests fail before
-calling the model, preserving saved results and successful batch caches.
-See [the pipeline guide](KNOWLEDGE_PIPELINE.md) for its contracts and limitations.
+Each overview synthesis request is bounded to 240,000 prepared-input characters;
+lossless repeated-item compaction starts at 180,000. Smaller inputs keep the normal
+single-request path. Larger eligible inputs use staged synthesis automatically.
+See [the pipeline guide](KNOWLEDGE_PIPELINE.md) for the source contracts and limits.
 
-### Oversized overview input
+### Large overviews and staged synthesis
 
-An error mentioning the **synthesis input limit** means the prepared evidence JSON
-is too large after lossless compaction. It is a character limit enforced by
-ProjectHub, not a model-token limit or a timeout. The error reports the compacted
-size, allowed size, overage, and the knowledge items and repository excerpts
-actually included. The final overview model request has not been sent.
+When the full prepared overview input does not fit one request, ProjectHub divides
+it into bounded groups and synthesizes each group before combining the results.
+Every eligible active Knowledge item, supplied repository excerpt and required
+later-message context is included in a completed stage; records are not silently
+selected out to meet the final request size. Existing source-availability/conflict
+filters and extraction-profile coverage limits still apply.
 
-Increasing the time budget or parallel reading count will not fix this check, and
-retrying unchanged inputs with the same settings will reach the same limit. Saved
-Knowledge, Overview, and previous previews remain unchanged; completed reading
-batches remain cached.
+Intermediate results are interpretations, not new source evidence. They retain
+links to exact original supporting quotations, source roles and conversation
+metadata. The final overview cites the original evidence rather than the
+intermediate summaries. The full Knowledge snapshot and source history remain
+unchanged; a compact overview does not repeat every underlying record or establish
+that every important fact was interpreted correctly.
 
-There is currently no per-run source picker or multi-stage overview control.
-Full coverage for an oversized input needs improved input packaging, a larger
-supported allowance, or multi-stage synthesis in the application. The experimental
-Economy profile may produce a smaller preview with partial coverage, but can require
-fresh reading and does not guarantee that synthesis will fit. Keep the full source
-history when complete coverage matters rather than deleting conversations to bypass
-the limit.
+Successful stages are cached locally using the project, original inputs, requested
+model/effort, effective account directory and instruction/configuration identity. Retry can reuse completed
+stages after a later failure. Changed inputs or generation settings invalidate the
+corresponding stages. Changes to externally configured Codex model defaults are not
+discoverable from a default-model request alone; choosing an explicit model provides
+a distinct cache identity. Saved Knowledge, Overview and prior previews are replaced
+only after the complete result passes validation and freshness checks.
+
+Progress reports overview-synthesis stages separately from conversation extraction.
+Generation details show actual synthesis requests, cached stages and processed
+active input counts. Stages run sequentially; the parallel-reading control still
+applies to conversation extraction. All stages share the generation's overall
+budget and cancellation state. Staging can add model calls and take longer than a
+small single-request overview; caching avoids repeating unchanged successful work.
+
+A finite merge-depth limit and a nonshrinking-input check prevent endless reduction.
+An individual source that cannot fit a bounded request, malformed model output,
+unresolvable references or a merge that cannot shrink produces an explicit error
+without publishing a partial replacement. Completed caches and previous saved
+results remain available. Increasing time or reading threads alone cannot fix an
+unsplittable source or a structurally invalid model result.

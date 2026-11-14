@@ -9,16 +9,32 @@ from backend.app.integrations.codex import knowledge_brief as brief
 from tests.test_synthesis_capacity import source_views, Capture
 
 
-def test_large_overview_bounds_actual_payload_without_changing_knowledge(monkeypatch):
+def test_large_overview_stages_every_record_without_changing_knowledge(monkeypatch):
     sources = source_views(monkeypatch, count=3009, statement_chars=420)
     before = deepcopy(sources)
-    capture, selection = Capture(), {}
+    class AllStages(Capture):
+        def __init__(self):
+            super().__init__()
+            self.sizes = []
+            self.seen = set()
+
+        def generate_brief(self, prompt, schema):
+            result = super().generate_brief(prompt, schema)
+            self.sizes.append(self.encoded_size)
+            self.seen.update(source['item']['statement'].split(':', 1)[0]
+                             for source in self.payload['sources']
+                             if source.get('item', {}).get('statement', '').startswith('Independent claim '))
+            return result
+
+    capture, selection = AllStages(), {}
     brief._synthesize(capture, {'coverage': {}}, {'project': {}}, {}, selection_diagnostics=selection)
     assert capture.encoded_size <= brief.MAX_SYNTHESIS_CHARS
-    assert selection['partial'] and selection['available_items'] == 3009
-    assert selection['selected_items'] + selection['omitted_items'] == 3009
-    assert selection['input_chars'] == capture.encoded_size
-    assert len(selection['selected_ids']) == selection['selected_items']
+    assert all(size <= brief.MAX_SYNTHESIS_CHARS for size in capture.sizes)
+    assert selection['partial'] is False
+    assert selection['selected_items'] == selection['available_items'] == 3009
+    assert selection['omitted_items'] == 0
+    assert selection['input_chars'] == max(capture.sizes)
+    assert capture.seen == {f'Independent claim {i}' for i in range(3009)}
     assert sources == before
 
 

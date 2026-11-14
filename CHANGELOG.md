@@ -34,6 +34,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Automatic staged synthesis for large Knowledge overviews: process every eligible input in bounded requests, preserve original-evidence citations, cache validated stages for retry, and report stage progress without publishing partial replacements.
 - An editable Overall time budget in Settings (30–7200 seconds, default 900), saved locally and applied to the next generation without changing active requests.
 - Activate a reviewed saved Knowledge result with **Use this result**, updating its matching Overview atomically without another AI call. Reject changed sources, repository evidence or Overview baselines and preserve existing results on failure.
 - Add persistent Quality, Balanced and Economy profiles for opt-in knowledge generation. Keep Quality and its matching caches unchanged; mark alternate profiles experimental, preserve explicit model/effort choices, and disclose Economy's bounded partial coverage.

@@ -1,4 +1,4 @@
-"""Later original context survives bounded synthesis and citation restoration."""
+"""Later original context survives staged synthesis and citation restoration."""
 from copy import deepcopy
 import json
 
@@ -6,7 +6,7 @@ from backend.app.integrations.codex import knowledge_brief as module
 from tests.test_synthesis_capacity import Capture, source_views
 
 
-def test_bounded_synthesis_includes_later_completion_and_restores_original_citation(monkeypatch):
+def test_staged_synthesis_includes_later_completion_and_restores_original_citation(monkeypatch):
     sources = source_views(monkeypatch, count=600, statement_chars=450)
     report = {
         'id': 'original:completion', 'conversation_id': 'original:discussion',
@@ -31,21 +31,32 @@ def test_bounded_synthesis_includes_later_completion_and_restores_original_citat
     candidate_before = deepcopy(candidate)
 
     class CiteCompletion(Capture):
+        contexts_seen = 0
+
         def generate_brief(self, prompt, schema):
             response = json.loads(super().generate_brief(prompt, schema))
             context = [s for s in self.payload['sources'] if s.get('kind') == 'original_conversation_context']
-            assert len(context) == 1
-            assert context[0]['excerpts'] == report['excerpts']
-            assert report['text'] not in json.dumps(context)
+            if context:
+                self.contexts_seen += 1
+                assert len(context) == 1
+                assert context[0]['excerpts'] == report['excerpts']
+                assert report['text'] not in json.dumps(context)
+            support = context or [source for source in self.payload['sources']
+                                  if source.get('item', {}).get('staged_support')
+                                  and source['item'].get('section') == 'next_steps']
+            if not support:
+                return json.dumps(response)
             response['sections']['next_steps'] = [{
                 'text': 'The assistant reports implementation and regression validation complete; a live pilot remains.',
-                'classification': 'reported', 'source_ids': [context[0]['id']]}]
+                'classification': 'reported', 'source_ids': [support[0]['id']]}]
             return json.dumps(response)
 
     manager, diagnostics = CiteCompletion(), {}
     sections, _, cited = module._synthesize(manager, candidate, {'project': {}}, {},
                                           selection_diagnostics=diagnostics)
-    assert diagnostics['selected_context_sources'] == 1
+    assert manager.contexts_seen > 0
+    assert diagnostics['staged_synthesis'] is True
+    assert diagnostics['selected_items'] == diagnostics['available_items'] == 601
     assert manager.encoded_size <= module.MAX_SYNTHESIS_CHARS
     assert sections['next_steps'][0]['source_ids'] == ['original:completion']
     assert any(source['id'] == 'original:completion' for source in cited)

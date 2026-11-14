@@ -11,13 +11,20 @@ export type GenerationProfileSettings = {
 };
 export type GenerationDiagnostics = {
   duration_seconds?: number; ai_requests?: number; cache_hits?: number;
-  synthesis_requests?: number; model_requests?: number;
+  synthesis_requests?: number; synthesis_cache_hits?: number; model_requests?: number;
   extraction_windows?: number; extraction_workers?: number; default_generation_configuration?: boolean;
   batch_timings?: { batch: number; seconds: number; cached: boolean }[];
   source_selection?: {
     available_primary_fragments?: number; selected_primary_fragments?: number;
     context_only_fragments?: number; omitted_primary_fragments?: number;
     selected_source_chars?: number; partial?: boolean;
+  };
+  overview_selection?: {
+    available_items?: number; selected_items?: number; omitted_items?: number;
+    partial?: boolean; staged_synthesis?: boolean;
+    synthesis_requests?: number; synthesis_cache_hits?: number;
+    synthesis_batches_total?: number; synthesis_batches_completed?: number;
+    synthesis_levels?: number; full_input_chars?: number; input_chars?: number;
   };
   profile?: {
     id?: string; label?: string; window_chars?: number; source_budget_chars?: number | null;
@@ -77,7 +84,7 @@ export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics 
   const result: GenerationDiagnostics = {};
   if (typeof raw.duration_seconds === 'number' && Number.isFinite(raw.duration_seconds) && raw.duration_seconds >= 0)
     result.duration_seconds = raw.duration_seconds;
-  for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'model_requests', 'extraction_windows', 'extraction_workers'] as const)
+  for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'synthesis_cache_hits', 'model_requests', 'extraction_windows', 'extraction_workers'] as const)
     if (count(raw[field])) result[field] = raw[field];
   if (typeof raw.default_generation_configuration === 'boolean') result.default_generation_configuration = raw.default_generation_configuration;
   if (Array.isArray(raw.batch_timings)) result.batch_timings = raw.batch_timings.flatMap((value) =>
@@ -92,6 +99,15 @@ export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics 
       if (count(raw.source_selection[field])) selection[field] = raw.source_selection[field];
     if (typeof raw.source_selection.partial === 'boolean') selection.partial = raw.source_selection.partial;
     result.source_selection = selection;
+  }
+  if (object(raw.overview_selection)) {
+    const selection: NonNullable<GenerationDiagnostics['overview_selection']> = {};
+    for (const field of ['available_items', 'selected_items', 'omitted_items', 'synthesis_requests', 'synthesis_cache_hits',
+      'synthesis_batches_total', 'synthesis_batches_completed', 'synthesis_levels', 'full_input_chars', 'input_chars'] as const)
+      if (count(raw.overview_selection[field])) selection[field] = raw.overview_selection[field];
+    for (const field of ['partial', 'staged_synthesis'] as const)
+      if (typeof raw.overview_selection[field] === 'boolean') selection[field] = raw.overview_selection[field];
+    result.overview_selection = selection;
   }
   if (object(raw.profile)) {
     const profile: NonNullable<GenerationDiagnostics['profile']> = { notes: [] };

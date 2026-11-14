@@ -125,7 +125,7 @@ a claim about the current build or extraction accuracy.
   is separate and provides no semantic retrieval or scope equivalence inference.
 - The current published snapshot is browsable; historical mismatches are reported
   rather than automatically resolving historical knowledge revisions.
-- Preview failures discard the previous in-memory preview; published data is preserved.
+- Failed or cancelled generation preserves the last successful saved preview and published data; only a complete validated result replaces the saved preview.
 - Source navigation depends on stored descriptors and current availability. Saved
   excerpts remain accessible when original navigation cannot be offered.
 

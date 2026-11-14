@@ -66,6 +66,21 @@ The Knowledge tab shows saved results directly. Generate/Regenerate creates an o
 candidate; **Use this result** activates its matching Knowledge and Overview.
 See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for current UI behavior and limitations.
 
+## Large overview synthesis
+
+Eligible overview inputs that exceed one synthesis request are processed in bounded
+stages, then merged with original-evidence citations. The normal single-request
+path is unchanged for inputs that already fit. Staging does not change the stored
+Knowledge snapshot, revive the decision workflow, or silently select fewer active
+items. Existing extraction coverage and source-availability limits remain explicit.
+
+Validated stage responses reuse the project-scoped history-batch cache with a
+separate versioned namespace and input/configuration identity. Cache hits are
+revalidated. Failed or cancelled runs retain successful stage caches and previous
+saved results; publication remains a single guarded transaction after complete
+success. See [AI generation](AI_GENERATION.md#large-overviews-and-staged-synthesis)
+for progress, costs and remaining limits.
+
 ## Isolated testing
 
 Do not use the production data directory just to try the pilot.
