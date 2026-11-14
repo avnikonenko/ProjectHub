@@ -165,6 +165,18 @@ Authentication, timeout and output-validation errors do not trigger this fallbac
 Bounded synthesis additionally instructs the model to support every substantive
 clause with its own exact citations; this does not guarantee semantic accuracy.
 
+Oversized selection also carries literal saved excerpts from the latest reliably
+later assistant message in the same original conversation and turn. A selected
+record and its required context must fit together; otherwise that unit is skipped.
+Shared context is deduplicated, without recursively grouping whole conversations.
+Only active valid supporting evidence with matching saved revisions is eligible;
+an unavailable latest message does not cause fallback to an older reply. Original
+source IDs are restored through the existing citation path. Reported completion
+remains distinct from independently verified execution and remaining live tests.
+Context adds no extraction or model request, but reduces the number of independent
+Knowledge records that fit. Missing chronology does not justify invented ordering,
+and same-turn context does not establish project-wide currentness or supersession.
+
 Selection can omit an important record: the Overview is explicitly selective,
 while the full Knowledge remains inspectable. AI-defined topic grouping is a
 separate planned improvement, not implemented by this selection policy.

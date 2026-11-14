@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep later same-turn completion reports with selected earlier requests in oversized Overviews, so reported completed work is not presented as still pending. Budget exact context excerpts with their Knowledge records and reject stale or unavailable supporting evidence.
 - Keep overflow-specific Overview instructions out of normal synthesis prompts; restore the pre-fallback instructions for both small and fully compacted inputs.
 - Preserve normal Overview generation and automatically select whole evidence-backed records only when its input exceeds the limit. Improve accepted-decision coverage, remove alphabetical scope bias, and strengthen clause-specific citation instructions for the fallback.
 - Fit large Knowledge-generated Overviews through a disclosed, balanced selection of complete evidence-backed records. Keep the full Knowledge snapshot intact, preserve conflict groups and original quotations, and enforce the actual compacted input limit before generation.

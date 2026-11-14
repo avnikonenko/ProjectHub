@@ -101,3 +101,72 @@ def test_equal_scope_ties_are_stable_hash_order_not_alphabetical():
     selected, _ = select_overview_sources(sources, len, 5)
     assert {s['id'] for s in selected} == {s['id'] for s in expected}
     assert {s['id'] for s in selected} != {str(i) for i in range(5)}
+
+
+def test_required_later_context_is_atomic_with_its_knowledge_item():
+    sources = [
+        {'id': 'question', 'item': {'statement': 'Historical question', 'design_status': 'UNRESOLVED'}},
+        {'id': 'other', 'item': {'statement': 'Independent context'}},
+    ]
+    companions = {'question': [{'id': 'context:answer', 'text': 'Later answer'}]}
+    selected, info = select_overview_sources(sources, len, 1, companions=companions)
+    assert [s['id'] for s in selected] == ['other']
+    assert info['selected_items'] == 1 and info['selected_context_sources'] == 0
+    assert info['omitted_context_required_units'] == 1
+    selected, info = select_overview_sources(sources[:1], len, 2, companions=companions)
+    assert [s['id'] for s in selected] == ['question', 'context:answer']
+    assert info['selected_items'] == 1 and info['selected_context_sources'] == 1
+    assert info['policy'] == 'accepted_requirements_with_later_context_v3'
+    with pytest.raises(CodexError, match='No complete knowledge'):
+        select_overview_sources(sources[:1], len, 1, companions=companions)
+
+
+def test_shared_context_is_deduplicated_without_recursive_expansion_or_mutation():
+    sources = [{'id': str(i), 'item': {'statement': 'Claim', 'design_status': 'AGREED'}} for i in range(3)]
+    answer = {'id': 'context:answer', 'text': 'Final reported answer'}
+    companions = {str(i): [answer] for i in range(3)}
+    companions['context:answer'] = [{'id': 'context:unused', 'text': 'Not recursively required'}]
+    before = deepcopy((sources, companions))
+    selected, info = select_overview_sources(sources, len, 4, companions=companions)
+    assert selected == [*sources, answer]
+    assert info['selected_items'] == 3 and info['selected_context_sources'] == 1
+    assert (sources, companions) == before
+
+
+def test_relationship_unit_requires_context_for_every_member():
+    sources = [
+        {'id': 'a', 'item': {'statement': 'First', 'conflicts_with': ['b']}},
+        {'id': 'b', 'item': {'statement': 'Second'}},
+        {'id': 'c', 'item': {'statement': 'Independent'}},
+    ]
+    companions = {'b': [{'id': 'context:answer', 'text': 'Later related report'}]}
+    selected, _ = select_overview_sources(sources, len, 2, companions=companions)
+    assert [s['id'] for s in selected] == ['c']
+    selected, _ = select_overview_sources(sources[:2], len, 3, companions=companions)
+    assert [s['id'] for s in selected] == ['a', 'b', 'context:answer']
+
+
+def test_context_cost_measurement_matches_final_base_then_context_order():
+    sources = [
+        {'id': 'b', 'item': {'statement': 'Second'}},
+        {'id': 'metadata', 'text': 'Metadata'},
+        {'id': 'a', 'item': {'statement': 'First', 'design_status': 'AGREED'}},
+    ]
+    companions = {'a': [{'id': 'context:z', 'text': 'Z'}, {'id': 'context:a', 'text': 'A'}]}
+    def measure(values):
+        ids = [s['id'] for s in values]
+        base_ids = [s['id'] for s in sources if s['id'] in ids]
+        assert ids == base_ids + sorted(set(ids) - set(base_ids))
+        return len(values)
+    selected, info = select_overview_sources(sources, measure, 5, companions=companions)
+    assert [s['id'] for s in selected] == ['b', 'metadata', 'a', 'context:a', 'context:z']
+    assert (selected, info) == select_overview_sources(sources, measure, 5, companions=companions)
+
+
+def test_conflicting_context_identity_is_rejected():
+    source = {'id': 'item', 'item': {'statement': 'Claim'}}
+    with pytest.raises(CodexError, match='conflicting source identities'):
+        select_overview_sources([source], len, 5, companions={'item': [source]})
+    with pytest.raises(CodexError, match='conflicting source identities'):
+        select_overview_sources([source], len, 5, companions={
+            'item': [{'id': 'context:1', 'text': 'One'}, {'id': 'context:1', 'text': 'Different'}]})

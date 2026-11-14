@@ -190,11 +190,15 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
     wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository)
     bounded_guidance = ''
     if len(serialized) > MAX_SYNTHESIS_CHARS:
+        from .overview_context import build_overview_companions
         full_input_chars = len(serialized)
+        companions, context_groups = build_overview_companions(candidate, sources)
+        groups.update(context_groups)
         overview_coverage = {'partial': True, 'available_items': sum('item' in source for source in sources)}
         def measure(selected):
             return len(_encode_synthesis(selected, candidate, bundle, repository, overview_coverage)[2])
-        sources, selection = select_overview_sources(sources, measure, MAX_SYNTHESIS_CHARS)
+        sources, selection = select_overview_sources(
+            sources, measure, MAX_SYNTHESIS_CHARS, companions=companions)
         wire_sources, canonical_ids, serialized = _encode_synthesis(sources, candidate, bundle, repository, overview_coverage)
         if len(serialized) > MAX_SYNTHESIS_CHARS:
             raise CodexError('Selected Overview synthesis input exceeds its limit; saved results are preserved.')
@@ -216,6 +220,13 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
             'unanswered: later answers may be outside this selection. Describe such entries as '
             'historically raised questions with current resolution not established here; never '
             'claim that an answer or decision does not exist based on this partial selection. '
+            'Original conversation context records supply exact saved excerpts from a later '
+            'assistant message in the same conversation turn. Check that context before calling '
+            'an earlier request pending or a question unresolved. Preserve the distinction between '
+            'reported completion, independently verified execution and any remaining live validation; '
+            'a later assistant report does not itself establish user acceptance or supersession. '
+            'Retain material preconditions and exceptions in safety or resource-accounting claims; '
+            'never shorten a conditional permission into an unconditional behavior. '
         )
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
