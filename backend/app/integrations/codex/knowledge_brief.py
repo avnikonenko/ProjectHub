@@ -18,7 +18,7 @@ from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, ge
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
-from .knowledge_previews import stage_knowledge_preview
+from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview, stage_knowledge_preview
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from .protocol import CodexError
@@ -324,7 +324,8 @@ def _repository_signature(repository):
     return hashlib.sha256(json.dumps(repository, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 
-def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None, expected_repository=None, guarded=False):
+def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None,
+                 expected_repository=None, guarded=False, expected_preview_id=None):
     """Short writer transaction: recheck original inputs, then publish the complete pair."""
     if (candidate.get('project_id') != project_id
             or candidate.get('source_manifest', {}).get('fingerprint') != expected_manifest.get('fingerprint')
@@ -340,9 +341,30 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
         # Acquire the SQLite writer lock before rechecking so an index/note edit
         # cannot commit between the manifest check and publication.
         db.execute(text('BEGIN IMMEDIATE'))
+        if expected_preview_id is not None:
+            saved = read_knowledge_preview(db, project_id)
+            if (saved is None or saved['publication_id'] != expected_preview_id
+                    or saved['knowledge'] != candidate or saved['brief'] != brief):
+                raise KnowledgePreviewConflict('A newer saved result is available. Open it before choosing Use this result.')
+            existing = db.get(ProjectKnowledge, project_id)
+            current_brief = read_brief(db, project_id)
+            if existing is not None and existing.snapshot == candidate and current_brief == brief:
+                return  # Idempotent retry: never append duplicate revisions.
+            if current_brief != saved['baseline_brief']:
+                raise KnowledgePreviewConflict('The project overview changed after this result was generated. Regenerate before using it.')
         current = load_sources(engine, project_id, previous_manifest=expected_manifest)
         if current['manifest']['fingerprint'] != expected_manifest['fingerprint']:
             raise CodexError('Project sources changed during generation. Cached extraction is preserved; retry.')
+        if expected_preview_id is not None:
+            if current['project'].get('repository_path'):
+                context = saved.get('publication_context')
+                signature = context.get('repository_signature') if isinstance(context, dict) else None
+                if not isinstance(signature, str) or not signature:
+                    raise KnowledgePreviewConflict('This saved result has no repository freshness record. Regenerate before using it.')
+                repository = collect_repository_code(current['project']['repository_path'])
+                if _repository_signature(repository) != signature:
+                    raise KnowledgePreviewConflict('Repository evidence changed after this result was generated. Regenerate before using it.')
+            _validate_saved_publication(candidate, brief, current, project_id)
         knowledge = db.get(ProjectKnowledge, project_id)
         if knowledge is None:
             db.add(ProjectKnowledge(project_id=project_id, snapshot=candidate))
@@ -361,6 +383,58 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
             progress.complete(project_id, db.commit)
         else:
             db.commit()
+
+
+def _validate_saved_publication(candidate, brief, bundle, project_id):
+    """Validate stored ownership and current literal evidence, never client claims."""
+    if (not isinstance(candidate.get('items'), list) or not isinstance(candidate.get('sources'), list)
+            or not isinstance(brief.get('sources'), list) or not isinstance(brief.get('sections'), dict)
+            or not isinstance(brief.get('project_map'), dict) or not isinstance(brief.get('generation'), dict)
+            or not isinstance(brief.get('coverage'), list)):
+        raise KnowledgePreviewConflict('The saved result is incomplete. Regenerate before using it.')
+    sources = {source['id']: source for source in bundle['sources']}
+    for source in [*candidate['sources'], *brief['sources']]:
+        if not isinstance(source, dict) or source.get('project_id', project_id) != project_id:
+            raise KnowledgePreviewConflict('Saved result evidence does not belong to this project.')
+    for item in candidate['items']:
+        if not isinstance(item, dict) or item.get('project_id', project_id) != project_id:
+            raise KnowledgePreviewConflict('Saved knowledge does not belong to this project.')
+        if item.get('source_state') != 'valid':
+            continue  # Historical evidence availability is independent of design status.
+        refs = item.get('evidence')
+        if not isinstance(refs, list) or not refs:
+            raise KnowledgePreviewConflict('Saved knowledge has missing original evidence. Regenerate before using it.')
+        for ref in refs:
+            original = sources.get(ref.get('source_id')) if isinstance(ref, dict) else None
+            if (original is None or ref.get('role') != original.get('role')
+                    or not isinstance(ref.get('excerpt'), str) or not ref['excerpt'].strip()
+                    or ref['excerpt'] not in original['text']
+                    or ('revision' in ref and ref['revision'] != original.get('revision'))):
+                raise KnowledgePreviewConflict('Saved knowledge evidence no longer matches the original source. Regenerate before using it.')
+
+
+def publish_saved_knowledge_preview(engine, project_id, publication_id):
+    """Activate a reviewed saved result without model calls or regeneration."""
+    if not generation_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation is running. Wait before using this result.')
+    try:
+        with Session(engine) as db:
+            result = read_knowledge_preview(db, project_id)
+        if result is None or result['publication_id'] != publication_id:
+            raise KnowledgePreviewConflict('The selected saved result is unavailable. Open the latest result and try again.')
+        candidate, brief = result['knowledge'], result['brief']
+        manifest = candidate.get('source_manifest')
+        if not isinstance(manifest, dict) or not isinstance(manifest.get('fingerprint'), str) or not manifest['fingerprint']:
+            raise KnowledgePreviewConflict('The saved result has no source freshness record. Regenerate before using it.')
+        publish_pair(engine, project_id, candidate, brief, manifest,
+                     expected_preview_id=publication_id)
+        return {**result, 'published': True}
+    except CodexError as exc:
+        if isinstance(exc, (BriefBusy, KnowledgePreviewConflict)):
+            raise
+        raise KnowledgePreviewConflict(str(exc)) from exc
+    finally:
+        generation_lock.release()
 
 
 def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
@@ -432,7 +506,9 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                     raise CodexError('Sources changed during preview generation; cached extraction is preserved.')
             result = {'published': publish, 'publication_id': publication_id, 'knowledge': candidate,
                       'brief': brief, 'baseline_brief': baseline_brief,
-                      'diagnostics': run_diagnostics}
+                      'diagnostics': run_diagnostics,
+                      'publication_context': {'repository_signature': _repository_signature(repository)
+                                              if bundle['project'].get('repository_path') else None}}
             if not publish:
                 with Session(engine) as db:
                     stage_knowledge_preview(db, project_id, result)

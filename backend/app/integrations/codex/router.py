@@ -16,8 +16,8 @@ from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .scheme import read_scheme, refresh_scheme
 from .knowledge import read_knowledge, reconcile
 from .knowledge_sources import load_sources
-from .knowledge_brief import generate_knowledge_brief
-from .knowledge_previews import read_knowledge_preview
+from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
+from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
 from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
@@ -89,6 +89,10 @@ class GenerationInput(ModelInput):
 
 class KnowledgeGenerationInput(GenerationInput):
     publish: bool = Field(default=False, strict=True)
+
+
+class KnowledgePublicationInput(Input):
+    publication_id: str = Field(min_length=1, max_length=200, strict=True)
 
 
 class QAGenerationInput(GenerationInput):
@@ -440,6 +444,18 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         with use_project_instructions(instructions):
             return generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
     except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.post('/knowledge/preview/publish')
+def publish_knowledge_preview(project_id: int, body: KnowledgePublicationInput, request: Request, db: DB):
+    project(db, project_id)
+    db.rollback()
+    try:
+        return publish_saved_knowledge_preview(request.app.state.engine, project_id, body.publication_id)
+    except (BriefBusy, KnowledgePreviewConflict) as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc

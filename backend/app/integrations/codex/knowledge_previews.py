@@ -10,6 +10,10 @@ from .revisions import save_revision
 PREVIEW_KIND = 'knowledge_preview'
 
 
+class KnowledgePreviewConflict(CodexError):
+    """A reviewed preview can no longer replace the current published pair."""
+
+
 def _validate_result(result, project_id):
     if not isinstance(result, dict):
         raise CodexError('Saved knowledge preview has invalid data.')
