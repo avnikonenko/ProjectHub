@@ -1,5 +1,5 @@
-.knowledge-filters { display: grid; grid-template-columns: minmax(12rem, 2fr) repeat(4, minmax(8rem, 1fr)); gap: 12px; align-items: end; }
-.knowledge-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.knowledge-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 12px; align-items: end; }
+.knowledge-filters label { display: flex; flex-direction: column; gap: 6px; min-width: 0; margin: 0; }
 .knowledge-filters input, .knowledge-filters select { width: 100%; min-width: 0; }
 .knowledge-filters button { justify-self: start; }
 .knowledge-group { margin-block: 24px; }
@@ -27,7 +27,15 @@
   .knowledge-item-body { padding-left: 4px; }
 }
 .topic-picker { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.topic-list > summary { cursor: pointer; font-size: .85rem; }
+.topic-picker > label { margin: 0; }
+.knowledge-filters input, .knowledge-filters select, .topic-control input { margin-top: 0; min-height: 2.75rem; }
+.topic-control { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.topic-control input { flex: 1; width: 0; min-width: 0; }
+.topic-list > summary { display: flex; align-items: center; justify-content: center; width: 2.75rem; height: 100%; min-height: 2.75rem; border: 1px solid var(--border, #d5dfd7); border-radius: 5px; cursor: pointer; list-style: none; }
+.topic-list > summary::-webkit-details-marker { display: none; }
+.topic-list > summary:hover { background: var(--surface-subtle, #eef2ef); }
+.topic-list > summary:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+.topic-list[open] > summary svg { transform: rotate(180deg); }
 .topic-list[open] { min-width: 0; }
 .topic-list ul { list-style: none; padding: 0; margin: 8px 0; max-height: 20rem; overflow: auto; }
 .topic-list li { padding: 8px 0; border-top: 1px solid var(--border, #70827955); overflow-wrap: anywhere; }
@@ -35,4 +43,4 @@
 .topic-list button { text-align: left; white-space: normal; }
 .topic-list button[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
 .topic-list { position: relative; }
-.topic-options { position: absolute; top: 100%; right: 0; z-index: 10; width: 22rem; max-width: 80vw; padding: 12px; border: 1px solid var(--border, #70827955); border-radius: 8px; background: var(--surface, #fff); box-shadow: 0 8px 20px #0002; }
+.topic-options { position: absolute; top: 100%; right: 0; z-index: 10; width: 22rem; max-width: calc(100vw - 3rem); max-height: min(28rem, 60vh); overflow-y: auto; padding: 12px; border: 1px solid var(--border, #70827955); border-radius: 8px; background: var(--surface, #fff); box-shadow: 0 8px 20px #0002; }
