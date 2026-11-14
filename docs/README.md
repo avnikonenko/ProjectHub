@@ -1,8 +1,6 @@
 # Documentation
 
-These guides describe installation, current behavior, settings, and engineering
-contracts. Historical methods, measurements, and observed results live separately
-under Experiments (private local reports; not distributed).
+Guides to installation, current behavior, settings, and engineering contracts.
 
 ## Use and configuration
 
@@ -24,6 +22,3 @@ under Experiments (private local reports; not distributed).
 - [Engineering decisions](DECISIONS.md)
 - [Implementation status](IMPLEMENTATION_REPORT.md)
 - [Implementation plan](IMPLEMENTATION_PLAN.md) and [Scheme implementation contract](scheme-implementation.md)
-
-For historical test counts, model comparisons, timing tables, reference annotations,
-and evaluation findings, use the experiment index (private local reports; not distributed).

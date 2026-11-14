@@ -23,7 +23,3 @@ Record the commit, environment, commands, results, and whether AI was mocked or
 live. A passing automated suite does not establish extraction accuracy or
 scientific validity. Run checks in the intended release environment rather than
 treating an old report as evidence for the current version.
-
-Historical test counts, browser runs, and release observations are preserved in
-validation results (private local reports; not distributed). Knowledge-specific methods and
-measurements are indexed under experiments (private local reports; not distributed).

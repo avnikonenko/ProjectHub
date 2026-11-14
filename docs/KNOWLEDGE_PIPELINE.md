@@ -132,16 +132,6 @@ by source attribution or a readable overview. Human review and supported referen
 cases remain necessary before promoting the pilot. Q&A/Scheme integration, manual
 corrections and advanced semantic merging remain deferred.
 
-## Evaluation reports
-
-The initial pipeline evaluation (private local reports; not distributed)
-preserves reference-review qualifications, the original project-specific sizing
-observation and pilot follow-up notes. See also the
-reference cases (private local reports; not distributed),
-human review rubric (private local reports; not distributed), and
-live pilot evaluation (private local reports; not distributed). Recorded request
-counts and timings are observations, not token costs or accuracy scores.
-
 
 ## Activating a saved result
 
@@ -197,55 +187,3 @@ primary over intermediate summary wording. This guidance is applied only when
 combining summary records, preserving normal-sized prompts and reusable source
 stage caches. It does not establish that every synthesized claim is semantically
 correct.
-
-## Bounded Overview inputs (historical selection path)
-
-When all active Knowledge fits the 240,000-character compacted synthesis budget,
-behavior is unchanged. Larger projects use a deterministic selection of complete
-records across design status, category and exact scope. Supported agreements,
-requirements receive most selection opportunities, while unresolved issues,
-proposals and context retain smaller shares. Sparse exact scopes go first;
-stable hashes break ties without alphabetical bias. This is a presentation
-policy, not an importance score or inferred chronology. Connected conflicts
-and recorded relationships stay together. Evidence, rationale and limitations
-are never shortened to fit. Project metadata and bounded code excerpts remain.
-
-The full Knowledge snapshot is retained and published atomically with the Overview.
-Only Overview evidence is selected. Its coverage notice gives selected/available
-counts; diagnostics retain selected/omitted IDs, oversized components and unavailable
-relationships independently of extraction coverage. The actual compacted payload
-is measured in final source order, followed by a hard size check before generation.
-No intermediate AI summaries or additional model-selection calls are introduced.
-
-Fallback happens only after the complete compacted input exceeds the limit,
-before a model request. Normal-sized inputs keep their existing prompt and path.
-Diagnostics record `fallback_reason: input_limit` and the original input size.
-Authentication, timeout and output-validation errors do not trigger this fallback.
-Bounded synthesis additionally instructs the model to support every substantive
-clause with its own exact citations; this does not guarantee semantic accuracy.
-
-Oversized selection also carries literal saved excerpts from the latest reliably
-later assistant message in the same original conversation and turn. A selected
-record and its required context must fit together; otherwise that unit is skipped.
-Shared context is deduplicated, without recursively grouping whole conversations.
-Only active valid supporting evidence with matching saved revisions is eligible;
-an unavailable latest message does not cause fallback to an older reply. Original
-source IDs are restored through the existing citation path. Reported completion
-remains distinct from independently verified execution and remaining live tests.
-Context adds no extraction or model request, but reduces the number of independent
-Knowledge records that fit. Missing chronology does not justify invented ordering,
-and same-turn context does not establish project-wide currentness or supersession.
-
-Selection can omit an important record: the Overview is explicitly selective,
-while the full Knowledge remains inspectable. AI-defined topic grouping is a
-separate planned improvement, not implemented by this selection policy.
-
-Validation on the previously failing project preserved all 3,009 Knowledge items,
-reused 234 extraction caches, and generated an unpublished Overview using 303 whole
-records and 12 repository excerpts in 239,854 compacted characters. One actual
-Codex synthesis request completed the run in 51.7 seconds. An initial trial exposed
-an order-dependent 41-character overrun; canonical-order measurement and a final
-guard fixed it before release. All evaluation writes stayed in a private database.
-Final checks: 833 backend tests, 58 frontend tests and the production build passed.
-An unrelated settings-test environment leak was also corrected without changing
-application settings or timeout behavior.

@@ -110,12 +110,6 @@ dependencies or global state library were introduced. Abort controllers and keye
 render state prevent late responses from a previous project/publication appearing
 under the current project.
 
-## Evaluation reports
-
-Historical automated checks, browser scenarios, retrieval counts and filtering
-measurements are preserved in the UI evaluation report (private local reports; not distributed).
-Those results are scoped to the tested snapshots and implementation, rather than
-a claim about the current build or extraction accuracy.
 
 ## Remaining limits
 
