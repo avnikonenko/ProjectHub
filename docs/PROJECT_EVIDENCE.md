@@ -18,9 +18,9 @@ Set PROJECTHUB_EVIDENCE_EXCLUDE before startup to a JSON array of additional glo
 
 This supplements built-in exclusions. It applies to repository evidence, not notes or conversations explicitly saved in ProjectHub.
 
-## Evidence is not validation
+## What the status means
 
-Repository metadata and filenames establish only those observations. They do not prove implementation correctness. Conversation excerpts, TODOs, and notes are reported claims or plans. ProjectHub currently has no independent test-run ingestion; the evidence snapshot explicitly states that no actual test execution or scientific-validation result is available.
+The overview distinguishes repository observations from conversation claims, plans, and AI interpretations. ProjectHub does not run tests during inspection or independently collect test results.
 
 ## Freshness
 
@@ -34,7 +34,7 @@ The baseline is captured before synthesis, so changes during generation can make
 
 On the Dashboard, click **Refresh project status** to generate an updated summary using the existing Codex integration. The Dashboard leads with current status, blockers, and suggested next steps; expand the other sections for details. Numbered citations open the matching passage in Sources.
 
-New summaries distinguish verified observations, reported claims, inferences, and unresolved issues. Only exact observations collected by ProjectHub can retain a verified label. The validation section states when no independent test results are available; this does not imply that tests were never run.
+Summaries label repository observations, reported claims, inferences, and unresolved issues separately. Missing test results mean none were recorded by ProjectHub, rather than that no one ran tests.
 
 The generator reads linked history in bounded batches and reuses cached batch summaries when possible. Long histories can take longer and the final summary can omit details. Previous summaries are comparison context, not evidence. Existing versions remain readable in **Previous versions**. Failed generation keeps the last successful version.
 

@@ -21,6 +21,7 @@ TypeScript checks, and the production build.
 - [HTTP API contract](API_CONTRACT.md)
 - [Data model](DATA_MODEL.md)
 - [Knowledge pipeline and isolated testing](KNOWLEDGE_PIPELINE.md)
+- [Knowledge interface API and implementation](KNOWLEDGE_UI_INTERNALS.md)
 - [Validation commands and scope](TEST_REPORT.md)
 - [Security and deployment boundaries](SECURITY_REVIEW.md)
 - [Engineering decisions](DECISIONS.md)

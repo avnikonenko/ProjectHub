@@ -1,96 +1,58 @@
 # Scheme
 
-Scheme has three views: Architecture, Workflow, and Dependencies. Code structure is
-collapsed beneath Architecture. Opening a view never invokes AI.
+Use Scheme to see how a project is organized and how it works. Saved diagrams and
+dependency information load without an AI request.
 
-## Use
+## Views
 
-Link a repository through Edit overview and relevant conversations through Sources.
-Open Scheme to inspect dependency declarations or load saved diagrams. Generate / Refresh
-Scheme sends selected evidence to the project's existing configured Codex account, using
-the same model, reasoning effort, and project instructions as other AI features.
+- **Architecture:** components and their relationships. Expand Code structure to
+  browse the inspected repository tree.
+- **Workflow:** processing stages, inputs, outputs, and execution order.
+- **Dependencies:** declared libraries and tools, version constraints, categories,
+  and short project-specific explanations.
 
-Architecture describes components; Workflow describes operations and execution order.
-Observed, proposed, and uncertain indicate evidence support, not runtime correctness.
-Each graph may be empty independently when evidence is insufficient. Dependencies show
-declared constraints, not installed versions. Expand Evidence used for original excerpts
-and provenance, or Components and relationships for individual citations. Previous versions
-use the existing generation revision history.
+Components are labeled observed, proposed, or uncertain according to their sources.
+A view can be empty when the available information does not support a diagram.
 
-## Architecture and storage
+## Generate or refresh
 
-The pipeline is read-only inspection, preserved evidence, one Codex structured-output
-request, graph/reference validation, deterministic Mermaid generation, and atomic
-snapshot/revision persistence. Migration 0019 adds project_schemes, storing one current
-snapshot per project. Existing brief/map fields and historical reports are preserved.
+1. Link a repository through **Edit overview**, if available, and relevant
+   conversations through **Sources**.
+2. Open **Scheme** and click **Generate / Refresh Scheme**.
+3. Inspect the diagrams and expand **Evidence used** for original excerpts, or
+   **Components and relationships** for individual references.
 
-Each snapshot contains graphs, Mermaid, direct dependencies, AI purpose explanations,
-directory structure, sources with hashes/provenance, coverage, source fingerprints,
-generation settings, and lightweight diagnostics. Evidence snapshots preserve the bounded
-excerpts supplied to Codex, not complete repository/history exports.
+Generation uses the project's selected Codex account, model, reasoning effort,
+and AI instructions. Selected project evidence is sent through Codex only when you
+request generation. Discussion-based designs can appear as proposed components;
+a linked repository is needed for code structure and manifest inspection.
 
-## Evidence and performance
+Saved results remain readable when Codex is unavailable. Earlier generated results
+are available through **Previous versions**.
 
-Inspection reuses existing Git safety, path, and exclusion helpers. Defaults bound the tree
-to 300 safe paths, content inspection to 24 files of up to 64 KiB each, direct dependency
-declarations to 100, and total evidence text to 40,000 characters. Production entrypoints and their explicit local imports are prioritized over utility scripts,
-tests, and migrations. Large source files contribute at most a 64 KiB prefix with partial
-coverage recorded. Code excerpts balance declarations, imports, and syntactic call names
-without arguments, initializer values, or defaults; private dependency and
-import locations are redacted. Project code is never executed.
+## Dependencies
 
-Supported declarations: PEP 621 pyproject.toml, Python dependency groups, common requirements
-text files with bounded safe includes, and package.json. Optional/development categories
-remain separate. Lockfiles, transitive dependency analysis, installation, and assumed
-import-to-distribution mappings are not supported.
+Inspection supports `pyproject.toml` project dependencies and dependency groups,
+common Python requirements files, and `package.json`. Optional and development
+dependencies remain separate.
 
-Retrieval reads at most 12 recent stored indexed conversation excerpts and six notes, plus
-bounded metadata, saved architecture, and previous brief context. It never invokes the
-full-history AI summarization pipeline. Sources and omissions are recorded. Unchanged
-extraction is reused after safe file-stat and bounded stored-record checks.
-
-Discussions are inspected up to 65,536 characters each. Deterministic selection retains
-complete relevant paragraphs, numbered workflows and diagrams rather than fixed-length
-note prefixes. Manageable discussions fit in full; longer ones contribute up to 6,000
-characters of selected passages, within a shared 24,000-character discussion budget.
-Confirmed shared turns are deduplicated before budget accounting. Fenced diagrams stay
-atomic; passages cut by the inspection boundary are omitted. There is no intermediate
-AI summary or additional knowledge store.
-
-Selected excerpts retain exact original spans, available speaker/message boundaries,
-explicit gap markers, inspection hashes and omission coverage. The collector cache is
-versioned, and changes within inspected text invalidate its selection. The unchanged
-40,000-character total source budget leaves space for repository evidence. An explicit
-discussion sequence supports a proposed workflow independently of user acceptance,
-runtime evidence or precise validation criteria.
-
-Generation makes one Codex request for both graphs and dependency explanations, with no
-automatic repair loop. Each graph is limited to 20 nodes and 40 edges. Dependency names
-and constraints remain deterministic; AI can explain only known dependency IDs.
-Conversation-only proposed tools can appear as proposed graph components.
+Versions are declared constraints, not confirmation of what is installed. Scheme
+does not install packages, analyze transitive dependencies or lockfiles, or execute
+project code. AI explanations describe dependencies found by inspection.
 
 ## Freshness and coverage
 
-These are separate indicators. No changes detected in inspected sources compares input
-fingerprints; it does not establish coverage or AI correctness. Partial coverage records
-bounded, excluded, or unsupported material. Unavailable repositories and stale conversation
-indexes make freshness unknown. Refresh History separately to update indexed conversations.
-Saved schemes remain readable when Codex is unavailable.
+**No changes detected in inspected sources** means those inputs still match the
+saved result. **Partial coverage** means some material was excluded, unsupported,
+or beyond inspection limits. An unavailable repository or stale conversation index
+can make freshness unknown. Refresh **History** separately to update indexed messages.
 
-## Security and limitations
+Scheme uses selected repository excerpts, recent indexed conversations, and notes;
+it does not read every file or the entire project history. Check **Evidence used**
+to see what supported the result. Diagrams explain available evidence and can miss
+connections or describe plans rather than working functionality.
 
-Inspection never installs packages, alters Codex profiles/history, or enables generation
-tools. It rejects unsafe paths/symlinks and honors evidence exclusions and Git ignore rules.
-Reference validation rejects unknown IDs/endpoints and ungrounded repository paths. Mermaid
-is generated from validated graphs, rendered in strict mode with text labels, and stripped
-of active content and navigation.
+Manual diagram editing and export are not currently available.
 
-Static inspection does not establish runtime call relationships, successful integrations,
-passing tests, or scientific validity. A valid citation identifies supplied material; it
-does not prove every generated statement. Workflow reconstruction can be incomplete.
-No external code-intelligence engine is required. Manual overrides and export are deferred.
-
-## Running
-
-Use the README's existing install/start commands; startup applies migration 0019. Back up
-the application data directory before upgrading. No new dependencies or API key are needed.
+See [installation](../README.md#install-and-run), [AI generation settings](AI_GENERATION.md),
+and the [implementation reference](scheme-implementation.md) for further details.
