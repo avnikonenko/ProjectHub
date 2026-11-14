@@ -17,6 +17,7 @@ from .scheme import read_scheme, refresh_scheme
 from .knowledge import read_knowledge, reconcile
 from .knowledge_sources import load_sources
 from .knowledge_brief import generate_knowledge_brief
+from .knowledge_previews import read_knowledge_preview
 from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
@@ -408,6 +409,15 @@ def get_knowledge(project_id: int, request: Request, db: DB):
     return {'snapshot': saved, 'paired_with_current_brief': paired,
             'current_evidence_availability': availability,
             'current_source_manifest': current['manifest'], 'coverage': current['coverage']}
+
+
+@router.get('/knowledge/preview')
+def get_knowledge_preview(project_id: int, db: DB):
+    project(db, project_id)
+    try:
+        return read_knowledge_preview(db, project_id)
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.post('/knowledge/brief')

@@ -120,7 +120,7 @@ def test_small_payload_keeps_existing_wire_shape(monkeypatch):
 
 
 def test_still_oversized_payload_fails_without_calling_model_or_mutating_data(monkeypatch):
-    sources = setup_synthesis(monkeypatch, statement_chars=700)
+    sources = setup_synthesis(monkeypatch, count=module.MAX_SYNTHESIS_CHARS // 400 + 1)
     before = deepcopy(sources)
     manager = CaptureSynthesis()
     with pytest.raises(CodexError, match='synthesis input limit'):

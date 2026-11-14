@@ -16,10 +16,12 @@ from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, ge
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
+from .knowledge_previews import stage_knowledge_preview
 from .protocol import CodexError
 from .revisions import save_revision
 
-MAX_SYNTHESIS_CHARS = 180_000
+SYNTHESIS_COMPACTION_CHARS = 180_000
+MAX_SYNTHESIS_CHARS = 240_000
 
 
 def _brief_inputs(candidate, bundle, repository):
@@ -171,7 +173,7 @@ def _synthesize(manager, candidate, bundle, repository):
                'evidence_excerpts': quotes, 'evidence_sources': evidence_sources,
                'interpretation_source_defaults': interpretation_defaults}
     serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
-    if len(serialized) > MAX_SYNTHESIS_CHARS:
+    if len(serialized) > min(SYNTHESIS_COMPACTION_CHARS, MAX_SYNTHESIS_CHARS):
         payload['interpretation_item_defaults'] = _apply_interpretation_item_defaults(wire_sources)
         serialized = json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
     if len(serialized) > MAX_SYNTHESIS_CHARS:
@@ -210,6 +212,10 @@ def _synthesize(manager, candidate, bundle, repository):
         'genuine conflicts. A broad agreement does not settle an unresolved first-release boundary. '
         'Do not alter, merge, or erase underlying knowledge items or their statuses. '
         'Check supplied evidence excerpts and agreement_basis before describing a choice as agreed. '
+        'A reference table repeated inside a user question is not itself adoption of all listed '
+        'tools or roles. Require the user\'s identifiable own selection or acceptance; describe '
+        'ambiguous pasted context as reported or proposed, even if an extracted agreement label '
+        'overstates its evidence. Do not claim the choice was rejected or never adopted. '
         'Resolve each evidence source_ref using evidence_sources for its original source ID, speaker and '
         'chronology; resolve excerpt_id using evidence_excerpts for its exact quotation. These dictionaries '
         'are a lossless encoding of the original evidence, not additional interpretations. '
@@ -226,6 +232,13 @@ def _synthesize(manager, candidate, bundle, repository):
         'provided relationship and original evidence establish a scoped revision. '
         'Overview: purpose and main workflow in two complete sentences. Architecture: supported component '
         'responsibilities and the reasons for the approach; say briefly if not established. '
+        'Explain the system through its main data flow, domain-specific constraints and reasons, '
+        'rather than a catalogue of libraries. Where supported, include the material preservation, '
+        'retention, safety or integrity policies that distinguish this project. Compactly connect '
+        'these policies to the components that enforce them, preserving their proposed or agreed status. '
+        'The interface already displays evidence-classification labels; do not prefix a point '
+        'with Reported, Inference or Unresolved again. Use Agreed or Proposed only when needed '
+        'to distinguish design acceptance, and do not repeat status prefixes within a point. '
         'Current_status: current direction without inventing implementation or repeating overview/open issues. '
         'Unresolved_problems: supported '
         'open questions, with consequences if known. Next_steps: only explicit supported priorities. '
@@ -387,12 +400,16 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                 current = load_sources(engine, project_id, previous_manifest=bundle['manifest'])
                 if current['manifest']['fingerprint'] != bundle['manifest']['fingerprint']:
                     raise CodexError('Sources changed during preview generation; cached extraction is preserved.')
+            result = {'published': publish, 'publication_id': publication_id, 'knowledge': candidate,
+                      'brief': brief, 'baseline_brief': baseline_brief,
+                      'diagnostics': {'duration_seconds': round(time.monotonic() - started, 3),
+                                      'synthesis_requests': 1, **candidate.get('diagnostics', {})}}
             if not publish:
-                progress.complete(project_id, lambda: None)
+                with Session(engine) as db:
+                    stage_knowledge_preview(db, project_id, result)
+                    progress.complete(project_id, db.commit)
             progress.finish(project_id)
-            return {'published': publish, 'publication_id': publication_id, 'knowledge': candidate, 'brief': brief, 'baseline_brief': baseline_brief,
-                    'diagnostics': {'duration_seconds': round(time.monotonic() - started, 3),
-                                    'synthesis_requests': 1, **candidate.get('diagnostics', {})}}
+            return result
     except Exception as exc:
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)
                         else 'Knowledge generation failed. The last published pair is preserved.')

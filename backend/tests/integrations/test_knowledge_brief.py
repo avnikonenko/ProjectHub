@@ -72,7 +72,9 @@ def _stored(engine, project_id=1):
         knowledge = deepcopy(db.get(ProjectKnowledge, project_id).snapshot)
         brief = deepcopy(pilot.read_brief(db, project_id))
         revisions = [(r.kind, r.generated_at, deepcopy(r.snapshot)) for r in db.scalars(
-            select(GenerationRevision).where(GenerationRevision.project_id == project_id).order_by(GenerationRevision.id))]
+            select(GenerationRevision).where(GenerationRevision.project_id == project_id,
+                                              GenerationRevision.kind.in_(('knowledge', 'brief')))
+            .order_by(GenerationRevision.id))]
     return knowledge, brief, revisions
 
 
