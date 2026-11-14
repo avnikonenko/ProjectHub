@@ -1,59 +1,42 @@
 # ProjectHub
 
-<img src="frontend/src/projecthub-logo.png" alt="ProjectHub stacked-layers logo" width="480" />
+<img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
 
-A local workspace for understanding and continuing projects across Codex sessions and shared ChatGPT conversations. Search saved history, keep Markdown notes and TODOs, and generate project overviews, Q&A, and diagrams with source references.
+A local workspace for understanding and continuing projects across Codex sessions and shared ChatGPT conversations.
 
-![ProjectHub dashboard with an example brief and numbered source references](docs/images/projecthub-dashboard.png)
+- Search saved conversations and keep Markdown notes and TODOs.
+- Generate cited project overviews, Q&A, architecture, and workflow diagrams.
+- Inspect read-only Git status and resume work with relevant project context.
 
-*Example data; no personal conversations or credentials are shown.*
+![ProjectHub dashboard with example data](docs/images/projecthub-dashboard.png)
 
 ## Install and run
 
-Requires Linux, Python 3.11+ with venv support, Git, and Node.js 22.18+ with npm. From a downloaded or cloned checkout:
+Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**. From a cloned or downloaded checkout:
 
 ```bash
 bash scripts/install.sh
 projecthub
 ```
 
-Open **http://127.0.0.1:8766**. Stop with Ctrl+C. If the command is outside your PATH, use `bash scripts/projecthub`. Keep the checkout: the installed command links to it. Standalone Python wheels are not supported.
+Open **http://127.0.0.1:8766**. Stop with Ctrl+C. If the command is outside your PATH, run `bash scripts/projecthub`. Keep the checkout: the launcher links to it.
 
-## Configuration and sign-in
+## Settings and AI
 
-Run `projecthub config` to create or locate `~/.config/projecthub/config.toml`. See [config.example.toml](config.example.toml). Restart after changes. Environment variables override the file; `PROJECTHUB_CONFIG` selects another file.
+Run `projecthub config` to locate your editable configuration. See [config.example.toml](config.example.toml). Environment variables override file settings; restart after changes.
 
-For AI features, install Codex separately and run `codex login` with your ChatGPT account. ProjectHub uses Codex's existing credentials and requires no OpenAI API key. **Do not put credentials in this repository.**
+AI features use your existing **Codex ChatGPT sign-in**: install Codex separately and run `codex login`. No OpenAI API key is required. Choose an existing profile, model, and reasoning effort in Settings; edit project AI instructions there too.
 
-To add an existing profile, open **Settings → Add Codex profile** and enter its name and Codex directory, such as `~/.codex`. Select it in the project's AI settings; existing sessions keep their original profile. The configuration's `ai.codex_home` can also select an existing profile.
+Browsing and search stay local. Requested AI generation sends selected project context to OpenAI. Generated claims need review; source references do not establish correctness. Higher parallel-reading settings can hit account or memory limits. See [AI generation and limits](docs/AI_GENERATION.md).
 
-Project data defaults to `~/.local/share/projecthub`, outside the checkout. Back up that directory. Requested AI work sends prompts and selected project context to OpenAI. Browsing, search, history indexing, and freshness checks run locally without model requests.
+## Data and safety
 
-**Single-user, local-only application:** do not expose it publicly without authentication and a security review.
+Settings default to `~/.config/projecthub/config.toml`; project data to `~/.local/share/projecthub`. **Back up the data directory and keep credentials out of Git.**
 
-## Use
-
-Open a project to load its workspace. The top search field searches saved project information with filters by record type; results and conversation history are paginated.
-
-- **Sources / History:** import public ChatGPT share links, link Codex sessions, and browse saved conversations. Unlinking stops active history sync while retaining records; link the same thread ID to restore it. Shared fork prefixes collapse without removing original messages. Select a passage to save a linked note.
-- **Overview / AI Q&A:** generate a concise project overview and explanations from conversations and bounded repository evidence. Local checks flag outdated overviews. See [Project Overview and Knowledge](docs/PROJECT_KNOWLEDGE_UI.md) and [evidence limits](docs/PROJECT_EVIDENCE.md).
-- **Knowledge:** search extracted choices, requirements, and supporting evidence. Review saved generation previews and activate matching Knowledge and Overview with **Use this result**, without another AI call. Failed generation preserves saved results; previews survive restart and export as JSON.
-- **Scheme:** generate architecture and workflow diagrams, inspect dependencies, and browse code structure. AI runs only on explicit refresh. See [Scheme](docs/SCHEME.md).
-- **Git:** link a repository in **Edit overview** for branch, commit, tracked-change, and untracked-file status. Inspection is read-only; it does not run tests or inspect changes inside submodules. Expand **Open GitHub issues** for public repository issues.
-- **TODO / Notes:** capture and bulk-add follow-ups; keep longer Markdown notes.
-- **Reviews:** ask cited questions about saved project information or ask a Codex session, then save useful responses as proposed notes.
-
-Use **AI settings → Project AI instructions** for project-specific response preferences. The editor starts with [shared recommendations](AI_RECOMMENDATIONS.md); edit, remove, or clear them. Read-only and evidence rules still apply. Older structured question/decision records remain historical references; there is no separate acceptance workflow.
-
-See [AI generation](docs/AI_GENERATION.md) for progress, cancellation, time budgets, caching, and quality profiles. Quality is the default; Balanced and Economy are experimental, and Economy can omit source windows. **More parallel-reading threads can exhaust local resources or hit account limits.** Review coverage and reported usage in Generation details.
+Single-user, local-only application. Do not expose it publicly without authentication and a security review.
 
 ## Development
 
-```bash
-projecthub check
-# Or: bash scripts/check.sh
-```
+Run `projecthub check` or `bash scripts/check.sh` for tests and the frontend build.
 
-Test files and conversation claims do not establish passing tests or scientific validity. Follow the [validation guide](docs/TEST_REPORT.md) for release checks.
-
-[Documentation](docs/README.md) · [Architecture](docs/ARCHITECTURE.md) · [Security](docs/SECURITY_REVIEW.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+[Documentation](docs/README.md) · [Validation](docs/TEST_REPORT.md) · [Security](docs/SECURITY_REVIEW.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
