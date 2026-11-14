@@ -6,6 +6,8 @@ import { ErrorBox } from './ui';
 type RepositoryStatus = {
   branch: string | null;
   dirty: boolean;
+  tracked_changes?: number;
+  untracked_files?: number;
   github_issues_url?: string | null;
   commits: { hash: string; subject: string; committed_at?: string }[];
 };
@@ -59,7 +61,13 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
         {status && (
           <p>
             {status.branch === null ? 'Detached HEAD' : <>Branch: <code>{status.branch}</code></>}
-            {' · '}{status.dirty ? 'Uncommitted changes' : 'Clean working tree'}
+            {' · '}{!status.dirty ? 'Clean working tree' : status.tracked_changes === undefined || status.untracked_files === undefined
+              ? 'Uncommitted changes'
+              : <>
+                {status.tracked_changes > 0 && `${status.tracked_changes} tracked file${status.tracked_changes === 1 ? '' : 's'} changed`}
+                {status.tracked_changes > 0 && status.untracked_files > 0 && ' · '}
+                {status.untracked_files > 0 && `${status.untracked_files} untracked file${status.untracked_files === 1 ? '' : 's'}`}
+              </>}
           </p>
         )}
       </div>

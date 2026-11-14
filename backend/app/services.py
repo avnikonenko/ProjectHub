@@ -116,11 +116,29 @@ def repository_snapshot(value, remote=''):
         raise HTTPException(503, 'Unable to safely inspect configured Git filters')
     overrides = [item for driver in drivers for option in ('clean=', 'process=', 'required=false')
                  for item in ('-c', f'{driver}.{option}')]
-    status = git('status', '--porcelain=v1', '--untracked-files=normal', '--ignore-submodules=dirty',
+    status = git('status', '--porcelain=v1', '-z', '--untracked-files=all', '--ignore-submodules=dirty',
                  overrides=overrides)
+    tracked_changes, untracked_files = 0, 0
+    entries = iter(status.stdout.split('\0'))
+    for entry in entries:
+        if not entry:
+            continue
+        if len(entry) < 4 or entry[2] != ' ':
+            raise HTTPException(503, 'Unable to parse repository status')
+        code = entry[:2]
+        if code == '??':
+            untracked_files += 1
+        else:
+            tracked_changes += 1
+        # In NUL-separated porcelain output renames/copies include a second
+        # pathname. It belongs to the same changed file, not another record.
+        if 'R' in code or 'C' in code:
+            if not next(entries, None):
+                raise HTTPException(503, 'Unable to parse repository status')
     target = repository_github_target(remote, path, validated=True)
     return {'branch': branch.stdout.strip() if branch.returncode == 0 else None,
             'dirty': bool(status.stdout), 'commits': commits,
+            'tracked_changes': tracked_changes, 'untracked_files': untracked_files,
             'github_issues_url': issues_url(target) if target else None}
 
 

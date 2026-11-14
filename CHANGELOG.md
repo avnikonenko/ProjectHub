@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Show separate counts for changed tracked files and untracked files in the repository overview.
+
 - Report oversized evidence quotations with their actual character count and the 1,600-character limit, instead of incorrectly suggesting a speaker/source mismatch. Keep strict quotation validation and existing limits unchanged.
 - Preserve material eligibility, state guards and explicitly named outcome subsets in each extracted Knowledge statement. Keep retained-charge rules separate from permission to release capacity, and version the extraction instructions so older cached overgeneralizations are not reused as corrected results.
 - Keep later same-turn completion reports with selected earlier requests in oversized Overviews, so reported completed work is not presented as still pending. Budget exact context excerpts with their Knowledge records and reject stale or unavailable supporting evidence.

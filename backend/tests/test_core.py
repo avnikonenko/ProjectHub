@@ -371,7 +371,8 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     git('init', '-b', 'work')
     p = project(client, repository_path=str(repo))
     url = f"/api/projects/{p['id']}/repository"
-    assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [], 'github_issues_url': None}
+    assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [],
+                                     'tracked_changes': 0, 'untracked_files': 0, 'github_issues_url': None}
     assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
     assert client.get('/api/projects/99999/repository').status_code == 404
 
@@ -394,6 +395,7 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     assert response.status_code == 200, response.text
     result = response.json()
     assert result['branch'] is None and result['dirty'] is True
+    assert result['tracked_changes'] == 1 and result['untracked_files'] == 0
     assert [commit['subject'] for commit in result['commits']] == ['Change 3', 'Change 2', 'Change 1']
     assert [commit['committed_at'] for commit in result['commits']] == [
         '2025-01-02T03:04:03+05:30', '2025-01-02T03:04:02+05:30', '2025-01-02T03:04:01+05:30',
@@ -401,6 +403,46 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     assert not (repo / 'ran-filter').exists()
     assert not (repo / 'ran-monitor').exists()
     assert (repo / '.git/index').read_bytes() == index
+
+
+def test_repository_snapshot_counts_tracked_and_untracked_files(client, tmp_path):
+    repo = tmp_path / 'counts'
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+
+    git('init', '-b', 'work')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    (repo / 'tracked.txt').write_text('original\n')
+    (repo / 'rename.txt').write_text('rename me\n')
+    git('add', '.')
+    git('commit', '-m', 'Initial')
+    linked = project(client, repository_path=str(repo))
+    url = f"/api/projects/{linked['id']}/repository"
+
+    def counts(tracked, untracked):
+        response = client.get(url)
+        assert response.status_code == 200, response.text
+        status = response.json()
+        assert status['tracked_changes'] == tracked
+        assert status['untracked_files'] == untracked
+        assert status['dirty'] is bool(tracked or untracked)
+
+    counts(0, 0)
+    (repo / 'new directory').mkdir()
+    (repo / 'new directory' / 'one.txt').write_text('untracked\n')
+    (repo / 'new directory' / 'two\nlines.txt').write_text('untracked\n')
+    counts(0, 2)
+    (repo / 'tracked.txt').write_text('staged\n')
+    git('add', 'tracked.txt')
+    (repo / 'tracked.txt').write_text('staged and unstaged\n')
+    counts(1, 2)
+    git('mv', 'rename.txt', 'renamed\nfile.txt')
+    counts(2, 2)
+    git('add', 'new directory')
+    counts(4, 0)
 
 
 
