@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, patch } from './api';
 import { ErrorBox } from './ui';
+import { SettingsHelp } from './SettingsHelp';
 import { generationProfilePatch, parseGenerationProfileSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
 type WorkerSettings = {
@@ -142,14 +143,16 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
         onChange={(event) => { setProfileDraft(event.target.value); setSaved(false); }}>
         {!profileSettings && <option value="">{loading ? 'Loading…' : 'Profiles unavailable'}</option>}
         {profileSettings?.generation_profiles.map((option) => <option key={option.id} value={option.id}>
-          {option.label}{option.id === 'quality' ? ' (default)' : ''}
+          {option.label}{option.id === 'quality' ? ' (default)' : option.experimental ? ' (experimental)' : ''}
         </option>)}
       </select>
     </label>
-    {profile && <p><small>{profile.description}</small></p>}
-    {profile?.experimental && <p role="note"><small>Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</small></p>}
-    <p><small>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
-      {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</small></p>
+    <SettingsHelp title="Profile explanation">
+      {profile && <p><small>{profile.description}</small></p>}
+      {profile?.experimental && <p role="note"><small>Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</small></p>}
+      <p><small>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
+        {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</small></p>
+    </SettingsHelp>
     <div className="actions left">
       <button type="button" className="secondary" disabled={loading || saving || !profile || unchangedProfile}
         onClick={() => void saveProfile()}>Save generation profile</button>
@@ -171,8 +174,10 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       <button type="button" className="secondary" disabled={loading || saving || !valid || unchanged}
         onClick={() => void save(count)}>Save thread count</button>
     </div>
-    <p><small id={helpId}>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
-      {' '}More threads use more memory and may hit account limits.</small></p>
+    <SettingsHelp title="Thread-count explanation" id={helpId}>
+      <p><small>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
+        {' '}More threads use more memory and may hit account limits.</small></p>
+    </SettingsHelp>
     {settings && !valid && <p role="status"><small>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</small></p>}
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
       && <p><small>Startup environment overrides the saved value ({settings.configured_extraction_workers}).</small></p>}

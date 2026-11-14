@@ -253,6 +253,21 @@ button:disabled {
   background: white;
   box-shadow: 0 6px 20px #24312a22;
 }
+.settings-help {
+  margin: 0.35rem 0 0.8rem;
+}
+.settings-help > summary {
+  cursor: pointer;
+  color: var(--muted, #68756f);
+  font-size: 0.9em;
+}
+.settings-help > summary:focus-visible {
+  outline: 2px solid var(--accent, #245c4b);
+  outline-offset: 3px;
+}
+.settings-help p {
+  margin: 0.4rem 0;
+}
 .eyebrow {
   font-size: 0.714286rem;
   letter-spacing: 1.5px;

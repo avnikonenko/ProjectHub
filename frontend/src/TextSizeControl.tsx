@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SettingsHelp } from './SettingsHelp';
 
 const sizes = [100, 125, 150, 200];
 const storageKey = 'projecthub.text-size';
@@ -22,6 +23,7 @@ export function applySavedTextSize() {
 export function TextSizeControl() {
   const [size, setSize] = useState(savedSize);
   return (
+    <>
     <label>
       Text size
       <select aria-label="Text size" value={size} onChange={(event) => {
@@ -36,5 +38,9 @@ export function TextSizeControl() {
         ))}
       </select>
     </label>
+    <SettingsHelp title="About text size">
+      <p>Scales text throughout ProjectHub immediately and remembers your choice in this browser.</p>
+    </SettingsHelp>
+    </>
   );
 }

@@ -25,6 +25,7 @@ import { groupSharedHistory } from './sharedHistory';
 import { TextSizeControl } from './TextSizeControl';
 import { ExtractionWorkersControl } from './ExtractionWorkersControl';
 import { PaletteControl } from './PaletteControl';
+import { SettingsHelp } from './SettingsHelp';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
 
@@ -1011,6 +1012,9 @@ function AppSettings() {
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
             Add Codex profile
           </button>
+          <SettingsHelp title="About Codex profiles">
+            <p>Register an existing Codex sign-in directory, then choose the profile in project AI settings. ProjectHub checks its login without copying credentials.</p>
+          </SettingsHelp>
           {profileMessage && <p role="status"><small>{profileMessage}</small></p>}
         </div>
       </details>
@@ -1067,6 +1071,9 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
           <button type="button" className="secondary" disabled={loadingInstructions} onClick={openInstructions}>
             {loadingInstructions ? 'Loading instructions…' : 'Project AI instructions'}
           </button>
+          <SettingsHelp title="About project AI instructions">
+            <p>Set response preferences for future AI requests in this project. You can edit the shared recommendations or leave the instructions blank. Read-only and evidence rules still apply.</p>
+          </SettingsHelp>
           {instructionsError && <small role="alert">{instructionsError}</small>}
           {instructionsSaved && <small role="status">Instructions saved.</small>}
         </GenerationOptions>}
@@ -1157,7 +1164,9 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
           {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
-      <small>Used for AI generation and new sessions. Existing sessions keep their original account.</small>
+      <SettingsHelp title="About the project account">
+        <p>Used for AI generation and new sessions. Existing sessions keep their original account.</p>
+      </SettingsHelp>
       {accountError && <small role="alert">{accountError}</small>}
       <label>
         Model
@@ -1167,6 +1176,9 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
           {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
+      <SettingsHelp title="About model selection">
+        <p>Codex default uses the account's configured model. Choosing another model resets reasoning effort to its default and applies to future generation.</p>
+      </SettingsHelp>
       <label>
         Reasoning effort
         <select value={generation.effort} disabled={!efforts.length}
@@ -1177,7 +1189,9 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
         </select>
       </label>
       {status && <small role="status">{status}</small>}
-      {!generation.model && <small>Choose a model to set its reasoning effort.</small>}
+      <SettingsHelp title="About reasoning effort">
+        <p>Choose a model to see its available reasoning levels. Higher effort can take longer and consume more tokens. An explicit reasoning choice takes precedence over a knowledge profile's default.</p>
+      </SettingsHelp>
       <div>{children}</div>
     </div>
   );
