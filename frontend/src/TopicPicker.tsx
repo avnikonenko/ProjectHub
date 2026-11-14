@@ -38,7 +38,7 @@ export function TopicPicker<T>({ choices, selected, onSelect, search = '', onSea
       </summary>
       <div className="topic-options">
       <p className="muted">AI-generated tags may overlap.</p>
-      {choices.length <= 2 && <p>No AI tags saved for this version. Tags are generated with the next Knowledge or Q&A generation.</p>}
+      {choices.length <= 2 && <p>No AI tags saved for this version. Use Generate AI tags to organize this saved result.</p>}
       <ul>{choices.filter(group => group.id === ALL_TOPICS || group.id === OTHER_TOPICS || matches.includes(group)).map(group => <li key={group.id}>
         <button type="button" className="quiet" disabled={disabled} aria-pressed={!search && selected === group.id}
           onClick={() => choose(group.id)}>{group.label} ({group.items.length})</button>

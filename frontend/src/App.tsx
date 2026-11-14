@@ -1,3 +1,4 @@
+import { TagGeneration } from './TagGeneration';
 import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './topicGroups';
 import { TopicPicker } from './TopicPicker';
 import { KnowledgePage } from './KnowledgePage';
@@ -907,6 +908,7 @@ function Report({ value }: { value: any }) {
 }
 
 type SavedQA = {
+  topic_grouping?: Record<string, unknown>;
   generated_at: string;
   generation?: GenerationProvenance | null;
   topic_groups?: TopicGroup[];
@@ -1235,6 +1237,8 @@ function isValidQALimit(value: number) {
 
 function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
+  const [tagsBusy, setTagsBusy] = useState(false);
+  const [tagRecovery, setTagRecovery] = useState(0);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
@@ -1272,8 +1276,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       .catch((e) => { if (active) setError(e.message); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [path, recoveryVersion, targetQuestion]);
-  const generationDisabled = loading || generating || recoveryBusy || deleting || revisionLoading;
+  }, [path, recoveryVersion, targetQuestion, tagRecovery]);
+  const generationDisabled = tagsBusy || loading || generating || recoveryBusy || deleting || revisionLoading;
   const validLimit = isValidQALimit(Number(maxQuestions));
   async function generate() {
     if (generationDisabled || generatingRef.current || !validLimit) return;
@@ -1298,7 +1302,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     }
   }
   async function removeQuestion(question: string) {
-    if (!saved || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
+    if (!saved || tagsBusy || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
     if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;
     const query = new URLSearchParams({ question, generated_at: saved.generated_at });
     setDeleting(true);
@@ -1355,7 +1359,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           </div>
         <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
-          disabled={loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
           onSelect={(snapshot, id) => {
             setSaved(snapshot);
             setRevisionId(id);
@@ -1363,6 +1367,13 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
+        {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa"
+          generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
+          hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
+          onBusyChange={setTagsBusy} onRecovered={() => { if (revisionId === null) setTagRecovery(value => value + 1); }}
+          onResult={result => setSaved(previous => previous && previous.generated_at === result.generated_at
+            ? { ...previous, topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } : previous)} />}
+        {saved && revisionId !== null && <small>AI tags can be generated for the current Q&A only.</small>}
         {!!saved && <div className="knowledge-filters">
           <TopicPicker choices={topics} selected={topic} search={tagSearch} disabled={targetQuestion !== undefined} onSearch={value => { setTagSearch(value); setPage(0); }}
             ariaLabel="AI Q&A tags" onSelect={id => { setTopic(id); setPage(0); }} />
@@ -1383,7 +1394,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             <div className="section-title">
               <h3>{item.question}</h3>
               <DeleteButton label={`Delete Q&A: ${item.question}`}
-                disabled={revisionId !== null || loading || generating || recoveryBusy || revisionLoading || deleting}
+                disabled={tagsBusy || revisionId !== null || loading || generating || recoveryBusy || revisionLoading || deleting}
                 onClick={() => void removeQuestion(item.question)} />
             </div>
             <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>

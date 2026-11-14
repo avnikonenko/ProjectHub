@@ -10,6 +10,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Generate AI tags only through a separate explicit button for saved Knowledge and Q&A. Give tagging its own batch progress, cancellation and time budget; main results no longer wait for tag generation.
+
 - Separate the per-reply tag limit from the combined project catalog limit so valid independent batches can exceed 40 topics without failing on every cached retry. Retire unused topics and bound the complete tagging prompt.
 - Dismiss the tag dropdown after selection, on Escape and on outside clicks. Explain and disable tag filtering while Q&A shows a selected project-search result.
 - Report malformed saved Knowledge item identities explicitly before validating tag memberships, avoiding unhandled preview errors.

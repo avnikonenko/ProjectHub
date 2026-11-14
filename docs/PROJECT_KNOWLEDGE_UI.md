@@ -101,8 +101,10 @@ An item can appear under several tags without being duplicated or merged.
 - Combine tag selection with the view's other filters. Counts describe tag membership;
   additional filters can reduce the visible results.
 
-Tags are generated with the next Knowledge or Q&A generation. Older saved results
-remain usable without tags. Browsing or filtering tags makes no AI request.
+Choose **Generate AI tags** to organize a saved Knowledge result or current Q&A.
+Knowledge, Overview and Q&A generation do not wait for tagging. Older saved results
+remain usable without tags. Tagging has its own progress, cancellation and time budget;
+failed or cancelled tagging preserves the existing tags and completed batch caches. Browsing or filtering tags makes no AI request.
 
 Tags help navigation; they do not change the underlying claims, decisions, evidence,
 or source references. Similar tags may overlap. A project catalog supports up to 400 topics (up to 40 new topics per model reply);

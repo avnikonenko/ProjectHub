@@ -1,3 +1,4 @@
+import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
 import { GenerationDetails } from './GenerationDetails';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
@@ -30,6 +31,9 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
   const loadKey = JSON.stringify([base, publicationKey]);
+  const [publishedTagsBusy, setPublishedTagsBusy] = useState(false);
+  const [previewTagsBusy, setPreviewTagsBusy] = useState(false);
+  const tagsBusy = publishedTagsBusy || previewTagsBusy;
   const [retry, setRetry] = useState(0);
   const [load, setLoad] = useState<LoadState>({ base, key: loadKey, loading: true, data: null, error: '' });
   const [preview, setPreview] = useState<PreviewState>({ base, busy: false, result: null, error: '', started: 0 });
@@ -112,7 +116,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }, [base, projectId, retry, visible, loadKey]);
 
   async function generatePreview() {
-    if (active.current || activating.current) return;
+    if (active.current || activating.current || tagsBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
     const controller = new AbortController();
@@ -142,7 +146,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }
 
   async function useResult() {
-    if (!candidate || active.current || activating.current || busy) return;
+    if (!candidate || active.current || activating.current || busy || tagsBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
     const controller = new AbortController();
@@ -189,7 +193,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     <section className="card" aria-busy={isLoading || publishing}>
       <div className="section-title">
         <div><h2>Project Knowledge</h2><small>Project #{projectId}</small></div>
-        <button disabled={busy || publishing || currentPreview?.loading} onClick={generatePreview}>
+        <button disabled={tagsBusy || busy || publishing || currentPreview?.loading} onClick={generatePreview}>
           {busy ? 'Generating…' : snapshot || currentPreview?.result ? 'Regenerate' : 'Generate'}
         </button>
       </div>
@@ -210,6 +214,13 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>
         <small>Current knowledge{snapshot.generated_at && ` · ${new Date(snapshot.generated_at).toLocaleString()}`}</small>
+        <TagGeneration key={`${base}:tags:${snapshot.publication_id}`} base={base} target="knowledge"
+          publicationId={snapshot.publication_id} itemIds={snapshot.items.map(item => item.id)}
+          generation={generation} hasTags={!!snapshot.topic_groups?.length} disabled={busy || publishing || !snapshot.publication_id}
+          onBusyChange={setPublishedTagsBusy} onRecovered={() => setRetry(value => value + 1)}
+          onResult={result => setLoad(previous => previous.base === base && previous.data && previous.data.snapshot && previous.data.snapshot.publication_id === result.publication_id
+            ? { ...previous, data: { ...previous.data, snapshot: { ...previous.data.snapshot,
+              topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } } : previous)} />
         {mismatch ? <Feedback>
           <p>This overview references another knowledge publication. Its selected record is not being substituted with the current version.</p>
           <button className="secondary" onClick={() => setDismissedLink(requestKey)}>Explore current knowledge</button>
@@ -236,7 +247,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       <div className="section-title">
         <div><h3>{snapshot ? 'New result' : 'Saved result'}</h3>
           <small>{new Date(candidate.brief.generated_at).toLocaleString()}</small></div>
-        <button disabled={busy || publishing || isLoading || currentPreview?.loading} onClick={useResult}>
+        <button disabled={tagsBusy || busy || publishing || isLoading || currentPreview?.loading} onClick={useResult}>
           {publishing ? 'Applying…' : 'Use this result'}
         </button>
       </div>
@@ -245,6 +256,13 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       <GenerationDetails diagnostics={candidate.diagnostics} />
       {renderBrief(candidate.brief)}
       <h3>Knowledge</h3>
+      <TagGeneration key={`${base}:preview-tags:${candidate.knowledge.publication_id}`} base={base} target="knowledge_preview"
+        publicationId={candidate.knowledge.publication_id} itemIds={candidate.knowledge.items.map(item => item.id)}
+        generation={generation} hasTags={!!candidate.knowledge.topic_groups?.length} disabled={busy || publishing || !candidate.knowledge.publication_id}
+        onBusyChange={setPreviewTagsBusy} onRecovered={() => setRetry(value => value + 1)}
+        onResult={result => setPreview(previous => previous.base === base && previous.result && previous.result.knowledge.publication_id === result.publication_id
+          ? { ...previous, result: { ...previous.result, knowledge: { ...previous.result.knowledge,
+            topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } } : previous)} />
       <KnowledgeItems key={`${base}:preview:${candidate.knowledge.publication_id}`} snapshot={candidate.knowledge} />
     </section>}
   </section>;

@@ -52,7 +52,10 @@ Use an isolated data directory and port for development as described in
 
 ## Topic metadata
 
-Tag generation uses project/configuration-scoped caches and bounded batches,
+The explicit `/codex/tags` action updates only the selected saved result’s tag
+metadata, using publication ID or Q&A generation timestamp plus atomic freshness
+checks. Main Knowledge and Q&A generation never invokes tagging. Tag generation
+uses project/configuration-scoped caches and bounded batches,
 separate from extraction caches and Overview selection. Unchanged memberships
 can be reused; successful batch caches survive later failures. Memberships are
 validated against existing record IDs. Q&A deletion prunes current memberships
