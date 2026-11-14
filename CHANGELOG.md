@@ -6,6 +6,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve independent tentative proposals and clearly requested preferences during extraction. Treat tool tables repeated as question context conservatively rather than adopting every listed backend; version the extraction instructions and use smaller context-preserving windows.
+- Generate briefs around project workflow, integrity/retention policies and reasons, keeping design agreement separate from implementation evidence and avoiding repeated evidence-label prefixes.
+- Keep lossless compaction at 180,000 characters and bound synthesis to 240,000 so the evaluated detailed knowledge fits without dropping records. Cached extraction remains reusable.
 - Fit larger knowledge previews using explicit defaults for repeated item fields in the synthesis request. Preserve every record, status, rationale and quotation, with the synthesis size limit unchanged.
 - Explain malformed knowledge-extraction responses precisely, including the returned item count when it exceeds the bound, while preserving successful batch caches and withholding source content from errors.
 - Keep words intact in Markdown table cells so short headers such as Priority do not split across lines; wide tables scroll locally.
@@ -17,6 +20,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Recover successful unpublished knowledge previews after refresh/restart through project-scoped revision storage. Restore active progress, preserve the previous preview after failure, and download its complete JSON without invoking AI or publishing it.
 - Long notes show compact Markdown previews with Expand/Show less; searching reveals full matching notes.
 
 - Search all Notes and TODOs before pagination, including completed TODOs, with match counts and local filtering.

@@ -11,7 +11,7 @@ have been reviewed. Q&A and Scheme are unchanged.
   hashes, within-conversation order, and separate parent manifests. No remote history
   or model call is made by this adapter. Ordinary notes and TODOs are not acceptance evidence.
 - Messages above 6,000 characters become exact fragments. Extraction windows are
-  bounded to 24,000 serialized characters, with preceding context identified separately.
+  bounded to 14,000 serialized characters, with preceding context identified separately.
   Fragmented distant context can remain incomplete and is reported as a limitation.
 - knowledge.py extracts material choices, requirements, proposals, findings, and open
   questions. Evidence quotations must match the supplied original fragment and speaker.
@@ -38,6 +38,11 @@ and publish (default false). It uses the existing account and project instructio
 Preview returns knowledge, candidate brief, baseline_brief, publication_id, and diagnostics.
 It preserves both published records while retaining successful extraction caches. This
 allows side-by-side evaluation without replacing the current overview.
+Successful previews are also stored under the project-scoped `knowledge_preview`
+kind in existing generation revisions. `GET /api/projects/{id}/codex/knowledge/preview`
+recovers the last successful result without generation. Saving is guarded by the
+same cancellation/time-budget check; failed replacements preserve the previous
+preview and published records. No separate knowledge store is introduced.
 
 Explicit publish:true updates current knowledge, its revision, current brief, and its
 revision in one transaction. Snapshot and brief share a publication ID and timestamp.

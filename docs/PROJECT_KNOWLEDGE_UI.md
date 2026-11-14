@@ -43,21 +43,27 @@ There is no publication or editing control in this UI.
 
 The preview renders its own paired brief, sources and filterable knowledge using
 the same components as published records. The project-wide search covers saved
-project records; it does not index the in-memory unpublished preview. It is labelled unpublished and cannot
+project records; it does not index the unpublished preview. It is labelled unpublished and cannot
 replace the saved brief or snapshot. Project/publication identities are validated.
 Progress and elapsed time appear during generation; failed previews display an
 error. A second click cannot submit another request while one is pending.
 
-Tab switching preserves the in-memory preview. Project switching clears it and
-aborts browser requests. Reloading the browser loses an unpublished preview;
-the UI does not persist it or claim that aborting a fetch cancels backend work.
-The existing published data remains available independently.
+Successful previews are retained separately in existing generation revisions.
+Reopening Knowledge, using **Reload knowledge**, or refreshing the browser recovers
+the last successful preview without invoking Codex. A running preview restores
+progress while the same server process continues; a failed or cancelled replacement
+keeps the earlier successful preview. A server restart ends active work but retains
+saved previews. Project switching aborts browser requests, not backend work.
+Use **Download preview JSON** to export the paired brief, structured knowledge and
+original evidence. Published data remains available independently.
 
 ## API and implementation
 
 - `GET /api/projects/{id}/codex/knowledge`: published snapshot plus current evidence
   availability and current coverage. No model call.
 - `POST /api/projects/{id}/codex/knowledge/brief`: explicit unpublished preview.
+- `GET /api/projects/{id}/codex/knowledge/preview`: last successful unpublished
+  result, or null. Read-only and project-scoped; no model call.
 - `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: preview progress.
 - Existing conversation/transcript hash resolvers open original evidence.
 

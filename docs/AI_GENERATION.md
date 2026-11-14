@@ -17,6 +17,14 @@ Refreshing the browser restores progress for an ongoing Project status or AI Q&A
 request after reopening its project. It does not start another generation.
 Progress recovery requires the same ProjectHub server process to remain running.
 
+Knowledge previews also recover their active progress after a browser refresh.
+The last successful unpublished preview is saved separately from published
+knowledge and the project overview. Opening Knowledge or using **Reload knowledge**
+loads that preview without calling Codex; a failed or cancelled replacement keeps
+the previous preview. Use **Download preview JSON** to inspect or share its complete
+brief, knowledge and source references. A server restart stops active work but
+does not erase a successfully saved preview.
+
 Generation status includes elapsed time and completed-stage durations
 (`elapsed_seconds`, `stage_seconds`). Server logs record stage duration without
 prompts or source excerpts. Knowledge extraction reports batch timing/cache reuse.
@@ -82,9 +90,19 @@ validation enforces item counts, field lengths, statuses and source ownership be
 caching. A quotation selector with whitespace differences is accepted only when it
 identifies one unambiguous original passage; the saved quotation is that exact source
 passage. Word changes, ambiguous matches and wrong speakers remain errors.
+Primary conversations are packed into bounded 14,000-character windows with
+preceding same-conversation context where it fits. Primary fragments are processed
+once. Smaller windows help retain independent proposals but can increase request
+overhead; source limits and incomplete-context warnings remain visible. A table
+quoted alongside a question is not sufficient evidence that its contents were
+adopted.
 
 Final synthesis uses lossless dictionaries for repeated evidence and request-local
 citation aliases. Original identities are restored before citation resolution;
 saved knowledge and citation URLs retain their original IDs. This reduces
-transmitted context without dropping records or increasing the synthesis limit.
+transmitted context without dropping records.
+The current synthesis input is bounded to 240,000 characters; lossless repeated-item
+compaction starts at 180,000. Retaining more source-backed knowledge can increase
+input consumption. This limit remains finite and oversized requests fail before
+calling the model, preserving saved results and successful batch caches.
 See [the pipeline guide](KNOWLEDGE_PIPELINE.md) for its contracts and limitations.

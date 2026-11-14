@@ -3,15 +3,15 @@ import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
 import {
   matchesPublication, parseKnowledgeResponse, parseKnowledgePreview,
-  type KnowledgeLink, type KnowledgeResponse, type KnowledgeSnapshot,
+  type KnowledgeLink, type KnowledgeResponse,
 } from './knowledge';
 import { Empty, ErrorBox } from './ui';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import type { Brief } from './BriefContent';
+import { knowledgePreviewExport, recoverKnowledgePreview, type KnowledgePreview } from './knowledgePreviewRecovery';
 
-type Preview = { knowledge: KnowledgeSnapshot; brief: Brief };
 type LoadState = { base: string; key: string; loading: boolean; data: KnowledgeResponse | null; error: string };
-type PreviewState = { base: string; busy: boolean; result: Preview | null; error: string; started: number; cancelled?: boolean };
+type PreviewState = { base: string; busy: boolean; result: KnowledgePreview | null; error: string; started: number; loading?: boolean; cancelled?: boolean };
 type Props = {
   base: string;
   generation: { model: string; effort: string };
@@ -31,6 +31,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const [preview, setPreview] = useState<PreviewState>({ base, busy: false, result: null, error: '', started: 0 });
   const [dismissedLink, setDismissedLink] = useState('');
   const active = useRef<{ base: string; controller: AbortController } | null>(null);
+  const recovery = useRef<AbortController | null>(null);
+  const previewRequestVersion = useRef(0);
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
   const currentPreview = preview.base === base ? preview : null;
   const busy = !!currentPreview?.busy;
@@ -62,12 +64,47 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     active.current = null;
   }, [base]);
 
+  useEffect(() => {
+    if (!visible || active.current?.base === base) return;
+    const controller = new AbortController();
+    recovery.current = controller;
+    const version = ++previewRequestVersion.current;
+    const canApply = () => !controller.signal.aborted && !active.current && version === previewRequestVersion.current;
+    setPreview((previous) => previous.base === base ? { ...previous, loading: true }
+      : { base, busy: false, result: null, error: '', started: 0, loading: true });
+    void recoverKnowledgePreview(base, projectId, controller.signal, (event) => {
+      if (!canApply()) return;
+      setPreview((previous) => {
+        const current = previous.base === base ? previous
+          : { base, busy: false, result: null, error: '', started: 0 };
+        if (event.type === 'saved') return { ...current, result: event.result };
+        const status = event.progress;
+        return { ...current, busy: status.state === 'running', loading: false,
+          started: status.state === 'running' ? Date.parse(status.started_at || '') || Date.now() : 0,
+          cancelled: status.state === 'cancelled',
+          error: status.state === 'failed' ? status.error || 'Knowledge generation failed. The previous preview is preserved.'
+            : status.state === 'idle' && current.busy
+              ? 'Generation is no longer running. The server may have restarted; the previous preview is preserved.' : '' };
+      });
+    }).catch((error: Error) => {
+      if (canApply()) setPreview((previous) => ({ ...previous, busy: false, started: 0, loading: false,
+        error: `Could not recover the knowledge preview: ${error.message}` }));
+    });
+    return () => {
+      controller.abort();
+      if (recovery.current === controller) recovery.current = null;
+    };
+  }, [base, projectId, retry, visible]);
+
   async function generatePreview() {
     if (active.current) return;
+    previewRequestVersion.current++;
+    recovery.current?.abort();
     const controller = new AbortController();
     const run = { base, controller };
     active.current = run;
-    setPreview({ base, busy: true, result: null, error: '', started: Date.now() });
+    setPreview((previous) => ({ base, busy: true, result: previous.base === base ? previous.result : null,
+      error: '', started: Date.now(), loading: false }));
     try {
       const raw = await api<unknown>(`${base}/codex/knowledge/brief`, {
         method: 'POST', signal: controller.signal,
@@ -79,11 +116,26 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         setPreview({ base, busy: false, result, error: '', started: 0 });
       }
     } catch (error) {
-      if (!controller.signal.aborted && active.current === run) setPreview({ base, busy: false,
-        result: null, error: isGenerationCancelled(error) ? '' : (error as Error).message,
-        started: 0, cancelled: isGenerationCancelled(error) });
+      if (!controller.signal.aborted && active.current === run) setPreview((previous) => ({ base, busy: false,
+        result: previous.base === base ? previous.result : null,
+        error: isGenerationCancelled(error) ? '' : (error as Error).message,
+        started: 0, cancelled: isGenerationCancelled(error) }));
     } finally {
       if (active.current === run) active.current = null;
+    }
+  }
+
+  function downloadPreview() {
+    if (!currentPreview?.result) return;
+    try {
+      const exported = knowledgePreviewExport(currentPreview.result, projectId);
+      const url = URL.createObjectURL(new Blob([exported.text], { type: 'application/json;charset=utf-8' }));
+      const anchor = document.createElement('a');
+      anchor.href = url; anchor.download = exported.filename;
+      document.body.appendChild(anchor); anchor.click(); anchor.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (error) {
+      setPreview((previous) => ({ ...previous, error: (error as Error).message }));
     }
   }
 
@@ -134,14 +186,18 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       <details className="card knowledge-preview">
         <summary>Try an unpublished knowledge preview</summary>
         <p>This opt-in action sends selected project conversations and evidence to OpenAI through Codex. It does not replace published knowledge or the saved overview.</p>
-        <button disabled={busy} onClick={generatePreview}>{busy ? 'Generating preview…' : 'Generate unpublished preview'}</button>
+        <button disabled={busy || currentPreview?.loading} onClick={generatePreview}>{busy ? 'Generating preview…' : 'Generate unpublished preview'}</button>
+        {currentPreview?.loading && <p role="status">Checking the saved preview and generation status…</p>}
         {busy && <GenerationStatus key={`${base}:${currentPreview?.started}`} base={base}
           kind="knowledge" label="Knowledge preview" />}
         {currentPreview?.cancelled && <p role="status">{cancelledGenerationMessage}</p>}
         <ErrorBox error={currentPreview?.error ?? ''} />
         {currentPreview?.result && <section aria-label="Unpublished knowledge preview">
           <h3>Unpublished preview</h3>
-          <p>This result is separate from published project knowledge.</p>
+          <small>Generated {new Date(currentPreview.result.brief.generated_at).toLocaleString()} · Unpublished</small>
+          <p>This saved preview is separate from published project knowledge.
+            {busy && ' The previous successful preview remains available while the new generation runs.'}</p>
+          <button className="secondary" onClick={downloadPreview}>Download preview JSON</button>
           {renderBrief(currentPreview.result.brief)}
           <h3>Preview knowledge</h3>
           <KnowledgeItems key={`${base}:preview:${currentPreview.result.knowledge.publication_id}`}
