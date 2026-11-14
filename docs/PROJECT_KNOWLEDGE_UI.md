@@ -105,5 +105,5 @@ Tags are generated with the next Knowledge or Q&A generation. Older saved result
 remain usable without tags. Browsing or filtering tags makes no AI request.
 
 Tags help navigation; they do not change the underlying claims, decisions, evidence,
-or source references. Similar tags may overlap. The current limit is 40 topics;
+or source references. Similar tags may overlap. A project catalog supports up to 400 topics (up to 40 new topics per model reply);
 a generation that exceeds it fails without replacing the previous saved result.

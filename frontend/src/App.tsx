@@ -1364,10 +1364,11 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           }} />
         </details>
         {!!saved && <div className="knowledge-filters">
-          <TopicPicker choices={topics} selected={topic} search={tagSearch} onSearch={value => { setTagSearch(value); setPage(0); }}
+          <TopicPicker choices={topics} selected={topic} search={tagSearch} disabled={targetQuestion !== undefined} onSearch={value => { setTagSearch(value); setPage(0); }}
             ariaLabel="AI Q&A tags" onSelect={id => { setTopic(id); setPage(0); }} />
-          <button className="secondary" type="button" onClick={() => { setTopic(ALL_TOPICS); setTagSearch(''); setPage(0); }}>Reset filters</button>
+          <button className="secondary" type="button" disabled={targetQuestion !== undefined} onClick={() => { setTopic(ALL_TOPICS); setTagSearch(''); setPage(0); }}>Reset filters</button>
         </div>}
+        {saved && targetQuestion !== undefined && <p className="muted">Choose Show all above to filter Q&A by tags.</p>}
         {loading && <Feedback>Loading saved Q&A…</Feedback>}
         {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
         {totalPages > 1 && (

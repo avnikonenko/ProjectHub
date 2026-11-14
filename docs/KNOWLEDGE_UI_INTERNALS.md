@@ -56,5 +56,5 @@ Tag generation uses project/configuration-scoped caches and bounded batches,
 separate from extraction caches and Overview selection. Unchanged memberships
 can be reused; successful batch caches survive later failures. Memberships are
 validated against existing record IDs. Q&A deletion prunes current memberships
-while preserving historical revisions. The taxonomy is bounded to 40 topics;
+while preserving historical revisions. The project taxonomy is bounded to 400 topics, with up to 40 new topics per reply;
 excess topics cause explicit failure rather than silent assignment truncation.

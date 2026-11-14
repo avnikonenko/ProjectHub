@@ -10,6 +10,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Separate the per-reply tag limit from the combined project catalog limit so valid independent batches can exceed 40 topics without failing on every cached retry. Retire unused topics and bound the complete tagging prompt.
+- Dismiss the tag dropdown after selection, on Escape and on outside clicks. Explain and disable tag filtering while Q&A shows a selected project-search result.
+- Report malformed saved Knowledge item identities explicitly before validating tag memberships, avoiding unhandled preview errors.
+
 - Preserve configuration, phase and population scopes when combining Overview stages, instead of inventing policy conflicts from different explicitly defined rules. Keep original source stages and normal-sized synthesis unchanged.
 - Declare the existing 100-character diagram-label limit in the AI response schema, matching validation so valid generation does not fail on an undeclared label constraint.
 - Retry a fresh quotation-copy failure once using source-owned snippet IDs, restoring exact original text before strict validation. Reuse canonical caches, retain the quotation limits, count the additional request, and avoid retries for foreign sources, incorrect speakers, transport failures or invalid cached data.
