@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Clear heading-specific context warnings when fresh extraction supplies the missing continuation, while preserving independent conflicts. Keep incomplete-heading warnings when the continuation exceeds the bounded context size.
+- Reopen and focus a knowledge record on every relationship-link selection, including an already-selected record that was manually collapsed.
 - Preserve the qualifying continuation when an extraction window ends at an assistant heading. Reuse unaffected caches; flag older heading-only interpretations for context review without rewriting their status or evidence.
 - Keep knowledge briefs focused on project meaning instead of repeating citation-processing details.
 - Reduce repeated preference cards through expandable interpretations from the same user passage, preserving every record, filter result and direct link.

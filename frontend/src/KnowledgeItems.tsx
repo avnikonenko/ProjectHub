@@ -12,6 +12,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   const [category, setCategory] = useState('');
   const [scope, setScope] = useState('');
   const [selected, setSelected] = useState(selectedItemId);
+  const [selectionRequest, setSelectionRequest] = useState(0);
   const [limits, setLimits] = useState<Record<string, number>>({});
   const instanceId = useId();
   const selectedRef = useRef<HTMLDetailsElement | null>(null);
@@ -24,8 +25,10 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
       selectedRef.current.scrollIntoView?.({ block: 'nearest' });
       selectedRef.current.querySelector('summary')?.focus({ preventScroll: true });
     }
-  }, [selected, identity]);
-  function select(id: string) { reset(); setSelected(id); onSelectItem?.(id); }
+  }, [selected, identity, selectionRequest]);
+  function select(id: string) {
+    reset(); setSelected(id); setSelectionRequest((value) => value + 1); onSelectItem?.(id);
+  }
   const items = filterKnowledge(snapshot.items, '', status, category, scope, snapshot.sources);
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
