@@ -164,6 +164,29 @@ must not become broader umbrella categories. The schema is unchanged. Earlier
 cache entries remain intact, but their interpretation version is not reused for
 new v17 extraction; the first full refresh must reread sources under that rule.
 
+### Bounded quotation-format retry
+
+The normal extraction request remains unchanged. Only a fresh response that fails
+quotation validation can receive one additional request. Before retrying, all
+nonquotation fields, source ownership, speaker and agreement checks must pass.
+Cancellation and the existing overall deadline still apply. Cached corruption,
+foreign references, wrong speakers, invalid JSON and transport errors do not
+trigger this retry.
+
+For that retry, application code presents the same original source text once as
+ordered, bounded literal snippets. The model selects snippet IDs instead of
+retyping quotes. The decoder enforces each ID's source owner and restores the
+exact original text, including punctuation and source-code typos; it never uses
+fuzzy matching or repairs the source. Blank snippets remain context but cannot
+be selected as evidence. Canonical extraction validation runs again before save.
+
+This is a lossless wire encoding, not another interpretation pipeline or store.
+The cached JSON retains schema 3 literal excerpts and v17 interpretation policy;
+older valid canonical results remain replayable. The cache envelope records
+`quote_selection_mode` when used. `ai_requests` includes the extra reading request,
+`quote_selector_retries` records it, and model/token metrics cover both calls when
+usage is reported. A second failure preserves previous results and completed caches.
+
 ## Bounded Overview inputs (historical selection path)
 
 When all active Knowledge fits the 240,000-character compacted synthesis budget,

@@ -76,7 +76,9 @@ def test_local_bounds_reject_structural_helper_output_without_caching(database, 
     manager = Manager(raw)
     with pytest.raises(CodexError):
         knowledge.extract_batch(database, 1, manager, window, knowledge.extraction_configuration(manager))
-    assert manager.calls == 1
+    # Only quotation failures permit one source-ID encoding retry. The helper
+    # deliberately returns the same invalid literal again; it must not be cached.
+    assert manager.calls == (2 if case == 'excerpt' else 1)
     with Session(database) as db:
         assert db.scalars(select(ProjectHistoryBatch)).all() == []
 

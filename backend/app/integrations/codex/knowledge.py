@@ -1,7 +1,7 @@
 """Replaceable source-backed interpretations; publication belongs to the brief caller."""
 from copy import deepcopy
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from contextvars import copy_context
+from contextvars import ContextVar, copy_context
 import os
 import threading
 import hashlib
@@ -18,6 +18,13 @@ from .protocol import CodexError
 
 SCHEMA_VERSION = 3
 PROMPT_VERSION = 17
+_quote_retry_counter = ContextVar('projecthub_quote_retry_counter', default=None)
+
+
+class EvidenceExcerptError(CodexError):
+    """A model excerpt cannot be resolved to bounded, literal source evidence."""
+
+
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -265,9 +272,9 @@ def _source_excerpt(quote, text):
     and rejects ambiguous matches, including overlapping occurrences.
     """
     if not isinstance(quote, str) or not quote.strip():
-        raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+        raise EvidenceExcerptError('Knowledge evidence does not match the original speaker and excerpt.')
     if len(quote) > 1600:
-        raise CodexError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(quote)} characters); matching the original speaker and excerpt does not relax this limit.')
+        raise EvidenceExcerptError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(quote)} characters); matching the original speaker and excerpt does not relax this limit.')
     if quote in text:
         return quote
     parts = re.split(r'(\s+)', quote)
@@ -277,9 +284,9 @@ def _source_excerpt(quote, text):
     matches = re.finditer('(?=(' + pattern + '))', text)
     first = next(matches, None)
     if first is None or next(matches, None) is not None:
-        raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+        raise EvidenceExcerptError('Knowledge evidence does not match the original speaker and excerpt.')
     if len(first[1]) > 1600:
-        raise CodexError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(first[1])} characters); matching the original speaker and excerpt does not relax this limit.')
+        raise EvidenceExcerptError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(first[1])} characters); matching the original speaker and excerpt does not relax this limit.')
     return first[1]
 
 
@@ -305,6 +312,7 @@ def validate_extraction(raw, window, project_id, extraction_version):
     primary = set(window['primary_ids'])
     expected = set(OUTPUT_SCHEMA['properties']['items']['items']['properties'])
     validated = []
+    excerpt_error = None
     for original in result['items']:
         if not isinstance(original, dict) or set(original) != expected:
             raise CodexError('Knowledge extraction returned an invalid item.')
@@ -332,7 +340,15 @@ def validate_extraction(raw, window, project_id, extraction_version):
             source = indexed[identifier]
             if ref['role'] not in ('user', 'assistant') or ref['role'] != source['role']:
                 raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
-            quote = _source_excerpt(ref['excerpt'], source['text'])
+            try:
+                quote = _source_excerpt(ref['excerpt'], source['text'])
+            except EvidenceExcerptError as exc:
+                # Check every other field/reference before authorizing a
+                # quotation-only retry. Never mask foreign evidence, a wrong
+                # speaker or unsupported agreement behind an earlier typo.
+                if excerpt_error is None:
+                    excerpt_error = exc
+                quote = ref['excerpt'] if isinstance(ref['excerpt'], str) else ''
             identity = (identifier, ref['role'], quote)
             if identity in seen_refs:
                 continue
@@ -354,6 +370,8 @@ def validate_extraction(raw, window, project_id, extraction_version):
                     raise CodexError('Knowledge acceptance requires its preceding proposal in the same conversation.')
             elif any(_short_acceptance(indexed[ref['source_id']]['text']) for ref in users):
                 raise CodexError('A short acceptance requires proposal context, not direct agreement.')
+        if excerpt_error is not None:
+            continue
         item.update(id='knowledge:' + _digest([project_id, item['category'], item['scope'],
                     item['design_status'], _normalized(item['statement'])])[:32], project_id=project_id,
                     evidence=evidence, extraction_version=extraction_version, source_state='valid',
@@ -362,6 +380,8 @@ def validate_extraction(raw, window, project_id, extraction_version):
                         'role', 'conversation_id', 'order', 'message_order', 'message_revision', 'source_key')},
                         'source_id': source['id'], 'revision': source['revision']} for source in window['sources']])
         validated.append(item)
+    if excerpt_error is not None:
+        raise excerpt_error
     return validated
 
 
@@ -417,9 +437,30 @@ def extract_batch(engine, project_id, manager, window, configuration):
         'alone into an unconditional policy. Context-only passages cannot independently create items.\n'
         if any(source.get('context_view') for source in window['sources']) else '')
     raw = generate(PROMPT + continuation_instruction + json.dumps(payload, ensure_ascii=False, separators=(',', ':')), schema)
-    items = validate_extraction(raw, window, project_id, version)
+    quote_selection = False
+    try:
+        items = validate_extraction(raw, window, project_id, version)
+    except EvidenceExcerptError:
+        from . import progress
+        from .quote_selectors import (QUOTE_SELECTION_INSTRUCTIONS, prepare_quote_selection,
+                                      restore_quote_selection)
+        progress.check_cancelled()
+        retry_payload, retry_schema, catalog = prepare_quote_selection(payload, schema)
+        progress.check_cancelled()
+        counter = _quote_retry_counter.get()
+        if counter is not None:
+            with counter['lock']:
+                counter['count'] += 1
+        selected_raw = generate(
+            PROMPT + continuation_instruction + QUOTE_SELECTION_INSTRUCTIONS
+            + json.dumps(retry_payload, ensure_ascii=False, separators=(',', ':')), retry_schema)
+        raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS)
+        items = validate_extraction(raw, window, project_id, version)
+        quote_selection = True
     cached_raw, adjustments = _cache_response(raw, window)
     envelope = {'raw': cached_raw, 'generation_mode': getattr(manager, 'extraction_generation_mode', 'full-schema')}
+    if quote_selection:
+        envelope['quote_selection_mode'] = 'exact-source-snippets-v1'
     if adjustments:
         envelope['selector_adjustments'] = adjustments
     with Session(engine) as db:
@@ -761,8 +802,14 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     for window in windows:
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
-    extracted, hits, requests, workers, timings = _extract_windows(
-        engine, project_id, manager, windows, configuration)
+    retry_counter = {'count': 0, 'lock': threading.Lock()}
+    retry_token = _quote_retry_counter.set(retry_counter)
+    try:
+        extracted, hits, requests, workers, timings = _extract_windows(
+            engine, project_id, manager, windows, configuration)
+    finally:
+        _quote_retry_counter.reset(retry_token)
+    requests += retry_counter['count']
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version)
     # Store only the exact quotations used, while keeping full originals in their
@@ -788,6 +835,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'fingerprint': bundle['manifest']['fingerprint'], 'coverage': coverage,
             'extraction_version': version,
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
+                            **({'quote_selector_retries': retry_counter['count']} if retry_counter['count'] else {}),
                             'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default',
                             'source_selection': selection}}

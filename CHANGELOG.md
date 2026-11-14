@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Retry a fresh quotation-copy failure once using source-owned snippet IDs, restoring exact original text before strict validation. Reuse canonical caches, retain the quotation limits, count the additional request, and avoid retries for foreign sources, incorrect speakers, transport failures or invalid cached data.
 - Show separate counts for changed tracked files and untracked files in the repository overview.
 
 - Report oversized evidence quotations with their actual character count and the 1,600-character limit, instead of incorrectly suggesting a speaker/source mismatch. Keep strict quotation validation and existing limits unchanged.
