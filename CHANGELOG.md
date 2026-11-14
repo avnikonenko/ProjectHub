@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve configuration, phase and population scopes when combining Overview stages, instead of inventing policy conflicts from different explicitly defined rules. Keep original source stages and normal-sized synthesis unchanged.
 - Declare the existing 100-character diagram-label limit in the AI response schema, matching validation so valid generation does not fail on an undeclared label constraint.
 - Retry a fresh quotation-copy failure once using source-owned snippet IDs, restoring exact original text before strict validation. Reuse canonical caches, retain the quotation limits, count the additional request, and avoid retries for foreign sources, incorrect speakers, transport failures or invalid cached data.
 - Show separate counts for changed tracked files and untracked files in the repository overview.

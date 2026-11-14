@@ -187,6 +187,17 @@ older valid canonical results remain replayable. The cache envelope records
 `quote_selector_retries` records it, and model/token metrics cover both calls when
 usage is reported. A second failure preserves previous results and completed caches.
 
+### Scope checks when combining Overview stages
+
+Combination prompts distinguish feature modes, lifecycle phases and populations
+before reporting a conflict or undefined policy. Different explicitly defined
+rules can coexist; unknown run configuration is a separate provenance question
+and must not be invented from a scope difference alone. Original excerpts remain
+primary over intermediate summary wording. This guidance is applied only when
+combining summary records, preserving normal-sized prompts and reusable source
+stage caches. It does not establish that every synthesized claim is semantically
+correct.
+
 ## Bounded Overview inputs (historical selection path)
 
 When all active Knowledge fits the 240,000-character compacted synthesis budget,

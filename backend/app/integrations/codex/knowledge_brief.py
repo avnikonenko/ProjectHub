@@ -209,6 +209,17 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
             'resolution merely from adjacency or summary wording. Keep one independently supported '
             'proposition per point. Preserve important policies, preconditions and distinct scopes. '
         )
+        if any(source.get('kind') == 'staged_interpretation' for source in sources):
+            bounded_guidance += (
+                'When combining summaries, compare configuration modes, lifecycle phases and '
+                'populations before calling statements conflicting or their relationship unresolved. '
+                'Different explicitly defined scopes can coexist: an enabled feature and its disabled '
+                'legacy path, or initial and later populations, do not contradict each other merely '
+                'because they use different rules. Verify the original excerpts rather than inheriting '
+                'a summary\'s conflict label. Missing evidence of which configuration a particular run '
+                'used is a separate provenance limitation, not an undefined policy; do not invent that '
+                'limitation or an open question solely from differing scopes. '
+            )
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '
