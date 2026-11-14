@@ -24,7 +24,11 @@ def _validate_result(result, project_id):
     if not isinstance(candidate, dict) or not isinstance(brief, dict):
         raise CodexError('Saved knowledge preview has invalid data.')
     from .topic_groups import validate_topic_groups
-    validate_topic_groups(candidate.get('topic_groups', []), [item['id'] for item in candidate.get('items', [])])
+    items = candidate.get('items', [])
+    if (not isinstance(items, list) or any(not isinstance(item, dict)
+            or not isinstance(item.get('id'), str) or not item['id'] for item in items)):
+        raise CodexError('Saved knowledge preview has invalid item identities.')
+    validate_topic_groups(candidate.get('topic_groups', []), [item['id'] for item in items])
     state = brief.get('project_state')
     identity, timestamp = result['publication_id'], brief.get('generated_at')
     if (candidate.get('project_id') != project_id or not isinstance(state, dict)

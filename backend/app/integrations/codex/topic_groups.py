@@ -19,7 +19,10 @@ from .protocol import CodexError
 from .staged_overview import _requested_provenance
 
 VERSION = 1
+# Each reply proposes at most 40 topics; independent batches may build a larger catalog.
 MAX_GROUPS = 40
+MAX_CATALOG_GROUPS = 400
+MAX_PROMPT_CHARS = 240_000
 MAX_BATCH_ITEMS = 120
 MAX_BATCH_CHARS = 40_000
 MAX_RESPONSE_CHARS = 120_000
@@ -45,8 +48,8 @@ def _text(value, maximum):
     return isinstance(value, str) and bool(value.strip()) and value == value.strip() and len(value) <= maximum
 
 
-def _definitions(groups):
-    if not isinstance(groups, list) or len(groups) > MAX_GROUPS:
+def _definitions(groups, maximum=MAX_CATALOG_GROUPS):
+    if not isinstance(groups, list) or len(groups) > maximum:
         raise CodexError('Knowledge topic groups have an invalid structure.')
     known, labels = set(), set()
     result = []
@@ -108,7 +111,7 @@ def _validate_reply(raw, batch, taxonomy):
         raise CodexError('Knowledge topic grouping returned invalid JSON.') from exc
     if not isinstance(reply, dict) or set(reply) != {'groups', 'assignments'}:
         raise CodexError('Knowledge topic grouping returned invalid fields.')
-    proposed = _definitions(reply['groups'])
+    proposed = _definitions(reply['groups'], maximum=MAX_GROUPS)
     existing = {group['id']: group for group in taxonomy}
     by_label = {' '.join(group['label'].casefold().split()): group['id'] for group in taxonomy}
     aliases = {identifier: identifier for identifier in existing}
@@ -127,7 +130,7 @@ def _validate_reply(raw, batch, taxonomy):
             existing[canonical] = updated[-1]
             by_label[normalized] = canonical
         aliases[identifier] = canonical
-    if len(updated) > MAX_GROUPS:
+    if len(updated) > MAX_CATALOG_GROUPS:
         raise CodexError('Knowledge topic grouping exceeded the topic limit.')
     assignments = reply['assignments']
     if not isinstance(assignments, list) or len(assignments) != len(batch):
@@ -211,6 +214,11 @@ def group_records(engine, project_id, manager, records, *, previous=None):
             if old_fingerprints.get(identifier) == fingerprints[identifier]:
                 memberships[identifier] = [group['id'] for group in groups if identifier in group['item_ids']]
                 reused += 1
+        # Validate the complete saved catalog first, then retire definitions whose
+        # old memberships have no surviving records. Untagged records still reuse.
+        active_topics = {group['id'] for group in groups if any(
+            identifier in known for identifier in group['item_ids'])}
+        taxonomy = [group for group in taxonomy if group['id'] in active_topics]
     pending = [record for record in compact if record['id'] not in memberships]
     batches = list(_batches(pending))
     fixed_taxonomy = deepcopy(taxonomy)
@@ -231,6 +239,8 @@ def group_records(engine, project_id, manager, records, *, previous=None):
         else:
             prompt = PROMPT + configuration['instructions'] + '\n' + json.dumps(
                 payload, ensure_ascii=False, separators=(',', ':'))
+            if len(prompt) > MAX_PROMPT_CHARS:
+                raise CodexError('Knowledge topic grouping prompt exceeds the input limit.')
             if callable(getattr(manager, 'independent_generation', None)):
                 with manager.independent_generation() as selected:
                     raw = selected.generate_brief(prompt, _schema(batch))
@@ -284,8 +294,9 @@ def group_records(engine, project_id, manager, records, *, previous=None):
         for group in batch_taxonomy:
             catalog.setdefault(group['id'], group)
         memberships.update(assigned)
-    taxonomy = list(catalog.values())
-    if len(taxonomy) > MAX_GROUPS:
+    used_topics = {identifier for assigned in memberships.values() for identifier in assigned}
+    taxonomy = [group for identifier, group in catalog.items() if identifier in used_topics]
+    if len(taxonomy) > MAX_CATALOG_GROUPS:
         raise CodexError('Knowledge topic grouping exceeded the topic limit.')
     groups = [{**group, 'item_ids': [record['id'] for record in compact
                                     if group['id'] in memberships.get(record['id'], [])]}
