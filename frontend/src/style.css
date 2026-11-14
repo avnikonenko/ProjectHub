@@ -247,6 +247,9 @@ button:disabled {
   inset-inline-end: 0;
   z-index: 5;
   width: min(17rem, 70vw);
+  max-height: 75dvh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0.8rem;
   border: 1px solid #dce6df;
   border-radius: 8px;

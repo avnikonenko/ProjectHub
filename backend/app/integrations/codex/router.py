@@ -37,11 +37,12 @@ class Input(BaseModel):
 class AIWorkerSettingsInput(Input):
     extraction_workers: int | None = Field(default=None, strict=True, ge=1, le=MAX_EXTRACTION_WORKERS)
     generation_profile: Literal['quality', 'balanced', 'economy'] | None = None
+    generation_budget: int | None = Field(default=None, strict=True, ge=30, le=7200)
 
     @model_validator(mode='after')
     def nonempty_settings(self):
         if not self.model_fields_set or any(getattr(self, key) is None for key in self.model_fields_set):
-            raise ValueError('Provide extraction_workers or generation_profile with a non-null value.')
+            raise ValueError('Provide extraction_workers, generation_profile or generation_budget with a non-null value.')
         return self
 
 

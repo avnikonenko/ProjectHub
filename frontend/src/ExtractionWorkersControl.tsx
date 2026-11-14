@@ -11,6 +11,7 @@ type WorkerSettings = {
   min_extraction_workers: number;
   max_extraction_workers: number;
   profileSettings?: GenerationProfileSettings | null;
+  budgetSettings?: { value: number; configured: number; min: number; max: number } | null;
 };
 
 function settingsResponse(value: unknown): WorkerSettings {
@@ -24,17 +25,33 @@ function settingsResponse(value: unknown): WorkerSettings {
     || settings.configured_extraction_workers! > settings.max_extraction_workers!) {
     throw new Error('AI settings returned an unsupported worker count.');
   }
-  return { ...settings, profileSettings: parseGenerationProfileSettings(value) } as WorkerSettings;
+  const budget = value as Record<string, unknown>;
+  let budgetSettings = null;
+  if ('generation_budget' in budget || 'configured_generation_budget' in budget) {
+    const min = budget.min_generation_budget;
+    const max = budget.max_generation_budget;
+    const effective = budget.generation_budget;
+    const configured = budget.configured_generation_budget;
+    if (!validCount(min) || !validCount(max) || !validCount(effective) || !validCount(configured)
+      || Number(min) > Number(max) || Number(effective) < Number(min) || Number(effective) > Number(max)
+      || Number(configured) < Number(min) || Number(configured) > Number(max)) {
+      throw new Error('AI settings returned an unsupported time budget.');
+    }
+    budgetSettings = { value: Number(effective), configured: Number(configured), min: Number(min), max: Number(max) };
+  }
+  return { ...settings, profileSettings: parseGenerationProfileSettings(value), budgetSettings } as WorkerSettings;
 }
 
 export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const helpId = useId();
+  const budgetHelpId = useId();
   const [settings, setSettings] = useState<WorkerSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState('');
   const [profileDraft, setProfileDraft] = useState('');
-  const [savedField, setSavedField] = useState<'workers' | 'profile'>('workers');
+  const [budgetDraft, setBudgetDraft] = useState('');
+  const [savedField, setSavedField] = useState<'workers' | 'profile' | 'budget'>('workers');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [reload, setReload] = useState(0);
@@ -62,6 +79,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
           setSettings(result);
           setDraft(String(result.extraction_workers));
           setProfileDraft(result.profileSettings?.generation_profile ?? '');
+          setBudgetDraft(result.budgetSettings ? String(result.budgetSettings.value) : '');
         }
       })
       .catch((failure: unknown) => {
@@ -128,6 +146,30 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     }
   }
 
+  async function saveBudget() {
+    const budget = settings?.budgetSettings;
+    const seconds = Number(budgetDraft);
+    if (savingRef.current || !budget || !Number.isSafeInteger(seconds) || seconds < budget.min || seconds > budget.max) return;
+    savingRef.current = true;
+    setSavedField('budget');
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const result = settingsResponse(await patch('/settings/ai', { generation_budget: seconds }));
+      if (!result.budgetSettings) throw new Error('The server did not return the saved time budget.');
+      if (mounted.current) {
+        ++loadVersion.current;
+        setSettings(result);
+        setBudgetDraft(String(result.budgetSettings.value));
+        setSaved(true);
+      }
+    } catch (failure: unknown) {
+      if (mounted.current) setError(failure instanceof Error ? failure.message : 'Could not save time budget.');
+    } finally {
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  }
+
   const profileSettings = settings?.profileSettings;
   const profile = profileSettings?.generation_profiles.find((value) => value.id === profileDraft);
   const unchangedProfile = profileDraft === profileSettings?.generation_profile
@@ -136,13 +178,17 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const valid = !!settings && Number.isSafeInteger(count)
     && count >= settings.min_extraction_workers && count <= settings.max_extraction_workers;
   const unchanged = count === settings?.extraction_workers && count === settings?.configured_extraction_workers;
+  const budget = settings?.budgetSettings;
+  const seconds = Number(budgetDraft);
+  const validBudget = !!budget && Number.isSafeInteger(seconds) && seconds >= budget.min && seconds <= budget.max;
+  const unchangedBudget = seconds === budget?.value && seconds === budget?.configured;
   const saveFeedback = <>
     <ErrorBox error={error} />
     {error && !saving && <button type="button" className="secondary" onClick={() => setReload((value) => value + 1)}>
       Reload setting
     </button>}
     {(loading || saving || saved) && <Feedback tone={saved && !saving && !loading ? 'success' : 'info'}>
-      {saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : 'Thread count saved.'}
+      {saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : savedField === 'budget' ? 'Overall time budget saved.' : 'Thread count saved.'}
     </Feedback>}
   </>;
   return <div>
@@ -193,5 +239,27 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     </SettingsHelp>
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
       && <p><small>Startup environment overrides the saved value ({settings.configured_extraction_workers}).</small></p>}
+    <label>
+      Overall time budget (seconds)
+      <input type="number" min={budget?.min ?? 30} max={budget?.max ?? 7200} step={1}
+        aria-label="Overall time budget (seconds)" aria-describedby={budgetHelpId}
+        aria-invalid={!!budget && !validBudget} value={budgetDraft}
+        disabled={loading || saving || !budget}
+        placeholder={loading ? 'Loading…' : budget ? '900' : 'Unavailable'}
+        onChange={(event) => { setBudgetDraft(event.target.value); setSaved(false); }} />
+    </label>
+    <div className="actions left">
+      <button type="button" className="secondary" disabled={loading || saving || !validBudget || unchangedBudget}
+        onClick={() => void saveBudget()}>Save time budget</button>
+    </div>
+    {savedField === 'budget' && !loading && saveFeedback}
+    {budget && !validBudget && <Feedback>Enter a whole number from {budget.min} to {budget.max} seconds.</Feedback>}
+    <SettingsHelp title="About the overall time budget" id={budgetHelpId}>
+      <p>Total time allowed across a generation's stages; default 900 seconds (15 minutes).
+        {' '}Applies to the next generation. Per-response timeouts still apply.</p>
+      <p>For Project status, AI Q&A, Scheme, Knowledge and Ask Project. Codex discussions are separate.</p>
+    </SettingsHelp>
+    {budget && budget.value !== budget.configured
+      && <p><small>Startup environment overrides the saved time budget ({budget.configured} seconds).</small></p>}
   </div>;
 }

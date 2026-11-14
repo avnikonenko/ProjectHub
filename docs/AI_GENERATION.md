@@ -13,6 +13,14 @@ is separate from the per-response `generation_timeout`. Cancellation and budget
 checks are cooperative; an in-flight protocol operation can take additional time
 to stop.
 
+To change the budget without restarting, open **Settings → Overall time budget
+(seconds)**, enter a whole number from 30 to 7200, and click **Save time budget**.
+The default is 900 seconds (15 minutes). Saving updates your local configuration
+and the next generation's allowance; an already-running request keeps its original
+budget. Increasing this setting does not increase the separate per-response timeout.
+It covers Project status, AI Q&A, Scheme, Knowledge generation, and Ask Project AI
+responses. Ordinary Codex discussion sessions use their own lifecycle.
+
 Refreshing the browser restores progress for an ongoing Project status or AI Q&A
 request after reopening its project. It does not start another generation.
 Progress recovery requires the same ProjectHub server process to remain running.

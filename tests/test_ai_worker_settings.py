@@ -22,6 +22,7 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     monkeypatch.delenv('PROJECTHUB_EXTRACTION_WORKERS', raising=False)
     monkeypatch.delenv('PROJECTHUB_GENERATION_PROFILE', raising=False)
+    monkeypatch.delenv('PROJECTHUB_GENERATION_BUDGET', raising=False)
     monkeypatch.setattr(CodexManager, '_new_client', lambda *args, **kwargs: pytest.fail('Settings invoked Codex'))
     app = create_app(tmp_path / 'data')
     with TestClient(app) as client:
@@ -38,6 +39,8 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
         'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
         'generation_profile': 'quality', 'configured_generation_profile': 'quality',
         'generation_profiles': config.list_generation_profiles(),
+        'generation_budget': 900, 'configured_generation_budget': 900,
+        'min_generation_budget': 30, 'max_generation_budget': 7200,
     }
     assert path.read_bytes() == original
     assert client.get('/api/projects').json() == []
@@ -186,6 +189,128 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
         'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
         'generation_profile': 'quality', 'configured_generation_profile': 'quality',
         'generation_profiles': config.list_generation_profiles(),
+        'generation_budget': 900, 'configured_generation_budget': 900,
+        'min_generation_budget': 30, 'max_generation_budget': 7200,
     }
     assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
     assert client.get('/api/settings/ai').json() == response.json()
+
+
+def test_budget_read_separates_environment_override_without_creating_or_editing_config(settings_client, monkeypatch):
+    client, path = settings_client
+    original = path.read_bytes()
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '1800')
+    result = client.get('/api/settings/ai').json()
+    assert result['generation_budget'] == 1800
+    assert result['configured_generation_budget'] == 900
+    assert result['min_generation_budget'] == 30 and result['max_generation_budget'] == 7200
+    assert path.read_bytes() == original
+
+
+@pytest.mark.parametrize('budget', [30, 1200, 7200])
+def test_budget_persists_and_reloads_for_next_process(settings_client, budget):
+    client, path = settings_client
+    before = tomllib.loads(path.read_text())
+    response = client.patch('/api/settings/ai', json={'generation_budget': budget})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['generation_budget'] == result['configured_generation_budget'] == budget
+    before['ai']['generation_budget'] = budget
+    assert tomllib.loads(path.read_text()) == before
+    assert os.environ['PROJECTHUB_GENERATION_BUDGET'] == str(budget)
+    assert config.load_settings({'PROJECTHUB_CONFIG': str(path)}).generation_budget == budget
+    assert client.get('/api/settings/ai').json()['generation_budget'] == budget
+
+
+@pytest.mark.parametrize('budget', [29, 7201, True, False, 900.0, '900', None])
+def test_invalid_budget_does_not_change_other_requested_settings(settings_client, monkeypatch, budget):
+    client, path = settings_client
+    original = path.read_bytes()
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '2')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_PROFILE', 'quality')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '900')
+    response = client.patch('/api/settings/ai', json={
+        'generation_budget': budget, 'extraction_workers': 8, 'generation_profile': 'economy',
+    })
+    assert response.status_code == 422
+    assert path.read_bytes() == original
+    assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '2'
+    assert os.environ['PROJECTHUB_GENERATION_PROFILE'] == 'quality'
+    assert os.environ['PROJECTHUB_GENERATION_BUDGET'] == '900'
+
+
+@pytest.mark.parametrize('original', [
+    '[ai]\ngeneration_budget = 900 # budget comment\n',
+    '["ai"]\n"generation_budget" = 900 # budget comment\n',
+    '[ai]\r\ngeneration_budget = 900 # budget comment\r\n',
+    '[server]\nport = 8766\n',
+    '[ai]\ngeneration_timeout = 600\n',
+])
+def test_budget_save_preserves_comments_and_supported_layouts(settings_client, original):
+    client, path = settings_client
+    path.write_bytes(original.encode())
+    response = client.patch('/api/settings/ai', json={'generation_budget': 1200})
+    assert response.status_code == 200, response.text
+    expected = tomllib.loads(original)
+    expected.setdefault('ai', {})['generation_budget'] = 1200
+    assert tomllib.loads(path.read_text()) == expected
+    if '# budget comment' in original:
+        assert '# budget comment' in path.read_text()
+    if '\r\n' in original:
+        assert b'\r\n' in path.read_bytes()
+
+
+def test_mixed_budget_worker_profile_changes_are_atomic(settings_client, monkeypatch):
+    client, path = settings_client
+    original = path.read_bytes()
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '2')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_PROFILE', 'quality')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '900')
+    replace = config.os.replace
+
+    def denied(*args):
+        raise PermissionError('private disk details')
+
+    monkeypatch.setattr(config.os, 'replace', denied)
+    body = {'generation_budget': 1200, 'extraction_workers': 8, 'generation_profile': 'economy'}
+    response = client.patch('/api/settings/ai', json=body)
+    assert response.status_code == 503
+    assert 'private disk details' not in response.text
+    assert path.read_bytes() == original
+    assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '2'
+    assert os.environ['PROJECTHUB_GENERATION_PROFILE'] == 'quality'
+    assert os.environ['PROJECTHUB_GENERATION_BUDGET'] == '900'
+    monkeypatch.setattr(config.os, 'replace', replace)
+    result = client.patch('/api/settings/ai', json=body)
+    assert result.status_code == 200, result.text
+    assert all(result.json()[key] == value for key, value in body.items())
+    assert all(tomllib.loads(path.read_text())['ai'][key] == value for key, value in body.items())
+    assert '# Preserve this comment.' in path.read_text()
+    assert 'extraction_workers = 8 # measured separately' in path.read_text()
+
+
+def test_budget_save_does_not_extend_an_active_generation_deadline(settings_client, monkeypatch):
+    import time
+    from backend.app.integrations.codex import progress
+    from backend.app.integrations.codex.protocol import CodexError
+
+    client, _ = settings_client
+    pid = 99135
+    assert client.patch('/api/settings/ai', json={'generation_budget': 30}).status_code == 200
+    before = time.monotonic()
+    progress.begin(pid, 'brief')
+    try:
+        assert client.patch('/api/settings/ai', json={'generation_budget': 1200}).status_code == 200
+        assert progress.read(pid, 'brief')['budget_seconds'] == 30
+        with monkeypatch.context() as scoped_patch:
+            scoped_patch.setattr(progress.time, 'monotonic', lambda: before + 31)
+            with pytest.raises(CodexError, match='overall time budget'):
+                progress.check_cancelled()
+    finally:
+        progress.finish(pid)
+    progress.begin(pid, 'brief')
+    try:
+        assert progress.read(pid, 'brief')['budget_seconds'] == 1200
+        progress.check_cancelled()
+    finally:
+        progress.finish(pid)

@@ -60,10 +60,11 @@ class Settings:
 
     def apply_environment(self):
         workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+        budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
         profile = _profile(self.generation_profile)
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
-        os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(self.generation_budget)
+        os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(budget)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
         os.environ['PROJECTHUB_GENERATION_PROFILE'] = profile
@@ -170,25 +171,30 @@ def create_config(environ: Mapping[str, str] | None = None):
     return path
 
 
-def _ai_settings_response(configured, *, workers=None, profile=None):
+def _ai_settings_response(configured, *, workers=None, profile=None, budget=None):
     effective_workers = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers)
                                  if workers is None else workers,
                                  'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
     effective_profile = _profile(os.environ.get('PROJECTHUB_GENERATION_PROFILE', configured.generation_profile)
                                  if profile is None else profile)
+    effective_budget = _integer(os.environ.get('PROJECTHUB_GENERATION_BUDGET', configured.generation_budget)
+                                if budget is None else budget, 'ai.generation_budget', 30, 7200)
     return {'extraction_workers': effective_workers,
             'configured_extraction_workers': configured.extraction_workers,
             'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
             'generation_profile': effective_profile,
             'configured_generation_profile': configured.generation_profile,
-            'generation_profiles': list_generation_profiles()}
+            'generation_profiles': list_generation_profiles(),
+            'generation_budget': effective_budget,
+            'configured_generation_budget': configured.generation_budget,
+            'min_generation_budget': 30, 'max_generation_budget': 7200}
 
 
 def ai_worker_settings():
     """Expose only non-secret AI settings, without creating a config file."""
     with _settings_write_lock:
         configured_env = dict(os.environ)
-        for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE'):
+        for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET'):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
 
@@ -206,7 +212,7 @@ def _ai_config_text(original, changes):
 
 def _ai_scalar_text(original, name, value):
     """Edit an application-owned scalar; comparison protects unsupported layouts."""
-    if name not in ('extraction_workers', 'generation_profile'):
+    if name not in ('extraction_workers', 'generation_profile', 'generation_budget'):
         raise ConfigError('Unsupported AI setting.')
     encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
@@ -254,15 +260,17 @@ def save_ai_worker_settings(workers):
     return save_ai_settings(extraction_workers=workers)
 
 
-def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET):
+def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET):
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
         changes['extraction_workers'] = _integer(extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
     if generation_profile is not _UNSET:
         changes['generation_profile'] = _profile(generation_profile)
+    if generation_budget is not _UNSET:
+        changes['generation_budget'] = _integer(generation_budget, 'ai.generation_budget', 30, 7200)
     if not changes:
-        raise ConfigError('Provide extraction_workers or generation_profile.')
+        raise ConfigError('Provide extraction_workers, generation_profile or generation_budget.')
     with _settings_write_lock:
         path = config_path()
         if any(p.is_symlink() for p in (path, *path.parents)):
@@ -295,7 +303,7 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET):
             configured = load_settings({'PROJECTHUB_CONFIG': temporary})
             # Validate unmodified runtime overrides before changing the file too.
             result = _ai_settings_response(configured, workers=changes.get('extraction_workers'),
-                                           profile=changes.get('generation_profile'))
+                                           profile=changes.get('generation_profile'), budget=changes.get('generation_budget'))
             if path.is_symlink() or (path.exists() != existed):
                 raise ConfigError('Settings changed while saving; reload and try again.')
             if existed and not stat.S_ISREG(path.stat().st_mode):
@@ -307,6 +315,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET):
                 os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(changes['extraction_workers'])
             if 'generation_profile' in changes:
                 os.environ['PROJECTHUB_GENERATION_PROFILE'] = changes['generation_profile']
+            if 'generation_budget' in changes:
+                os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(changes['generation_budget'])
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

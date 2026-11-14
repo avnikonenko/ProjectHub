@@ -185,3 +185,24 @@ def test_direct_invalid_settings_worker_value_cannot_enter_environment(tmp_path,
         settings.apply_environment()
     assert 'do-not-print-this' not in str(exc.value)
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '2'
+
+
+@pytest.mark.parametrize('budget', [30, 1200, 7200])
+def test_budget_file_and_environment_precedence(tmp_path, budget):
+    path = tmp_path / 'config.toml'
+    path.write_text(f'[ai]\ngeneration_budget = {budget}\n')
+    env = {'PROJECTHUB_CONFIG': str(path)}
+    assert load_settings(env).generation_budget == budget
+    override = 600 if budget == 1200 else 1200
+    assert load_settings({**env, 'PROJECTHUB_GENERATION_BUDGET': str(override)}).generation_budget == override
+
+
+@pytest.mark.parametrize('value', [True, False, 29, 7201, 900.0, None])
+def test_direct_invalid_budget_does_not_partially_update_environment(tmp_path, monkeypatch, value):
+    monkeypatch.setenv('PROJECTHUB_PORT', '8766')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '900')
+    settings = Settings(9876, tmp_path, 600, None, generation_budget=value)
+    with pytest.raises(ConfigError, match='ai.generation_budget must be an integer from 30 to 7200'):
+        settings.apply_environment()
+    assert os.environ['PROJECTHUB_PORT'] == '8766'
+    assert os.environ['PROJECTHUB_GENERATION_BUDGET'] == '900'
