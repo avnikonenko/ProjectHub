@@ -40,13 +40,26 @@ request as authorization. If the outcome is uncertain, check
 
 ## Add a TODO
 
-When asked to record a follow-up, submit it once:
+Use a short, actionable title that is easy to scan. Put context, rationale,
+requirements, examples, and acceptance checks in the **Notes field of that same
+TODO** (`description`), not in its title or a separate project note. Preserve the
+user's details; do not invent missing requirements. A simple task needs no notes.
+
+For a task with details, write its notes to a UTF-8 Markdown file and submit once:
 
 ```bash
-projecthub todo add --project-id 1 --title 'Verify the backup can be restored'
+projecthub todo add --project-id 1 --title 'Test backup restoration' --notes-file /tmp/todo-notes.md
 ```
 
-Report the returned TODO ID and project. This adds a checklist item; it does not execute that work. If the result is uncertain, check `projecthub todo list --project-id 1 --all` before retrying.
+For example, the notes could specify restoring a backup into a temporary data
+directory and checking that saved notes and tasks are present. Keep multiline
+Markdown in the file rather than interpolating arbitrary text into shell code.
+Short notes can use `--notes`; `--notes-stdin` reads notes from standard input.
+For a title-only task, omit these options.
+
+Report the returned TODO ID and project. This saves a task and its related notes
+in one operation; it does not execute the work. If the result is uncertain, check
+`projecthub todo list --project-id 1 --all` before retrying.
 
 ## Mark a TODO finished or cross it out
 

@@ -290,3 +290,52 @@ def test_complete_missing_todo_never_writes(monkeypatch):
         return [{'id': 2, 'name': 'Example'}] if path == '/projects' else []
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['todo', 'complete', '--project-id', '2', '--todo-id', '99']) == 1
+
+
+@pytest.mark.parametrize('source', ['--notes', '--description', '--notes-file', '--notes-stdin'])
+def test_todo_details_preserve_markdown_in_same_task(monkeypatch, tmp_path, capsys, source):
+    import io
+    details = '## Check\n\n- Restore `backup`\n- Keep $(literal) and café.\n'
+    arguments = [source, details]
+    if source == '--notes-file':
+        file = tmp_path / 'details.md'
+        file.write_text(details, encoding='utf-8')
+        arguments = [source, str(file)]
+    elif source == '--notes-stdin':
+        monkeypatch.setattr(notes_cli.sys, 'stdin', io.StringIO(details))
+        arguments = [source]
+    calls = []
+    def request(method, path, payload=None):
+        calls.append((method, path, payload))
+        if method == 'GET':
+            return [{'id': 2, 'name': 'Example'}]
+        assert path == '/projects/2/tasks'
+        assert payload == {'title': 'Check backup', 'description': details}
+        return {'id': 7, 'project_id': 2}
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['todo', 'add', '--project-id', '2', '--title', 'Check backup', *arguments]) == 0
+    assert json.loads(capsys.readouterr().out)['todo_id'] == 7
+    assert [method for method, _, _ in calls] == ['GET', 'POST']
+
+
+@pytest.mark.parametrize('source', ['--notes', '--notes-file', '--notes-stdin'])
+def test_oversized_todo_details_never_access_projecthub(monkeypatch, tmp_path, capsys, source):
+    import io
+    details = 'x' * (notes_cli.MAX_CONTENT + 1)
+    arguments = [source, details]
+    if source == '--notes-file':
+        file = tmp_path / 'details.md'
+        file.write_text(details)
+        arguments = [source, str(file)]
+    elif source == '--notes-stdin':
+        monkeypatch.setattr(notes_cli.sys, 'stdin', io.StringIO(details))
+        arguments = [source]
+    monkeypatch.setattr(notes_cli, 'request', lambda *a, **k: pytest.fail('Invalid details must not access API'))
+    assert notes_cli.main(['todo', 'add', '--project-id', '2', '--title', 'Check backup', *arguments]) == 1
+    assert '200,000' in capsys.readouterr().err
+
+
+def test_todo_details_sources_are_mutually_exclusive():
+    with pytest.raises(SystemExit) as error:
+        notes_cli.parser().parse_args(['todo', 'add', '--project-id', '2', '--title', 'Check', '--notes', 'Text', '--notes-stdin'])
+    assert error.value.code == 2

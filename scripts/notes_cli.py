@@ -76,6 +76,10 @@ def parser():
     todo_add = todo_actions.add_parser('add')
     project_arguments(todo_add)
     todo_add.add_argument('--title', required=True)
+    todo_notes = todo_add.add_mutually_exclusive_group()
+    todo_notes.add_argument('--notes', '--description', dest='notes', help='Details stored in this TODO’s Notes field')
+    todo_notes.add_argument('--notes-file', type=Path, help='UTF-8 Markdown/text file for TODO details')
+    todo_notes.add_argument('--notes-stdin', action='store_true', help='Read TODO details from standard input')
     done = todo_actions.add_parser('complete', aliases=['done'], help='Mark an existing TODO completed')
     project_arguments(done)
     done.add_argument('--todo-id', type=int, required=True)
@@ -159,8 +163,19 @@ def main(argv=None):
         if not title or len(title) > 500:
             raise ValueError('Title must contain 1–500 characters.')
         if args.command == 'todo':
+            details = args.notes
+            if args.notes_file:
+                with args.notes_file.open(encoding='utf-8') as stream:
+                    details = stream.read(MAX_CONTENT + 1)
+            elif args.notes_stdin:
+                details = sys.stdin.read(MAX_CONTENT + 1)
+            if details is not None and len(details) > MAX_CONTENT:
+                raise ValueError('TODO notes must contain at most 200,000 characters.')
+            payload = {'title': title}
+            if details is not None:
+                payload['description'] = details
             project = resolve_project(request('GET', '/projects'), args)
-            result = request('POST', f"/projects/{project['id']}/tasks", {'title': title})
+            result = request('POST', f"/projects/{project['id']}/tasks", payload)
             if (not isinstance(result, dict) or not isinstance(result.get('id'), int)
                     or result.get('project_id') != project['id']):
                 raise ValueError('Unexpected TODO response. Check TODO before retrying; the item may have been saved.')

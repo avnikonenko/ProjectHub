@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Terminal TODO creation accepts related Markdown notes; the agent skill uses short titles with details stored on the same task.
+
 - Scheme colors distinguish entry blocks, intermediate components, and outputs in both themes, including saved diagrams without regeneration.
 
 - AI-generated, project-specific tags for Knowledge and AI Q&A. Browse all tags or type to filter alongside existing controls; retain overlapping memberships, original records and citations, with incremental assignment reuse and project-scoped caches.
