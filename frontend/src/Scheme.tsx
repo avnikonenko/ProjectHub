@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, post } from './api';
 import { briefReferences, BriefSources, type BriefSource } from './BriefReferences';
@@ -160,7 +161,7 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
         {fullscreen ? 'Exit fullscreen' : 'Fullscreen'}
       </button>
     </div>
-    {rendering && <p role="status">Rendering diagram…</p>}
+    {rendering && <Feedback>Rendering diagram…</Feedback>}
     <ErrorBox error={error || viewError} />
     <div ref={viewport} className="scheme-viewport" tabIndex={0}
       role="region" aria-label="Scrollable project diagram">
@@ -316,6 +317,10 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         {generating || recoveryBusy ? 'Generating…' : snapshot ? 'Refresh Scheme' : 'Generate Scheme'}
       </button>} />
     <small className="brief-refresh-note">Refreshing sends project evidence to Codex.</small>
+    <ErrorBox error={error} />
+    <Feedback>{notice}</Feedback>
+    {revisionLoading && <Feedback>Loading saved version…</Feedback>}
+    {loading && !result && <Feedback>Loading Scheme…</Feedback>}
     <details className="brief-details">
       <summary>Scheme details</summary>
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
@@ -331,14 +336,11 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           setRevisionId(id);
         }} />
     </details>
-    <ErrorBox error={error} />
-    {notice && <p role="status">{notice}</p>}
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {(['Architecture', 'Workflow', 'Dependencies'] as const).map((name) =>
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
           onClick={() => setView(name)}>{name}</button>)}
     </nav>
-    {loading && !result && <Empty>Loading Scheme…</Empty>}
     {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved scheme. Generate one from this project’s available evidence.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}

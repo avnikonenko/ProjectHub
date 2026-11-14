@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { DeleteButton } from './ui';
@@ -113,10 +114,10 @@ export function RevisionHistory<T>({
           </button>
         </p>
       )}
-      {error && <div className="error" role="alert">{error}</div>}
+      <Feedback tone="error">{error}</Feedback>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>Previous versions</summary>
-        {loading && !disabled && <p role="status">Loading saved versions…</p>}
+        {loading && !disabled && <Feedback>Loading saved versions…</Feedback>}
         {!loading && page && !page.results.length && <p>No previous versions saved.</p>}
         {!!page?.results.length && (
           <ul>

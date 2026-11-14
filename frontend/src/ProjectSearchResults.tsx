@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Empty, ErrorBox } from './ui';
@@ -49,7 +50,7 @@ export function ProjectSearchResults({ base, query, onOpenRecord, onOpenSource }
         className="secondary" aria-pressed={kind === value} onClick={() => select(value)}>{name}</button>)}
     </div>
     <ErrorBox error={error} />
-    {loading && <Empty>Searching saved project information…</Empty>}
+    {loading && <Feedback>Searching saved project information…</Feedback>}
     {!loading && !error && !groups.some((group) => group.results.length) && <Empty>No matching records in this project.</Empty>}
     {groups.filter((group) => group.results.length).map((group) => <section className="brief-section" key={group.kind}>
       <h3>{group.title}</h3>

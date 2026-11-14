@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, patch } from './api';
 import { ErrorBox } from './ui';
+import { Feedback } from './Feedback';
 import { SettingsHelp } from './SettingsHelp';
 import { generationProfilePatch, parseGenerationProfileSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
@@ -135,6 +136,15 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const valid = !!settings && Number.isSafeInteger(count)
     && count >= settings.min_extraction_workers && count <= settings.max_extraction_workers;
   const unchanged = count === settings?.extraction_workers && count === settings?.configured_extraction_workers;
+  const saveFeedback = <>
+    <ErrorBox error={error} />
+    {error && !saving && <button type="button" className="secondary" onClick={() => setReload((value) => value + 1)}>
+      Reload setting
+    </button>}
+    {(loading || saving || saved) && <Feedback tone={saved && !saving && !loading ? 'success' : 'info'}>
+      {saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : 'Thread count saved.'}
+    </Feedback>}
+  </>;
   return <div>
     <label>
       Knowledge generation profile
@@ -157,6 +167,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       <button type="button" className="secondary" disabled={loading || saving || !profile || unchangedProfile}
         onClick={() => void saveProfile()}>Save generation profile</button>
     </div>
+    {savedField === 'profile' && !loading && saveFeedback}
     {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile
       && <p><small>Startup environment overrides the saved profile ({profileSettings.configured_generation_profile}).</small></p>}
     <label>
@@ -174,17 +185,13 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       <button type="button" className="secondary" disabled={loading || saving || !valid || unchanged}
         onClick={() => void save(count)}>Save thread count</button>
     </div>
+    {(savedField === 'workers' || loading) && saveFeedback}
+    {settings && !valid && <Feedback>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</Feedback>}
     <SettingsHelp title="Thread-count explanation" id={helpId}>
       <p>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
         {' '}More threads use more memory and may hit account limits.</p>
     </SettingsHelp>
-    {settings && !valid && <p role="status"><small>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</small></p>}
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
       && <p><small>Startup environment overrides the saved value ({settings.configured_extraction_workers}).</small></p>}
-    <ErrorBox error={error} />
-    {error && !saving && <button type="button" className="secondary" onClick={() => setReload((value) => value + 1)}>
-      Reload setting
-    </button>}
-    {(loading || saving || saved) && <p role="status"><small>{saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : 'Thread count saved.'}</small></p>}
   </div>;
 }

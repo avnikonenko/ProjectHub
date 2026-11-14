@@ -42,6 +42,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Tighten page/control spacing, keep prose at a comfortable reading width while tables and diagrams use more space, and standardize saving/progress/error/cancellation feedback near the related actions.
 - Make list action icons quieter at rest, with consistent square targets and matching hover/keyboard-focus highlights. Pinned TODOs stay prominent; touch targets remain larger.
 - Merge colour-palette and text-size help into one About appearance section in Settings.
 - Show saved Knowledge results directly with Generate/Regenerate actions. Remove manual reload controls and preview-only explanatory panels; refresh saved data on returning to the page and refresh Overview after activation.

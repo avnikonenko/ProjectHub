@@ -1,3 +1,5 @@
+import { Feedback } from './Feedback';
+import { ErrorBox } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 
@@ -214,11 +216,12 @@ export function GenerationStatus({
   const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;
   if (kind === 'ask' && (!progress || progress.state === 'idle' || progress.state === 'completed')) return null;
   return (
-    <div className="generation-progress">
+    <>
+    <Feedback className="generation-progress" tone={progress?.state === 'failed' ? 'error' : progress?.state === 'completed' ? 'success' : 'info'}>
       <p>
-        <strong>{label ?? 'AI generation'}</strong> · <span>Elapsed {elapsedLabel}</span>
+        <strong>{label ?? 'AI generation'}</strong> · <span aria-live="off">Elapsed {elapsedLabel}</span>
       </p>
-      <div role="status" aria-atomic="true">
+      <div>
         <p>{error ? 'Progress updates are temporarily unavailable. Still waiting for the result.'
           : cancelling ? 'Cancelling… Waiting for Codex to stop.'
           : describeProgress(progress?.stage ?? '', kind)}</p>
@@ -248,7 +251,8 @@ export function GenerationStatus({
           {cancelling ? 'Cancelling…' : 'Cancel generation'}
         </button>
       )}
-      {cancelError && <p role="alert">{cancelError}</p>}
-    </div>
+    </Feedback>
+    <ErrorBox error={cancelError} />
+    </>
   );
 }

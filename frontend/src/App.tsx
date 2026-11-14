@@ -18,6 +18,7 @@ import { Scheme } from './Scheme';
 import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { AIResultHeader } from './AIResultHeader';
+import { Feedback } from './Feedback';
 import { ProjectSearchResults } from './ProjectSearchResults';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
@@ -54,7 +55,7 @@ function SessionIdentifier({ threadId }: { threadId: string }) {
             }
           }}>Copy ID</button>
       </div>
-      {status && <small role="status">{status}</small>}
+      <Feedback tone={status === 'Copied' ? 'success' : 'info'}>{status}</Feedback>
     </details>
   );
 }
@@ -1020,7 +1021,7 @@ function AppSettings() {
           <SettingsHelp title="About Codex profiles">
             <p>Register an existing Codex sign-in directory, then choose the profile in project AI settings. ProjectHub checks its login without copying credentials.</p>
           </SettingsHelp>
-          {profileMessage && <p role="status"><small>{profileMessage}</small></p>}
+          <Feedback tone="success">{profileMessage}</Feedback>
         </div>
       </details>
       {addingProfile && <Form
@@ -1079,8 +1080,8 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
           <SettingsHelp title="About project AI instructions">
             <p>Set response preferences for future AI requests in this project. You can edit the shared recommendations or leave the instructions blank. Read-only and evidence rules still apply.</p>
           </SettingsHelp>
-          {instructionsError && <small role="alert">{instructionsError}</small>}
-          {instructionsSaved && <small role="status">Instructions saved.</small>}
+          <ErrorBox error={instructionsError} />
+          {instructionsSaved && <Feedback tone="success">Instructions saved.</Feedback>}
         </GenerationOptions>}
       </details>
       {instructions !== null && <Form
@@ -1172,7 +1173,7 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
       <SettingsHelp title="About the project account">
         <p>Used for AI generation and new sessions. Existing sessions keep their original account.</p>
       </SettingsHelp>
-      {accountError && <small role="alert">{accountError}</small>}
+      <ErrorBox error={accountError} />
       <label>
         Model
         <select value={generation.model} disabled={savingAccount} onChange={(e) => onChange({ model: e.target.value, effort: '' })}>
@@ -1193,7 +1194,7 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
           {efforts.map((effort) => <option key={effort} value={effort}>{label(effort)}</option>)}
         </select>
       </label>
-      {status && <small role="status">{status}</small>}
+      <Feedback>{status}</Feedback>
       <SettingsHelp title="About reasoning effort">
         <p>Choose a model to see its available reasoning levels. Higher effort can take longer and consume more tokens. An explicit reasoning choice takes precedence over a knowledge profile's default.</p>
       </SettingsHelp>
@@ -1300,7 +1301,10 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             {generating || recoveryBusy ? 'Generating…' : saved ? 'Refresh Q&A' : 'Generate Q&A'}
           </button>} />
         <small className="brief-refresh-note">Generating sends saved conversations and project evidence to OpenAI.</small>
-        {!validLimit && <small role="status">Enter a positive whole number in Q&A details & options.</small>}
+        {!validLimit && <Feedback>Enter a positive whole number in Q&A details & options.</Feedback>}
+        {revisionLoading && <Feedback>Loading saved Q&A version…</Feedback>}
+        <ErrorBox error={error} />
+        {cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
         <details className="brief-details">
           <summary>Q&A details & options</summary>
           {saved && <SavedGeneration generation={saved.generation} />}
@@ -1328,10 +1332,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
-        {revisionLoading && <p role="status">Loading saved Q&A version…</p>}
-        <ErrorBox error={error} />
-        {cancelled && <p role="status">{cancelledGenerationMessage}</p>}
-        {loading && <Empty>Loading saved Q&A…</Empty>}
+        {loading && <Feedback>Loading saved Q&A…</Feedback>}
         {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
@@ -1506,7 +1507,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
         <h2>Project conversation history</h2>
         <p className="muted">Select conversation text to save it as a note. Add sessions in Sources.</p>
         <ErrorBox error={error} />
-        {loading ? <Empty>Loading project sessions…</Empty> : (
+        {loading ? <Feedback>Loading project sessions…</Feedback> : (
           <label>
             Project session
             <select value={sessionId} onChange={(e) => setSessionId(e.target.value)}>
@@ -1607,7 +1608,7 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, sessionTitle, onClos
       </div>
       <ErrorBox error={error} />
       {error && <p>Use Index Codex history or Refresh Codex index above to include newly saved turns, then this link will retry.</p>}
-      {loading && <Empty>Loading the requested turn…</Empty>}
+      {loading && <Feedback>Loading the requested turn…</Feedback>}
       {turn && (
         <>
           <Badge value={turn.status} />
@@ -1766,7 +1767,7 @@ function SavedHistory({
       {!turns.length && !loading && !error && (
         <Empty>No saved conversation turns found.</Empty>
       )}
-      {loading && !turns.length && <Empty>Loading saved history…</Empty>}
+      {loading && !turns.length && <Feedback>Loading saved history…</Feedback>}
     </section>
   );
 }
@@ -2202,7 +2203,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             }} />
         )}
         <ErrorBox error={error} />
-        {loading ? <p role="status">Loading sessions…</p> : sessions?.length ? (
+        {loading ? <Feedback>Loading sessions…</Feedback> : sessions?.length ? (
           <label>
             Review session
             <select value={sessionId} disabled={busy} onChange={(e) => selectReviewSession(e.target.value)}>
@@ -2260,7 +2261,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             </button>
           ))}
         </div>}
-        {waiting && <p role="status">Waiting for Codex to finish. Keep Reviews open to send this question automatically.</p>}
+        {waiting && <Feedback>Waiting for Codex to finish. Keep Reviews open to send this question automatically.</Feedback>}
       </section>
       {sessionId && (
         <section className="card">

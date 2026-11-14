@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { Children, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -68,11 +69,7 @@ export function Markdown({ children, preview = false }: { children?: string; pre
   );
 }
 export function ErrorBox({ error }: { error: string }) {
-  return error ? (
-    <div className="error" role="alert">
-      {error}
-    </div>
-  ) : null;
+  return <Feedback tone="error">{error}</Feedback>;
 }
 
 export function PagedItems({ children, label, listClass, pageSize = 3 }: {
@@ -216,6 +213,7 @@ export function Form({
             </label>
           ))}
           <ErrorBox error={error} />
+          {saving && <Feedback>{savingLabel}</Feedback>}
           <div className="actions">
             <button
               type="button"

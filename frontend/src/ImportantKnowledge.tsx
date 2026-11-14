@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { importantKnowledge, knowledgeHref, knowledgePassageGroups, matchesPublication, parseKnowledgeResponse, type KnowledgeResponse } from './knowledge';
@@ -30,8 +31,8 @@ export function ImportantKnowledge({ base, publicationId, visible }: {
       .map(group => [group.primary.id, group.related.length + 1]) : []);
   return <section className="card important-knowledge" aria-label="Important choices">
     <h2>Important choices</h2>
-    {!current && <p role="status">Loading associated knowledge…</p>}
-    {current?.error && <p role="alert">Could not load associated knowledge: {current.error}</p>}
+    {!current && <Feedback>Loading associated knowledge…</Feedback>}
+    {current?.error && <Feedback tone="error">Could not load associated knowledge: {current.error}</Feedback>}
     {current?.data && !matching && <p>The published knowledge does not match this overview. Open Knowledge to inspect the current snapshot separately.</p>}
     {matching && <>
       <ul>{items.map(item => <li key={item.id}>

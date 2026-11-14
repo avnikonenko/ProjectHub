@@ -137,7 +137,7 @@
 :root[data-palette]:not([data-palette='green']) :is(small, .muted, .brand small, .sidebar-label, .sidebar-footer, .sidebar-footer small, .eyebrow, h4, .subtle-label, .metric span, .search-bar > span, .compact-row p, .activity p, .activity small, .empty, .history-message > small, label, .project-brief small, .brief-sources small) {
   color: var(--muted);
 }
-:root[data-palette]:not([data-palette='green']) :is(.brief-points, .project-brief .brief-note, .brief-sources, .generation-progress p) {
+:root[data-palette]:not([data-palette='green']) :is(.brief-points, .project-brief .brief-note, .brief-sources) {
   color: var(--text);
 }
 :root[data-palette]:not([data-palette='green']) :is(.repository, .tags span, .answer, .json-report, .delivery-preview, .markdown pre, .markdown code) {

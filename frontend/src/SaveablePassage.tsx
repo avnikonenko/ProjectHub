@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useRef, useState } from 'react';
 import { post } from './api';
 import { Form, titleField } from './ui';
@@ -46,7 +47,7 @@ export function SaveablePassage({ context, reference, title, children }: {
             await context.onSaved();
           }} />
       )}
-      {saved && <small role="status">Saved to Notes.</small>}
+      {saved && <Feedback tone="success">Saved to Notes.</Feedback>}
     </>
   );
 }

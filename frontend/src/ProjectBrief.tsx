@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { BriefContent, briefSections, validationCopy, type Brief } from './BriefContent';
 import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
@@ -114,9 +115,10 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
           </button>} />
         <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         <ErrorBox error={error} />
-        {notice && <p role="status">{notice}</p>}
-        {revisionLoading && <p role="status">Loading saved version…</p>}
-        {loading && <Empty>Loading saved project status…</Empty>}
+        <ErrorBox error={evidenceError} />
+        <Feedback>{notice}</Feedback>
+        {revisionLoading && <Feedback>Loading saved version…</Feedback>}
+        {loading && <Feedback>Loading saved project status…</Feedback>}
         {!loading && !brief && <Empty>No saved project status yet.</Empty>}
         {brief && (
           <>
@@ -139,7 +141,6 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
             setRevisionId(id);
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
-        <ErrorBox error={evidenceError} />
         {brief && revisionId === null && evidence && (
           <details>
             <summary>Evidence freshness</summary>

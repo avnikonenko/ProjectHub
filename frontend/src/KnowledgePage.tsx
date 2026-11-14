@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { GenerationDetails } from './GenerationDetails';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
@@ -197,22 +198,23 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       <ErrorBox error={error} />
       <ErrorBox error={currentActivation?.error || ''} />
       <ErrorBox error={currentPreview?.error || ''} />
-      {currentActivation?.notice && <p role="status">{currentActivation.notice}</p>}
-      {currentPreview?.cancelled && <p role="status">{cancelledGenerationMessage}</p>}
+      {publishing && <Feedback>Updating Knowledge and Overview…</Feedback>}
+      <Feedback tone="success">{currentActivation?.notice}</Feedback>
+      {currentPreview?.cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
       {busy && <GenerationStatus key={`${base}:${currentPreview?.started}`} base={base}
         kind="knowledge" label="Knowledge generation" />}
-      {(isLoading || currentPreview?.loading) && !snapshot && !candidate && <Empty>Loading saved knowledge…</Empty>}
+      {(isLoading || currentPreview?.loading) && !snapshot && !candidate && <Feedback>Loading saved knowledge…</Feedback>}
       {!isLoading && !currentPreview?.loading && !error && !currentPreview?.error && !snapshot && !candidate
         && <Empty>No saved knowledge yet. Generate a result to get started.</Empty>}
       {!isLoading && !snapshot && expectedPublication
-        && <p role="status">The linked knowledge version is not currently available.</p>}
+        && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>
         <small>Current knowledge{snapshot.generated_at && ` · ${new Date(snapshot.generated_at).toLocaleString()}`}</small>
-        {mismatch ? <div role="status">
+        {mismatch ? <Feedback>
           <p>This overview references another knowledge publication. Its selected record is not being substituted with the current version.</p>
           <button className="secondary" onClick={() => setDismissedLink(requestKey)}>Explore current knowledge</button>
-        </div> : <>
-          {!!absentItem && <p role="status">The requested item is not in this version. Other current records are shown below.</p>}
+        </Feedback> : <>
+          {!!absentItem && <Feedback>The requested item is not in this version. Other current records are shown below.</Feedback>}
           <KnowledgeItems key={`${base}:${snapshot.publication_id ?? snapshot.generated_at ?? 'published'}`}
             snapshot={snapshot} availability={load.data?.current_evidence_availability}
             selectedItemId={absentItem ? undefined : selectedItemId} />

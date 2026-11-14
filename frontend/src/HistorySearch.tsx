@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 
@@ -93,8 +94,8 @@ export function HistorySearch({
             autoSync ? 'Saved Codex history will sync automatically. Imported chats are already searchable.'
               : 'Imported chats are already searchable. Index Codex history to include saved turns.'}
       </p>
-      {syncError && <div className="error" role="alert">{syncError}</div>}
-      {error && <div className="error" role="alert">{error}</div>}
+      <Feedback tone="error">{syncError}</Feedback>
+      <Feedback tone="error">{error}</Feedback>
     </section>
   );
 }

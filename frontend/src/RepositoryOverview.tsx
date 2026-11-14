@@ -1,3 +1,4 @@
+import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { ErrorBox } from './ui';
@@ -53,7 +54,7 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
       <h4>Git repository</h4>
       <code className="repository">{path}</code>
       <div aria-busy={loading}>
-        {loading && <p role="status">Reading repository…</p>}
+        {loading && <Feedback>Reading repository…</Feedback>}
         <ErrorBox error={error} />
         {status && (
           <p>
@@ -100,7 +101,7 @@ export function GitHubIssues({ base, url }: { base: string; url: string }) {
       <summary>Open GitHub issues</summary>
       {open && <>
         <ErrorBox error={error} />
-        {!error && issues === null && <p role="status">Loading GitHub issues…</p>}
+        {!error && issues === null && <Feedback>Loading GitHub issues…</Feedback>}
         {issues?.length === 0 && <p>No open issues.</p>}
         {!!issues?.length && <ul>{issues.map((issue) => (
           <li key={issue.number}><a href={issue.url} target="_blank" rel="noopener noreferrer">
