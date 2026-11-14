@@ -20,9 +20,12 @@ def settings_client(tmp_path, monkeypatch):
                     '[history]\nauto_sync = false\nsync_interval = 120\n')
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
-    monkeypatch.delenv('PROJECTHUB_EXTRACTION_WORKERS', raising=False)
-    monkeypatch.delenv('PROJECTHUB_GENERATION_PROFILE', raising=False)
-    monkeypatch.delenv('PROJECTHUB_GENERATION_BUDGET', raising=False)
+    for name in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE',
+                 'PROJECTHUB_GENERATION_BUDGET'):
+        # Track an originally absent key before removing it: the settings API
+        # writes os.environ directly, outside pytest's monkeypatch operations.
+        monkeypatch.setenv(name, os.environ.get(name, ''))
+        monkeypatch.delenv(name)
     monkeypatch.setattr(CodexManager, '_new_client', lambda *args, **kwargs: pytest.fail('Settings invoked Codex'))
     app = create_app(tmp_path / 'data')
     with TestClient(app) as client:
