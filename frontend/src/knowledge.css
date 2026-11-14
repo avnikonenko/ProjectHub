@@ -34,3 +34,5 @@
 .topic-list li p { margin: 4px 0; font-size: .85rem; }
 .topic-list button { text-align: left; white-space: normal; }
 .topic-list button[aria-pressed="true"] { font-weight: 700; text-decoration: underline; }
+.topic-list { position: relative; }
+.topic-options { position: absolute; top: 100%; right: 0; z-index: 10; width: 22rem; max-width: 80vw; padding: 12px; border: 1px solid var(--border, #70827955); border-radius: 8px; background: var(--surface, #fff); box-shadow: 0 8px 20px #0002; }

@@ -14,6 +14,7 @@ export function TopicPicker<T>({ choices, selected, onSelect, search = '', onSea
       onChange={event => { onSelect(ALL_TOPICS); onSearch?.(event.target.value); }} />
     <details className="topic-list">
       <summary>Browse tags · {search ? `${matches.length} matching` : choices.find(group => group.id === selected)?.label ?? 'All items'}</summary>
+      <div className="topic-options">
       <p className="muted">AI-generated tags may overlap.</p>
       {choices.length <= 2 && <p>No AI tags saved for this version. Tags are generated with the next Knowledge or Q&A generation.</p>}
       <ul>{choices.filter(group => group.id === ALL_TOPICS || group.id === OTHER_TOPICS || matches.includes(group)).map(group => <li key={group.id}>
@@ -24,6 +25,7 @@ export function TopicPicker<T>({ choices, selected, onSelect, search = '', onSea
           .map(([name, count]) => `${name.replaceAll('_', ' ')}: ${count}`).join(' · ')}</small>}
       </li>)}</ul>
       {search && !matches.length && <p>No matching tags.</p>}
+      </div>
     </details>
   </div>;
 }
