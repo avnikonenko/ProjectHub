@@ -264,8 +264,10 @@ def _source_excerpt(quote, text):
     their existing behavior; the fallback changes neither words nor punctuation
     and rejects ambiguous matches, including overlapping occurrences.
     """
-    if not isinstance(quote, str) or not quote.strip() or len(quote) > 1600:
+    if not isinstance(quote, str) or not quote.strip():
         raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+    if len(quote) > 1600:
+        raise CodexError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(quote)} characters); matching the original speaker and excerpt does not relax this limit.')
     if quote in text:
         return quote
     parts = re.split(r'(\s+)', quote)
@@ -274,8 +276,10 @@ def _source_excerpt(quote, text):
     # source-location fidelity. Retain at most one bounded original span.
     matches = re.finditer('(?=(' + pattern + '))', text)
     first = next(matches, None)
-    if first is None or len(first[1]) > 1600 or next(matches, None) is not None:
+    if first is None or next(matches, None) is not None:
         raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+    if len(first[1]) > 1600:
+        raise CodexError(f'Knowledge evidence excerpt exceeds the 1600-character limit ({len(first[1])} characters); matching the original speaker and excerpt does not relax this limit.')
     return first[1]
 
 
