@@ -5,7 +5,7 @@ import type { Brief } from './BriefContent';
 export const statusOrder = ['AGREED', 'UNDER_EVALUATION', 'UNRESOLVED', 'PROPOSED', 'REJECTED', 'UNKNOWN'] as const;
 export type KnowledgeEvidence = {
   source_id: string; role: string; excerpt: string; label?: string;
-  conversation_id?: string; order?: number; timestamp?: string | null;
+  conversation_id?: string; order?: number; timestamp?: string | null; revision?: string;
 };
 export type KnowledgeSource = {
   id: string; label?: string; text?: string; role?: string;
@@ -16,7 +16,7 @@ export type KnowledgeItem = {
   design_status: string; scope: string; rationale?: string; alternatives?: string;
   limitations?: string; evidence: KnowledgeEvidence[]; source_state?: string;
   supersedes?: string[]; superseded_by?: string[]; conflicts_with?: string[];
-  reconciliation_state?: string;
+  reconciliation_state?: string; reconciliation_note?: string; agreement_basis?: string;
   relationships?: { kind?: string; target?: string; status?: string; source_ids?: string[] }[];
 };
 export type KnowledgeCoverage = Record<string, string[]>;
@@ -49,10 +49,10 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
           || !item.id || ids.has(item.id as string) || (item.project_id !== undefined && item.project_id !== projectId)
           || !Array.isArray(item.evidence) || item.evidence.some((ref) => !object(ref)
             || !['source_id', 'role', 'excerpt'].every((key) => typeof ref[key] === 'string')
-            || ['label', 'conversation_id'].some((key) => ref[key] !== undefined && typeof ref[key] !== 'string')
+            || ['label', 'conversation_id', 'revision'].some((key) => ref[key] !== undefined && typeof ref[key] !== 'string')
             || (ref.timestamp !== undefined && ref.timestamp !== null && typeof ref.timestamp !== 'string')
             || (ref.order !== undefined && !Number.isSafeInteger(ref.order)))
-          || ['rationale', 'alternatives', 'limitations', 'source_state', 'reconciliation_state'].some((key) => item[key] !== undefined && typeof item[key] !== 'string')
+          || ['rationale', 'alternatives', 'limitations', 'source_state', 'reconciliation_state', 'reconciliation_note', 'agreement_basis'].some((key) => item[key] !== undefined && typeof item[key] !== 'string')
           || ['conflicts_with', 'supersedes', 'superseded_by'].some((key) => item[key] !== undefined && !strings(item[key])))
         throw new Error('Invalid project knowledge item.');
       if (item.relationships !== undefined && (!Array.isArray(item.relationships) || item.relationships.some((relation) =>
@@ -107,6 +107,44 @@ export function filterKnowledge(items: KnowledgeItem[], query = '', status = '',
 export function evidenceAvailability(item: KnowledgeItem, availability: Record<string, string> = {}) {
   return availability[item.id] || item.source_state || 'unknown';
 }
+export type KnowledgePassageGroup = { primary: KnowledgeItem; related: KnowledgeItem[] };
+// Shared passage is a display relationship, never evidence of semantic equivalence.
+// Only direct user choices qualify: a numbered acceptance can refer to multiple proposals.
+export function knowledgePassageGroups(snapshot: KnowledgeSnapshot, items = snapshot.items,
+  availability: Record<string, string> = {}): KnowledgePassageGroup[] {
+  const linked = new Set(snapshot.items.flatMap(item => [
+    ...(item.conflicts_with || []), ...(item.supersedes || []), ...(item.superseded_by || []),
+    ...(item.relationships || []).flatMap(relation => relation.target ? [relation.target] : []),
+  ]));
+  const byPassage = new Map<string, KnowledgePassageGroup>();
+  const groups: KnowledgePassageGroup[] = [];
+  for (const item of [...items].sort((a, b) => a.id.localeCompare(b.id))) {
+    const userRefs = item.evidence.filter(ref => ref.role === 'user');
+    const eligible = (item.project_id === undefined || item.project_id === snapshot.project_id)
+      && item.design_status === 'AGREED' && item.agreement_basis === 'direct_user'
+      && evidenceAvailability(item, availability) === 'valid' && !linked.has(item.id)
+      && !item.conflicts_with?.length && !item.supersedes?.length && !item.superseded_by?.length
+      && !item.relationships?.length && item.reconciliation_state !== 'unresolved'
+      && userRefs.length > 0 && userRefs.every(ref => ref.source_id.trim() && ref.excerpt.trim()
+        && typeof ref.revision === 'string' && /^[a-f0-9]{64}$/i.test(ref.revision));
+    const key = eligible ? JSON.stringify([snapshot.project_id, item.design_status, item.category, item.scope,
+      [...new Set(userRefs.map(ref => JSON.stringify([ref.source_id, ref.revision, ref.excerpt])))].sort()]) : null;
+    const existing = key ? byPassage.get(key) : undefined;
+    if (existing) existing.related.push(item);
+    else {
+      const group = { primary: item, related: [] as KnowledgeItem[] };
+      groups.push(group);
+      if (key) byPassage.set(key, group);
+    }
+  }
+  return groups;
+}
+export function visibleKnowledgeGroups(groups: KnowledgePassageGroup[], limit: number, selectedId?: string) {
+  const visible = groups.slice(0, limit);
+  const selected = groups.find(group => group.primary.id === selectedId || group.related.some(item => item.id === selectedId));
+  if (selected && !visible.includes(selected)) visible.push(selected);
+  return visible;
+}
 export function importantKnowledge(snapshot: KnowledgeSnapshot, availability: Record<string, string> = {}) {
   // Stable ID order is a display fallback, not a chronology or importance score.
   const conflictTargets = new Set(snapshot.items.flatMap((item) => item.conflicts_with || []));
@@ -115,7 +153,7 @@ export function importantKnowledge(snapshot: KnowledgeSnapshot, availability: Re
     && item.reconciliation_state !== 'unresolved')
     .sort((a, b) => a.id.localeCompare(b.id));
   const seen = new Set<string>();
-  const distinct = candidates.filter((item) => {
+  const distinct = knowledgePassageGroups(snapshot, candidates, availability).map(group => group.primary).filter((item) => {
     const key = JSON.stringify([normalizeKnowledgeText(item.statement), item.scope, item.design_status]);
     if (seen.has(key)) return false;
     seen.add(key); return true;

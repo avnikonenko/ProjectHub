@@ -17,6 +17,8 @@
 .knowledge-evidence blockquote { white-space: pre-wrap; overflow-wrap: anywhere; margin: 12px 0; }
 .knowledge-evidence article p { margin-block: 6px; }
 .knowledge-coverage { margin-top: 24px; overflow-wrap: anywhere; }
+.knowledge-related { margin: 0 0 16px 18px; overflow-wrap: anywhere; }
+.knowledge-related > summary { cursor: pointer; }
 .knowledge-items :focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 @media (max-width: 750px) {
   .knowledge-filters { grid-template-columns: 1fr; }

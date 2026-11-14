@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import { importantKnowledge, knowledgeHref, matchesPublication, parseKnowledgeResponse, type KnowledgeResponse } from './knowledge';
+import { importantKnowledge, knowledgeHref, knowledgePassageGroups, matchesPublication, parseKnowledgeResponse, type KnowledgeResponse } from './knowledge';
 
 export function ImportantKnowledge({ base, publicationId, visible }: {
   base: string; publicationId?: string; visible: boolean;
@@ -25,6 +25,9 @@ export function ImportantKnowledge({ base, publicationId, visible }: {
   const snapshot = current?.data?.snapshot;
   const matching = matchesPublication(snapshot, projectId, publicationId);
   const items = snapshot && matching ? importantKnowledge(snapshot, current?.data?.current_evidence_availability) : [];
+  const passageCounts = new Map(snapshot && matching
+    ? knowledgePassageGroups(snapshot, snapshot.items, current?.data?.current_evidence_availability)
+      .map(group => [group.primary.id, group.related.length + 1]) : []);
   return <section className="card important-knowledge" aria-label="Important choices">
     <h2>Important choices</h2>
     {!current && <p role="status">Loading associated knowledge…</p>}
@@ -35,6 +38,7 @@ export function ImportantKnowledge({ base, publicationId, visible }: {
         <small>{item.design_status.replaceAll('_', ' ')}</small>{' · '}
         <a href={knowledgeHref({ projectId, publicationId, itemId: item.id })}>{item.statement}</a>
         <div className="muted">{item.scope}</div>
+        {(passageCounts.get(item.id) || 0) > 1 && <small>{passageCounts.get(item.id)} interpretations from the same passage</small>}
       </li>)}</ul>
       {!items.length && <p>No supported choices selected for this overview.</p>}
     </>}

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import { evidenceAvailability, filterKnowledge, knowledgeSourceHref, statusOrder,
+import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
 import './knowledge.css';
 
@@ -45,7 +45,8 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     const current = evidenceAvailability(item, availability);
     return <details key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
       id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`} open={item.id === selected || undefined}>
-      <summary><span>{item.statement}</span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references</small></summary>
+      <summary><span>{item.statement}</span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references
+        {item.reconciliation_state === 'unresolved' && ' · Needs context review'}</small></summary>
       <div className="knowledge-item-body">
         <p className="muted">Extracted interpretation</p>
         <dl className="knowledge-fields">
@@ -57,6 +58,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           {item.limitations && <><dt>Limitations</dt><dd>{item.limitations}</dd></>}
           <dt>Current evidence</dt><dd>{display(current)}{current !== 'valid' && ' — historical design status is preserved.'}</dd>
           {item.reconciliation_state && <><dt>Reconciliation</dt><dd>{display(item.reconciliation_state)}</dd></>}
+          {item.reconciliation_note && <><dt>Context review</dt><dd>{item.reconciliation_note}</dd></>}
         </dl>
         {relationships(item, 'conflicts_with', 'Recorded conflict')}
         {relationships(item, 'superseded_by', 'Historical decision — superseded by')}
@@ -110,13 +112,19 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
       const group = items.filter((item) => item.design_status === value).sort((a, b) => a.id.localeCompare(b.id));
       if (!group.length) return null;
       const limit = limits[value] || 10;
-      const shown = group.slice(0, limit);
-      const requested = group.find((item) => item.id === selected);
-      if (requested && !shown.includes(requested)) shown.push(requested);
+      const passages = knowledgePassageGroups(snapshot, group, availability);
+      const shown = visibleKnowledgeGroups(passages, limit, selected);
       return <section className="knowledge-group" key={value}>
         <h3>{display(value)} ({group.length})</h3>
-        {shown.map(itemDetails)}
-        {group.length > shown.length && <button className="secondary" type="button"
+        {shown.map(({ primary, related }) => <div key={primary.id}>
+          {itemDetails(primary)}
+          {!!related.length && <details className="knowledge-related" open={related.some(item => item.id === selected) || undefined}>
+            <summary>Interpretations from the same passage ({related.length + 1} records)</summary>
+            <p className="muted">These records cite the same user passage. Their statements and evidence remain separate.</p>
+            {related.map(itemDetails)}
+          </details>}
+        </div>)}
+        {passages.length > shown.length && <button className="secondary" type="button"
           onClick={() => setLimits((previous) => ({ ...previous, [value]: limit + 10 }))}>Show more {display(value).toLowerCase()} items</button>}
       </section>;
     })}
