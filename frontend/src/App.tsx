@@ -1037,7 +1037,7 @@ function AppSettings() {
           <PaletteControl />
           <TextSizeControl />
           <SettingsHelp title="About appearance">
-            <p>Colour palette and text size apply throughout ProjectHub immediately. Your choices are saved in this browser.</p>
+            <p>Themes change the app’s typography, contrast, and spacing immediately. Light or dark mode and text size are independent. Choose Original to return to your saved colour palette. Your choices are saved in this browser.</p>
           </SettingsHelp>
           <ExtractionWorkersControl active={open} />
           <button type="button" className="secondary"
