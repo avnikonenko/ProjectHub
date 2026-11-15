@@ -111,14 +111,19 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
       <label>Category<select value={category} onChange={(event) => { setCategory(event.target.value); setLimits({}); }}><option value="">All categories</option>
         {[...new Set(snapshot.items.map((item) => item.category))].sort().map((value) => <option key={value} value={value}>{display(value)}</option>)}
       </select></label>
-      <label>Scope<select value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
-        {[...new Set(snapshot.items.map((item) => item.scope))].sort().map((value) => <option key={value} value={value}>{value}</option>)}
-      </select></label>
       <TopicPicker choices={topics} selected={topic} search={tagSearch} ariaLabel="Knowledge tags"
         onSearch={value => { setTagSearch(value); setLimits({}); }}
         onSelect={id => { setTopic(id); setLimits({}); }} />
       <button className="secondary" type="button" onClick={reset}>Reset filters</button>
     </div>
+    <details className="knowledge-advanced-filters">
+      <summary>Advanced filters{scope && ` · Scope: ${scope}`}</summary>
+      <div className="knowledge-filters">
+        <label>Scope<select value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
+          {[...new Set(snapshot.items.map((item) => item.scope))].sort().map((value) => <option key={value} value={value}>{value}</option>)}
+        </select></label>
+      </div>
+    </details>
     <p role="status">{items.length} of {snapshot.items.length} knowledge items</p>
     {selected && !byId.has(selected) && <p role="status">The selected knowledge item is unavailable in this snapshot.</p>}
     {!items.length && <p>{snapshot.items.length ? 'No items match these filters.' : 'This snapshot contains no knowledge items.'}</p>}

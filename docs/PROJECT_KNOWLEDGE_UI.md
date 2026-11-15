@@ -16,8 +16,9 @@ in a separate tab.
 Open a project and select **Knowledge**. Published knowledge loads when that view
 opens; returning to it refreshes the read-only snapshot. Use the single project-wide
 search bar to find saved knowledge and its evidence alongside other project records.
-The Knowledge view has status/category/scope filters; these combine, and **Reset
-filters** clears them. It does not have a separate text-search field. Records group
+Within Knowledge, text search includes the original scope. Use status, category, and
+tag filters together with the exact Scope filter under **Advanced filters**. An active
+scope is shown even when that section is collapsed. **Reset filters** clears all filters. Records group
 by design status and expand to show reasons, exact evidence, recorded relationships,
 and current source availability. Show more exposes every record in large groups.
 
