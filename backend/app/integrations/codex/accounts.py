@@ -54,7 +54,9 @@ def profile_entries(engine=None):
 def account_options(engine=None, selected=None):
     entries = profile_entries(engine)
     # Preserve an existing selection's identity while hiding other aliases.
-    entries.sort(key=lambda item: item[0] != selected)
+    entries.sort(key=lambda item: (item[0] != selected, not item[0].startswith('registered:')))
+    names = {path.resolve(): label for key, label, path in entries
+             if key.startswith('registered:') and path.is_dir()}
     seen = set() if selected is not None else {launch_home()}
     options = []
     for key, label, path in entries:
@@ -64,10 +66,22 @@ def account_options(engine=None, selected=None):
         if canonical in seen or (canonical == launch_home() and key != selected):
             continue
         seen.add(canonical)
-        options.append({'id': key, 'label': label})
+        options.append({'id': key, 'label': names.get(canonical, label)})
     if selected and not any(option['id'] == selected for option in options):
         options.insert(0, {'id': selected, 'label': 'Unavailable profile'})
     return options
+
+
+def launch_label(engine=None):
+    home = launch_home()
+    entries = profile_entries(engine)
+    entries.sort(key=lambda item: (not item[0].startswith('registered:'),
+                                   not item[0].startswith('profile:')))
+    for key, label, path in entries:
+        if (key.startswith(('registered:', 'profile:')) and path.is_dir()
+                and path.resolve() == home):
+            return label
+    return 'ProjectHub launch account'
 
 
 def validate_profile_directory(value):

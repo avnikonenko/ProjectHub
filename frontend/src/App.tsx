@@ -1062,9 +1062,12 @@ function AppSettings() {
         onSave={async ({ name, directory }) => {
           const result = await post('/settings/codex-profiles', { name, directory });
           window.dispatchEvent(new Event('projecthub:profiles-changed'));
-          setProfileMessage(result.added === false
-            ? 'Profile already available.'
-            : 'Profile added. Choose it in project AI settings.');
+          const profileName = typeof result.label === 'string' ? result.label : 'Profile';
+          setProfileMessage(result.is_launch
+            ? `${profileName} is the ProjectHub launch account. Choose it in project AI settings.`
+            : result.added === false
+              ? `${profileName} is already available in project AI settings.`
+              : `${profileName} added. Choose it in project AI settings.`);
         }}
       />}
     </>
@@ -1134,7 +1137,7 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
 }) {
   const [models, setModels] = useState<{ id: string; label: string; efforts: string[] }[]>([]);
   const [status, setStatus] = useState('Loading Codex models…');
-  const [accounts, setAccounts] = useState<{ account: string | null; options: { id: string; label: string }[]; include_launch?: boolean } | null>(null);
+  const [accounts, setAccounts] = useState<{ account: string | null; options: { id: string; label: string }[]; include_launch?: boolean; launch_label?: string } | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [accountVersion, setAccountVersion] = useState(0);
@@ -1193,7 +1196,7 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
         Default account for this project
         <select value={accounts?.account ?? ''} disabled={!accounts || savingAccount}
           onChange={(e) => changeAccount(e.target.value)}>
-          {accounts?.include_launch !== false && <option value="">ProjectHub launch account</option>}
+          {accounts?.include_launch !== false && <option value="">{accounts?.launch_label || 'ProjectHub launch account'}</option>}
           {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>

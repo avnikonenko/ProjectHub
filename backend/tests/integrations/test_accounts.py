@@ -75,3 +75,66 @@ def test_global_profile_registration_works_without_a_project(tmp_path, monkeypat
         with Session(app.state.engine) as db:
             assert len(list(db.scalars(select(CodexProfile)))) == 1
     app.state.engine.dispose()
+
+
+def test_registered_names_win_without_duplicate_options_or_identity_changes(tmp_path, monkeypatch):
+    from backend.app.models import CodexProfile
+
+    home = tmp_path / 'launch'; home.mkdir()
+    other = tmp_path / 'other'; other.mkdir()
+    monkeypatch.setenv('CODEX_HOME', str(home))
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {
+        'current': home, 'profile:launch': home, 'profile:other': other,
+    })
+    engine, _ = initialize(tmp_path / 'data')
+    with Session(engine) as db:
+        db.add_all([CodexProfile(name='Personal', directory=str(home)),
+                    CodexProfile(name='Work', directory=str(other))])
+        db.commit()
+    assert accounts.launch_label(engine) == 'Personal'
+    assert accounts.account_options(engine) == [{'id': 'registered:2', 'label': 'Work'}]
+    assert accounts.account_options(engine, selected='profile:other') == [
+        {'id': 'profile:other', 'label': 'Work'}]
+    assert accounts.account_options(engine, selected='profile:launch') == [
+        {'id': 'profile:launch', 'label': 'Personal'}, {'id': 'registered:2', 'label': 'Work'}]
+    engine.dispose()
+
+
+@pytest.mark.parametrize('launch', [False, True])
+def test_explicit_registration_names_discovered_and_launch_directories(tmp_path, monkeypatch, launch):
+    from importlib import import_module
+    from fastapi.testclient import TestClient
+    from backend.app.main import create_app
+    from backend.app.models import CodexProfile
+
+    routes = import_module('backend.app.integrations.codex.router')
+    monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
+    directory = tmp_path / 'profile'; directory.mkdir()
+    monkeypatch.setenv('CODEX_HOME', str(directory if launch else tmp_path / 'launch'))
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {'profile:automatic': directory})
+    monkeypatch.setattr(routes, 'availability', lambda *_: {
+        'authenticated': True, 'app_server': True, 'error': '',
+    })
+    app = create_app(tmp_path / 'data')
+    with TestClient(app) as client:
+        project = client.post('/api/projects', json={'name': 'Project'}).json()
+        response = client.post('/api/settings/codex-profiles',
+                               json={'name': 'Named profile', 'directory': str(directory)})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result['added'] is True and result['label'] == 'Named profile'
+        assert result['is_launch'] is launch
+        settings = client.get(f"/api/projects/{project['id']}/codex/account").json()
+        if launch:
+            assert settings['launch_label'] == 'Named profile'
+            assert settings['include_launch'] is True
+            assert settings['options'] == []
+        else:
+            assert settings['options'] == [{'id': result['registered_id'], 'label': 'Named profile'}]
+        duplicate = client.post('/api/settings/codex-profiles',
+                                json={'name': 'Replacement', 'directory': str(directory)}).json()
+        assert duplicate['added'] is False and duplicate['label'] == 'Named profile'
+        with Session(app.state.engine) as db:
+            assert db.get(CodexProfile, int(result['registered_id'].split(':')[1])).name == 'Named profile'
+        assert client.get('/api/projects/99999/codex/account').status_code == 404
+    app.state.engine.dispose()

@@ -11,7 +11,7 @@ from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
-from .accounts import account_options, account_home, launch_home, profile_entries, validate_profile_directory
+from .accounts import account_options, account_home, launch_home, launch_label, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import read_scheme, refresh_scheme
@@ -206,7 +206,8 @@ def get_account(project_id: int, db: DB):
     except CodexError:
         pass  # The unavailable selection is shown explicitly in options.
     return {'account': row.codex_account, 'options': account_options(db.get_bind(), row.codex_account),
-            'include_launch': selected_home is None or Path(selected_home) != launch_home()}
+            'include_launch': selected_home is None or Path(selected_home) != launch_home(),
+            'launch_label': launch_label(db.get_bind())}
 
 
 class AddAccountInput(Input):
@@ -223,17 +224,13 @@ def register_profile(body: AddAccountInput, db: DB):
     capability = availability(directory)
     if not capability['authenticated'] or not capability['app_server']:
         raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
-    if Path(directory) == launch_home():
-        return {'registered_id': None, 'added': False}
-    for key, _, path in profile_entries(db.get_bind()):
-        if path.is_dir() and path.resolve() == Path(directory):
-            return {'registered_id': key, 'added': False}
     stmt = insert(CodexProfile).values(name=body.name, directory=directory)
     result = db.execute(stmt.on_conflict_do_nothing(index_elements=[CodexProfile.directory]))
     added = result.rowcount == 1
     db.commit()
     saved = db.scalar(select(CodexProfile).where(CodexProfile.directory == directory))
-    return {'registered_id': f'registered:{saved.id}', 'added': added}
+    return {'registered_id': f'registered:{saved.id}', 'added': added,
+            'label': saved.name, 'is_launch': Path(directory) == launch_home()}
 
 
 @settings_router.post('/codex-profiles')
