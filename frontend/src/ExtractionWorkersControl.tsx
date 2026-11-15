@@ -204,10 +204,13 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       </select>
     </label>
     <SettingsHelp title="Profile explanation">
-      {profile && <p>{profile.description}</p>}
-      {profile?.experimental && <p role="note">Experimental profile: lower consumption and complete recall are not guaranteed. Review the result and its coverage.</p>}
-      <p>Knowledge previews only. Applies to the next generation; the selected model and explicit reasoning choice are preserved.
-        {' '}Changing profiles can require fresh extraction instead of cache reuse. Saved results are retained.</p>
+      <ul>
+        <li><strong>Quality (default):</strong> Smaller batches to help preserve detail. Uses all available source material.</li>
+        <li><strong>Balanced (experimental):</strong> Larger batches cover the same sources with potentially fewer calls, but may miss details.</li>
+        <li><strong>Economy (experimental):</strong> Larger batches and a source limit can reduce usage, but some sources may be skipped.</li>
+      </ul>
+      <p>Your model and explicit reasoning choice stay the same. Economy uses low reasoning when supported if you haven’t chosen an effort.
+        Changing profiles may require reprocessing; saved results stay intact.</p>
     </SettingsHelp>
     <div className="actions left">
       <button type="button" className="secondary" disabled={loading || saving || !profile || unchangedProfile}
