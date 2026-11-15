@@ -1,3 +1,4 @@
+import { SettingsHelp } from './SettingsHelp';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
@@ -88,7 +89,9 @@ export function TagGeneration(props: Props) {
   return <div className="tag-generation">
     <button className="secondary" type="button" disabled={disabled || busy || localBusy || !itemIds.length}
       onClick={() => void generate()}>{localBusy ? 'Generating AI tags…' : 'Generate AI tags'}</button>
-    <small className="muted"> Sends this saved version’s item statements or questions and answers to OpenAI through Codex to organize AI tags.</small>
+    <SettingsHelp title="About AI tag generation">
+      <p>Sends this saved version’s item statements or questions and answers to OpenAI through Codex to organize AI tags.</p>
+    </SettingsHelp>
     <ErrorBox error={error} />
     {cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
     {(busy || localBusy) && <GenerationStatus base={base} kind="tags" label="AI tag generation" />}
