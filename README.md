@@ -19,7 +19,7 @@ Use it for software, research, or other projects with a growing conversation his
 - **Connect the history to the code.** Link a local Git repository to inspect branch, recent commits, tracked changes, and untracked files. View public GitHub issues. Repository inspection is read-only.
 - **Continue with context.** Review project questions and prepare a context preview to send to a Codex session after confirmation.
 
-Choose the Codex account, model, reasoning effort, and response instructions for each project. In Settings, try the Original, Studio, Editorial, or High contrast app themes. Light/dark mode and text size can be adjusted independently.
+Choose the Codex account, model, reasoning effort, and response instructions for each project. In Settings, try the Original, Portfolio, Studio, Editorial, or High contrast app themes. Light/dark mode and text size can be adjusted independently.
 
 **AI runs when you request it.** Opening projects and searching saved information do not trigger model requests.
 

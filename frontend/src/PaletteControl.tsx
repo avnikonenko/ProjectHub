@@ -9,6 +9,7 @@ const palettes = [
 ];
 const presets = [
   { value: 'original', label: 'Original', detail: 'Keep your chosen colour palette.' },
+  { value: 'portfolio', label: 'Portfolio', detail: 'Quiet surfaces, fine borders, and cool blue accents.' },
   { value: 'studio', label: 'Studio', detail: 'Clean sans-serif type and a compact layout.' },
   { value: 'editorial', label: 'Editorial', detail: 'Serif text and more space for reading.' },
   { value: 'contrast', label: 'High contrast', detail: 'Brighter text and stronger control borders.' },
