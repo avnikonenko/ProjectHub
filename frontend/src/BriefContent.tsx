@@ -90,9 +90,9 @@ export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }
         </ul>
       );
       return collapsed ? (
-        <details className="brief-section" key={key}><summary>{title}</summary>{points}</details>
+        <details className="brief-section" key={key}><summary className="brief-topic">{title}</summary>{points}</details>
       ) : (
-        <section className="brief-section" key={key}><h3>{title}</h3>{points}</section>
+        <section className="brief-section" key={key}><h3 className="brief-topic">{title}</h3>{points}</section>
       );
     })}
     {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}

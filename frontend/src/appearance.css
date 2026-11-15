@@ -90,3 +90,15 @@
 .ai-emphasis, .markdown strong {
   color: var(--accent);
 }
+
+.brief-topic {
+  font-weight: 700;
+}
+
+:root[data-palette] :is(.brief-reference, .citation-source, .brief-sources li > details > summary) {
+  color: var(--muted);
+}
+
+:root[data-palette] :is(.brief-reference, .citation-source):is(:hover, :focus-visible) {
+  color: var(--accent);
+}
