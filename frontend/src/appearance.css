@@ -91,19 +91,17 @@
   color: var(--emphasis);
 }
 
-:root[data-palette] :is(.brief-topic, .brief-section h3, .knowledge-group h3,
-  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6) {
+:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
   font-weight: 750;
   color: var(--accent);
   color: color-mix(in srgb, var(--accent) 82%, #000);
 }
 
-:root[data-theme='dark'][data-palette] :is(.brief-topic, .brief-section h3, .knowledge-group h3,
-  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6) {
+:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
   color: color-mix(in srgb, var(--accent) 90%, #000);
 }
 
-:root[data-palette] :is(.brief-reference, .citation-source, .brief-sources li > details > summary) {
+:root[data-palette] :is(.brief-reference, .citation-source, .brief-sources li > details > summary, .brief-sources h4) {
   color: var(--muted);
 }
 
