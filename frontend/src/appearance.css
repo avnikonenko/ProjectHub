@@ -88,14 +88,13 @@
 }
 
 .ai-emphasis, .markdown strong {
-  color: var(--accent);
+  color: var(--emphasis);
 }
 
-.brief-topic,
-.brief-section h3,
-.knowledge-group h3,
-.markdown :is(h1, h2, h3, h4, h5, h6) {
-  font-weight: 700;
+:root[data-palette] :is(.brief-topic, .brief-section h3, .knowledge-group h3,
+  .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6) {
+  font-weight: 750;
+  color: var(--accent);
 }
 
 :root[data-palette] :is(.brief-reference, .citation-source, .brief-sources li > details > summary) {
@@ -105,3 +104,11 @@
 :root[data-palette] :is(.brief-reference, .citation-source):is(:hover, :focus-visible) {
   color: var(--accent);
 }
+
+
+:root { --emphasis: #76501f; }
+:root[data-theme='dark'] { --emphasis: #e2bf89; }
+:root[data-palette='sage'], :root[data-palette='amber'] { --emphasis: #6b4a8b; }
+:root[data-theme='dark']:is([data-palette='sage'], [data-palette='amber']) { --emphasis: #cdb2e8; }
+:root[data-palette='lavender'] { --emphasis: #36604e; }
+:root[data-theme='dark'][data-palette='lavender'] { --emphasis: #a0c8af; }
