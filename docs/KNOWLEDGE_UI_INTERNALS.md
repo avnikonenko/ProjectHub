@@ -61,3 +61,33 @@ can be reused; successful batch caches survive later failures. Memberships are
 validated against existing record IDs. Q&A deletion prunes current memberships
 while preserving historical revisions. The project taxonomy is bounded to 400 topics, with up to 40 new topics per reply;
 excess topics cause explicit failure rather than silent assignment truncation.
+
+### Experimental compact tagging
+
+Set `PROJECTHUB_COMPACT_TAGS=1` in the server environment and restart to try
+the compact path. The existing path remains the default. The compact path
+builds one shared topic catalog from a bounded sample, then classifies larger
+batches using local numeric IDs, statements, and scope. It does not send original
+evidence or rationale in assignment batches. A record with no strong topic match
+stays available under **Untagged** for review; the assignment calls do not invent
+new topics. The initial sample can miss niche topics.
+
+Catalog and assignment caches are separate from legacy tag caches. Unchanged
+items reuse their assignments when the saved catalog and generation configuration
+match. Existing saved tags remain intact until a complete successful replacement.
+The experiment uses the configured model and reasoning effort.
+
+One cold comparison used the same 240 evenly spaced records from a saved
+3,162-item snapshot, isolated databases, the same model, and four configured
+workers. These are single observations, not full-project timing estimates.
+
+| Path | Effort | Wall time | Calls | Reported tokens | Tagged records |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Existing | Medium | 108.38 s | 2 | 63,001 | 240 |
+| Compact | Medium | 67.81 s | 3 | 58,795 | 226 |
+| Compact | Low | 57.23 s | 3 | 58,371 | 233 |
+
+The compact runs produced 8–9 broader tags versus 35. These counts measure
+coverage, not assignment accuracy. The full saved snapshot packs into 17
+compact assignment batches plus one catalog call versus 27 existing batches.
+A full cold run and detailed assignment review remain unverified.

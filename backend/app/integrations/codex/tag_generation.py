@@ -5,6 +5,7 @@ publication identity and paired brief remain untouched.
 """
 from contextlib import ExitStack
 from copy import deepcopy
+import os
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -79,7 +80,8 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                                             *[variant['answer'] for variant in item.get('variants', [])]]),
                 } for item in records]
             progress.update(project_id, stage='Generating tags for saved result')
-            grouping = group_records(engine, project_id, manager, records, previous=previous)
+            grouping_options = {'compact_assignment': True} if os.getenv('PROJECTHUB_COMPACT_TAGS') == '1' else {}
+            grouping = group_records(engine, project_id, manager, records, previous=previous, **grouping_options)
             progress.check_cancelled()
 
             def save():

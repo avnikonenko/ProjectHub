@@ -108,3 +108,19 @@ def test_cancelled_tags_preserve_saved_metadata(saved, monkeypatch):
         tags.generate_tags(saved, 1, object(), target='knowledge', publication_id='publication')
     assert snapshot(saved) == before
     assert tags.progress.read(1, 'tags')['state'] == 'cancelled'
+
+
+@pytest.mark.parametrize('setting', [None, '1'])
+def test_compact_tagging_requires_opt_in(saved, monkeypatch, setting):
+    monkeypatch.delenv('PROJECTHUB_COMPACT_TAGS', raising=False)
+    if setting is not None:
+        monkeypatch.setenv('PROJECTHUB_COMPACT_TAGS', setting)
+    options = {}
+
+    def generate(*args, previous, **kwargs):
+        options.update(kwargs)
+        return {'topic_groups': [], 'topic_grouping': {}}
+
+    monkeypatch.setattr(tags, 'group_records', generate)
+    tags.generate_tags(saved, 1, object(), target='knowledge', publication_id='publication')
+    assert options == ({'compact_assignment': True} if setting == '1' else {})

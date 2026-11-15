@@ -25,6 +25,7 @@ MAX_GROUPS = 40
 MAX_CATALOG_GROUPS = 400
 MAX_PROMPT_CHARS = 240_000
 MAX_BATCH_ITEMS = 120
+MAX_COMPACT_BATCH_ITEMS = 240
 MAX_BATCH_CHARS = 40_000
 MAX_RESPONSE_CHARS = 120_000
 FIELDS = ('id', 'statement', 'category', 'design_status', 'scope', 'rationale')
@@ -150,13 +151,15 @@ def _validate_reply(raw, batch, taxonomy):
     return updated, result
 
 
-def _batches(records):
+def _batches(records, *, compact=False):
     batch, size = [], 0
+    item_limit = MAX_COMPACT_BATCH_ITEMS if compact else MAX_BATCH_ITEMS
     for record in records:
-        chars = len(json.dumps(record, ensure_ascii=False, separators=(',', ':'))) + 1
+        size_record = [record['statement'], record['scope']] if compact else record
+        chars = len(json.dumps(size_record, ensure_ascii=False, separators=(',', ':'))) + (24 if compact else 1)
         if chars > MAX_BATCH_CHARS:
             raise CodexError('One Knowledge record exceeds the topic grouping input limit.')
-        if batch and (len(batch) >= MAX_BATCH_ITEMS or size + chars > MAX_BATCH_CHARS):
+        if batch and (len(batch) >= item_limit or size + chars > MAX_BATCH_CHARS):
             yield batch
             batch, size = [], 0
         batch.append(record)
@@ -165,7 +168,7 @@ def _batches(records):
         yield batch
 
 
-def group_records(engine, project_id, manager, records, *, previous=None):
+def group_records(engine, project_id, manager, records, *, previous=None, compact_assignment=False):
     """Return additive navigation and reusable metadata; never mutate inputs.
 
     ``previous`` is the prior complete Knowledge snapshot (or this function's
@@ -191,6 +194,10 @@ def group_records(engine, project_id, manager, records, *, previous=None):
         compact.append({key: record[key] for key in FIELDS if key in record})
     configuration = {'version': VERSION, 'prompt': PROMPT, 'instructions': ai_instructions(),
                      'identity': _requested_provenance(manager)}
+    if compact_assignment:
+        from . import compact_topic_wire as wire
+        configuration.update(strategy='shared-catalog-v1', bootstrap=wire.BOOTSTRAP_PROMPT,
+                             assignment=wire.ASSIGNMENT_PROMPT)
     configuration_fingerprint = _digest(configuration)
     fingerprints = {record['id']: _digest(record) for record in compact}
     taxonomy, memberships, reused = [], {}, 0
@@ -222,7 +229,50 @@ def group_records(engine, project_id, manager, records, *, previous=None):
             identifier in known for identifier in group['item_ids'])}
         taxonomy = [group for group in taxonomy if group['id'] in active_topics]
     pending = [record for record in compact if record['id'] not in memberships]
-    batches = list(_batches(pending))
+    catalog_requests = 0
+
+    def cached_stage(stage, prompt, payload, schema, parse, *, item_ids=()):
+        progress.check_cancelled()
+        key = _digest({'namespace': 'compact-topic-v1', 'stage': stage, 'project_id': project_id,
+                       'configuration': configuration, 'payload': payload, 'schema': schema,
+                       'item_ids': item_ids})
+        with Session(engine) as db:
+            row = db.get(ProjectHistoryBatch, (project_id, key))
+            cached = row is not None
+            envelope = row.evidence if cached else None
+            if cached and (not isinstance(envelope, list) or len(envelope) != 1
+                           or not isinstance(envelope[0], dict)
+                           or set(envelope[0]) != {'topic_group_response'}):
+                raise CodexError('Cached compact topic response is invalid.')
+            raw = envelope[0]['topic_group_response'] if cached else None
+        if not cached:
+            message = prompt + configuration['instructions'] + '\n' + json.dumps(
+                payload, ensure_ascii=False, separators=(',', ':'))
+            if len(message) > MAX_PROMPT_CHARS:
+                raise CodexError('Knowledge topic grouping prompt exceeds the input limit.')
+            independent = getattr(manager, 'independent_generation', None)
+            if callable(independent):
+                with independent() as selected:
+                    raw = selected.generate_brief(message, schema)
+            else:
+                raw = manager.generate_brief(message, schema)
+        result = parse(raw)
+        progress.check_cancelled()
+        if not cached:
+            with Session(engine) as db:
+                if db.get(ProjectHistoryBatch, (project_id, key)) is None:
+                    db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key,
+                                               evidence=[{'topic_group_response': raw}]))
+                    db.commit()
+        return result, cached
+
+    if compact_assignment and pending and not taxonomy:
+        progress.update(project_id, stage='Finding shared AI topics', batch_phase='AI tagging',
+                        batch_total=0, batch_completed=0, cache_hits=0)
+        taxonomy, cached = cached_stage('catalog', wire.BOOTSTRAP_PROMPT, wire.bootstrap_payload(compact),
+                                         wire.BOOTSTRAP_SCHEMA, wire.parse_bootstrap)
+        catalog_requests = int(not cached)
+    batches = list(_batches(pending, compact=compact_assignment))
     fixed_taxonomy = deepcopy(taxonomy)
     progress.check_cancelled()
     progress.update(project_id, stage='Organizing AI tags', batch_phase='AI tagging',
@@ -253,6 +303,13 @@ def group_records(engine, project_id, manager, records, *, previous=None):
 
     def classify(batch):
         progress.check_cancelled()
+        if compact_assignment:
+            assigned, cached = cached_stage(
+                'assign', wire.ASSIGNMENT_PROMPT, wire.assignment_payload(batch, fixed_taxonomy),
+                wire.assignment_schema(batch, fixed_taxonomy),
+                lambda raw: wire.parse_assignments(raw, batch, fixed_taxonomy),
+                item_ids=[record['id'] for record in batch])
+            return [], assigned, cached
         payload = {'topics': fixed_taxonomy, 'records': batch}
         key = _digest({'namespace': 'knowledge-topic-groups-v1', 'project_id': project_id,
                        'configuration': configuration, 'payload': payload})
@@ -316,7 +373,7 @@ def group_records(engine, project_id, manager, records, *, previous=None):
                     raise failure[0]
                 raise
     progress.check_cancelled()
-    requests = hits = 0
+    requests, hits = catalog_requests, 0
     catalog = {group['id']: group for group in taxonomy}
     for batch_taxonomy, assigned, cached in results:
         hits += int(cached)

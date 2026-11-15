@@ -232,3 +232,35 @@ def test_deep_json_is_explicit_error(monkeypatch):
     monkeypatch.setattr(topics.json, 'loads', reject)
     with pytest.raises(CodexError, match='invalid JSON'):
         topics._validate_reply('{}', [], [])
+
+
+def test_shared_catalog_cached_independently_and_reused_for_delta(engine):
+    class CompactManager:
+        calls = []
+
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.rsplit('\n', 1)[1])
+            self.calls.append(payload)
+            if 'sample' in payload:
+                return json.dumps({'topics': [{'label': 'Storage', 'description': 'Storage choices'}]})
+            assert all(set(row) == {'i', 'statement', 'scope'} for row in payload['records'])
+            return json.dumps({'assignments': [
+                {'i': row['i'], 't': [] if row['statement'] == 'Unrelated' else [1]}
+                for row in payload['records']]})
+
+    manager = CompactManager()
+    records = [record(str(i)) for i in range(241)] + [record('unrelated', 'Unrelated')]
+    original = deepcopy(records)
+    first = topics.group_records(engine, 1, manager, records, compact_assignment=True)
+    assert [len(call['records']) for call in manager.calls if 'records' in call] == [240, 2]
+    assert first['topic_grouping']['ai_requests'] == 3
+    assert first['topic_groups'][0]['item_ids'] == [row['id'] for row in records[:-1]]
+    assert records == original
+    warm = topics.group_records(engine, 1, manager, records, compact_assignment=True)
+    assert warm['topic_groups'] == first['topic_groups']
+    assert warm['topic_grouping']['ai_requests'] == 0
+    delta = topics.group_records(engine, 1, manager, [*records, record('new')],
+                                 previous=first, compact_assignment=True)
+    assert delta['topic_grouping']['reused_items'] == len(records)
+    assert delta['topic_grouping']['ai_requests'] == 1
+    assert delta['topic_groups'][0]['item_ids'][-1] == 'new'
