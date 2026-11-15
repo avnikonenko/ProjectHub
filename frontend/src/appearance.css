@@ -91,7 +91,10 @@
   color: var(--accent);
 }
 
-.brief-topic {
+.brief-topic,
+.brief-section h3,
+.knowledge-group h3,
+.markdown :is(h1, h2, h3, h4, h5, h6) {
   font-weight: 700;
 }
 
