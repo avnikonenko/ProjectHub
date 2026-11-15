@@ -1,106 +1,5 @@
-/* Presets build on the shared palette selectors. Original has no overrides. */
-:root[data-appearance='studio'] {
-  --page: #eef1f5;
-  --surface: #ffffff;
-  --surface-subtle: #f2f5f9;
-  --text: #18243a;
-  --muted: #47566e;
-  --accent: #244d91;
-  --border: #b9c5d6;
-  --palette-selected: #dce7f8;
-  --palette-button: #284e8a;
-  font-family: system-ui, sans-serif;
-  line-height: 1.5;
-}
-
-:root[data-appearance='studio'][data-theme='dark'] {
-  --page: #101721;
-  --surface: #192333;
-  --surface-subtle: #222f42;
-  --text: #eaf0f9;
-  --muted: #b2c1d5;
-  --accent: #a9c8fc;
-  --border: #4c607a;
-  --palette-selected: #283d5b;
-  --palette-button: #35598c;
-}
-
-:root[data-appearance='editorial'] {
-  --page: #f2eee6;
-  --surface: #fffcf6;
-  --surface-subtle: #f4efe5;
-  --text: #26271f;
-  --muted: #57584d;
-  --accent: #635027;
-  --border: #c8bfac;
-  --palette-selected: #e9e0cc;
-  --palette-button: #62512d;
-  font-family: Georgia, 'Times New Roman', serif;
-  line-height: 1.65;
-}
-
-:root[data-appearance='editorial'][data-theme='dark'] {
-  --page: #191916;
-  --surface: #23231e;
-  --surface-subtle: #2d2d26;
-  --text: #f2eee3;
-  --muted: #c8c0ad;
-  --accent: #e9cd8c;
-  --border: #625d4d;
-  --palette-selected: #3d3727;
-  --palette-button: #6b542d;
-}
-
-:root[data-appearance='contrast'] {
-  --page: #f2f2f2;
-  --surface: #ffffff;
-  --surface-subtle: #eeeeee;
-  --text: #101010;
-  --muted: #333333;
-  --accent: #123d80;
-  --border: #686868;
-  --palette-selected: #dce7fc;
-  --palette-button: #123d80;
-  font-family: Arial, Helvetica, sans-serif;
-  line-height: 1.6;
-}
-
-:root[data-appearance='contrast'][data-theme='dark'] {
-  --page: #0c0c0c;
-  --surface: #161616;
-  --surface-subtle: #242424;
-  --text: #fafafa;
-  --muted: #dddddd;
-  --accent: #b5d1ff;
-  --border: #989898;
-  --palette-selected: #243852;
-  --palette-button: #315486;
-}
-
-:root[data-appearance='studio'] .card {
-  border-radius: 0.75rem;
-  padding: 1.3rem;
-}
-
-:root[data-appearance='editorial'] .card {
-  border-radius: 0.2rem;
-  padding: 1.45rem;
-}
-
-:root[data-appearance='editorial'] :is(.tabs, button, input, textarea, select) {
-  font-family: system-ui, sans-serif;
-}
-
-:root[data-appearance='editorial'] :is(h1, h2, h3) {
-  letter-spacing: 0;
-}
-
-:root[data-appearance='contrast'] :is(input, select, textarea, button, a, summary):focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 2px;
-}
-
-:root[data-appearance='portfolio'] {
+/* Portfolio layout and neutral surfaces are shared by all accent colours. */
+:root {
   --page: #f5f5f5;
   --surface: #ffffff;
   --surface-subtle: #ededee;
@@ -114,7 +13,7 @@
   line-height: 1.65;
 }
 
-:root[data-appearance='portfolio'][data-theme='dark'] {
+:root[data-theme='dark'] {
   --page: #171717;
   --surface: #1c1c1c;
   --surface-subtle: #242424;
@@ -126,16 +25,64 @@
   --palette-button: #35536c;
 }
 
-:root[data-appearance='portfolio'] :is(.project-header, .tabs) {
+:root[data-palette] :is(.project-header, .tabs) {
   background: var(--page);
 }
 
-:root[data-appearance='portfolio'] .card {
+:root .card {
   border-radius: .35rem;
   box-shadow: none;
   padding: clamp(1rem, 2.5vw, 1.65rem);
 }
 
-:root[data-appearance='portfolio'] :is(h1, h2, h3) {
+:root :is(h1, h2, h3) {
   letter-spacing: -.018em;
+}
+
+:root[data-palette='sage'] {
+  --accent: #36604e;
+  --palette-selected: #e1ede5;
+  --palette-button: #36604e;
+}
+
+:root[data-palette='sage'][data-theme='dark'] {
+  --accent: #a0c8af;
+  --palette-selected: #283b31;
+  --palette-button: #385948;
+}
+
+:root[data-palette='lavender'] {
+  --accent: #614781;
+  --palette-selected: #eee5f5;
+  --palette-button: #614781;
+}
+
+:root[data-palette='lavender'][data-theme='dark'] {
+  --accent: #d0b5e6;
+  --palette-selected: #3c3046;
+  --palette-button: #61477c;
+}
+
+:root[data-palette='amber'] {
+  --accent: #765014;
+  --palette-selected: #f5ead8;
+  --palette-button: #765014;
+}
+
+:root[data-palette='amber'][data-theme='dark'] {
+  --accent: #edc48d;
+  --palette-selected: #443727;
+  --palette-button: #62491f;
+}
+
+:root[data-palette='graphite'] {
+  --accent: #414751;
+  --palette-selected: #e6e8ec;
+  --palette-button: #414751;
+}
+
+:root[data-palette='graphite'][data-theme='dark'] {
+  --accent: #c3cad4;
+  --palette-selected: #35383d;
+  --palette-button: #4c5460;
 }

@@ -1,153 +1,64 @@
-/* Optional palettes; the original green theme is left untouched. */
-:root[data-palette='black'] {
-  --page: #f4f4f4;
-  --surface: #ffffff;
-  --surface-subtle: #eaeaea;
-  --text: #222222;
-  --muted: #595959;
-  --accent: #333333;
-  --border: #c6c6c6;
-  --palette-selected: #dedede;
-  --palette-button: #333333;
-}
-:root[data-theme='dark'][data-palette='black'] {
-  --page: #171717;
-  --surface: #202020;
-  --surface-subtle: #282828;
-  --text: #eeeeee;
-  --muted: #bfbfbf;
-  --accent: #e0e0e0;
-  --border: #484848;
-  --palette-selected: #333333;
-  --palette-button: #404040;
-}
-:root[data-palette='lavender'] {
-  --page: #f5f1fb;
-  --surface: #fdfbff;
-  --surface-subtle: #ede5f6;
-  --text: #332b3e;
-  --muted: #655b72;
-  --accent: #68448e;
-  --border: #cfc0df;
-  --palette-selected: #e5d8f2;
-  --palette-button: #68448e;
-}
-:root[data-palette='sand'] {
-  --page: #faf6ee;
-  --surface: #fffdf8;
-  --surface-subtle: #f1e8d8;
-  --text: #352e24;
-  --muted: #6e6250;
-  --accent: #775a28;
-  --border: #d4c5ab;
-  --palette-selected: #eadcc2;
-  --palette-button: #775a28;
-}
-:root[data-palette='slate'] {
-  --page: #eff4f8;
-  --surface: #fbfdff;
-  --surface-subtle: #e3ecf3;
-  --text: #293541;
-  --muted: #596b7d;
-  --accent: #3d617b;
-  --border: #bccdda;
-  --palette-selected: #d6e4ef;
-  --palette-button: #3d617b;
-}
-:root[data-theme='dark'][data-palette='lavender'] {
-  --page: #1b1623;
-  --surface: #272030;
-  --surface-subtle: #32283e;
-  --text: #eee5f7;
-  --muted: #c4b5d1;
-  --accent: #d2b8f0;
-  --border: #655174;
-  --palette-selected: #463354;
-  --palette-button: #73509a;
-}
-:root[data-theme='dark'][data-palette='sand'] {
-  --page: #211c15;
-  --surface: #2d271e;
-  --surface-subtle: #393024;
-  --text: #f1e9dc;
-  --muted: #c8baa4;
-  --accent: #e5c187;
-  --border: #705e45;
-  --palette-selected: #4b3b25;
-  --palette-button: #795c31;
-}
-:root[data-theme='dark'][data-palette='slate'] {
-  --page: #151e27;
-  --surface: #202c38;
-  --surface-subtle: #2a3948;
-  --text: #e4edf6;
-  --muted: #b1c2d2;
-  --accent: #a9d0ee;
-  --border: #4c657b;
-  --palette-selected: #304c63;
-  --palette-button: #426784;
-}
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) {
+:root[data-palette] {
   color: var(--text);
   background: var(--page);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.sidebar, .workspace, .topbar) {
+:root[data-palette] :is(.sidebar, .workspace, .topbar) {
   background: var(--page);
   color: var(--text);
   border-color: var(--border);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.project-header, .tabs, .card, .modal, .generation-options, .secondary) {
+:root[data-palette] :is(.project-header, .tabs, .card, .modal, .generation-options, .secondary) {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(input, textarea, select) {
+:root[data-palette] :is(input, textarea, select) {
   background: var(--surface);
   color: var(--text);
   border-color: var(--border);
   accent-color: var(--accent);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(input, textarea)::placeholder {
+:root[data-palette] :is(input, textarea)::placeholder {
   color: var(--muted);
   opacity: 1;
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(button, .button):not(.secondary, .quiet, .icon-edit, .theme-toggle, .project-option, .add-project):not(.tabs button) {
+:root[data-palette] :is(button, .button):not(.secondary, .quiet, .icon-edit, .theme-toggle, .project-option, .add-project):not(.tabs button) {
   background: var(--palette-button);
   border-color: var(--palette-button);
   color: #fff;
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.project-option, .add-project, .quiet, .local-label, .tabs button, .icon-edit, .metric strong, .brief-reference, a, .markdown a) {
+:root[data-palette] :is(.project-option, .add-project, .quiet, .local-label, .tabs button, .icon-edit, .metric strong, .brief-reference, a, .markdown a) {
   color: var(--accent);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) .tabs button {
+:root[data-palette] .tabs button {
   background: transparent;
   border-color: transparent;
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) .tabs button.active {
+:root[data-palette] .tabs button.active {
   color: var(--accent);
   border-bottom-color: var(--accent);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.project-option.selected, .theme-toggle:hover, .icon-edit:is(:hover, :focus-visible):not(:disabled)) {
+:root[data-palette] :is(.project-option.selected, .theme-toggle:hover, .icon-edit:is(:hover, :focus-visible):not(:disabled)) {
   background: var(--palette-selected);
   color: var(--accent);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) .selected .project-dot {
+:root[data-palette] .selected .project-dot {
   background: var(--accent);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(small, .muted, .brand small, .sidebar-label, .sidebar-footer, .sidebar-footer small, .eyebrow, h4, .subtle-label, .metric span, .search-bar > span, .compact-row p, .activity p, .activity small, .empty, .history-message > small, label, .project-brief small, .brief-sources small) {
+:root[data-palette] :is(small, .muted, .brand small, .sidebar-label, .sidebar-footer, .sidebar-footer small, .eyebrow, h4, .subtle-label, .metric span, .search-bar > span, .compact-row p, .activity p, .activity small, .empty, .history-message > small, label, .project-brief small, .brief-sources small) {
   color: var(--muted);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.brief-points, .project-brief .brief-note, .brief-sources) {
+:root[data-palette] :is(.brief-points, .project-brief .brief-note, .brief-sources) {
   color: var(--text);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.repository, .tags span, .answer, .json-report, .delivery-preview, .markdown pre, .markdown code) {
+:root[data-palette] :is(.repository, .tags span, .answer, .json-report, .delivery-preview, .markdown pre, .markdown code) {
   background: var(--surface-subtle);
   color: var(--text);
   border-color: var(--border);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(.sidebar-footer, .add-project, .metric, .compact-row, .activity, .upload-label, .markdown td, .markdown th, .history-turn, .history-message, .list-item) {
+:root[data-palette] :is(.sidebar-footer, .add-project, .metric, .compact-row, .activity, .upload-label, .markdown td, .markdown th, .history-turn, .history-message, .list-item) {
   border-color: var(--border);
 }
-:root:is([data-palette]:not([data-palette='green']), [data-appearance]:not([data-appearance='original'])) :is(input, textarea, select, button, a):focus-visible {
+:root[data-palette] :is(input, textarea, select, button, a):focus-visible {
   outline-color: var(--accent);
 }
