@@ -1,8 +1,8 @@
 /* Portfolio layout and neutral surfaces are shared by all accent colours. */
 :root {
-  --page: #f5f5f5;
-  --surface: #ffffff;
-  --surface-subtle: #ededee;
+  --page: #efeeea;
+  --surface: #faf9f6;
+  --surface-subtle: #e8e7e2;
   --text: #212327;
   --muted: #51565e;
   --accent: #315b80;
