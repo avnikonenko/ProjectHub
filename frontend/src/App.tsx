@@ -1,3 +1,4 @@
+import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
 import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './topicGroups';
 import { TopicPicker } from './TopicPicker';
@@ -991,12 +992,12 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
         <section className="brief-section">
           <h3>{busy || remoteBusy ? 'Previous answer' : 'Answer'}</h3>
           {answeredQuestion && <p className="muted">{answeredQuestion}</p>}
-          <p className="shared-transcript">{result.answer.split(/(\[\d+\])/g).map((part, index) => {
+          <p className="shared-transcript"><AIEmphasis text={result.answer} renderText={text => text.split(/(\[\d+\])/g).map((part, index) => {
             const id = /^\[(\d+)\]$/.exec(part)?.[1];
             return id && numbers.has(id)
               ? <span key={index}>{briefReferences([id], numbers, prefix)}</span>
               : part;
-          })}</p>
+          })} /></p>
           {!!result.sources.length && (
             <div className="brief-sources">
               <h4>Sources</h4>
@@ -1392,18 +1393,18 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         {items.map((item) => (
           <article className="brief-section" key={item.question}>
             <div className="section-title">
-              <h3>{item.question}</h3>
+              <h3><AIEmphasis text={item.question} /></h3>
               <DeleteButton label={`Delete Q&A: ${item.question}`}
                 disabled={tagsBusy || revisionId !== null || loading || generating || recoveryBusy || revisionLoading || deleting}
                 onClick={() => void removeQuestion(item.question)} />
             </div>
-            <p>{item.answer}{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
+            <p><AIEmphasis text={item.answer} />{briefReferences(item.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
             {!!item.variants?.length && (
               <details>
                 <summary>Other recorded answers ({item.variants.length})</summary>
                 <p>These sources differ. Review them to determine which answer applies.</p>
                 {item.variants.map((answer, index) => (
-                  <p key={index}>{answer.answer}{briefReferences(answer.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
+                  <p key={index}><AIEmphasis text={answer.answer} />{briefReferences(answer.source_ids, numbers, base.split('/')[2] + '-qa', sources)}</p>
                 ))}
               </details>
             )}

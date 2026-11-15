@@ -1,3 +1,4 @@
+import { AIEmphasis } from './AIEmphasis';
 import { useEffect, useId, useRef, useState } from 'react';
 import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
@@ -55,7 +56,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     const current = evidenceAvailability(item, availability);
     return <details key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
       id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`} open={item.id === selected || undefined}>
-      <summary><span>{item.statement}</span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references
+      <summary><span><AIEmphasis text={item.statement} /></span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references
         {item.reconciliation_state === 'unresolved' && ' · Needs context review'}</small></summary>
       <div className="knowledge-item-body">
         <p className="muted">Extracted interpretation</p>
@@ -63,7 +64,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           <dt>Design status</dt><dd>{display(item.design_status)}</dd>
           <dt>Category</dt><dd>{display(item.category)}</dd>
           <dt>Scope</dt><dd>{item.scope}</dd>
-          {item.rationale && <><dt>Rationale</dt><dd>{item.rationale}</dd></>}
+          {item.rationale && <><dt>Rationale</dt><dd><AIEmphasis text={item.rationale} /></dd></>}
           {item.alternatives && <><dt>Alternatives</dt><dd>{item.alternatives}</dd></>}
           {item.limitations && <><dt>Limitations</dt><dd>{item.limitations}</dd></>}
           <dt>Current evidence</dt><dd>{display(current)}{current !== 'valid' && ' — historical design status is preserved.'}</dd>

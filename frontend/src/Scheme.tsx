@@ -1,3 +1,4 @@
+import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, post } from './api';
@@ -233,7 +234,7 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
     <summary>Components and relationships ({graph.nodes.length})</summary>
     <ul>{graph.nodes.map((node) => <li key={node.id}>
       <strong>{node.label}</strong> <span className="badge">{label(node.status)}</span>
-      <p>{node.description}{briefReferences(node.source_ids, numbers, prefix, sources)}</p>
+      <p><AIEmphasis text={node.description} />{briefReferences(node.source_ids, numbers, prefix, sources)}</p>
       {!!node.paths.length && <small>{node.paths.join(' · ')}</small>}
     </li>)}</ul>
     {!!graph.edges.length && <details><summary>Relationships ({graph.edges.length})</summary><ul>
@@ -328,7 +329,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <thead><tr><th>Dependency</th><th>Declared constraint</th><th>Category</th><th>Purpose / evidence</th></tr></thead>
       <tbody>{items.map((dependency) => <tr key={dependency.id}>
         <td>{dependency.name}</td><td><code>{dependency.constraint || 'Not specified'}</code></td>
-        <td>{label(dependency.category)}</td><td>{dependency.purpose || 'Purpose not explained yet.'}
+        <td>{label(dependency.category)}</td><td><AIEmphasis text={dependency.purpose || 'Purpose not explained yet.'} />
           {briefReferences(dependency.purpose_source_ids ?? [], numbers, prefix, sources)}
           <small>Declaration{briefReferences(dependency.source_ids, numbers, prefix, sources)} · {[...new Set(dependency.source_ids.map((id) => sources.find((source) => source.id === id)?.provenance).filter(Boolean))].map((value) => label(value!)).join(' · ')}</small>
         </td>
@@ -368,7 +369,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved scheme. Generate one from this project’s available evidence.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
-      <p>{graph.explanation}</p>
+      <p><AIEmphasis text={graph.explanation} /></p>
       {!!graph.nodes.length && <>
         <small>Observed means supported by inspected evidence; it does not establish that the functionality works.</small>
         <GraphEvidence graph={graph} numbers={numbers} prefix={prefix} sources={sources} />

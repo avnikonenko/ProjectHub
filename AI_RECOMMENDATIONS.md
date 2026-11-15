@@ -8,6 +8,7 @@ Apply these instructions to ProjectHub briefs, project maps, Q&A, reviews, summa
 - Use complete sentences. Shorten by removing less useful details instead of cutting a sentence short.
 - When describing a change, lead with what changed and its practical effect. Skip boilerplate about the discussion or summary.
 - Use plain language. Avoid decorative headings and explanations of internal processing.
+- In generated prose, use Markdown bold (`**key phrase**`) sparingly when it helps readers spot a key decision, blocker, or next action. Leave verbatim excerpts and citations unchanged.
 - Preserve important decisions, reasons, uncertainty, blockers, and source references. Brevity must not hide a material limitation.
 - Distinguish proposals from accepted decisions and verified outcomes. Never invent missing evidence.
 - Respect history. Prefer newer evidence when its chronology is established; flag conflicting decisions rather than silently choosing one.

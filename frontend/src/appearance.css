@@ -86,3 +86,7 @@
   --palette-selected: #35383d;
   --palette-button: #4c5460;
 }
+
+.ai-emphasis, .markdown strong {
+  color: var(--accent);
+}

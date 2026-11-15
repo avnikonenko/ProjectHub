@@ -1,3 +1,4 @@
+import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
@@ -37,7 +38,7 @@ export function ImportantKnowledge({ base, publicationId, visible }: {
     {matching && <>
       <ul>{items.map(item => <li key={item.id}>
         <small>{item.design_status.replaceAll('_', ' ')}</small>{' · '}
-        <a href={knowledgeHref({ projectId, publicationId, itemId: item.id })}>{item.statement}</a>
+        <a href={knowledgeHref({ projectId, publicationId, itemId: item.id })}><AIEmphasis text={item.statement} /></a>
         <div className="muted">{item.scope}</div>
         {(passageCounts.get(item.id) || 0) > 1 && <small>{passageCounts.get(item.id)} interpretations from the same passage</small>}
       </li>)}</ul>

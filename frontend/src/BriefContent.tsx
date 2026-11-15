@@ -1,3 +1,4 @@
+import { AIEmphasis } from './AIEmphasis';
 import { type GenerationProvenance } from './GenerationStatus';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { Empty } from './ui';
@@ -82,7 +83,7 @@ export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }
           {entries.map((entry, index) => (
             <li key={index}>
               {entry.classification && <><small>{evidenceLabels[entry.classification]}</small>{' · '}</>}
-              {key === 'validation' ? validationCopy(entry.text) : entry.text}
+              <AIEmphasis text={key === 'validation' ? validationCopy(entry.text) : entry.text} />
               {briefReferences(entry.source_ids, sourceNumbers, prefix, brief.sources)}
             </li>
           ))}
