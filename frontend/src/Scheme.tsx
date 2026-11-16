@@ -164,7 +164,7 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
       svg.style.height = 'auto';
       element.replaceChildren(document.importNode(svg, true));
       fitDiagram();
-    }).catch(() => { if (active) setError('The diagram could not be rendered. Its components and evidence are available below.'); })
+    }).catch(() => { if (active) setError('The diagram could not be rendered. Try refreshing the page. Its components and evidence are available below.'); })
       .finally(() => { if (active) setRendering(false); });
     return () => { active = false; };
   }, [graph.mermaid, graph.nodes, graph.edges, id, theme]);
