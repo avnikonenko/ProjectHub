@@ -35,9 +35,17 @@ projecthub search --project-id 1 --query 'why SQLite' --kind conversations
 Search uses existing local saved indexes and returns supporting snippets. It is
 optional: read overviews and Knowledge directly when they answer the request.
 Use returned record IDs, `next_offset` and text-window metadata to continue reading,
-rather than downloading the whole project. `read` also supports notes, tasks,
+keeping each request bounded. `read` also supports notes, tasks,
 sessions and saved discussion responses; use `--id` to narrow a record and
 `--text-offset` for its next text window. Run `projecthub read --help` for the supported kinds and options.
+
+When the user asks to read all records in a collection, follow every `next_offset`
+and every per-field text continuation until that collection is exhausted. A compact
+briefing or search result is not a complete read. Otherwise, retrieve relevant
+details as needed. State briefly which material was read and any remaining coverage
+gaps; if a limit or error interrupts an exhaustive read, report it as incomplete.
+Reading all saved records does not include full conversation transcripts or older
+revisions; retrieve those separately only when requested and supported.
 
 Exclude unrelated projects, raw diagnostic logs, credentials, account configuration
 and entire conversation histories from the starting briefing. Reading must not
@@ -56,7 +64,7 @@ projecthub read --project-id 1 --kind tasks --limit 5
 
 Replace the example ID with the actual project ID. These pages include each task’s
 recorded status; do not treat completed or not-planned tasks as active work.
-Follow `next_offset` and per-field continuation offsets only when needed. To read
+Follow `next_offset` and per-field continuation offsets as described above. To read
 a specific note or task, add `--id` with its returned record ID.
 
 Legacy `note list` and `todo list --all` return entire collections, including
