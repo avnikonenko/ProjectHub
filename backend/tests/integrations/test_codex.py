@@ -624,3 +624,16 @@ def test_review_response_pages_survive_noisy_raw_event_history(setup):
     assert setup.client.get(url + '/responses?limit=51').status_code == 422
     assert setup.client.get(url + '/responses?offset=-1').status_code == 422
     assert setup.client.get(f'/api/projects/2/codex/sessions/{sid}/responses').status_code == 404
+
+
+def test_completed_response_retains_turn_identity_only(setup):
+    sid = create_session(setup)
+    setup.manager._event(sid, 'item/completed', {
+        'turnId': 'review-turn', 'threadId': 'not-retained',
+        'item': {'type': 'agentMessage', 'text': 'Answer', 'extra': 'not-retained'},
+    })
+    with Session(setup.engine) as db:
+        event = db.scalar(select(CodexEvent).where(CodexEvent.session_id == sid,
+                          CodexEvent.method == 'item/completed').order_by(CodexEvent.id.desc()))
+        assert event.payload == {'turnId': 'review-turn',
+                                 'item': {'type': 'agentMessage', 'text': 'Answer'}}

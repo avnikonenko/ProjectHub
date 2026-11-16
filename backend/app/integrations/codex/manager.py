@@ -281,7 +281,10 @@ class CodexManager:
             item = params.get('item', {})
             if item.get('type') != 'agentMessage':
                 return
+            turn_id = params.get('turnId')
             params = {'item': {'type': 'agentMessage', 'text': str(item.get('text', ''))[:100_000]}}
+            if isinstance(turn_id, str) and turn_id:
+                params['turnId'] = turn_id
         elif method == 'error':
             params = {'message': _REVIEW_EXECUTION_ERROR,
                       'will_retry': bool(params.get('willRetry', False))}

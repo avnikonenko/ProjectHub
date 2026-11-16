@@ -1603,3 +1603,7 @@ a:focus-visible {
 }
 .review-discussion-toggle { cursor: pointer; padding-block: .5rem; }
 .answer time { display: block; font-size: .85rem; }
+
+.review-question { border-left: 2px solid var(--border); padding-left: .85rem; margin: .75rem 0 1rem; }
+.review-question h4 { margin: 0 0 .25rem; }
+.review-question p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }

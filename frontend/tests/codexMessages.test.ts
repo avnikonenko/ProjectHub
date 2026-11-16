@@ -32,3 +32,14 @@ test('timestamps do not turn deltas, tool output or malformed items into complet
     { id: 4, method: 'item/completed', created_at },
   ]), []);
 });
+
+test('saved questions remain attached only to their completed response', () => {
+  const event = { id: 1, method: 'item/completed', question: 'Why this approach?',
+    payload: { item: { type: 'agentMessage', text: 'Because it preserves history.' } } };
+  assert.deepEqual(completedMessages([event]), [
+    { id: 1, text: 'Because it preserves history.', question: 'Why this approach?' },
+  ]);
+  assert.deepEqual(completedMessages([{ ...event, question: null }]), [
+    { id: 1, text: 'Because it preserves history.' },
+  ]);
+});

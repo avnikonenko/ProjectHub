@@ -2340,6 +2340,10 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                         }} />
                     </div>
                   </div>
+                  {message.question && <div className="review-question">
+                    <h4>Question</h4>
+                    <p>{message.question}</p>
+                  </div>}
                   <Markdown>{message.text}</Markdown>
                   <button
                     className="secondary"

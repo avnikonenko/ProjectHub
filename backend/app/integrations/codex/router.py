@@ -890,7 +890,9 @@ def review_responses(project_id: int, session_id: int, db: DB,
                                .where(*conditions)).one()
     rows = list(db.scalars(select(CodexEvent).where(*conditions)
                            .order_by(CodexEvent.id.desc()).offset(offset).limit(limit)))
-    return {'events': [record_dict(row) for row in reversed(rows)],
+    from .review_questions import response_question
+    return {'events': [{**record_dict(row), **response_question(db, project_id, session_id, row)}
+                       for row in reversed(rows)],
             'total': total, 'latest_id': latest}
 
 
