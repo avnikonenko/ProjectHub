@@ -178,9 +178,7 @@ export default function App() {
       </aside>
       <div className="workspace">
         <header className="topbar">
-          <span>PROJECT WORKSPACE</span>
           <div className="topbar-actions">
-            <span className="local-label">● localhost</span>
             <ThemeToggle />
             <AppSettings />
           </div>
@@ -436,14 +434,11 @@ function ProjectWorkspace({
     <>
       <div className="project-header">
         <div>
-          <p className="eyebrow">
-            PROJECT / {String(project.id).padStart(2, '0')}
-          </p>
+          <p className="eyebrow">#{String(project.id).padStart(2, '0')}</p>
           <h1>{project.name}</h1>
           {project.description && <p className="muted project-description">{project.description}</p>}
         </div>
         <div className="project-actions">
-          <Badge value={project.status} />
           <button
             className="secondary"
             onClick={() =>
@@ -2381,9 +2376,6 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                       </div>
                       <Markdown>{item.decision_id == null ? question : content}</Markdown>
                       {item.error && <ErrorBox error={item.error} />}
-                      <small>
-                        Context version ID: {item.context_id ?? 'Decision update'}
-                      </small>
                       {item.decision_id == null && ['draft', 'queued', 'failed'].includes(item.status ?? '') && (
                         <div className="actions left">
                           <button
@@ -2417,7 +2409,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                   );
                 })}</PagedItems>
                 <details>
-                  <summary>Raw event log</summary>
+                  <summary>Diagnostics</summary>
                   <Report value={events} />
                 </details>
               </details>
