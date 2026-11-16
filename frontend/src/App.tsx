@@ -780,26 +780,16 @@ function ProjectWorkspace({
             )}
             {view === 'Reviews' && (
               <>
-                <section className="card">
-                  <p className="eyebrow">PROJECT HEALTH</p>
-                  <h2>Review follow-ups</h2>
-                  <p>
-                    Review open TODOs and limitations recorded in your notes.
-                  </p>
-                  <div className="actions left">
-                    <button
-                      disabled={busy}
-                      onClick={() =>
-                        run(async () => setReport(await api(`${base}/review`)))
-                      }
-                    >
-                      Review follow-ups
-                    </button>
-                  </div>
-                </section>
                 <AskProject base={base} projectId={projectId} generation={generation} />
+                <div className="review-followups">
+                  <span className="muted">Open TODOs and recorded limitations</span>
+                  <button className="secondary" disabled={busy}
+                    onClick={() => run(async () => setReport(await api(`${base}/review`)))}>
+                    Review follow-ups
+                  </button>
+                </div>
                 <details>
-                  <summary className="card">Continue a Codex discussion</summary>
+                  <summary className="review-discussion-toggle">Continue a Codex discussion</summary>
                   <CodexReview base={base} generation={generation} onNotesChanged={load}
                     onManageSessions={() => { setReport(null); setView('Sources'); }} />
                 </details>
@@ -2326,7 +2316,12 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
               {completed.map((message) => (
                 <article className="answer" key={message.id}>
                   <div className="section-title">
-                    <h3>Codex response</h3>
+                    <div>
+                      <h3>Response #{message.id}</h3>
+                      {message.created_at && <time className="muted" dateTime={message.created_at}>
+                        {new Date(message.created_at).toLocaleString()}
+                      </time>}
+                    </div>
                     <div className="note-actions">
                       <Badge value="unverified" />
                       <DeleteButton label={`Delete saved Codex response #${message.id}`} disabled={busy}

@@ -1592,3 +1592,14 @@ a:focus-visible {
 .scheme-color-key span::before { content: ""; display: inline-block; width: .65em; height: .65em; border-radius: 50%; margin-right: .4em; background: #497ba5; }
 .scheme-color-key .scheme-key-start::before { background: #357a62; }
 .scheme-color-key .scheme-key-end::before { background: #80549f; }
+
+.review-followups {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin: .75rem 0 1.25rem;
+}
+.review-discussion-toggle { cursor: pointer; padding-block: .5rem; }
+.answer time { display: block; font-size: .85rem; }
