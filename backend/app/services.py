@@ -1,5 +1,6 @@
 import os
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -71,14 +72,13 @@ def repository_github_target(remote, path=None, *, validated=False):
     env = _repository_env()
     if not validated:
         path = validate_repository(path, env=env)
+    from .project_evidence import _git, EvidenceReadError
     try:
-        result = subprocess.run(
-            ['git', '-C', path, 'config', '--local', '--no-includes', '--get', 'remote.origin.url'],
-            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=5, env=env,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        output, code = _git(path, 'config', '--local', '--no-includes', '--get', 'remote.origin.url',
+                            allowed=(0, 1), limit=8192)
+    except EvidenceReadError:
         return None
-    return github_repository(result.stdout) if result.returncode == 0 else None
+    return github_repository(output.decode('utf-8', errors='replace')) if code == 0 else None
 
 
 def repository_snapshot(value, remote=''):
@@ -86,17 +86,15 @@ def repository_snapshot(value, remote=''):
         raise HTTPException(404, 'No repository is linked to this project')
     env = _repository_env()
     path = validate_repository(value, env=env)
-    command = ['git', '-C', path, '-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=/dev/null']
-
     def git(*args, allowed=(0,), overrides=()):
+        # Reuse the evidence inspector's byte/deadline bounds and safe process
+        # cleanup instead of buffering arbitrary Git output in subprocess.run.
+        from .project_evidence import _git, EvidenceReadError
         try:
-            result = subprocess.run([*command, *overrides, *args], capture_output=True,
-                                    text=True, encoding='utf-8', errors='replace', timeout=5, env=env)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise HTTPException(503, 'Unable to inspect repository') from exc
-        if result.returncode not in allowed:
-            raise HTTPException(503, 'Unable to inspect repository')
-        return result
+            output, code = _git(path, *args, allowed=allowed, overrides=overrides)
+        except EvidenceReadError as exc:
+            raise HTTPException(503, 'Repository inspection failed or exceeded its byte/time limit.') from exc
+        return SimpleNamespace(stdout=output.decode('utf-8', errors='replace'), returncode=code)
 
     branch = git('symbolic-ref', '--quiet', '--short', 'HEAD', allowed=(0, 1))
     head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
@@ -182,7 +180,15 @@ def overview(db, project_id, *, compact=False, note_content=True):
 
 
 def summary(db, project_id):
-    data = overview(db,project_id)
+    data = {'project': serialize(require_project(db, project_id)),
+            'tasks': [dict(row) for row in db.execute(select(Task.id, Task.title, Task.status)
+                .where(Task.project_id == project_id).order_by(Task.pinned.desc(), Task.id)).mappings()],
+            'decisions': [dict(row) for row in db.execute(select(Decision.id, Decision.title, Decision.description, Decision.status, Decision.limitations)
+                .where(Decision.project_id == project_id, Decision.status == 'accepted').order_by(Decision.id)).mappings()],
+            'questions': [dict(row) for row in db.execute(select(Question.id, Question.title, Question.status)
+                .where(Question.project_id == project_id, Question.status != 'resolved').order_by(Question.id)).mappings()],
+            'notes': [{'kind': 'limitation', 'content': content} for content in db.scalars(
+                select(Note.content).where(Note.project_id == project_id, Note.kind == 'limitation').order_by(Note.id))]}
     p = data['project']
     decisions = [d for d in data['decisions'] if d['status'] == 'accepted']
     questions = [q for q in data['questions'] if q['status'] != 'resolved']
@@ -207,11 +213,14 @@ def summary(db, project_id):
 
 
 def review(db, project_id):
-    data = overview(db,project_id)
+    require_project(db, project_id)
+    tasks = db.execute(select(Task.id, Task.title, Task.status).where(Task.project_id == project_id)
+                       .order_by(Task.pinned.desc(), Task.id)).mappings()
     findings = []
     def finding(category, message, entity_id=None): findings.append({'category':category, 'message':message, 'entity_id':entity_id, 'status':'unverified'})
-    for t in data['tasks']:
+    for t in tasks:
         if t['status'] not in ('completed', 'not_planned'): finding('incomplete_task',f"Task #{t['id']} is {t['status']}: {t['title']}",t['id'])
-    for n in data['notes']:
-        if n['kind']=='limitation': finding('limitation',n['content'],n['id'])
+    for n in db.execute(select(Note.id, Note.content).where(Note.project_id == project_id, Note.kind == 'limitation')
+                        .order_by(Note.id)).mappings():
+        finding('limitation',n['content'],n['id'])
     return {'project_id':project_id,'source':'deterministic','findings':findings,'limitations':['Rule-based checks flag gaps in recorded information; they do not verify claims or detect contradictions in meaning.']}

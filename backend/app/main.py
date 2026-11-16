@@ -16,6 +16,7 @@ from .db import initialize, default_data_dir, get_db
 from .integrations import chatgpt_share, github_issues
 from .integrations.codex.history_search import search_history
 from .project_search import project_search
+from .project_export import audit_response, project_export_response
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
@@ -265,8 +266,9 @@ def create_app(data_dir=None):
         return result
 
     @app.get('/api/projects/{project_id}/audit')
-    def get_audit(project_id:int,db:Session=db_dep):
-        require_project(db,project_id);return [serialize(a) for a in db.scalars(select(AuditEvent).where(AuditEvent.project_id==project_id).order_by(AuditEvent.id))]
+    def get_audit(project_id:int,db:Session=db_dep,
+                  offset: int = Query(0, ge=0), limit: int | None = Query(None, ge=1, le=1000)):
+        return audit_response(db, project_id, offset, limit)
 
     @app.get('/api/projects/{project_id}/repository')
     def get_repository_snapshot(project_id: int, db: Session = db_dep):
@@ -311,9 +313,7 @@ def create_app(data_dir=None):
 
     @app.get('/api/projects/{project_id}/export')
     def export(project_id:int,db:Session=db_dep):
-        data=overview(db,project_id);data.pop('activity');data['schema_version']=1
-        for key,cls in [('answers',Answer),('audit',AuditEvent),('sessions',CodexSession),('contexts',ContextPackage),('deliveries',Delivery),('events',CodexEvent)]:data[key]=[serialize(x) for x in db.scalars(select(cls).where(cls.project_id==project_id).order_by(cls.id))]
-        return data
+        return project_export_response(db, project_id)
 
     @app.post('/api/projects/{project_id}/documents',status_code=201)
     async def import_document(project_id:int,file:UploadFile=File(...),db:Session=db_dep):
