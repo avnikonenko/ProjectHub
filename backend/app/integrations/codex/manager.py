@@ -1002,6 +1002,20 @@ class CodexManager:
             client.request('turn/interrupt', {'threadId': session.thread_id, 'turnId': turn_id})
             return {'status': 'interrupt_requested'}
 
+    def release_session(self, session_id):
+        """Release only this database session, including its original account.
+
+        Account settings may have changed since the client was opened. Search
+        retained managers instead of constructing a new account connection.
+        Session IDs are globally unique within this engine.
+        """
+        with self.lock:
+            for manager in (self, *self.account_managers.values()):
+                client = manager.clients.get(session_id)
+                if client is not None:
+                    client.close()
+                    manager.clients.pop(session_id, None)
+
     def close(self):
         for child in self.account_managers.values():
             child.close()

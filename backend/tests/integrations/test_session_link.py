@@ -14,6 +14,10 @@ class FakeHistory:
 
     def __init__(self):
         self.reads = []
+        self.released = []
+
+    def release_session(self, session_id):
+        self.released.append(session_id)
 
     def _new_read_client(self):
         return self
@@ -47,8 +51,10 @@ def test_unlink_hides_session_and_search_but_preserves_citations_and_relinks(tmp
     with TestClient(app) as client:
         assert client.post(f'{prefix}/history/index').json()['indexed_turns'] == 1
         assert client.patch('/api/projects/2/codex/sessions/1/link', json={'linked': False}).status_code == 404
+        assert manager.released == []
         assert client.patch(f'{session}/link', json={'linked': 'false'}).status_code == 422
         assert client.patch(f'{session}/link', json={'linked': False}).json()['is_linked'] is False
+        assert manager.released == [1]
         assert client.get(f'{prefix}/sessions').json() == []
         assert client.get(f'{prefix}/history/search', params={'q': 'evidence'}).json()['indexed_turns'] == 0
         assert client.get(f'/api/projects/1/history/search', params={'q': 'evidence'}).json()['results'] == []
@@ -73,6 +79,7 @@ def test_unlink_hides_session_and_search_but_preserves_citations_and_relinks(tmp
             row.status = 'running'
             db.commit()
         assert client.patch(f'{session}/link', json={'linked': False}).status_code == 409
+        assert manager.released == [1]
         with Session(app.state.engine) as db:
             actions = list(db.scalars(select(AuditEvent.action).order_by(AuditEvent.id)))
             assert actions == ['session_unlinked', 'session_relinked']

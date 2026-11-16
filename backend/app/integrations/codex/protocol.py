@@ -2,9 +2,11 @@
 import json
 import os
 import queue
+import select
 import shutil
 import subprocess
 import threading
+import time
 from ...version import VERSION
 
 
@@ -41,6 +43,9 @@ class AppServerClient:
         self.timeout = timeout
         self.pending = {}
         self.lock = threading.Lock()
+        self._write_lock = threading.RLock()
+        self._read_lock = threading.RLock()
+        self._close_lock = threading.Lock()
         self.next_id = 0
         self.closed = False
         executable = executable or shutil.which('codex')
@@ -56,7 +61,13 @@ class AppServerClient:
                                             env=environment, stdin=subprocess.PIPE,
                                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                             text=True, encoding='utf-8', bufsize=1)
+            # Use bounded nonblocking writes; a server that stops reading must
+            # not trap the caller before its response timeout even starts.
+            os.set_blocking(self.process.stdin.fileno(), False)
+            os.set_blocking(self.process.stdout.fileno(), False)
         except OSError as exc:
+            if hasattr(self, 'process'):
+                self.close()
             raise CodexError('Unable to start Codex App Server') from exc
         try:
             try:
@@ -71,33 +82,68 @@ class AppServerClient:
             self.close()
             raise
 
-    def _write(self, message):
-        with self.lock:
+    def _check_io(self, deadline, *, connection=True):
+        from . import progress
+        try:
+            progress.check_cancelled()
+        except CodexError:
+            self.close()
+            raise
+        if time.monotonic() >= deadline:
+            self.close()
+            raise CodexError('Codex request timed out; delivery may be unverified')
+        if connection and (self.closed or self.process.poll() is not None):
+            raise CodexError('Codex App Server connection is closed')
+
+    def _write(self, message, *, deadline=None):
+        deadline = time.monotonic() + self.timeout if deadline is None else deadline
+        # State and write locks are separate, so close/read can wake pending
+        # callers while a pipe is full. Only one JSONL frame writes at a time.
+        while not self._write_lock.acquire(timeout=min(.05, max(0, deadline - time.monotonic()))):
+            self._check_io(deadline)
+        try:
+            self._check_io(deadline)
             if self.closed or self.process.poll() is not None:
                 raise CodexError('Codex App Server connection is closed')
             try:
-                self.process.stdin.write(json.dumps(message, ensure_ascii=False) + '\n')
-                self.process.stdin.flush()
+                encoded = (json.dumps(message, ensure_ascii=False) + '\n').encode('utf-8')
+                pending = memoryview(encoded)
+                descriptor = self.process.stdin.fileno()
+                while pending:
+                    self._check_io(deadline)
+                    try:
+                        written = os.write(descriptor, pending)
+                    except BlockingIOError:
+                        select.select([], [descriptor], [], min(.05, max(0, deadline - time.monotonic())))
+                        continue
+                    if not written:
+                        raise OSError('Closed pipe')
+                    pending = pending[written:]
             except (OSError, ValueError) as exc:
                 raise CodexError('Codex App Server connection was interrupted') from exc
+        finally:
+            self._write_lock.release()
 
     @property
     def connected(self):
         return not self.closed and self.process.poll() is None and self.reader.is_alive()
 
     def request(self, method, params):
+        deadline = time.monotonic() + self.timeout
         response = queue.Queue(maxsize=1)
         with self.lock:
             self.next_id += 1
             request_id = self.next_id
             self.pending[request_id] = response
         try:
-            self._write({'id': request_id, 'method': method, 'params': params})
-            try:
-                result = response.get(timeout=self.timeout)
-            except queue.Empty as exc:
-                self.close()
-                raise CodexError('Codex request timed out; delivery may be unverified') from exc
+            self._write({'id': request_id, 'method': method, 'params': params}, deadline=deadline)
+            while True:
+                self._check_io(deadline, connection=False)
+                try:
+                    result = response.get(timeout=min(.05, max(0, deadline - time.monotonic())))
+                    break
+                except queue.Empty:
+                    continue
             if 'error' in result:
                 # Do not expose arbitrary server/config/auth details to browser clients.
                 code = result['error'].get('code', 'unknown')
@@ -115,27 +161,54 @@ class AppServerClient:
                 self.pending.pop(request_id, None)
 
     def _read(self):
+        buffered = bytearray()
+        maximum_chars = 2 * 1024 * 1024
         try:
-            while True:
-                line = self.process.stdout.readline(2 * 1024 * 1024 + 1)
-                if not line:
+            with self._read_lock:
+                if self.closed:
+                    return
+                descriptor = self.process.stdout.fileno()
+            while not self.closed:
+                readable, _, _ = select.select([descriptor], [], [], .05)
+                if not readable:
+                    continue
+                # Never hold a buffered-stream read lock while waiting for an
+                # inherited pipe to close. Cleanup synchronizes only this short
+                # nonblocking read, so a server descendant cannot pin close().
+                with self._read_lock:
+                    if self.closed:
+                        break
+                    try:
+                        chunk = os.read(descriptor, 65536)
+                    except BlockingIOError:
+                        continue
+                if not chunk:
                     break
-                if len(line) > 2 * 1024 * 1024:
+                buffered.extend(chunk)
+                # UTF-8 needs at most four bytes per character. Preserve the
+                # prior character bound and also bound unfinished wire frames.
+                while (newline := buffered.find(b'\n')) >= 0:
+                    line = bytes(buffered[:newline]).decode('utf-8')
+                    del buffered[:newline + 1]
+                    if len(line) + 1 > maximum_chars:
+                        raise ValueError('Oversized Codex frame')
+                    message = json.loads(line)
+                    if not isinstance(message, dict):
+                        raise ValueError('Unsupported Codex frame')
+                    if 'id' in message and 'method' not in message:
+                        with self.lock:
+                            target = self.pending.get(message['id'])
+                        if target is not None:
+                            target.put_nowait(message)
+                    elif 'id' in message:
+                        # No server-initiated approvals, tools or login flows.
+                        self._write({'id': message['id'], 'error': {
+                            'code': -32601, 'message': 'ProjectHub does not permit this operation'}})
+                        self._event('projecthub/approvalDenied', {'method': message.get('method')})
+                    else:
+                        self._event(message.get('method', ''), message.get('params', {}))
+                if len(buffered) > maximum_chars * 4:
                     break
-                message = json.loads(line)
-                if 'id' in message and 'method' not in message:
-                    with self.lock:
-                        target = self.pending.get(message['id'])
-                    if target is not None:
-                        target.put_nowait(message)
-                elif 'id' in message:
-                    # A read-only client never grants server-initiated approvals,
-                    # dynamic tools, login flows or permission expansion.
-                    self._write({'id': message['id'], 'error': {
-                        'code': -32601, 'message': 'ProjectHub does not permit this operation'}})
-                    self._event('projecthub/approvalDenied', {'method': message.get('method')})
-                else:
-                    self._event(message.get('method', ''), message.get('params', {}))
         except (ValueError, OSError, CodexError, queue.Full):
             pass
         finally:
@@ -158,14 +231,29 @@ class AppServerClient:
             logging.getLogger(__name__).exception('Codex event callback failed')
 
     def close(self):
-        self.closed = True
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=3)
-        for stream in (self.process.stdin, self.process.stdout):
-            if stream:
-                stream.close()
+        # Another close already owns process cleanup; callers can stop waiting
+        # as soon as closed is set, without contending with a blocked writer.
+        if not self._close_lock.acquire(blocking=False):
+            return
+        try:
+            self.closed = True
+            if self.process.poll() is None:
+                try:
+                    self.process.terminate()
+                except ProcessLookupError:
+                    pass
+                try:
+                    self.process.wait(timeout=.2)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=3)
+            # Termination/closed wakes writers first. Only close descriptors
+            # after their writer exits, preventing a descriptor-reuse race.
+            # Reentrant because the deadline checker can close its own writer.
+            with self._write_lock:
+                with self._read_lock:
+                    for stream in (self.process.stdin, self.process.stdout):
+                        if stream:
+                            stream.close()
+        finally:
+            self._close_lock.release()

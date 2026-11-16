@@ -12,6 +12,21 @@ from .shared_history import SharedPrefixIndex
 log = logging.getLogger(__name__)
 _cache = OrderedDict()
 _lock = Lock()
+MAX_CACHE_SESSIONS = 1000
+MAX_INDEX_TURNS = 20_000
+MAX_CACHED_TURNS = 40_000
+MAX_ID_CHARS = 4 * 1024 * 1024
+
+
+def _retire_project(engine, project_id):
+    """Caller holds _lock; obsolete revisions never keep the same project alive."""
+    for key in list(_cache):
+        if key[0] is engine and key[1] == project_id:
+            del _cache[key]
+
+
+def _turn_count(value):
+    return sum(len(turns) for turns in value[0]._session_turns.values())
 
 
 def _signature(turn):
@@ -26,16 +41,32 @@ def indexed_sharing(db, project_id):
         'SELECT id,history_indexed_at,history_indexed_activity,thread_id,codex_account,codex_activity_at '
         'FROM codex_sessions WHERE project_id=:pid AND is_linked=1 '
         'AND history_indexed_at IS NOT NULL AND history_indexed_activity IS NOT NULL '
-        'AND (codex_activity_at IS NULL OR codex_activity_at=history_indexed_activity) ORDER BY id'),
-        {'pid': project_id}).all()
-    if not markers:
+        'AND (codex_activity_at IS NULL OR codex_activity_at=history_indexed_activity) ORDER BY id LIMIT :limit'),
+        {'pid': project_id, 'limit': MAX_CACHE_SESSIONS + 1}).all()
+    engine = db.get_bind()
+    if not markers or len(markers) > MAX_CACHE_SESSIONS:
+        with _lock:
+            _retire_project(engine, project_id)
         return SharedPrefixIndex(), {}
-    key = (db.get_bind(), project_id, tuple(tuple(row) for row in markers))
+    key = (engine, project_id, tuple(tuple(row) for row in markers))
     with _lock:
         saved = _cache.get(key)
         if saved is not None:
             _cache.move_to_end(key)
             return saved
+        _retire_project(engine, project_id)
+    # Deduplication is optional navigation metadata. Above this budget preserve
+    # all original turns/excerpts instead of allocating a giant prefix index.
+    count, chars = db.execute(text(
+        'SELECT count(*),coalesce(sum(length(h.turn_id)),0) FROM codex_history_turns h '
+        'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+        'WHERE h.project_id=:pid AND s.is_linked=1 AND s.history_indexed_at IS NOT NULL '
+        'AND s.history_indexed_activity IS NOT NULL '
+        'AND (s.codex_activity_at IS NULL OR s.codex_activity_at=s.history_indexed_activity)'),
+        {'pid': project_id}).one()
+    marker_chars = sum(len(str(value)) for row in markers for value in row if value is not None)
+    if count > MAX_INDEX_TURNS or chars + marker_chars > MAX_ID_CHARS:
+        return SharedPrefixIndex(), {}
     sharing, signatures = SharedPrefixIndex(), {}
     for marker in markers:
         session_id = marker[0]
@@ -69,9 +100,10 @@ def indexed_sharing(db, project_id):
     signatures = {ref: signatures[ref] for ref in sharing.canonical}
     result = sharing, signatures
     with _lock:
+        _retire_project(engine, project_id)
         _cache[key] = result
         _cache.move_to_end(key)
-        while len(_cache) > 8:
+        while len(_cache) > 8 or sum(_turn_count(value) for value in _cache.values()) > MAX_CACHED_TURNS:
             _cache.popitem(last=False)
     return result
 

@@ -707,7 +707,10 @@ def configure_session_link(project_id: int, session_id: int, body: SessionLinkIn
     manager = manager_for(request.app)
     with manager.lock:
         row = scoped(db, CodexSession, project_id, session_id)
-        return _set_session_linked(db, row, body.linked)
+        result = _set_session_linked(db, row, body.linked)
+        if not body.linked:
+            manager.release_session(row.id)
+        return result
 
 
 @router.post('/sessions', status_code=201)
