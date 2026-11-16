@@ -32,7 +32,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
-- Preserve complete source evidence for long Scheme dependency manifests using bounded declaration chunks. Follow explicit imports into safe archive paths without promoting unreferenced backups, redact pip references with extras, and retain compatible-release version constraints.
+- Preserve complete source evidence for long Scheme dependency manifests using bounded declaration chunks. Follow explicit imports into safe archive paths without promoting unreferenced backups, redact pip references with extras, retain compatible-release constraints, and keep distinct dependency versions independently identified while removing exact duplicates.
 
 - Keep dependency-table headings on one line at larger text sizes, with horizontal scrolling on narrow screens.
 

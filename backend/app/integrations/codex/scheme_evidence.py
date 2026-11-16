@@ -506,9 +506,12 @@ def _dependency(name, constraint, category, source_id, dependencies, limitations
         limitations.add('Some malformed dependency declarations were omitted.')
         return
     # Direct URLs, credentials, and local machine paths must not be echoed into diagrams.
-    if any(token in constraint.lower() for token in ('://', 'git+', 'file:', ' @ ', '\\')) or constraint.startswith(('/', '~', '@')):
+    direct_reference = re.match(r'^\s*(?:\[[^\]\r\n]*\]\s*)?@', constraint)
+    home_reference = re.match(r'^~(?![=])', constraint)
+    if (any(token in constraint.lower() for token in ('://', 'git+', 'file:', ' @ ', '\\'))
+            or direct_reference or home_reference or constraint.startswith('/')):
         constraint = 'Direct/local reference (location omitted)'
-    identifier = 'dependency:' + _digest([name, category, source_id])[:20]
+    identifier = 'dependency:' + _digest([name, category, source_id, constraint])[:20]
     dependencies.append({'id': identifier, 'name': name, 'constraint': constraint,
                          'category': category, 'source_ids': [source_id], 'purpose': ''})
 
@@ -540,6 +543,27 @@ def _requirements(value, path, source_id, dependencies, includes, limitations):
             _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
         else:
             limitations.add('Some requirements declarations could not be parsed.')
+
+
+def _manifest_excerpts(declared_excerpt, dependencies, source_id):
+    """Keep complete normalized declarations with the exact chunk they cite."""
+    chunks, lines, size = [], [], 0
+    entries = [(line, None) for line in declared_excerpt.splitlines()]
+    entries.extend((f"{item['name']} {item['constraint']} ({item['category']})", item)
+                   for item in dependencies)
+    for line, dependency in entries:
+        if lines and size + len(line) + 1 > 3200:
+            chunks.append('\n'.join(lines))
+            lines, size = [], 0
+        chunk_id = source_id if not chunks else f'{source_id}:part:{len(chunks) + 1}'
+        if dependency is not None:
+            dependency['source_ids'] = [chunk_id]
+        lines.append(line)
+        size += len(line) + (1 if len(lines) > 1 else 0)
+    if lines:
+        chunks.append('\n'.join(lines))
+    return [(source_id if index == 0 else f'{source_id}:part:{index + 1}', value)
+            for index, value in enumerate(chunks)]
 
 
 def _parse_manifest(value, path, source_id, dependencies, includes, limitations):
@@ -898,7 +922,7 @@ def collect_evidence(engine, project_id):
             marked_paths = {relative for relative, _ in markers}
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v9', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v10', 'project_id': project_id,
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
@@ -924,9 +948,10 @@ def collect_evidence(engine, project_id):
                              else (1, -1) if PurePosixPath(path).stem.casefold() in shared_stems
                              else (99, i)) for i, path in enumerate(candidates)}
         last_area = None
-        code_paths = {path for path in paths if _production_path(path)}
-        if not code_paths:
-            code_paths = {path for path in paths if _scheme_category(path) == 'code'}
+        # Directory names set initial priority, not whether explicitly imported
+        # code can participate in the application. Resolve imports against every
+        # safe code path; unreferenced backups remain outside initial candidates.
+        code_paths = {path for path in paths if _scheme_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         entrypoint_paths = set()
         declared_commands, guide_words = set(), {}
@@ -989,6 +1014,7 @@ def collect_evidence(engine, project_id):
                 files_read += 1
                 source_id = 'repository:file:' + hashlib.sha256(relative.encode()).hexdigest()[:24]
                 includes = []
+                manifest_excerpts = None
                 if _manifest(relative) or relative in requirement_paths:
                     before = len(dependencies)
                     if relative in requirement_paths:
@@ -996,8 +1022,11 @@ def collect_evidence(engine, project_id):
                     else:
                         _parse_manifest(value, relative, source_id, dependencies, includes, limitations)
                     # Preserve safe normalized declarations, not package-manager credentials/URLs.
-                    excerpt = '\n'.join(f"{d['name']} {d['constraint']} ({d['category']})" for d in dependencies[before:])
-                    excerpt = '\n'.join(part for part in (declared_excerpt, excerpt) if part)
+                    # Deduplicate exact declarations in linear time before chunk
+                    # references are assigned; different constraints keep distinct IDs.
+                    dependencies[before:] = list({item['id']: item for item in dependencies[before:]}.values())
+                    manifest_excerpts = _manifest_excerpts(declared_excerpt, dependencies[before:], source_id)
+                    excerpt = ''
                     provenance = 'dependency manifest'
                     for include in includes:
                         if include in paths and _safe_relative(include, patterns) and include not in scanned:
@@ -1014,7 +1043,11 @@ def collect_evidence(engine, project_id):
                     if omitted:
                         limitations.add('Some documentation sections were omitted from bounded excerpts; omitted text is not evidence of absence.')
                     provenance = 'project documentation'
-                if excerpt:
+                if manifest_excerpts is not None:
+                    for chunk_id, chunk in manifest_excerpts:
+                        sources.append(_source(chunk_id, relative, chunk, provenance, path=relative,
+                                               revision=hashlib.sha256(value.encode()).hexdigest()))
+                elif excerpt:
                     if len(excerpt) > 3200:
                         limitations.add('Some normalized manifest declaration excerpts were truncated.')
                     sources.append(_source(source_id, relative, excerpt[:3200], provenance, path=relative,

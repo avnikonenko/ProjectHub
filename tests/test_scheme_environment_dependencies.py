@@ -4,6 +4,7 @@ import json
 import pytest
 
 from backend.app.integrations.codex import scheme_evidence as evidence
+from backend.app.integrations.codex.scheme import validate_output
 from backend.app.integrations.codex.scheme_environments import environment_dependencies, is_environment_manifest
 from backend.tests.integrations.test_scheme_evidence import repository, setup
 
@@ -152,3 +153,106 @@ def test_requirements_categories_follow_file_purpose_not_package_name(path, cate
     dependencies = []
     evidence._requirements('example-package>=1\n', path, 'source:one', dependencies, [], set())
     assert dependencies[0]['category'] == category
+
+
+@pytest.mark.parametrize('entry', [
+    'package[extra] @ /private/SECRET.whl',
+    'package[extra]@relative/SECRET.whl',
+    'package[extra] @ ~/private/SECRET.whl',
+    'package[extra] @ https://user:SECRET@example.test/package.whl',
+    'package @ /private/SECRET.whl',
+    'package@relative/SECRET.whl',
+])
+@pytest.mark.parametrize('path', ['env.yml', 'requirements.txt', 'pyproject.toml'])
+def test_direct_reference_redaction_survives_extras_and_compact_at(entry, path):
+    value = ('dependencies:\n  - pip:\n    - ' + entry + '\n' if path == 'env.yml'
+             else '[project]\ndependencies = [' + json.dumps(entry) + ']\n'
+             if path == 'pyproject.toml' else entry + '\n')
+    dependencies = []
+    evidence._parse_manifest(value, path, 'source:one', dependencies, [], set())
+    assert len(dependencies) == 1
+    assert dependencies[0]['constraint'] == 'Direct/local reference (location omitted)'
+    assert 'SECRET' not in json.dumps(dependencies)
+
+
+@pytest.mark.parametrize('entry', [
+    'package~=1.2',
+    'package[extra]~=1.2',
+    'package>=1; python_version < "3.14"',
+    'package[extra]>=1; python_version < "3.14"',
+])
+@pytest.mark.parametrize('path', ['env.yml', 'requirements.txt', 'pyproject.toml'])
+def test_standard_constraints_and_markers_are_not_direct_references(entry, path):
+    value = ('dependencies:\n  - pip:\n    - ' + entry + '\n' if path == 'env.yml'
+             else '[project]\ndependencies = [' + json.dumps(entry) + ']\n'
+             if path == 'pyproject.toml' else entry + '\n')
+    dependencies = []
+    evidence._parse_manifest(value, path, 'source:one', dependencies, [], set())
+    assert len(dependencies) == 1
+    assert dependencies[0]['constraint'] == entry.removeprefix('package')
+
+
+@pytest.mark.parametrize('path', ['env.yml', 'requirements.txt'])
+def test_exact_duplicates_collapse_but_distinct_constraints_keep_stable_identity(tmp_path, path):
+    repo = repository(tmp_path)
+    declarations = ['example>=1', 'example<2', 'example>=1']
+
+    def write(entries):
+        value = ('dependencies:\n' + ''.join('  - ' + entry + '\n' for entry in entries)
+                 if path == 'env.yml' else '\n'.join(entries) + '\n')
+        (repo / path).write_text(value)
+
+    write(declarations)
+    engine = setup(tmp_path, repo)
+    try:
+        first = evidence.collect_evidence(engine, 1)
+        assert len(first['dependencies']) == 2
+        identifiers = {item['constraint']: item['id'] for item in first['dependencies']}
+        assert len(set(identifiers.values())) == 2
+        assert set(identifiers) == {'>=1', '<2'}
+        graph = {'nodes': [], 'edges': [], 'explanation': 'No graph evidence.'}
+        response = {'architecture': graph, 'workflow': graph, 'dependencies': [
+            {'id': item['id'], 'purpose': 'Explanation for ' + item['constraint'],
+             'source_ids': item['source_ids']} for item in first['dependencies']]}
+        _, _, explained = validate_output(json.dumps(response), first)
+        assert {item['constraint']: item['purpose'] for item in explained} == {
+            '>=1': 'Explanation for >=1', '<2': 'Explanation for <2'}
+        write(list(reversed(declarations[:-1])))
+        changed = evidence.collect_evidence(engine, 1)
+        assert changed['diagnostics']['cache_hits'] == 0
+        assert {item['constraint']: item['id'] for item in changed['dependencies']} == identifiers
+    finally:
+        engine.dispose()
+
+
+def test_matching_environment_constraints_keep_independent_variant_sources(tmp_path):
+    repo = repository(tmp_path)
+    for path in ('env.yml', 'env_gpu.yml'):
+        (repo / path).write_text('dependencies:\n  - example>=1\n')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_evidence(engine, 1)
+        assert len(result['dependencies']) == 2
+        assert len({item['id'] for item in result['dependencies']}) == 2
+        sources = {source['id']: source for source in result['sources']}
+        assert {sources[item['source_ids'][0]]['path'] for item in result['dependencies']} == {'env.yml', 'env_gpu.yml'}
+    finally:
+        engine.dispose()
+
+
+def test_distinct_constraints_and_exact_duplicates_have_correct_chunk_evidence(tmp_path):
+    repo = repository(tmp_path)
+    name = 'example-package-' + 'x' * 60
+    declarations = [name + '>=' + str(index) for index in range(60)]
+    (repo / 'requirements.txt').write_text('\n'.join(declarations + declarations) + '\n')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_evidence(engine, 1)
+        assert len(result['dependencies']) == 60
+        assert len({item['id'] for item in result['dependencies']}) == 60
+        sources = {source['id']: source for source in result['sources']}
+        assert len({item['source_ids'][0] for item in result['dependencies']}) > 1
+        for item in result['dependencies']:
+            assert f"{item['name']} {item['constraint']} ({item['category']})" in sources[item['source_ids'][0]]['text']
+    finally:
+        engine.dispose()
