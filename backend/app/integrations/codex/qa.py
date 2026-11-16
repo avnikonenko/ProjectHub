@@ -72,9 +72,19 @@ def generate_items(manager, batch, *, engine=None, project_id=None):
         from .ai_instructions import ai_instructions
         # Cache only successful drafts. Resolve citations against today's sources
         # on every hit; changing final question count does not invalidate drafts.
+        # A summary and its citation IDs can stay unchanged after the original
+        # passage changes. Bind drafts to that evidence too, excluding incidental
+        # import/update timestamps. Preserve list order because batch-local IDs
+        # and the source labels in the model input are ordered.
         inputs = {
-            'stage': 'qa-draft-v1', 'prompt': prompt, 'payload': payload, 'schema': schema,
+            'stage': 'qa-draft-v2', 'prompt': prompt, 'payload': payload, 'schema': schema,
             'source_ids': [[source['id'] for source in item['sources']] for item in batch],
+            'source_evidence': [[{
+                key: source[key] for key in (
+                    'id', 'text', 'kind', 'role', 'session_id', 'turn_id', 'turn_status',
+                    'revision', 'source_revision', 'content_hash',
+                ) if key in source
+            } for source in item['sources']] for item in batch],
             'instructions': ai_instructions(),
             **{key: getattr(manager, 'generation_' + key, None)
                for key in ('account', 'model', 'effort')},
