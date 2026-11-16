@@ -18,6 +18,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Close Codex processes and pipes on malformed output or unexpected EOF, including invalid RPC error envelopes, and report uncertain delivery explicitly.
+- Enforce history-cache budgets while reading and recheck index revisions before caching, preventing concurrent refreshes from bypassing limits.
+- Apply the same UTF-8 byte limit to expanded shared-chat imports and note editing. Preserve oversized existing transcripts through metadata-only edits without resubmitting or truncating unchanged text.
+
 - Bound Codex transport writes by request deadlines and cancellation, release clients when sessions are unlinked, and retire obsolete or oversized duplicate-history caches.
 - Mount expanded Knowledge content on demand, paginate related records, share published snapshots, and stop redundant idle or hidden tag polling.
 - Read revision metadata without historical snapshot bodies, accelerate Knowledge source-label search, and allow exact full-content edits of large imported notes.

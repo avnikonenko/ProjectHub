@@ -34,6 +34,57 @@ class ShareReadError(Exception):
     pass
 
 
+def _utf8_size(value):
+    """Count expanded text without allocating a complete UTF-8 copy."""
+    return sum(len(value[start:start + 65536].encode('utf-8'))
+               for start in range(0, len(value), 65536))
+
+
+def _too_large():
+    raise ShareReadError('The shared conversation is too large to import.')
+
+
+class _MessageText:
+    """Incrementally preserve the legacy newline/strip normalization."""
+    def __init__(self, budget):
+        self.budget = budget
+        self.parts = []
+        self.pending = []
+        self.size = self.pending_size = self.newlines = 0
+
+    def append(self, value):
+        for match in re.finditer(r'\n+|[^\n]+', value):
+            part = match[0]
+            if part.startswith('\n'):
+                allowed = min(len(part), max(0, 2 - self.newlines))
+                self.newlines = min(2, self.newlines + len(part))
+                part = '\n' * allowed
+            else:
+                self.newlines = 0
+            if not self.parts:
+                part = part.lstrip()
+            body = part.rstrip()
+            tail = part[len(body):]
+            if body:
+                size = _utf8_size(body)
+                if self.size + self.pending_size + size > self.budget:
+                    _too_large()
+                self.parts.extend(self.pending)
+                self.pending.clear()
+                self.size += self.pending_size + size
+                self.pending_size = 0
+                self.parts.append(body)
+            if tail:
+                self.pending_size += _utf8_size(tail)
+                # Trailing whitespace is discarded. Once over budget, keep
+                # only its size: later nonblank text will reject before flush.
+                if self.size + self.pending_size <= self.budget:
+                    self.pending.append(tail)
+
+    def finish(self):
+        return ''.join(self.parts)
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
@@ -52,7 +103,8 @@ class _Transcript(HTMLParser):
         self.messages = []
         self.stack = []
         self.role = None
-        self.parts = []
+        self.parts = None
+        self.output_bytes = 0
         self.hidden = 0
         self.pre = 0
         self.stream = []
@@ -67,6 +119,8 @@ class _Transcript(HTMLParser):
             self.role = next((self._markers[key] for key, _ in attrs if key in self._markers), None)
             if self.role is None:
                 return
+            prefix = len(self.role) + 2 + (2 if self.messages else 0)
+            self.parts = _MessageText(_MAX_BYTES - self.output_bytes - prefix)
         if tag not in self._void:
             self.stack.append(tag)
         if tag in self._ignored:
@@ -93,10 +147,11 @@ class _Transcript(HTMLParser):
         elif not self.hidden and tag in self._blocks:
             self.parts.append('\n')
         if not self.stack:
-            body = re.sub(r'\n{3,}', '\n\n', ''.join(self.parts)).strip()
+            body = self.parts.finish()
             if body:
+                self.output_bytes += self.parts.size + len(self.role) + 2 + (2 if self.messages else 0)
                 self.messages.append(f'{self.role}:\n{body}')
-            self.parts.clear()
+            self.parts = None
             self.role = None
 
     def handle_data(self, data):
@@ -157,16 +212,18 @@ def _stream_transcript(chunks):
             if content.get('content_type') not in ('text', 'multimodal_text') or not isinstance(parts, list):
                 continue
             strings = []
+            body_bytes = 0
+            label = 'User' if role == 'user' else 'ChatGPT'
+            prefix_bytes = len(label) + 2 + (2 if messages else 0)
             for part in parts:
                 text = value(part)
-                if isinstance(text, str):
-                    length += len(text) + 1
-                    if length > _MAX_BYTES:
-                        raise ShareReadError('The shared conversation is too large to import.')
-                    if text.strip():
-                        strings.append(text)
+                if isinstance(text, str) and text.strip():
+                    body_bytes += _utf8_size(text) + (1 if strings else 0)
+                    if length + prefix_bytes + body_bytes > _MAX_BYTES:
+                        _too_large()
+                    strings.append(text)
             if strings:
-                label = 'User' if role == 'user' else 'ChatGPT'
+                length += prefix_bytes + body_bytes
                 messages.append(label + ':\n' + '\n'.join(strings))
     title = conversation.get('title')
     return title if isinstance(title, str) else '', messages

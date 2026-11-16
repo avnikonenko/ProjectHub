@@ -11,6 +11,7 @@ import { version } from '../package.json';
 import { api, patch, post } from './api';
 import { NoteCard } from './NoteCard';
 import { LazyNote, useLoadedNote } from './LazyNote';
+import { noteEditPatch } from './noteEditing';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
@@ -749,7 +750,7 @@ function ProjectWorkspace({
                     onEdit={loaded => edit('Edit note', [titleField,
                       { name: 'content', label: 'Markdown content', type: 'textarea' },
                       { name: 'kind', label: 'Kind' }, { name: 'reference', label: 'Reference' },
-                    ], `/notes/${n.id}`, loaded)}
+                    ], `/notes/${n.id}`, loaded, values => noteEditPatch(values, loaded))}
                     onDelete={() => {
                       if (window.confirm(`Delete note “${n.title}”?`)) {
                         void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));

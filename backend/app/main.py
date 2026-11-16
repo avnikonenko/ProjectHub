@@ -10,6 +10,7 @@ from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
@@ -235,9 +236,14 @@ def create_app(data_dir=None):
             raise HTTPException(409, 'This shared conversation is already saved in this project.')
         try:
             title, content = chatgpt_share.read_transcript(url)
+            # Validate the extracted text, not just the downloaded page: indexed
+            # stream references can expand a small page into a large transcript.
+            values = NoteCreate(title=title, content=content, kind='document', reference=url).model_dump()
         except chatgpt_share.ShareReadError as exc:
             raise HTTPException(502, str(exc)) from exc
-        note = Note(project_id=project_id, title=title, content=content, kind='document', reference=url)
+        except ValidationError as exc:
+            raise HTTPException(502, 'The extracted conversation exceeds supported note limits or contains invalid text.') from exc
+        note = Note(project_id=project_id, **values)
         db.add(note)
         audit(db, project_id, note, 'created')
         db.commit()
