@@ -1,4 +1,5 @@
 import os
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,7 +16,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.port == 8766 and settings.generation_timeout == 600
     assert settings.data_dir == tmp_path / 'data/projecthub'
     assert settings.codex_home is None
-    assert settings.extraction_workers == 4
+    assert settings.extraction_workers == 10
     assert settings.generation_profile == 'quality'
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
@@ -86,6 +87,7 @@ def test_create_config_is_private_and_does_not_replace_existing_file(tmp_path):
     env = {'XDG_CONFIG_HOME': str(tmp_path)}
     path = create_config(env)
     assert path.read_text() == TEMPLATE
+    assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == 10
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
     path.write_text('existing settings')
@@ -125,7 +127,7 @@ def test_example_template_matches_created_config():
     assert Path('config.example.toml').read_text() == TEMPLATE
 
 
-@pytest.mark.parametrize('workers', [1, 2, 3, 4, 5, 12, MAX_EXTRACTION_WORKERS])
+@pytest.mark.parametrize('workers', [1, 2, 3, 4, 5, 8, 10, 12, MAX_EXTRACTION_WORKERS])
 def test_extraction_workers_file_setting_and_environment_override(tmp_path, workers):
     path = tmp_path / 'config.toml'
     path.write_text(f'[ai]\nextraction_workers = {workers}\n')
@@ -162,7 +164,7 @@ def test_extraction_worker_unknown_field_is_not_silently_ignored(tmp_path):
 def test_settings_preserves_positional_fields_and_applies_validated_worker_count(tmp_path, monkeypatch):
     # Existing positional callers retain every prior field's meaning.
     settings = Settings(8888, tmp_path, 120, None, 600, False, 90)
-    assert settings.extraction_workers == 4
+    assert settings.extraction_workers == 10
     assert settings.generation_budget == 600
     assert settings.history_auto_sync is False and settings.history_sync_interval == 90
     path = tmp_path / 'config.toml'

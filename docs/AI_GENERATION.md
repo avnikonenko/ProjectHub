@@ -88,7 +88,7 @@ not counted again when their results are reused.
 
 The shared setting applies to opt-in Knowledge extraction and the history/evidence
 batches used by legacy Project status and AI Q&A, across all projects. It defaults
-to four concurrent independent batches,
+to ten concurrent independent batches,
 using separate read-only Codex transports with the selected account, model and
 reasoning effort. Set `[ai] extraction_workers = N` to choose the maximum concurrent
 reading threads (`1` restores serial batch processing). N must be a whole number from 1
@@ -99,6 +99,8 @@ legacy reduction groups overlap within a round, while dependent rounds retain
 their original order. A group is dispatched only when it is guaranteed necessary,
 so parallelism does not summarize a tail that could already fit unchanged.
 Final synthesis and Scheme generation remain single requests.
+Independent AI Q&A drafts and consolidation groups share this worker limit;
+their dependent final ranking remains sequential.
 
 You can also enter N in **Settings → Parallel AI reading threads**, then click
 **Save thread count**. It saves the value in your local ProjectHub settings and
@@ -110,7 +112,7 @@ the control shows when the effective and saved values differ.
 > Codex process and request. High thread counts can exhaust memory or operating-system
 > resources and encounter account usage/concurrency limits. More threads do not
 > reduce model calls or token consumption and can make generation slower or fail.
-> Start with the default 4 (or 1 for serial reading) and increase gradually after
+> Start with the default 10 (or 1 for serial reading) and increase gradually after
 > measuring; counts larger than the number of batches provide no additional concurrency.
 
 Parallelism preserves batch inputs, cache identities and reconciliation order.

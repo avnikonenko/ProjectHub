@@ -9,7 +9,7 @@ generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
 # Independent extraction requests; increase only after measuring account capacity.
-extraction_workers = 4
+extraction_workers = 10
 # Knowledge-generation quality/cost trade-off: quality, balanced, or economy.
 generation_profile = "quality"
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.

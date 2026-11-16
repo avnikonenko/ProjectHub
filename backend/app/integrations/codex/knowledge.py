@@ -12,7 +12,7 @@ import re
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, ProjectKnowledge
-from ...config import MAX_EXTRACTION_WORKERS
+from ...config import DEFAULT_EXTRACTION_WORKERS, MAX_EXTRACTION_WORKERS
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
@@ -661,7 +661,7 @@ def _extraction_workers(manager):
     from .knowledge_profiles import captured_knowledge_workers
     try:
         captured = captured_knowledge_workers()
-        workers = captured if captured is not None else int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', '4'))
+        workers = captured if captured is not None else int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', str(DEFAULT_EXTRACTION_WORKERS)))
     except ValueError as exc:
         raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.') from exc
     if not 1 <= workers <= MAX_EXTRACTION_WORKERS:

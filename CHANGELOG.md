@@ -16,6 +16,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - AI-generated, project-specific tags for Knowledge and AI Q&A. Browse all tags or type to filter alongside existing controls; retain overlapping memberships, original records and citations, with incremental assignment reuse and project-scoped caches.
 
+### Changed
+
+- Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.
+
 ### Fixed
 
 - Quote-selection retries use one source-owned selector instead of independently choosing source and quote IDs. Restore exact source identity and text before validation; reject redundant identity fields.

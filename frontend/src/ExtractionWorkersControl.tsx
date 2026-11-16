@@ -237,7 +237,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     {(savedField === 'workers' || loading) && saveFeedback}
     {settings && !valid && <Feedback>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</Feedback>}
     <SettingsHelp title="Thread-count explanation" id={helpId}>
-      <p>For conversation extraction; 1 is serial, 4 is the default. Applies to the next generation.
+      <p>For independent AI reading and Q&A batches; 1 is serial, 10 is the default. Applies to the next generation.
         {' '}More threads use more memory and may hit account limits.</p>
     </SettingsHelp>
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
