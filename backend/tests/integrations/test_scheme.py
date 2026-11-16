@@ -126,6 +126,12 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
             self.calls += 1
             assert 'primary end-to-end' in prompt
             assert 'Do not substitute the workflow for generating this Scheme' in prompt
+            # Prompt contract only: semantic diagram quality is evaluated with real generation.
+            assert 'project-capability level' in prompt
+            assert 'domain-language labels supported by the evidence' in prompt
+            assert 'represent their purpose rather than giving each command a node' in prompt
+            assert 'Preserve documented domain purposes of analysis and visualization' in prompt
+            assert 'archived, backup, example, or experimental files' in prompt
             assert 'static' in prompt and 'runtime correctness' in prompt
             assert 'Preserve conflicts' in prompt
             assert 'Do not use tools' in prompt

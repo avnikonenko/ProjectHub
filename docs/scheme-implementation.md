@@ -44,3 +44,39 @@ Successful snapshots/revisions preserve evidence and remain readable without Cod
 
 Phase 1 only: three views, graphs, dependencies, code tree, evidence, persistence, basic freshness.
 Later: manual overrides, copying/export, advanced navigation. No external indexing engine.
+
+## Capability and dependency regression check — 2026-11-17
+
+The prior Example Runner result emphasized CLI entrypoints and generic simulation artifacts.
+Inspection recognized requirements files but omitted Conda environment declarations,
+and did not select most project guides. Backup modules could also compete with current
+application code. These were evidence-selection and presentation problems, not a
+reason to revert the broader repository inspection.
+
+Scheme now reads bounded project-guide outlines and original CLI-purpose prose,
+prioritizes guides mentioning declared commands, and places historical manifests
+after current sources. Dependency limiting happens after source-budget filtering,
+so discarded historical evidence cannot consume current dependency slots. Literal
+Conda/pip environment declarations retain variant-specific constraints and sources;
+unsupported YAML is reported rather than interpreted. Diagram instructions prefer
+domain capabilities and reserve command/module details for descriptions and paths.
+
+Validation used a SQLite backup of project 4, Example Runner checkout `218f871`, and real
+Codex generation with `gpt-6.1-sol`, medium reasoning. Production results and the
+registered repository were not modified. The final run took 167.845 seconds, made
+one model request (46,081 input and 8,186 output tokens), and produced 14 architecture
+nodes, 17 workflow nodes and 89 dependency declarations from 35 retained sources.
+All generated references passed validation. The result includes observed binding-mode
+and contact maps with current ProLIF-guide evidence, interaction fingerprints,
+convergence analysis and binding free-energy estimates. Proposed extensions remain
+distinct. CPU/GPU GROMACS build constraints and scientific environment dependencies
+including AmberTools, RDKit, MDAnalysis, ProLIF and gmx-MMPBSA are retained.
+
+The full backend regression suite passed: 1,627 tests. Focused additions cover guide
+selection beyond prefixes, command-guide retention under output limits, archive
+priorities, environment parsing/security, variant provenance, cache invalidation and
+CI/docs/build categorization. No frontend changes were needed. This is one real
+generation and static declaration validation, not proof of exhaustive architecture
+recall, installed dependencies or successful execution of Example Runner workflows. Existing
+inspection/text budgets and the 100-declaration ceiling still apply with coverage
+limitations recorded. Saved Schemes require explicit regeneration to use the fix.

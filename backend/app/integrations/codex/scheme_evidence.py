@@ -22,6 +22,7 @@ from ...project_evidence import (
 )
 from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
+from .scheme_environments import environment_dependencies, is_environment_manifest
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
@@ -97,7 +98,7 @@ def _safe_relative(value, patterns):
 
 def _manifest(path):
     name = PurePosixPath(path).name.lower()
-    return name in ('pyproject.toml', 'package.json') or (
+    return is_environment_manifest(path) or name in ('pyproject.toml', 'package.json') or (
         name.startswith('requirements') and name.endswith(('.txt', '.in')))
 
 
@@ -202,14 +203,33 @@ _ENTRYPOINTS = {'main', 'app', 'index', 'server', 'cli', 'router', 'routes', 'se
 _CODE_EXTENSIONS = ('.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
 
 
+def _scheme_category(relative):
+    """Include project guides without changing other features' evidence policy."""
+    path = PurePosixPath(relative)
+    if path.suffix.lower() in {'.md', '.rst'} and any(
+            part.casefold() in {'docs', 'documentation'} for part in path.parts[:-1]):
+        return 'docs'
+    return _code_category(relative)
+
+
 def _production_path(relative):
     path = PurePosixPath(relative)
-    return _code_category(relative) == 'code' and not any(part.lower() in _AUXILIARY for part in path.parts[:-1])
+    return _scheme_category(relative) == 'code' and not any(
+        part.casefold() in _AUXILIARY | {'archive', 'archives', 'backup', 'backups'}
+        or part.startswith('.') or part.casefold().startswith('_changed_')
+        for part in path.parts[:-1])
+
+
+def _historical_path(relative):
+    """A selection hint, not proof that an old file is unused."""
+    return any(part.casefold() in {'archive', 'archives', 'backup', 'backups', 'old'}
+               or part.casefold().startswith(('old_', '_changed_'))
+               for part in PurePosixPath(relative).parts[:-1])
 
 
 def _scheme_order(relative):
     path = PurePosixPath(relative)
-    category = _code_category(relative)
+    category = _scheme_category(relative)
     group = 0 if _manifest(relative) or path.name == 'setup.py' else 1 if category == 'docs' else 2 if _production_path(relative) else 3
     return group, path.stem.casefold() not in _ENTRYPOINTS, len(path.parts), relative.casefold(), relative
 
@@ -315,9 +335,9 @@ def _repository(repository_path, patterns, *, inventory=None):
     paths = sorted(paths, key=_scheme_order)
     manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)
     declarations = [v for v in paths if PurePosixPath(v).name == 'setup.py']
-    docs = sorted((v for v in paths if _code_category(v) == 'docs'), key=_code_order)
+    docs = sorted((v for v in paths if _scheme_category(v) == 'docs'), key=_code_order)
     shared_stems = _shared_feature_stems(paths)
-    code = sorted((v for v in paths if _code_category(v) == 'code' and v not in declarations), key=lambda v: (
+    code = sorted((v for v in paths if _scheme_category(v) == 'code' and v not in declarations), key=lambda v: (
         PurePosixPath(v).stem.casefold() not in _ENTRYPOINTS,
         PurePosixPath(v).stem.casefold() not in shared_stems, *_scheme_order(v)))
     production = [v for v in code if _production_path(v)]
@@ -412,11 +432,52 @@ def _entrypoint_targets(declarations, relative, available):
     return targets
 
 
+def _guide_excerpt(value):
+    """Retain original guide purpose, outline and short CLI-help descriptions."""
+    from .scheme_passages import _passage_ranges
+
+    ranges, _ = _passage_ranges(value)
+    candidates = []
+    prose_count = 0
+    for left, right in ranges:
+        body = value[left:right]
+        if re.match(r"[ \t]*(`{3,}|~{3,})", body):
+            # CLI help is often one enormous fence. Its purpose prose remains
+            # useful while usage flags/options tables are implementation detail.
+            if re.search(r"(?m)^usage:[ \t]", body):
+                purpose = re.search(
+                    r"\n[ \t]*\n([\s\S]*?)\n[ \t]*\n(?:options|optional arguments|positional arguments):",
+                    body)
+                if purpose and len(purpose[1]) <= 600:
+                    candidates.append((0, left + purpose.start(1), left + purpose.end(1)))
+            continue
+        headings = list(re.finditer(r"(?m)^#{1,6}[ \t]+[^\n]+", body))
+        for heading in headings:
+            candidates.append((2, left + heading.start(), left + heading.end()))
+        # Prefer the introduction before later detailed configuration prose.
+        if len(body) <= 600 and (not headings or len(body.splitlines()) > len(headings)):
+            candidates.append((1 if prose_count < 2 else 3, left, right))
+            prose_count += 1
+    selected = []
+    for _, left, right in sorted(candidates):
+        if any(left >= start and right <= end for start, end in selected):
+            continue
+        proposed = [(start, end) for start, end in selected if not (start >= left and end <= right)]
+        proposed.append((left, right))
+        proposed.sort()
+        text = GAP.join(value[start:end] for start, end in proposed)
+        if len(text) <= _MAX_EXCERPT and len(proposed) <= 24:
+            selected = proposed
+    if not selected:
+        return select_passages(value, _MAX_EXCERPT)['text']
+    return GAP.join(value[start:end] for start, end in selected)
+
+
 def _documentation_excerpt(value):
     """Prefer a whole feature section over decorative README prefixes."""
     heading = re.search(r'(?im)^(#{1,6})[ \t]+(?:features?|capabilities)[ \t]*:?[ \t]*$', value)
     if heading is None:
-        return value[:_MAX_EXCERPT], len(value) > _MAX_EXCERPT
+        return (value if len(value) <= _MAX_EXCERPT else _guide_excerpt(value)), len(value) > _MAX_EXCERPT
     depth = len(heading[1])
     following = re.search(r'(?m)^#{1,' + str(depth) + r'}[ \t]+', value[heading.end():])
     end = heading.end() + following.start() if following else len(value)
@@ -453,6 +514,14 @@ def _dependency(name, constraint, category, source_id, dependencies, limitations
 
 
 def _requirements(value, path, source_id, dependencies, includes, limitations):
+    # Requirement file purpose is evidence; package names alone are not. Keep
+    # documentation/CI/release declarations out of the runtime dependency group.
+    parts = PurePosixPath(path.lower()).parts
+    labels = set(re.split(r'[._-]+', PurePosixPath(path).stem.lower())) | set(parts[:-1])
+    category = ('development:documentation' if labels & {'doc', 'docs', 'documentation'}
+                else 'build' if labels & {'build', 'release', 'packaging'}
+                else 'development' if labels & {'ci', 'dev', 'development', 'test', 'tests', 'testing'}
+                else 'runtime')
     for line in value.splitlines()[:500]:
         line = line.strip()
         if not line or line.startswith('#'):
@@ -468,14 +537,16 @@ def _requirements(value, path, source_id, dependencies, includes, limitations):
         match = _REQUIREMENT.fullmatch(line.split(' #', 1)[0])
         if match:
             name, extras, constraint = match.groups()
-            category = 'development' if any(t in path.lower() for t in ('dev', 'test')) else 'runtime'
             _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
         else:
             limitations.add('Some requirements declarations could not be parsed.')
 
 
 def _parse_manifest(value, path, source_id, dependencies, includes, limitations):
-    if PurePosixPath(path).name.lower() == 'package.json':
+    if is_environment_manifest(path):
+        for name, constraint, category in environment_dependencies(value, limitations):
+            _dependency(name, constraint, category, source_id, dependencies, limitations)
+    elif PurePosixPath(path).name.lower() == 'package.json':
         parsed = json.loads(value)
         if not isinstance(parsed, dict):
             raise ValueError('Invalid package manifest')
@@ -827,7 +898,7 @@ def collect_evidence(engine, project_id):
             marked_paths = {relative for relative, _ in markers}
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v8', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v9', 'project_id': project_id,
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
@@ -855,9 +926,10 @@ def collect_evidence(engine, project_id):
         last_area = None
         code_paths = {path for path in paths if _production_path(path)}
         if not code_paths:
-            code_paths = {path for path in paths if _code_category(path) == 'code'}
+            code_paths = {path for path in paths if _scheme_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         entrypoint_paths = set()
+        declared_commands, guide_words = set(), {}
         while pending:
             try:
                 budget.check()
@@ -869,24 +941,27 @@ def collect_evidence(engine, project_id):
             declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
             if declared:
                 pick = min(declared, key=lambda i: priorities[pending[i]])
-            elif pending and _code_category(pending[0]) == 'code' and PurePosixPath(pending[0]).name != 'setup.py':
+            elif pending and _scheme_category(pending[0]) == 'code' and PurePosixPath(pending[0]).name != 'setup.py':
                 choices = [i for i, candidate in enumerate(pending)
-                           if _area(candidate) != last_area and _code_category(candidate) == 'code']
+                           if _area(candidate) != last_area and _scheme_category(candidate) == 'code']
                 if not choices:
-                    choices = [i for i, candidate in enumerate(pending) if _code_category(candidate) == 'code']
+                    choices = [i for i, candidate in enumerate(pending) if _scheme_category(candidate) == 'code']
                 pick = min(choices, key=lambda i: priorities.get(pending[i], (99, i)))
             relative = pending.pop(pick)
-            if _code_category(relative) == 'code':
+            if _scheme_category(relative) == 'code':
                 last_area = _area(relative)
             if relative in scanned:
                 continue
             scanned.add(relative)
             try:
-                is_code = (_code_category(relative) == 'code'
+                is_code = (_scheme_category(relative) == 'code'
                            or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
                 decoded_reads += 1
                 declarations = _entrypoint_declarations(value, relative)
+                declared_commands.update(command for command, _ in declarations)
+                if _scheme_category(relative) == 'docs':
+                    guide_words[relative] = set(re.findall(r'[A-Za-z][A-Za-z0-9_.-]*', value))
                 targets = _entrypoint_targets(declarations, relative, paths)
                 if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
                     limitations.add('Some declared entrypoint modules were unavailable within the safe bounded repository paths.')
@@ -961,14 +1036,15 @@ def collect_evidence(engine, project_id):
             omitted_reasons['time_budget'] = len(set(pending) - scanned)
         if inspection_stop:
             limitations.add(f'The source inspection {inspection_stop.replace("_", " ")} was reached; coverage may be incomplete.')
-        if len(dependencies) > _MAX_DEPENDENCIES:
-            dependencies = dependencies[:_MAX_DEPENDENCIES]
-            limitations.add('Only the first 100 direct dependency declarations are included.')
         # Prevent an unusually large manifest/dependency set from exhausting the AI input budget.
         bounded, size = [], 0
+        command_guides = {path for path, words in guide_words.items() if words & declared_commands}
         repository_sources = sorted(sources[len(records):], key=lambda source: (
+            _historical_path(source.get('path', '')),
             source.get('path') not in entrypoint_paths,
-            PurePosixPath(source.get('path', '')).name not in {'setup.py', 'pyproject.toml'}))
+            PurePosixPath(source.get('path', '')).name not in {'setup.py', 'pyproject.toml'},
+            not _manifest(source.get('path', '')),
+            source.get('path') not in command_guides))
         # Reserve half for repository evidence when both kinds are present. Keep
         # whole excerpts and return any unused repository allowance to records.
         repository_reserve = min(_MAX_SOURCES_CHARS // 2, sum(len(s['text']) for s in repository_sources))
@@ -988,6 +1064,11 @@ def collect_evidence(engine, project_id):
             size += len(source['text'])
         allowed_ids = {source['id'] for source in bounded}
         dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
+        source_order = {source['id']: index for index, source in enumerate(bounded)}
+        dependencies.sort(key=lambda dependency: min(source_order[ref] for ref in dependency['source_ids']))
+        if len(dependencies) > _MAX_DEPENDENCIES:
+            dependencies = dependencies[:_MAX_DEPENDENCIES]
+            limitations.add('Only the first 100 dependency declarations supported by retained evidence are included.')
         excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
         for relative in paths[:_MAX_PATHS]:

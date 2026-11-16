@@ -22,6 +22,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Keep Scheme diagrams focused on project capabilities rather than CLI wrappers and storage details. Read feature guides and preserve their original purpose, prioritize current application evidence over backups, and include source-linked Conda/pip environment dependencies with CPU/GPU constraints. Separate CI, build and documentation requirements from runtime declarations.
+
 - Replace Scheme's 24-file inspection cap with bounded bytes and time. Keep entrypoint priorities, separate the directory-display limit from inspection, report budget omissions, and prevent oversized evidence packages.
 
 - Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.

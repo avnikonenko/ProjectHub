@@ -6,7 +6,8 @@ dependency information load without an AI request.
 ## Views
 
 - **Architecture:** components and their relationships. Expand Code structure to
-  browse the inspected repository tree.
+  browse the inspected repository tree. Diagram labels emphasize project
+  capabilities; module and command names belong in component details.
 - **Workflow:** processing stages, inputs, outputs, and execution order.
 - **Dependencies:** declared libraries and tools, version constraints, categories,
   and short project-specific explanations.
@@ -36,8 +37,12 @@ are available through **Previous versions**.
 ## Dependencies
 
 Inspection supports `pyproject.toml` project dependencies and dependency groups,
-common Python requirements files, and `package.json`. Optional and development
-dependencies remain separate.
+common Python requirements files, `package.json`, and Conda `env`/`environment`
+YAML manifests, including CPU/GPU variants and nested pip declarations.
+Environment declarations, optional, development, build and documentation
+dependencies retain separate categories and source references. Unsupported YAML
+constructs are omitted with a coverage limitation; this is not a general YAML
+interpreter.
 
 Versions are declared constraints, not confirmation of what is installed. Scheme
 does not install packages, analyze transitive dependencies or lockfiles, or execute
@@ -60,6 +65,10 @@ in `setup.py` and `pyproject.toml`, and retains README feature sections instead 
 only introductory badges. Repository excerpts receive a bounded share of the
 input budget alongside discussions. Setup files are parsed statically and never
 executed; dynamic declarations and targets outside inspected paths may be omitted.
+Project guides under `docs` and `documentation` contribute their original purpose
+and section outline, including short command-help descriptions. Guides mentioning
+declared commands take priority over peripheral documentation. Backup and archive
+paths do not displace current application evidence, but remain in the inventory.
 
 Source inspection uses a 2 MiB read budget and a cooperative 5-second deadline,
 rather than a fixed number of files. Individual source reads remain limited to
