@@ -1,3 +1,4 @@
+import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
 import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './topicGroups';
@@ -1498,8 +1499,8 @@ function SharedChatTranscript({ base, share, passageNotes }: {
   </details>;
 }
 
-  base: string;
 function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, onNoteSaved }: {
+  base: string;
   projectId: number;
   historyLink: HistoryLink | null;
   notes: RecordData[];
@@ -2105,11 +2106,14 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [responsePage, setResponsePage] = useState(0);
   const selectedSession = sessions?.find((session) => String(session.id) === sessionId);
   const canSend = !!selectedSession && selectedSession.status !== 'linked';
-  const completed = completedMessages(events?.events ?? []).reverse();
-  const responsePageCount = Math.max(1, Math.ceil(completed.length / HISTORY_PAGE_SIZE));
+  const completed = completedMessages(events?.response_events ?? []).reverse();
+  const responsePageCount = Math.max(1, Math.ceil((events?.response_total ?? 0) / HISTORY_PAGE_SIZE));
   const currentResponsePage = Math.min(responsePage, responsePageCount - 1);
-  const newestResponseId = completed[0]?.id;
+  const newestResponseId = events?.latest_response_id;
   useEffect(() => { setResponsePage(0); }, [sessionId, newestResponseId]);
+  useEffect(() => {
+    if (events && responsePage >= responsePageCount) setResponsePage(responsePageCount - 1);
+  }, [events, responsePage, responsePageCount]);
   const latestRequest = (events?.deliveries ?? []).findLast((item: RecordData) => item.decision_id == null);
   const activeReview = (events?.deliveries ?? []).findLast((item: RecordData) =>
     item.decision_id == null && item.status === 'sent' && events?.session?.status === 'running');
@@ -2213,29 +2217,23 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   }, [busy, events, prefix, sessionId, waiting]);
   useEffect(() => {
     if (!sessionId) return;
-    let alive = true;
-    const poll = () => {
+    return startReviewPolling(async (signal) => {
       const version = responseVersion.current;
-      return api(`${prefix}/sessions/${sessionId}/events`)
-        .then((result) => {
-          if (alive && version === responseVersion.current) {
-            setEvents(result);
-            setEventsError('');
-          }
-        })
-        .catch((e) => {
-          if (alive) {
-            setEventsError(e.message);
-          }
-        });
-    };
-    poll();
-    const timer = window.setInterval(poll, 3000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-  }, [prefix, sessionId]);
+      const [result, responses] = await Promise.all([
+        api<any>(`${prefix}/sessions/${sessionId}/events`, { signal }),
+        api<{ events: any[]; total: number; latest_id: number | null }>(
+          `${prefix}/sessions/${sessionId}/responses?offset=${responsePage * HISTORY_PAGE_SIZE}&limit=${HISTORY_PAGE_SIZE}`,
+          { signal }),
+      ]);
+      return { version, result: { ...result, response_events: responses.events,
+        response_total: responses.total, latest_response_id: responses.latest_id, response_page: responsePage } };
+    }, ({ version, result }) => {
+      if (version === responseVersion.current) {
+        setEvents(result);
+        setEventsError('');
+      }
+    }, (error) => setEventsError((error as Error).message));
+  }, [prefix, sessionId, responsePage]);
   return (
     <>
       <section className="card">
@@ -2323,10 +2321,9 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             {latestRequest && latestRequest.status !== 'completed' && <Badge value={latestRequest.status} />}
           </div>
           <ErrorBox error={eventsError} />
-          {events ? (
+          {events && events.response_page === responsePage ? (
             <>
-              {completed.slice(currentResponsePage * HISTORY_PAGE_SIZE,
-                (currentResponsePage + 1) * HISTORY_PAGE_SIZE).map((message) => (
+              {completed.map((message) => (
                 <article className="answer" key={message.id}>
                   <div className="section-title">
                     <h3>Codex response</h3>
@@ -2341,6 +2338,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                             setEvents((current: any) => current && ({
                               ...current,
                               events: current.events.filter((event: RecordData) => event.id !== message.id),
+                              response_events: current.response_events.filter((event: RecordData) => event.id !== message.id),
+                              response_total: Math.max(0, current.response_total - 1),
                             }));
                           });
                         }} />

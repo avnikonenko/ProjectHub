@@ -586,3 +586,41 @@ def test_delete_only_older_overview_revision_in_project(setup):
     assert setup.client.delete(f'{route}/1').status_code == 204
     assert setup.client.get(f'{route}/1').status_code == 404
     assert setup.client.get('/api/projects/1/codex/brief').json()['generated_at'] == 'latest'
+
+
+def test_review_response_pages_survive_noisy_raw_event_history(setup):
+    sid = create_session(setup)
+    other = create_session(setup)
+    with Session(setup.engine) as db:
+        for index in range(8):
+            db.add(CodexEvent(project_id=1, session_id=sid, method='item/completed',
+                             payload={'item': {'type': 'agentMessage', 'text': f'Answer {index}'}}))
+        db.add_all([CodexEvent(project_id=1, session_id=sid, method='item/agentMessage/delta',
+                              payload={'delta': str(index)}) for index in range(650)])
+        db.add(CodexEvent(project_id=1, session_id=other, method='item/completed',
+                         payload={'item': {'type': 'agentMessage', 'text': 'Other session'}}))
+        db.add(CodexEvent(project_id=1, session_id=sid, method='item/completed',
+                         payload={'item': {'type': 'agentMessage', 'text': 123}}))
+        db.commit()
+    url = f'/api/projects/1/codex/sessions/{sid}'
+    raw = setup.client.get(url + '/events').json()
+    assert len(raw['events']) == 500
+    assert not any(e['method'] == 'item/completed' and
+                   isinstance(e['payload'].get('item', {}).get('text'), str) for e in raw['events'])
+    latest = None
+    seen = []
+    for offset in (0, 3, 6):
+        response = setup.client.get(url + f'/responses?offset={offset}&limit=3')
+        assert response.status_code == 200
+        page = response.json()
+        assert page['total'] == 8
+        assert len(page['events']) <= 3
+        if latest is None:
+            latest = page['latest_id']
+        assert page['latest_id'] == latest
+        seen.extend(e['payload']['item']['text'] for e in reversed(page['events']))
+    assert seen == [f'Answer {index}' for index in reversed(range(8))]
+    assert setup.client.get(url + '/responses?offset=30').json()['events'] == []
+    assert setup.client.get(url + '/responses?limit=51').status_code == 422
+    assert setup.client.get(url + '/responses?offset=-1').status_code == 422
+    assert setup.client.get(f'/api/projects/2/codex/sessions/{sid}/responses').status_code == 404

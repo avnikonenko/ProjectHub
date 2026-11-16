@@ -875,6 +875,25 @@ def send_delivery(project_id: int, delivery_id: int, body: GenerationInput, requ
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.get('/sessions/{session_id}/responses')
+def review_responses(project_id: int, session_id: int, db: DB,
+                     offset: int = Query(0, ge=0), limit: int = Query(3, ge=1, le=50)):
+    project(db, project_id)
+    scoped(db, CodexSession, project_id, session_id)
+    conditions = (
+        CodexEvent.project_id == project_id, CodexEvent.session_id == session_id,
+        CodexEvent.method == 'item/completed',
+        CodexEvent.payload['item']['type'].as_string() == 'agentMessage',
+        func.json_type(CodexEvent.payload, '$.item.text') == 'text',
+    )
+    total, latest = db.execute(select(func.count(CodexEvent.id), func.max(CodexEvent.id))
+                               .where(*conditions)).one()
+    rows = list(db.scalars(select(CodexEvent).where(*conditions)
+                           .order_by(CodexEvent.id.desc()).offset(offset).limit(limit)))
+    return {'events': [record_dict(row) for row in reversed(rows)],
+            'total': total, 'latest_id': latest}
+
+
 @router.delete('/sessions/{session_id}/responses/{event_id}', status_code=204)
 def delete_review_response(project_id: int, session_id: int, event_id: int, db: DB):
     project(db, project_id)

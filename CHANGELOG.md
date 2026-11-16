@@ -18,6 +18,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep all saved review responses reachable through independent paging, even after long raw-event histories; serialize and abort browser polling so older requests cannot overwrite newer results.
+- Mark review requests failed on terminal Codex errors instead of leaving them stuck as sent, while retaining matching later completion evidence and protecting newer running turns from delayed older completions.
+
 - Load note and imported ChatGPT transcript content on demand instead of including it in every project load. Exclude duplicate audit bodies from the lightweight response, preserve source links and full-content editing, and retain existing export and API defaults.
 
 - Distinguish conditionally equivalent implementation optimizations from unresolved policy choices in Overview synthesis, without upgrading acceptance or claiming independent validation. Preserve Knowledge records and reusable source-stage caches.
