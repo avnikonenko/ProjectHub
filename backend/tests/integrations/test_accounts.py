@@ -70,7 +70,7 @@ def test_global_profile_registration_works_without_a_project(tmp_path, monkeypat
         assert result.json()['registered_id'].startswith('registered:')
         duplicate = client.post('/api/settings/codex-profiles',
                                 json={'name': 'Alias', 'directory': str(directory)})
-        assert duplicate.json()['added'] is False
+        assert duplicate.status_code == 409
         assert client.get('/api/projects').json() == []
         with Session(app.state.engine) as db:
             assert len(list(db.scalars(select(CodexProfile)))) == 1
@@ -120,21 +120,12 @@ def test_explicit_registration_names_discovered_and_launch_directories(tmp_path,
         project = client.post('/api/projects', json={'name': 'Project'}).json()
         response = client.post('/api/settings/codex-profiles',
                                json={'name': 'Named profile', 'directory': str(directory)})
-        assert response.status_code == 200, response.text
-        result = response.json()
-        assert result['added'] is True and result['label'] == 'Named profile'
-        assert result['is_launch'] is launch
-        settings = client.get(f"/api/projects/{project['id']}/codex/account").json()
-        if launch:
-            assert settings['launch_label'] == 'Named profile'
-            assert settings['include_launch'] is True
-            assert settings['options'] == []
-        else:
-            assert settings['options'] == [{'id': result['registered_id'], 'label': 'Named profile'}]
-        duplicate = client.post('/api/settings/codex-profiles',
-                                json={'name': 'Replacement', 'directory': str(directory)}).json()
-        assert duplicate['added'] is False and duplicate['label'] == 'Named profile'
+        assert response.status_code == 409, response.text
         with Session(app.state.engine) as db:
-            assert db.get(CodexProfile, int(result['registered_id'].split(':')[1])).name == 'Named profile'
+            assert db.query(CodexProfile).count() == 0
+        alias = tmp_path / 'alias'
+        alias.symlink_to(directory, target_is_directory=True)
+        assert client.post('/api/settings/codex-profiles',
+                           json={'name': 'Alias', 'directory': str(alias)}).status_code == 409
         assert client.get('/api/projects/99999/codex/account').status_code == 404
     app.state.engine.dispose()

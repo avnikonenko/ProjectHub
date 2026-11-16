@@ -11,7 +11,7 @@ from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
-from .accounts import account_options, account_home, launch_home, launch_label, validate_profile_directory
+from .accounts import account_options, account_home, launch_home, launch_label, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import read_scheme, refresh_scheme
@@ -221,12 +221,20 @@ def register_profile(body: AddAccountInput, db: DB):
     except (CodexError, OSError, RuntimeError) as exc:
         raise HTTPException(422, 'Choose an existing absolute Codex directory.') from exc
     db.rollback()
+    for _, name, path in profile_entries(db.get_bind()):
+        if path.is_dir() and path.resolve() == Path(directory):
+            raise HTTPException(409, f'Profile already available as “{name}”. Choose it in project AI settings.')
+    if Path(directory) == launch_home():
+        raise HTTPException(409, 'This directory is already the ProjectHub launch account. Choose it in project AI settings.')
     capability = availability(directory)
     if not capability['authenticated'] or not capability['app_server']:
         raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
     stmt = insert(CodexProfile).values(name=body.name, directory=directory)
     result = db.execute(stmt.on_conflict_do_nothing(index_elements=[CodexProfile.directory]))
     added = result.rowcount == 1
+    if not added:
+        db.rollback()
+        raise HTTPException(409, 'This Codex directory is already registered. Choose the existing profile in project AI settings.')
     db.commit()
     saved = db.scalar(select(CodexProfile).where(CodexProfile.directory == directory))
     return {'registered_id': f'registered:{saved.id}', 'added': added,
