@@ -18,6 +18,11 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Give note-edit requests and forms workspace identities so delayed responses cannot replace another editor, discard unsaved values, or change its save target. Cancel pending edits on navigation and pagination.
+- Preserve literal special characters in SQLite data paths; serialize duplicate shared-chat import checks and accepted-decision task creation with their writes.
+- Verify inherited connector isolation before every AI generation, including pooled and parallel requests, without editing Codex account configuration.
+- Synchronize cleanup regression tests on completed writes, distinguishing sent requests with uncertain delivery from requests closed before sending.
+
 - Close Codex processes and pipes on malformed output or unexpected EOF, including invalid RPC error envelopes, and report uncertain delivery explicitly.
 - Enforce history-cache budgets while reading and recheck index revisions before caching, preventing concurrent refreshes from bypassing limits.
 - Apply the same UTF-8 byte limit to expanded shared-chat imports and note editing. Preserve oversized existing transcripts through metadata-only edits without resubmitting or truncating unchanged text.

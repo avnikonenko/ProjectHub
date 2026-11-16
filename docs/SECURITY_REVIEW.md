@@ -23,6 +23,11 @@ Codex manages its own ChatGPT credentials. ProjectHub uses the existing App Serv
 integration, checks authentication type, and requests read-only analysis without tool
 approvals. Unsupported server requests fail closed. Inherited MCP connectors are
 refused for analysis; tool paths are restricted through process overrides.
+Every generation path discovers and disables inherited MCP servers per connection,
+then verifies the fresh thread's tool/resource inventory before sending its prompt.
+This also applies to pooled and parallel requests; failed verification preserves
+saved results and does not send a model-generation request. Account configuration
+and authentication files are not modified.
 
 AI generation sends selected context to OpenAI only when requested. Do not send
 information you are not permitted to share. Queued or interrupted requests are not

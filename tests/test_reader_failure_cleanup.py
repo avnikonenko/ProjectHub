@@ -145,44 +145,75 @@ def test_cancellation_closes_without_unexpected_disconnect_callback(local_server
     assert client.process.stdin.closed and client.process.stdout.closed
 
 
-def test_request_registered_during_failure_cleanup_is_also_woken(local_server, monkeypatch):
+@pytest.mark.parametrize('second_frame_sent', [True, False])
+def test_request_registered_during_failure_cleanup_is_also_woken(local_server, monkeypatch, second_frame_sent):
     client = local_server()
+    client.timeout = 5
     entered, release = threading.Event(), threading.Event()
-    original_close = client.close
+    second_before_write, second_written = threading.Event(), threading.Event()
+    permit_second_write, cleanup_finished = threading.Event(), threading.Event()
+    original_close, original_write = client.close, client._write
 
     def gated_close():
-        if threading.current_thread() is client.reader:
+        is_reader = threading.current_thread() is client.reader
+        if is_reader:
             entered.set()
-            assert release.wait(2)
+            assert release.wait(3)
         original_close()
+        if is_reader:
+            cleanup_finished.set()
+
+    def tracked_write(message, **kwargs):
+        if message.get('method') == 'another-request':
+            second_before_write.set()
+            if not second_frame_sent:
+                assert permit_second_write.wait(3)
+        result = original_write(message, **kwargs)
+        if message.get('method') == 'another-request':
+            second_written.set()
+        return result
 
     monkeypatch.setattr(client, 'close', gated_close)
-    errors = []
+    monkeypatch.setattr(client, '_write', tracked_write)
+    errors = {}
 
     def request(method):
         try:
             client.request(method, {})
         except CodexError as error:
-            errors.append(str(error))
+            errors[method] = str(error)
 
     first = threading.Thread(target=request, args=('malformed',))
     second = threading.Thread(target=request, args=('another-request',))
     try:
         first.start()
-        assert entered.wait(1)
+        assert entered.wait(3)
         second.start()
-        deadline = time.monotonic() + 1
-        while len(client.pending) < 2 and time.monotonic() < deadline:
-            time.sleep(.005)
-        assert len(client.pending) == 2
+        assert second_before_write.wait(3)
+        if second_frame_sent:
+            # Registration precedes writing. Only this signal establishes that
+            # both frames were actually sent and require uncertain-delivery errors.
+            assert second_written.wait(3)
+        with client.lock:
+            assert len(client.pending) == 2
         release.set()
-        first.join(timeout=1)
-        second.join(timeout=1)
+        assert cleanup_finished.wait(3)
+        permit_second_write.set()
+        first.join(timeout=3)
+        second.join(timeout=3)
         assert not first.is_alive() and not second.is_alive()
-        assert len(errors) == 2 and all('disconnected' in error and 'unverified' in error for error in errors)
+        assert len(errors) == 2
+        assert 'disconnected' in errors['malformed'] and 'unverified' in errors['malformed']
+        if second_frame_sent:
+            assert 'disconnected' in errors['another-request'] and 'unverified' in errors['another-request']
+        else:
+            assert not second_written.is_set()
+            assert errors['another-request'] == 'Codex App Server connection is closed'
         assert client.pending == {}
+        assert client.closed and client.process.poll() is not None
     finally:
         release.set()
-        first.join(timeout=2)
+        permit_second_write.set()
+        first.join(timeout=3)
         if second.ident is not None:
-            second.join(timeout=2)
+            second.join(timeout=3)

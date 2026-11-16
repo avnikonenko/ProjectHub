@@ -42,6 +42,7 @@ Answer: `{id,project_id,question_id,solution,explanation,advantages,limitations,
 - `POST /{pid}/decisions`: `{title,description?,next_step?,rationale?,alternatives?,evidence?,limitations?,status?}`; status defaults to proposed and the optional next step is at most 500 characters.
 - `PATCH /{pid}/decisions/{did}`: editable decision fields/status; always preserves before/after audit history.
 - `POST /{pid}/decisions/{did}/tasks`: `{title?,description?,priority?}`; requires accepted decision, returns linked task.
+  Status validation and task creation share a serialized write transaction with acceptance/reopening.
 - `POST /{pid}/tasks`: `{title,description?,priority?,status?,question_id?,decision_id?,session_id?}`.
 - `PATCH /{pid}/tasks/{tid}`: same editable fields.
 
