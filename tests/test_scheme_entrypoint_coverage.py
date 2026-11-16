@@ -39,7 +39,8 @@ def test_multiple_setup_entrypoints_survive_crowded_package_and_cache(tmp_path, 
     assert 'Declared entrypoint report = sample.zeta_report:main' in paths['setup.py']['text']
     assert paths['setup.py']['provenance'] == 'observed in code'
     assert 'MUST_NOT_EXECUTE' not in json.dumps(first)
-    assert first['coverage']['files_inspected'] <= evidence._MAX_FILES
+    assert first['coverage']['files_inspected'] > 24
+    assert first['diagnostics']['bytes_read'] <= evidence._MAX_INSPECTION_BYTES
     monkeypatch.setattr(evidence, '_read', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('Cache reread')))
     cached = evidence.collect_evidence(engine, 1)
     assert cached['diagnostics']['cache_hits'] == 1

@@ -61,6 +61,13 @@ only introductory badges. Repository excerpts receive a bounded share of the
 input budget alongside discussions. Setup files are parsed statically and never
 executed; dynamic declarations and targets outside inspected paths may be omitted.
 
+Source inspection uses a 2 MiB read budget and a cooperative 5-second deadline,
+rather than a fixed number of files. Individual source reads remain limited to
+64 KiB, and the evidence sent to AI has separate text and serialized-size limits.
+Code structure displays at most 300 paths; that display limit does not restrict
+which files can be inspected. Coverage reports distinguish budget-stopped reading
+from inspected material omitted from the final AI input.
+
 Manual diagram editing and export are not currently available.
 
 See [installation](../README.md#install-and-run), [AI generation settings](AI_GENERATION.md),

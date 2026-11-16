@@ -20,6 +20,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Replace Scheme's 24-file inspection cap with bounded bytes and time. Keep entrypoint priorities, separate the directory-display limit from inspection, report budget omissions, and prevent oversized evidence packages.
+
 - Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.
 
 ### Fixed

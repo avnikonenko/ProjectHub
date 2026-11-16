@@ -1,5 +1,6 @@
 """Bounded Scheme inputs from local files and stored records; never runs project code or AI."""
 import ast
+from collections import deque
 from copy import deepcopy
 import hashlib
 import json
@@ -23,18 +24,61 @@ from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 
 _MAX_PATHS = 300
-_MAX_FILES = 24
-_MAX_MANIFESTS = 12
 _MAX_BYTES = 65536
+_MAX_INSPECTION_BYTES = 2 * 1024 * 1024
+_INSPECTION_SECONDS = 5.0
+_MAX_METADATA_BYTES = 1024 * 1024
+_METADATA_SECONDS = 5.0
 _MAX_EXCERPT = 1600
 _MAX_DEPENDENCIES = 100
 _MAX_SOURCES_CHARS = 40_000
+_MAX_PACKAGE_CHARS = 140_000
 _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
 
 
 def _source(identifier, label, value, provenance, **metadata):
     return {'id': identifier, 'label': label[:240], 'text': value,
             'provenance': provenance, 'content_hash': hashlib.sha256(value.encode()).hexdigest(), **metadata}
+
+
+def _bound_package(result):
+    """Bound serialized metadata too, keeping whole sources and valid references."""
+    def serialized_size(value):
+        return len(json.dumps(value, ensure_ascii=False))
+
+    payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+    used = serialized_size(payload)
+    if used > _MAX_PACKAGE_CHARS:
+        coverage = result['coverage']
+        coverage['partial'] = True
+        coverage['limitations'] = sorted({*coverage['limitations'],
+            'The serialized evidence package budget was reached; some structure or source evidence was omitted.'})
+        counts = coverage['omitted_reason_counts']
+        counts['package_output_budget'] = 0
+        used = serialized_size(payload)
+
+        def remove(items, index=-1):
+            nonlocal used
+            value = items.pop(index)
+            used -= serialized_size(value) + (2 if items else 0)
+            counts['package_output_budget'] += 1
+            return value
+
+        # Structure is supplemental; preserve priority-ordered source evidence first.
+        # Reserve a little space for the updated counters and coverage metadata.
+        while used > max(0, _MAX_PACKAGE_CHARS - 512):
+            if result['tree']:
+                remove(result['tree'])
+            elif result['sources']:
+                removed = remove(result['sources'])
+                for index in range(len(result['dependencies']) - 1, -1, -1):
+                    if removed['id'] in result['dependencies'][index]['source_ids']:
+                        remove(result['dependencies'], index)
+            else:
+                break
+        coverage['conversation_excerpts'] = sum(
+            source['provenance'] == 'Codex conversation' for source in result['sources'])
+    return serialized_size(payload)
 
 
 def _safe_relative(value, patterns):
@@ -67,12 +111,40 @@ def _descriptor(root_fd, relative):
             os.close(fd)
 
 
-def _read(root_fd, relative, *, allow_prefix=False):
+class _InspectionStopped(Exception):
+    def __init__(self, reason):
+        self.reason = reason
+
+
+class _InspectionBudget:
+    def __init__(self):
+        self.started = time.monotonic()
+        self.deadline = self.started + _INSPECTION_SECONDS
+        self.bytes_read = 0
+
+    def check(self):
+        if time.monotonic() >= self.deadline:
+            raise _InspectionStopped('time_budget')
+        if self.bytes_read >= _MAX_INSPECTION_BYTES:
+            raise _InspectionStopped('byte_budget')
+
+
+def _read(root_fd, relative, *, allow_prefix=False, budget=None):
+    if budget is not None:
+        budget.check()
     fd = _descriptor(root_fd, relative)
     try:
         data = bytearray()
         while len(data) <= _MAX_BYTES:
-            chunk = os.read(fd, min(8192, _MAX_BYTES + 1 - len(data)))
+            maximum = min(8192, _MAX_BYTES + 1 - len(data))
+            if budget is not None:
+                budget.check()
+                maximum = min(maximum, _MAX_INSPECTION_BYTES - budget.bytes_read)
+            chunk = os.read(fd, maximum)
+            if budget is not None:
+                budget.bytes_read += len(chunk)
+                if time.monotonic() >= budget.deadline:
+                    raise _InspectionStopped('time_budget')
             if not chunk:
                 break
             data.extend(chunk)
@@ -89,7 +161,15 @@ def _read(root_fd, relative, *, allow_prefix=False):
 
 def _markers(root_fd, candidates):
     result = []
+    deadline = time.monotonic() + _METADATA_SECONDS
+    size = 0
     for relative in candidates:
+        if time.monotonic() >= deadline:
+            return result, 'time_budget'
+        # Reserve enough room for the bounded numeric stat fields as well as the path.
+        size += len(relative.encode('utf-8', errors='surrogateescape')) + 256
+        if size > _MAX_METADATA_BYTES:
+            return result, 'byte_budget'
         try:
             fd = _descriptor(root_fd, relative)
             try:
@@ -100,7 +180,7 @@ def _markers(root_fd, candidates):
         except OSError:
             marker = 'unavailable'
         result.append([relative, marker])
-    return result
+    return result, 'time_budget' if time.monotonic() >= deadline else None
 
 
 _AUXILIARY = {'script', 'scripts', 'migration', 'migrations', 'test', 'tests',
@@ -217,11 +297,11 @@ def _repository(repository_path, patterns):
     paths = [v for v in paths if v not in ignored_paths and _safe_relative(v, patterns)]
     limits = []
     if len(paths) > _MAX_PATHS:
-        limits.append('Code structure is limited to 300 safe paths; other paths were omitted.')
-    paths = sorted(paths, key=_scheme_order)[:_MAX_PATHS]
-    manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)[:_MAX_MANIFESTS]
-    declarations = [v for v in paths if PurePosixPath(v).name == 'setup.py'][:3]
-    docs = sorted((v for v in paths if _code_category(v) == 'docs'), key=_code_order)[:3]
+        limits.append('Code structure display is limited to 300 safe paths; source inspection uses separate byte and time budgets.')
+    paths = sorted(paths, key=_scheme_order)
+    manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)
+    declarations = [v for v in paths if PurePosixPath(v).name == 'setup.py']
+    docs = sorted((v for v in paths if _code_category(v) == 'docs'), key=_code_order)
     shared_stems = _shared_feature_stems(paths)
     code = sorted((v for v in paths if _code_category(v) == 'code' and v not in declarations), key=lambda v: (
         PurePosixPath(v).stem.casefold() not in _ENTRYPOINTS,
@@ -232,13 +312,23 @@ def _repository(repository_path, patterns):
     # Round-robin top-level areas so a backend does not hide a frontend.
     buckets = {}
     for value in code:
-        buckets.setdefault(_area(value), []).append(value)
+        buckets.setdefault(_area(value), deque()).append(value)
     chosen = []
-    while any(buckets.values()) and len(chosen) < _MAX_FILES - len(manifests) - len(declarations) - len(docs):
-        for values in buckets.values():
-            if values and len(chosen) < _MAX_FILES - len(manifests) - len(declarations) - len(docs):
-                chosen.append(values.pop(0))
-    candidates = [*manifests, *declarations, *docs, *chosen]
+    active = deque(buckets.values())
+    while active:
+        values = active.popleft()
+        chosen.append(values.popleft())
+        if values:
+            active.append(values)
+    # No category may consume the entire read budget before application code.
+    # Preserve each category's order, with declared entrypoint overrides below.
+    groups = deque(deque(group) for group in (manifests, declarations, docs, chosen) if group)
+    candidates = []
+    while groups:
+        group = groups.popleft()
+        candidates.append(group.popleft())
+        if group:
+            groups.append(group)
     if len(candidates) < len(paths):
         limits.append('Only selected source files and bounded declaration excerpts were inspected.')
     return root, paths, candidates, limits
@@ -705,20 +795,33 @@ def collect_evidence(engine, project_id):
     try:
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
-        markers = _markers(root_fd, paths) if root_fd is not None else []
-        key = _digest({'namespace': 'scheme-inspection-v6', 'project_id': project_id,
+        markers, metadata_stop = _markers(root_fd, paths) if root_fd is not None else ([], None)
+        if metadata_stop:
+            limitations.add(f'The repository metadata {metadata_stop.replace("_", " ")} was reached; some paths were omitted.')
+            marked_paths = {relative for relative, _ in markers}
+            paths = [relative for relative in paths if relative in marked_paths]
+            candidates = [relative for relative in candidates if relative in marked_paths]
+        key = _digest({'namespace': 'scheme-inspection-v7', 'project_id': project_id,
+            'budgets': {'read_bytes': _MAX_INSPECTION_BYTES, 'inspection_seconds': _INSPECTION_SECONDS,
+                        'file_bytes': _MAX_BYTES, 'metadata_bytes': _MAX_METADATA_BYTES,
+                        'metadata_seconds': _METADATA_SECONDS, 'tree_paths': _MAX_PATHS,
+                        'source_chars': _MAX_SOURCES_CHARS, 'package_chars': _MAX_PACKAGE_CHARS},
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
             'freshness_unknown': freshness_unknown})
         with Session(engine) as db:
             cached = db.get(ProjectHistoryBatch, (project_id, key))
-            if cached is not None and isinstance(cached.evidence, list) and len(cached.evidence) == 1:
+            if not metadata_stop and cached is not None and isinstance(cached.evidence, list) and len(cached.evidence) == 1:
                 result = deepcopy(cached.evidence[0])
                 result['diagnostics'].update(cache_hits=1, duration_ms=round((time.monotonic() - started) * 1000))
                 return result
         sources, dependencies = list(records), []
-        scanned = []
+        scanned = set()
         files_read = 0
+        omitted_reasons = {}
+        inspection_stop = None
+        budget = _InspectionBudget()
+        marker_by_path = dict(markers)
         pending = list(candidates)
         shared_stems = _shared_feature_stems(paths)
         priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in {'main', 'app', 'index', 'server', 'cli'}
@@ -730,7 +833,13 @@ def collect_evidence(engine, project_id):
             code_paths = {path for path in paths if _code_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         entrypoint_paths = set()
-        while pending and len(scanned) < _MAX_FILES:
+        while pending:
+            try:
+                budget.check()
+            except _InspectionStopped as exc:
+                inspection_stop = exc.reason
+                omitted_reasons[exc.reason] = len(set(pending) - scanned)
+                break
             pick = 0
             declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
             if declared:
@@ -746,11 +855,11 @@ def collect_evidence(engine, project_id):
                 last_area = _area(relative)
             if relative in scanned:
                 continue
-            scanned.append(relative)
+            scanned.add(relative)
             try:
                 is_code = (_code_category(relative) == 'code'
                            or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
-                value = _read(root_fd, relative, allow_prefix=True) if is_code else _read(root_fd, relative)
+                value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
                 declarations = _entrypoint_declarations(value, relative)
                 targets = _entrypoint_targets(declarations, relative, paths)
                 if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
@@ -764,7 +873,7 @@ def collect_evidence(engine, project_id):
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
-                    marker = dict(markers).get(relative)
+                    marker = marker_by_path.get(relative)
                     if isinstance(marker, list) and marker[3] > _MAX_BYTES:
                         limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
                     linked = _import_targets(value, relative, code_paths)
@@ -806,13 +915,23 @@ def collect_evidence(engine, project_id):
                         limitations.add('Some normalized manifest declaration excerpts were truncated.')
                     sources.append(_source(source_id, relative, excerpt[:3200], provenance, path=relative,
                                            revision=hashlib.sha256(value.encode()).hexdigest()))
+            except _InspectionStopped as exc:
+                inspection_stop = exc.reason
+                omitted_reasons[exc.reason] = 1 + len(set(pending) - scanned)
+                break
             except OSError:
+                omitted_reasons['unsafe_or_unavailable'] = omitted_reasons.get('unsafe_or_unavailable', 0) + 1
                 freshness_unknown = True
                 limitations.add('Some selected files could not be read safely; their freshness is unknown.')
             except (ValueError, TypeError, AttributeError, RecursionError):
+                omitted_reasons['unreadable_or_malformed'] = omitted_reasons.get('unreadable_or_malformed', 0) + 1
                 limitations.add('Some selected files were unreadable, unsafe, malformed, binary, above 64 KiB, or too deeply nested.')
-        if pending:
-            limitations.add('The selected file limit was reached; some inputs were omitted.')
+        inspection_seconds = round(time.monotonic() - budget.started, 6)
+        if not inspection_stop and inspection_seconds >= _INSPECTION_SECONDS:
+            inspection_stop = 'time_budget'
+            omitted_reasons['time_budget'] = len(set(pending) - scanned)
+        if inspection_stop:
+            limitations.add(f'The source inspection {inspection_stop.replace("_", " ")} was reached; coverage may be incomplete.')
         if len(dependencies) > _MAX_DEPENDENCIES:
             dependencies = dependencies[:_MAX_DEPENDENCIES]
             limitations.add('Only the first 100 direct dependency declarations are included.')
@@ -833,6 +952,7 @@ def collect_evidence(engine, project_id):
                 deferred.append(source)
         for source in [*repository_sources, *deferred]:
             if size + len(source['text']) > _MAX_SOURCES_CHARS:
+                omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1
                 limitations.add('The source excerpt budget was reached; some evidence was omitted.')
                 continue
             bounded.append(source)
@@ -841,7 +961,7 @@ def collect_evidence(engine, project_id):
         dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
         excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
-        for relative in paths:
+        for relative in paths[:_MAX_PATHS]:
             parts = PurePosixPath(relative).parts
             for n in range(1, len(parts)):
                 tree['/'.join(parts[:n])] = 'directory'
@@ -857,16 +977,26 @@ def collect_evidence(engine, project_id):
             'tree': [{'path': path, 'type': kind} for path, kind in sorted(tree.items())],
             'coverage': {'partial': bool(limitations), 'freshness_unknown': freshness_unknown,
                          'limitations': sorted(limitations),
+                         'inspection_stopped': inspection_stop, 'omitted_reason_counts': omitted_reasons,
                          'files_inspected': files_read, 'conversation_excerpts': excerpt_count},
-            'fingerprint': _digest({'sources': bounded, 'dependencies': dependencies, 'tree': sorted(tree.items()),
-                                    'coverage': sorted(limitations), 'sessions': session_markers}),
             'diagnostics': {'cache_hits': 0, 'input_chars': size, 'files_inspected': files_read,
+                            'files_attempted': len(scanned), 'bytes_read': budget.bytes_read,
+                            'inspection_seconds': inspection_seconds,
+                            'omitted_reason_counts': omitted_reasons,
                             'conversation_excerpts': excerpt_count,
                             'duration_ms': round((time.monotonic() - started) * 1000)}}
-        with Session(engine) as db:
-            if db.get(ProjectHistoryBatch, (project_id, key)) is None:
-                db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[result]))
-                db.commit()
+        package_chars = _bound_package(result)
+        result['diagnostics'].update(package_chars=package_chars,
+            input_chars=sum(len(source['text']) for source in result['sources']),
+            conversation_excerpts=result['coverage']['conversation_excerpts'],
+            duration_ms=round((time.monotonic() - started) * 1000))
+        result['fingerprint'] = _digest({key: result[key] for key in
+            ('sources', 'dependencies', 'tree', 'coverage')} | {'sessions': session_markers})
+        if inspection_stop != 'time_budget' and not metadata_stop:
+            with Session(engine) as db:
+                if db.get(ProjectHistoryBatch, (project_id, key)) is None:
+                    db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[result]))
+                    db.commit()
         return result
     finally:
         if root_fd is not None:
