@@ -1344,6 +1344,7 @@ a:focus-visible {
 .scheme-table-scroll { overflow-x: auto; margin: 1rem 0; }
 .scheme-dependencies { width: 100%; border-collapse: collapse; text-align: left; }
 .scheme-dependencies th, .scheme-dependencies td { padding: .75rem .5rem; vertical-align: top; border-bottom: 1px solid var(--border, #d9e2dd); }
+.scheme-dependencies th { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .scheme-dependencies small { display: block; padding-top: .3rem; }
 
 /* Keep titles, supporting details, and actions in consistent reading rows. */

@@ -26,6 +26,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep dependency-table headings on one line at larger text sizes, with horizontal scrolling on narrow screens.
+
 - Report unavailable home directories as configuration errors and preserve the actual settings error in terminal commands instead of blaming the local port.
 
 - Keep a selected historical Scheme visible across tab returns and ignore stale profile reads after the project account changes.
