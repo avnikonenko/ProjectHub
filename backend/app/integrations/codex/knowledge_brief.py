@@ -27,6 +27,17 @@ from .revisions import save_revision
 SYNTHESIS_COMPACTION_CHARS = 180_000
 MAX_SYNTHESIS_CHARS = 240_000
 
+EQUIVALENCE_GUIDANCE = (
+    'Distinguish a domain-policy change from an implementation optimization described as preserving '
+    'the same result. When original evidence explicitly explains equivalence under stated conditions, '
+    'attribute that equivalence to the discussion and retain those conditions; do not claim independent '
+    'proof or validation. Missing acceptance of the optimization alone does not make the underlying '
+    'policy unresolved or establish a conflict. Describe the optimization as proposed with acceptance '
+    'unverified when appropriate, without promoting it to agreed or rewriting Knowledge statuses. '
+    'Do not infer equivalence from similar labels, and preserve genuine differences in outcomes, '
+    'scope, requirements or unresolved validation questions. '
+)
+
 
 def _brief_inputs(candidate, bundle, repository):
     originals = {source['id']: source for source in candidate['sources']}
@@ -220,6 +231,8 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
                 'used is a separate provenance limitation, not an undefined policy; do not invent that '
                 'limitation or an open question solely from differing scopes. '
             )
+    if not _stage or any(source.get('kind') == 'staged_interpretation' for source in sources):
+        bounded_guidance += EQUIVALENCE_GUIDANCE
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '

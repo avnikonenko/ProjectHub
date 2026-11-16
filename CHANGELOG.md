@@ -14,6 +14,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Distinguish conditionally equivalent implementation optimizations from unresolved policy choices in Overview synthesis, without upgrading acceptance or claiming independent validation. Preserve Knowledge records and reusable source-stage caches.
+
 - Recheck previously untagged records when the available topic catalog changes, while preserving existing positive assignments and zero-call reuse when unchanged.
 - Clear transient AI-tag progress errors when polling recovers without hiding actual generation failures. Reject malformed saved tag records explicitly before sizing input.
 

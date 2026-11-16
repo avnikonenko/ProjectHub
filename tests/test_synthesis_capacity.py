@@ -62,7 +62,7 @@ class Capture:
 
 @pytest.mark.parametrize('count', [8, 339])
 def test_normal_synthesis_keeps_pre_fallback_prompt_and_no_selection_metadata(monkeypatch, count):
-    """Compatibility snapshot of the instructions at ea0eea1 (before fallback).
+    """Compatibility snapshot apart from the explicit equivalence bug fix.
 
     Deliberately independent of Git at test runtime. This checks both ordinary
     and compacted complete inputs, not model compliance with the instructions.
@@ -72,7 +72,9 @@ def test_normal_synthesis_keeps_pre_fallback_prompt_and_no_selection_metadata(mo
     manager, diagnostics = Capture(), {}
     module._synthesize(manager, {'coverage': {}}, {'project': {}}, {},
                        selection_diagnostics=diagnostics)
-    assert sha256((manager.instructions + '\n').encode()).hexdigest() == (
+    assert module.EQUIVALENCE_GUIDANCE in manager.instructions
+    unchanged = manager.instructions.replace(module.EQUIVALENCE_GUIDANCE, '')
+    assert sha256((unchanged + '\n').encode()).hexdigest() == (
         'f8580ba885694a13129783ea1ac969eab82ffc48dbca4181f843ddadeb677f71')
     assert 'overview_selection' not in manager.payload
     assert diagnostics == {}
