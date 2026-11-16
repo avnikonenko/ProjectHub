@@ -24,6 +24,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep a selected historical Scheme visible across tab returns and ignore stale profile reads after the project account changes.
+
 - Reject Codex notifications that explicitly name another session's thread. Enforce embedded project identities in agent Knowledge/Scheme reads, preserve text containing NUL characters across paging, and report unresolved repository home paths as validation errors.
 
 - Preserve major application workflows in Scheme evidence by prioritizing literal Python CLI entrypoints and README feature sections. Reserve space for repository evidence alongside discussions, retain bounded inspection, and refresh older inspection caches.

@@ -1171,39 +1171,48 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
   const [savingAccount, setSavingAccount] = useState(false);
   const [accountError, setAccountError] = useState('');
   const [accountVersion, setAccountVersion] = useState(0);
+  const accountRead = useRef(0);
+  const accountMutation = useRef(false);
   useEffect(() => {
     let controller: AbortController;
     function loadAccounts() {
+      if (accountMutation.current) return;
+      const identity = ++accountRead.current;
       controller?.abort();
       controller = new AbortController();
       const current = controller;
       api<typeof accounts>(`${base}/codex/account`, { signal: current.signal })
         .then((result) => {
-          if (!current.signal.aborted) { setAccounts(result); setAccountError(''); }
+          if (!current.signal.aborted && accountRead.current === identity) { setAccounts(result); setAccountError(''); }
         })
-        .catch((e) => { if (!current.signal.aborted) setAccountError(e.message); });
+        .catch((e) => { if (!current.signal.aborted && accountRead.current === identity) setAccountError(e.message); });
     }
     loadAccounts();
     window.addEventListener('projecthub:profiles-changed', loadAccounts);
     return () => {
-      controller.abort();
+      controller?.abort();
+      accountRead.current++;
       window.removeEventListener('projecthub:profiles-changed', loadAccounts);
     };
   }, [base]);
   async function changeAccount(account: string) {
-    if (savingAccount) return;
+    if (accountMutation.current) return;
+    accountMutation.current = true;
+    const identity = ++accountRead.current;
     setSavingAccount(true);
     setAccountError('');
     try {
       const result = await patch(`${base}/codex/account`, { account: account || null });
+      if (accountRead.current !== identity) return;
       setAccounts(result);
       setModels([]);
       onChange({ model: '', effort: '' });
       setAccountVersion((value) => value + 1);
     } catch (e) {
-      setAccountError((e as Error).message);
+      if (accountRead.current === identity) setAccountError((e as Error).message);
     } finally {
-      setSavingAccount(false);
+      accountMutation.current = false;
+      if (accountRead.current === identity) setSavingAccount(false);
     }
   }
   useEffect(() => {

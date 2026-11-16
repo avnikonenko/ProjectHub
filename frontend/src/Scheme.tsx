@@ -261,27 +261,34 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const inFlight = useRef(false);
+  const selectedRevision = useRef<number | null>(null);
+  const selectingRevision = useRef(false);
+  const resultRead = useRef(0);
   const alive = useRef(true);
   const path = base + '/codex/scheme';
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || inFlight.current || selectingRevision.current) return;
     const abort = new AbortController();
+    const identity = ++resultRead.current;
     setLoading(true);
     api<SchemeResult>(path, { signal: abort.signal })
       .then((data) => {
-        if (!abort.signal.aborted) {
-          setResult(data); setError(''); setLatestVersion(data.snapshot?.generated_at ?? null); setRevisionId(null);
+        if (!abort.signal.aborted && resultRead.current === identity) {
+          setResult(previous => selectedRevision.current !== null && previous
+            ? { ...data, snapshot: previous.snapshot } : data);
+          setError(''); setLatestVersion(data.snapshot?.generated_at ?? null);
         }
       })
-      .catch((e: Error) => { if (!abort.signal.aborted) setError(e.message); })
-      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
+      .catch((e: Error) => { if (!abort.signal.aborted && resultRead.current === identity) setError(e.message); })
+      .finally(() => { if (!abort.signal.aborted && resultRead.current === identity) setLoading(false); });
     return () => abort.abort();
   }, [path, recoveryVersion, visible]);
 
   async function generate() {
     if (inFlight.current || loading || recoveryBusy || revisionLoading) return;
     inFlight.current = true;
+    resultRead.current++;
     setGenerating(true);
     setError('');
     setNotice('');
@@ -290,6 +297,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       const snapshot = await post(path, { confirmed: true, model: generation.model || null, effort: generation.effort || null }) as SchemeSnapshot;
       if (alive.current) {
         setLatestVersion(snapshot.generated_at);
+        selectedRevision.current = null;
         setRevisionId(null);
         setResult((previous) => ({
         snapshot,
@@ -355,8 +363,15 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           <ul>{[...new Set([...(coverage?.limitations ?? []), ...result.freshness.limitations])].map((item) => <li key={item}>{item}</li>)}</ul>
         </details>}
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
-        disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+        disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
+          selectingRevision.current = value;
+          if (value) { resultRead.current++; setLoading(false); }
+          setRevisionLoading(value);
+        }}
         onSelect={(selected, id) => {
+          resultRead.current++;
+          selectedRevision.current = id;
+          setLoading(false);
           setResult((previous) => previous ? { ...previous, snapshot: selected } : previous);
           setRevisionId(id);
         }} />
