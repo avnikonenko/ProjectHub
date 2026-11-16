@@ -20,7 +20,7 @@ from ...project_evidence import (
     _excluded, _exclusions, _git, _repository_root,
 )
 from ...services import require_project
-from .scheme_passages import READ_CHARS, EXCERPT_CHARS, select_passages
+from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 
 _MAX_PATHS = 300
 _MAX_FILES = 24
@@ -117,7 +117,7 @@ def _production_path(relative):
 def _scheme_order(relative):
     path = PurePosixPath(relative)
     category = _code_category(relative)
-    group = 0 if _manifest(relative) else 1 if category == 'docs' else 2 if _production_path(relative) else 3
+    group = 0 if _manifest(relative) or path.name == 'setup.py' else 1 if category == 'docs' else 2 if _production_path(relative) else 3
     return group, path.stem.casefold() not in _ENTRYPOINTS, len(path.parts), relative.casefold(), relative
 
 
@@ -220,9 +220,10 @@ def _repository(repository_path, patterns):
         limits.append('Code structure is limited to 300 safe paths; other paths were omitted.')
     paths = sorted(paths, key=_scheme_order)[:_MAX_PATHS]
     manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)[:_MAX_MANIFESTS]
+    declarations = [v for v in paths if PurePosixPath(v).name == 'setup.py'][:3]
     docs = sorted((v for v in paths if _code_category(v) == 'docs'), key=_code_order)[:3]
     shared_stems = _shared_feature_stems(paths)
-    code = sorted((v for v in paths if _code_category(v) == 'code'), key=lambda v: (
+    code = sorted((v for v in paths if _code_category(v) == 'code' and v not in declarations), key=lambda v: (
         PurePosixPath(v).stem.casefold() not in _ENTRYPOINTS,
         PurePosixPath(v).stem.casefold() not in shared_stems, *_scheme_order(v)))
     production = [v for v in code if _production_path(v)]
@@ -233,14 +234,99 @@ def _repository(repository_path, patterns):
     for value in code:
         buckets.setdefault(_area(value), []).append(value)
     chosen = []
-    while any(buckets.values()) and len(chosen) < _MAX_FILES - len(manifests) - len(docs):
+    while any(buckets.values()) and len(chosen) < _MAX_FILES - len(manifests) - len(declarations) - len(docs):
         for values in buckets.values():
-            if values and len(chosen) < _MAX_FILES - len(manifests) - len(docs):
+            if values and len(chosen) < _MAX_FILES - len(manifests) - len(declarations) - len(docs):
                 chosen.append(values.pop(0))
-    candidates = [*manifests, *docs, *chosen]
+    candidates = [*manifests, *declarations, *docs, *chosen]
     if len(candidates) < len(paths):
         limits.append('Only selected source files and bounded declaration excerpts were inspected.')
     return root, paths, candidates, limits
+
+
+def _entrypoint_declarations(value, relative):
+    """Read literal packaging declarations only; never import or evaluate setup code."""
+    entries = []
+    name = PurePosixPath(relative).name
+    if name == 'pyproject.toml':
+        project = tomllib.loads(value).get('project', {})
+        for group in ('scripts', 'gui-scripts'):
+            mapping = project.get(group, {})
+            if isinstance(mapping, dict):
+                entries.extend(list(mapping.items())[:_MAX_DEPENDENCIES])
+    elif name == 'setup.py':
+        try:
+            parsed = ast.parse(value)
+        except (SyntaxError, ValueError, RecursionError):
+            return []
+        setup_names, modules = set(), set()
+        for node in parsed.body:
+            if isinstance(node, ast.Import):
+                modules.update(alias.asname or alias.name for alias in node.names if alias.name == 'setuptools')
+            elif isinstance(node, ast.ImportFrom) and node.module == 'setuptools' and not node.level:
+                setup_names.update(alias.asname or alias.name for alias in node.names if alias.name == 'setup')
+        for statement in parsed.body:
+            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                continue
+            call = statement.value
+            if _qualified_name(call.func) not in setup_names | {module + '.setup' for module in modules}:
+                continue
+            for keyword in call.keywords:
+                if keyword.arg != 'entry_points' or not isinstance(keyword.value, ast.Dict):
+                    continue
+                for key, group in zip(keyword.value.keys, keyword.value.values):
+                    if not isinstance(key, ast.Constant) or key.value not in ('console_scripts', 'gui_scripts'):
+                        continue
+                    if not isinstance(group, (ast.List, ast.Tuple)):
+                        continue
+                    for entry in group.elts[:_MAX_DEPENDENCIES]:
+                        if isinstance(entry, ast.Constant) and isinstance(entry.value, str) and '=' in entry.value:
+                            command, target = entry.value.split('=', 1)
+                            entries.append((command.strip(), target.strip()))
+    result = []
+    for command, target in entries[:_MAX_DEPENDENCIES]:
+        if (isinstance(command, str) and isinstance(target, str)
+                and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}', command)
+                and len(target) <= 240
+                and re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*', target, re.ASCII)):
+            result.append((command, target))
+    return sorted(set(result))
+
+
+def _entrypoint_targets(declarations, relative, available):
+    targets = []
+    for _, target in declarations:
+        module = PurePosixPath(*target.split(':', 1)[0].split('.'))
+        for base in (PurePosixPath(relative).parent, PurePosixPath(relative).parent / 'src'):
+            for candidate in (str(base / module) + '.py', (base / module / '__init__.py').as_posix()):
+                if candidate in available and candidate not in targets:
+                    targets.append(candidate)
+    return targets
+
+
+def _documentation_excerpt(value):
+    """Prefer a whole feature section over decorative README prefixes."""
+    heading = re.search(r'(?im)^(#{1,6})[ \t]+(?:features?|capabilities)[ \t]*:?[ \t]*$', value)
+    if heading is None:
+        return value[:_MAX_EXCERPT], len(value) > _MAX_EXCERPT
+    depth = len(heading[1])
+    following = re.search(r'(?m)^#{1,' + str(depth) + r'}[ \t]+', value[heading.end():])
+    end = heading.end() + following.start() if following else len(value)
+    section = value[heading.start():end].rstrip()
+    excerpt = select_passages(section, _MAX_EXCERPT)['text']
+    # Keep short title/intro paragraphs when room remains; omit badges and logos.
+    introduction = []
+    for match in re.finditer(r'\S[\s\S]*?(?=\n[ \t]*\n|\Z)', value[:heading.start()]):
+        paragraph = match[0]
+        if re.match(r'(?:<|!\[|\[!\[)', paragraph):
+            continue
+        candidate = GAP.join([*introduction, paragraph, excerpt])
+        if len(candidate) <= _MAX_EXCERPT:
+            introduction.append(paragraph)
+        if len(introduction) == 2:
+            break
+    result = GAP.join([*introduction, excerpt]) if introduction else excerpt
+    return result, result != value
 
 
 def _dependency(name, constraint, category, source_id, dependencies, limitations):
@@ -620,7 +706,7 @@ def collect_evidence(engine, project_id):
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
         markers = _markers(root_fd, paths) if root_fd is not None else []
-        key = _digest({'namespace': 'scheme-inspection-v5', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v6', 'project_id': project_id,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
             'freshness_unknown': freshness_unknown})
@@ -643,9 +729,13 @@ def collect_evidence(engine, project_id):
         if not code_paths:
             code_paths = {path for path in paths if _code_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
+        entrypoint_paths = set()
         while pending and len(scanned) < _MAX_FILES:
             pick = 0
-            if pending and _code_category(pending[0]) == 'code':
+            declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
+            if declared:
+                pick = min(declared, key=lambda i: priorities[pending[i]])
+            elif pending and _code_category(pending[0]) == 'code' and PurePosixPath(pending[0]).name != 'setup.py':
                 choices = [i for i, candidate in enumerate(pending)
                            if _area(candidate) != last_area and _code_category(candidate) == 'code']
                 if not choices:
@@ -658,8 +748,19 @@ def collect_evidence(engine, project_id):
                 continue
             scanned.append(relative)
             try:
-                is_code = _code_category(relative) == 'code'
+                is_code = (_code_category(relative) == 'code'
+                           or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
                 value = _read(root_fd, relative, allow_prefix=True) if is_code else _read(root_fd, relative)
+                declarations = _entrypoint_declarations(value, relative)
+                targets = _entrypoint_targets(declarations, relative, paths)
+                if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
+                    limitations.add('Some declared entrypoint modules were unavailable within the safe bounded repository paths.')
+                for order, target in enumerate(targets):
+                    entrypoint_paths.add(target)
+                    priorities[target] = (-1, order)
+                    if target not in scanned and target not in pending:
+                        pending.append(target)
+                declared_excerpt = '\n'.join(f'Declared entrypoint {command} = {target}' for command, target in declarations)
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
@@ -684,6 +785,7 @@ def collect_evidence(engine, project_id):
                         _parse_manifest(value, relative, source_id, dependencies, includes, limitations)
                     # Preserve safe normalized declarations, not package-manager credentials/URLs.
                     excerpt = '\n'.join(f"{d['name']} {d['constraint']} ({d['category']})" for d in dependencies[before:])
+                    excerpt = '\n'.join(part for part in (declared_excerpt, excerpt) if part)
                     provenance = 'dependency manifest'
                     for include in includes:
                         if include in paths and _safe_relative(include, patterns) and include not in scanned:
@@ -691,11 +793,13 @@ def collect_evidence(engine, project_id):
                             pending.insert(0, include)
                         else:
                             limitations.add('Some requirement includes were excluded or outside the bounded repository paths.')
-                elif _code_category(relative) == 'code':
-                    excerpt = _structural_excerpt(value, relative)
+                elif is_code:
+                    excerpt = '\n'.join(part for part in (declared_excerpt, _structural_excerpt(value, relative)) if part)
                     provenance = 'observed in code'
                 else:
-                    excerpt = value[:_MAX_EXCERPT]
+                    excerpt, omitted = _documentation_excerpt(value)
+                    if omitted:
+                        limitations.add('Some documentation sections were omitted from bounded excerpts; omitted text is not evidence of absence.')
                     provenance = 'project documentation'
                 if excerpt:
                     if len(excerpt) > 3200:
@@ -714,7 +818,20 @@ def collect_evidence(engine, project_id):
             limitations.add('Only the first 100 direct dependency declarations are included.')
         # Prevent an unusually large manifest/dependency set from exhausting the AI input budget.
         bounded, size = [], 0
-        for source in sources:
+        repository_sources = sorted(sources[len(records):], key=lambda source: (
+            source.get('path') not in entrypoint_paths,
+            PurePosixPath(source.get('path', '')).name not in {'setup.py', 'pyproject.toml'}))
+        # Reserve half for repository evidence when both kinds are present. Keep
+        # whole excerpts and return any unused repository allowance to records.
+        repository_reserve = min(_MAX_SOURCES_CHARS // 2, sum(len(s['text']) for s in repository_sources))
+        deferred = []
+        for source in records:
+            if size + len(source['text']) <= _MAX_SOURCES_CHARS - repository_reserve:
+                bounded.append(source)
+                size += len(source['text'])
+            else:
+                deferred.append(source)
+        for source in [*repository_sources, *deferred]:
             if size + len(source['text']) > _MAX_SOURCES_CHARS:
                 limitations.add('The source excerpt budget was reached; some evidence was omitted.')
                 continue
@@ -722,6 +839,7 @@ def collect_evidence(engine, project_id):
             size += len(source['text'])
         allowed_ids = {source['id'] for source in bounded}
         dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
+        excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
         for relative in paths:
             parts = PurePosixPath(relative).parts

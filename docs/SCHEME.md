@@ -55,6 +55,12 @@ it does not read every file or the entire project history. Check **Evidence used
 to see what supported the result. Diagrams explain available evidence and can miss
 connections or describe plans rather than working functionality.
 
+Inspection prioritizes executable modules declared by literal Python entrypoints
+in `setup.py` and `pyproject.toml`, and retains README feature sections instead of
+only introductory badges. Repository excerpts receive a bounded share of the
+input budget alongside discussions. Setup files are parsed statically and never
+executed; dynamic declarations and targets outside inspected paths may be omitted.
+
 Manual diagram editing and export are not currently available.
 
 See [installation](../README.md#install-and-run), [AI generation settings](AI_GENERATION.md),
