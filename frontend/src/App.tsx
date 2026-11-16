@@ -94,7 +94,7 @@ const projectBody = (data: Record<string, any>) => ({
 });
 
 export default function App() {
-  const [projects, setProjects] = useState<Pick<Project, 'id' | 'name'>[]>([]);
+  const [projects, setProjects] = useState<Pick<Project, 'id' | 'name' | 'pinned'>[]>([]);
   const [selected, setSelected] = useState<number | null>(() => {
     try {
       const value = Number(localStorage.getItem('projecthub.selected-project'));
@@ -103,11 +103,12 @@ export default function App() {
   });
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
+  const [pinningProject, setPinningProject] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [historyLink, setHistoryLink] = useState(() => readHistoryLink(window.location.hash));
   const [knowledgeLink, setKnowledgeLink] = useState(() => readKnowledgeLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
-    const data = await api<Pick<Project, 'id' | 'name'>[]>('/projects?compact=true');
+    const data = await api<Pick<Project, 'id' | 'name' | 'pinned'>[]>('/projects?compact=true');
     setProjects(data);
     setSelected((current) =>
       current !== null && data.some((p) => p.id === current)
@@ -131,6 +132,19 @@ export default function App() {
   const linkedProject = historyLink?.projectId ?? knowledgeLink?.projectId;
   const linkedProjectExists = linkedProject !== undefined && projects.some((p) => p.id === linkedProject);
   const selectedProject = linkedProject !== undefined ? (linkedProjectExists ? linkedProject : null) : selected;
+  async function toggleProjectPin(project: Pick<Project, 'id' | 'pinned'>) {
+    if (pinningProject !== null) return;
+    setPinningProject(project.id);
+    setError('');
+    try {
+      await patch(`/projects/${project.id}`, { pinned: !project.pinned });
+      await fetchProjects();
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setPinningProject(null);
+    }
+  }
   function selectProject(projectId: number) {
     setSelected(projectId);
     try { localStorage.setItem('projecthub.selected-project', String(projectId)); } catch { /* Storage is optional. */ }
@@ -152,14 +166,26 @@ export default function App() {
         <div className="sidebar-label">YOUR PROJECTS</div>
         <div className="project-list">
           {projects.map((p) => (
-            <button
-              key={p.id}
-              className={`project-option ${p.id === selectedProject ? 'selected' : ''}`}
-              onClick={() => selectProject(p.id)}
-            >
-              <span className="project-dot" />
-              {p.name}
-            </button>
+            <div className="project-row" key={p.id}>
+              <button
+                className={`project-option ${p.id === selectedProject ? 'selected' : ''}`}
+                onClick={() => selectProject(p.id)}
+              >
+                <span className="project-dot" />
+                <span className="project-name">{p.name}</span>
+              </button>
+              <button type="button" className="icon-edit project-pin"
+                aria-label={`${p.pinned ? 'Unpin' : 'Pin'} project: ${p.name}`}
+                title={p.pinned ? 'Unpin project' : 'Pin project'}
+                aria-pressed={Boolean(p.pinned)} disabled={pinningProject !== null}
+                onClick={() => void toggleProjectPin(p)}>
+                <svg viewBox="0 0 24 24" width="16" height="16"
+                  fill={p.pinned ? 'currentColor' : 'none'} stroke="currentColor"
+                  strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m12 3 2.8 5.7 6.3.9-4.5 4.4 1 6.2-5.6-3-5.6 3 1-6.2L3 9.6l6.2-.9L12 3Z" />
+                </svg>
+              </button>
+            </div>
           ))}
         </div>
         <button className="add-project" onClick={() => setAdding(true)}>

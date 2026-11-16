@@ -3,7 +3,7 @@ from pathlib import Path
 
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
@@ -19,7 +19,8 @@ def test_existing_brief_survives_additive_knowledge_migration(tmp_path):
         config.attributes['connection'] = connection
         command.upgrade(config, '0019')
     with Session(engine) as db:
-        db.add(Project(name='Existing project')); db.flush()
+        # Seed the historical schema independently of newer ORM columns.
+        db.execute(text("INSERT INTO projects (id,name,description,goals,status,git_remote,tags,architecture_mermaid,created_at,updated_at) VALUES (1,'Existing project','','','planning','','[]','','before','before')"))
         db.add(ProjectBrief(project_id=1, generated_at='before', sections={'overview': []}, sources=[], coverage=[]))
         db.commit()
     engine.dispose()

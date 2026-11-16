@@ -25,6 +25,7 @@ class Input(BaseModel):
 
 
 class ProjectCreate(Input):
+    pinned: bool = Field(default=False, strict=True)
     name: str = Field(min_length=1, max_length=200)
     description: str = ''
     goals: str = ''

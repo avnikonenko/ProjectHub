@@ -43,7 +43,7 @@ def test_compact_workspace_reads_preserve_full_api_and_project_scope(client):
     assert full_projects[0]['description'] == 'Full project metadata'
     assert list(full_projects[0]) == list(first)
     assert client.get('/api/projects?compact=true').json() == [
-        {'id': project_id, 'name': 'First'}, {'id': other_id, 'name': 'Second'},
+        {'id': project_id, 'name': 'First', 'pinned': False}, {'id': other_id, 'name': 'Second', 'pinned': False},
     ]
     path = f'/api/projects/{project_id}/overview'
     full = client.get(path).json()

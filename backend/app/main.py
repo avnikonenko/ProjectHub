@@ -80,9 +80,10 @@ def create_app(data_dir=None):
     @app.get('/api/projects')
     def list_projects(compact: bool = False, db: Session = db_dep):
         if compact:
-            return [{'id': row.id, 'name': row.name} for row in
-                    db.execute(select(Project.id, Project.name).order_by(Project.id))]
-        return [serialize(p) for p in db.scalars(select(Project).order_by(Project.id))]
+            return [{'id': row.id, 'name': row.name, 'pinned': row.pinned} for row in
+                    db.execute(select(Project.id, Project.name, Project.pinned)
+                               .order_by(Project.pinned.desc(), Project.id))]
+        return [serialize(p) for p in db.scalars(select(Project).order_by(Project.pinned.desc(), Project.id))]
 
     @app.post('/api/projects',status_code=201)
     def create_project(payload: ProjectCreate,db: Session=db_dep):

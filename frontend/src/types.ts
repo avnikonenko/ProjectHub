@@ -1,6 +1,7 @@
 export interface Project {
   id: number;
   name: string;
+  pinned: boolean;
   description: string;
   goals: string;
   status: string;
