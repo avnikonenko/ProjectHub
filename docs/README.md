@@ -11,6 +11,7 @@ implementation, tests, and deployment boundaries.
 - [Project evidence and freshness](PROJECT_EVIDENCE.md)
 - [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md)
 - [Scheme](SCHEME.md)
+- [Terminal-agent context and reading](TERMINAL_AGENTS.md)
 
 ## For contributors
 

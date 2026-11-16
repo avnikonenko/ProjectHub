@@ -339,3 +339,103 @@ def test_todo_details_sources_are_mutually_exclusive():
     with pytest.raises(SystemExit) as error:
         notes_cli.parser().parse_args(['todo', 'add', '--project-id', '2', '--title', 'Check', '--notes', 'Text', '--notes-stdin'])
     assert error.value.code == 2
+
+@pytest.mark.parametrize('arguments,endpoint,parameters', [
+    (['context'], '/projects/2/agent/context', {'q': ['']}),
+    (['context', '--query', 'decisions & café?'], '/projects/2/agent/context', {'q': ['decisions & café?']}),
+    (['read', '--kind', 'overview'], '/projects/2/agent/read',
+     {'kind': ['overview'], 'offset': ['0'], 'limit': ['5'], 'text_offset': ['0']}),
+    (['read', '--kind', 'knowledge', '--offset', '5', '--limit', '20', '--id', 'choice:á/7', '--text-offset', '3000'],
+     '/projects/2/agent/read',
+     {'kind': ['knowledge'], 'offset': ['5'], 'limit': ['20'], 'text_offset': ['3000'], 'record_id': ['choice:á/7']}),
+    (['search', '--query', 'architecture & café?'], '/projects/2/search/all',
+     {'q': ['architecture & café?'], 'kind': ['all'], 'offset': ['0']}),
+    (['search', '--query', 'sources', '--kind', 'conversations', '--offset', '10'], '/projects/2/search/all',
+     {'q': ['sources'], 'kind': ['conversations'], 'offset': ['10']}),
+])
+def test_saved_context_reads_are_get_only_bounded_and_urlencoded(monkeypatch, capsys, arguments, endpoint, parameters):
+    from urllib.parse import parse_qs, urlsplit
+    calls = []
+    payload = {'project_id': 2, 'items': [{'text': 'Saved café', 'source_ids': ['turn:7']}]}
+
+    def request(method, path, body=None):
+        assert method == 'GET' and body is None
+        calls.append(path)
+        if len(calls) == 1:
+            assert path == '/projects?compact=true'
+            return [{'id': 1, 'name': 'Other'}, {'id': 2, 'name': 'Projet café'}]
+        parsed = urlsplit(path)
+        assert parsed.path == endpoint
+        assert parse_qs(parsed.query, keep_blank_values=True) == parameters
+        return payload
+
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main([*arguments, '--project', 'Projet café']) == 0
+    assert calls and len(calls) == 2
+    assert json.loads(capsys.readouterr().out) == payload
+
+
+@pytest.mark.parametrize('arguments', [
+    ['context', '--project-id', '0'],
+    ['context', '--project', ' '],
+    ['context', '--project-id', '2', '--query', 'x' * 2001],
+    ['search', '--project-id', '-1', '--query', 'test'],
+    ['search', '--project-id', '2', '--query', ' '],
+    ['search', '--project-id', '2', '--query', 'test', '--offset', '-1'],
+    ['read', '--project-id', '2', '--kind', 'notes', '--offset', '2147483648'],
+    ['read', '--project-id', '2', '--kind', 'notes', '--limit', '0'],
+    ['read', '--project-id', '2', '--kind', 'notes', '--limit', '21'],
+    ['read', '--project-id', '2', '--kind', 'notes', '--text-offset', '-1'],
+    ['read', '--project-id', '2', '--kind', 'notes', '--id', ''],
+])
+def test_invalid_saved_context_read_never_accesses_api(monkeypatch, arguments, capsys):
+    monkeypatch.setattr(notes_cli, 'request', lambda *a, **k: pytest.fail('Invalid input must not access API'))
+    assert notes_cli.main(arguments) == 1
+    assert 'projecthub:' in capsys.readouterr().err
+
+
+@pytest.mark.parametrize('arguments', [
+    ['read', '--project-id', '2'],
+    ['read', '--project-id', '2', '--kind', 'credentials'],
+    ['search', '--project-id', '2'],
+    ['context'],
+])
+def test_saved_read_required_arguments_and_kind_are_explicit(arguments):
+    with pytest.raises(SystemExit):
+        notes_cli.parser().parse_args(arguments)
+
+
+@pytest.mark.parametrize('projects', [
+    [],
+    [{'id': 1, 'name': 'Duplicate'}, {'id': 2, 'name': 'Duplicate'}],
+])
+def test_saved_read_does_not_guess_missing_or_ambiguous_project(monkeypatch, capsys, projects):
+    calls = []
+    def request(method, path, payload=None):
+        calls.append(path)
+        return projects
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['context', '--project', 'Duplicate']) == 1
+    assert calls == ['/projects?compact=true']
+    assert 'ambiguous' in capsys.readouterr().err
+
+
+def test_saved_read_reports_server_failure_without_retry_or_write(monkeypatch, capsys):
+    calls = []
+    def request(method, path, payload=None):
+        calls.append((method, path))
+        if len(calls) == 1:
+            return [{'id': 2, 'name': 'Example'}]
+        raise ValueError('ProjectHub rejected the request (HTTP 503).')
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['read', '--project-id', '2', '--kind', 'qa']) == 1
+    assert len(calls) == 2 and all(method == 'GET' for method, _ in calls)
+    assert not capsys.readouterr().out
+
+
+def test_read_launcher_exposes_new_commands():
+    from pathlib import Path
+    script = Path('scripts/projecthub').read_text()
+    assert 'projects|note|notes|todo|session|context|read|search)' in script
+    for command in ('context', 'read', 'search'):
+        assert f'  {command} ' in script

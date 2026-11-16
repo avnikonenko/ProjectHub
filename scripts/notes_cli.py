@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import sys
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import HTTPRedirectHandler, ProxyHandler, Request, build_opener
 
 MAX_CONTENT = 200_000
@@ -90,12 +91,58 @@ def parser():
     project_arguments(linking)
     linking.add_argument('--session', help='Codex thread ID (defaults to CODEX_THREAD_ID)')
     linking.add_argument('--title', help='Optional display name (otherwise use the Codex name)')
+    context = commands.add_parser('context', help='Read a compact saved project briefing')
+    project_arguments(context)
+    context.add_argument('--query', default='', help='Optional focus for relevant saved information')
+    reading = commands.add_parser('read', help='Read a bounded page of saved project information')
+    project_arguments(reading)
+    reading.add_argument('--kind', required=True, choices=(
+        'overview', 'knowledge', 'qa', 'scheme', 'notes', 'tasks', 'sessions', 'responses'))
+    reading.add_argument('--offset', type=int, default=0)
+    reading.add_argument('--limit', type=int, default=5, help='Records per page (1–20)')
+    reading.add_argument('--id', dest='record_id', help='Read one record by its returned ID')
+    reading.add_argument('--text-offset', type=int, default=0, help='Character offset within long prose')
+    searching = commands.add_parser('search', help='Search saved project records locally')
+    project_arguments(searching)
+    searching.add_argument('--query', required=True)
+    searching.add_argument('--kind', default='all', choices=(
+        'all', 'tasks', 'notes', 'conversations', 'qa', 'knowledge', 'sessions', 'other'))
+    searching.add_argument('--offset', type=int, default=0)
     return root
 
 
 def main(argv=None):
     args = parser().parse_args(argv)
     try:
+        if args.command in ('context', 'read', 'search'):
+            if args.project_id is not None and args.project_id <= 0:
+                raise ValueError('Project ID must be a positive integer.')
+            if args.project_id is None and not args.project.strip():
+                raise ValueError('Project name must not be blank.')
+            if args.command in ('context', 'search'):
+                if len(args.query) > 2000 or (args.command == 'search' and not args.query.strip()):
+                    raise ValueError('Query must contain 1–2,000 characters (optional for context).')
+            if args.command in ('read', 'search') and not 0 <= args.offset <= 2_147_483_647:
+                raise ValueError('Offset must be between 0 and 2,147,483,647.')
+            if args.command == 'read':
+                if not 1 <= args.limit <= 20 or not 0 <= args.text_offset <= 2_147_483_647:
+                    raise ValueError('Limit must be 1–20 and text offset must be between 0 and 2,147,483,647.')
+                if args.record_id is not None and (not args.record_id.strip() or len(args.record_id) > 200):
+                    raise ValueError('Record ID must contain 1–200 characters.')
+            project = resolve_project(request('GET', '/projects?compact=true'), args)
+            base = f"/projects/{project['id']}"
+            if args.command == 'context':
+                path = base + '/agent/context?' + urlencode({'q': args.query})
+            elif args.command == 'search':
+                path = base + '/search/all?' + urlencode({'q': args.query, 'kind': args.kind, 'offset': args.offset})
+            else:
+                values = {'kind': args.kind, 'offset': args.offset, 'limit': args.limit,
+                          'text_offset': args.text_offset}
+                if args.record_id is not None:
+                    values['record_id'] = args.record_id
+                path = base + '/agent/read?' + urlencode(values)
+            print(json.dumps(request('GET', path), ensure_ascii=False))
+            return 0
         if args.command == 'projects':
             projects = request('GET', '/projects')
             print(json.dumps([{'id': p['id'], 'name': p['name']} for p in projects], ensure_ascii=False))
