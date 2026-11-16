@@ -93,6 +93,23 @@ def create_app(data_dir=None):
     @app.get('/api/projects/{project_id}')
     def get_project(project_id:int,db:Session=db_dep): return serialize(require_project(db,project_id))
 
+    @app.get('/api/projects/{project_id}/agent/context')
+    def get_agent_context(project_id: int, db: Session = db_dep,
+                          q: str = Query('', max_length=2000)):
+        from .agent_context import agent_context
+        return agent_context(db, project_id, q)
+
+    @app.get('/api/projects/{project_id}/agent/read')
+    def get_agent_records(project_id: int, db: Session = db_dep,
+                          kind: Literal['overview', 'knowledge', 'qa', 'scheme', 'notes',
+                                        'tasks', 'sessions', 'responses'] = Query(...),
+                          offset: int = Query(0, ge=0, le=2_147_483_647),
+                          limit: int = Query(5, ge=1, le=20),
+                          record_id: str | None = Query(None, min_length=1, max_length=200),
+                          text_offset: int = Query(0, ge=0, le=2_147_483_647)):
+        from .agent_context import agent_read
+        return agent_read(db, project_id, kind, offset, limit, record_id, text_offset)
+
     @app.patch('/api/projects/{project_id}')
     def update_project(project_id:int,payload:ProjectPatch,db:Session=db_dep):
         p=require_project(db,project_id);before=serialize(p);values=payload.model_dump(exclude_unset=True)
