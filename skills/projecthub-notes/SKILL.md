@@ -39,13 +39,15 @@ keeping each request bounded. `read` also supports notes, tasks,
 sessions and saved discussion responses; use `--id` to narrow a record and
 `--text-offset` for its next text window. Run `projecthub read --help` for the supported kinds and options.
 
-When the user asks to read all records in a collection, follow every `next_offset`
-and every per-field text continuation until that collection is exhausted. A compact
-briefing or search result is not a complete read. Otherwise, retrieve relevant
-details as needed. State briefly which material was read and any remaining coverage
-gaps; if a limit or error interrupts an exhaustive read, report it as incomplete.
-Reading all saved records does not include full conversation transcripts or older
-revisions; retrieve those separately only when requested and supported.
+Handle paging automatically. Retrieve enough relevant information to answer the
+user's request, following `next_offset` and per-field text continuations as needed;
+do not stop at the first page or ask the user to request more pages. Search snippets
+and compact briefings are starting points, not complete reads. Before concluding
+that a record is absent, search or finish paging the relevant collection.
+For an exhaustive request, finish every page and text continuation in scope.
+Mention coverage gaps only when they materially limit the answer, and report an
+interrupted exhaustive read as incomplete. Full conversation transcripts and older
+revisions require separate supported retrieval when relevant to the request.
 
 Exclude unrelated projects, raw diagnostic logs, credentials, account configuration
 and entire conversation histories from the starting briefing. Reading must not
