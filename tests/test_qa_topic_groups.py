@@ -24,9 +24,9 @@ def prepared(tmp_path, monkeypatch):
     original = deepcopy(item)
     monkeypatch.setattr(qa, 'archive_history', lambda *args: ([{
         'text': 'evidence', 'sources': [{'id': 'source:1'}]}], []))
-    monkeypatch.setattr(qa, 'generate_items', lambda *args, **kwargs: [
+    monkeypatch.setattr(qa, '_generate_items', lambda *args, **kwargs: ([
         (item, {identifier: {'id': identifier, 'text': identifier}
-                for identifier in ('source:1', 'source:2')})])
+                for identifier in ('source:1', 'source:2')})], False))
     monkeypatch.setattr(qa, 'consolidate_items', lambda *args: [deepcopy(item)])
     yield engine, item, original
     engine.dispose()

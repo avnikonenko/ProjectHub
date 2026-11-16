@@ -1,27 +1,33 @@
 """Generate a separate, source-backed project Q&A from linked conversations."""
 from contextlib import ExitStack
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import ContextVar, copy_context
 from copy import deepcopy
 import hashlib
 import json
 import re
+import threading
+import time
 import unicodedata
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import Answer, Project, ProjectQA, ProjectHistoryBatch, Question, utcnow
-from .archive import archive_history, archive_worker_scope
+from .archive import archive_history, archive_worker_scope, archive_diagnostics, _worker_count
 from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, recorded_evidence, generation_metadata
 from . import progress
 from .revisions import save_revision
-from .protocol import CodexError
+from .protocol import CodexError, JSONFormattingError
 
 _FIELDS = {'question': 180, 'answer': 800}
 DEFAULT_QA_MAX_ITEMS = 25
 _GROUP_SIZE = 72
 _DRAFT_BATCH_ITEMS = 32
 _DRAFT_BATCH_CHARS = 24_000
+_draft_result = ContextVar('projecthub_qa_draft_result', default=None)
 _INLINE_CITATION = re.compile(r'\s*\[\d+(?:\s*[,;–-]\s*\d+)*\]')
 _SCHEMA = {
     'type': 'object', 'required': ['items'], 'additionalProperties': False,
@@ -48,6 +54,43 @@ def read_qa(db, project_id):
 
 
 def generate_items(manager, batch, *, engine=None, project_id=None):
+    items, cached = _generate_items(manager, batch, engine=engine, project_id=project_id)
+    outcome = _draft_result.get()
+    if outcome is not None:
+        outcome['cached'] = cached
+    return items
+
+
+def _generate_json(manager, prompt, schema):
+    """Retry only the transport's explicit excessive-formatting failure once."""
+    def request(text, *, formatting_retry=False):
+        progress.check_cancelled()
+        # A formatting failure poisons its pooled session. Each attempt owns a
+        # fresh child scope so neither retry nor later consolidation reuses it.
+        with ExitStack() as scope:
+            independent = getattr(manager, 'independent_generation', None)
+            selected = scope.enter_context(independent()) if callable(independent) else manager
+            extraction = getattr(selected, 'generate_extraction', None)
+            generate = extraction if formatting_retry and callable(extraction) else selected.generate_brief
+            raw = generate(text, schema)
+            metadata = getattr(selected, 'generation_metadata', None)
+            if isinstance(metadata, dict) and metadata:
+                outcome = _draft_result.get()
+                if outcome is None:
+                    manager.generation_metadata = deepcopy(metadata)
+                else:
+                    outcome['metadata'] = deepcopy(metadata)
+            return raw
+
+    try:
+        return request(prompt)
+    except JSONFormattingError:
+        progress.check_cancelled()
+        return request(prompt + '\nReturn compact JSON with no indentation or padding whitespace.',
+                       formatting_retry=True)
+
+
+def _generate_items(manager, batch, *, engine=None, project_id=None):
     prompt = (
         'Turn conversations, accepted solutions and decisions, and architecture into useful project Q&A. '
         'Explain what the project does, how its components connect, and what solutions were chosen and why. '
@@ -97,21 +140,165 @@ def generate_items(manager, batch, *, engine=None, project_id=None):
                 if (not isinstance(cached.evidence, list) or len(cached.evidence) != 1
                         or not isinstance(cached.evidence[0], dict)):
                     raise CodexError('Saved Q&A draft cache is invalid.')
-                return _validate_items(cached.evidence[0].get('raw'), indexed, limit)
+                return _validate_items(cached.evidence[0].get('raw'), indexed, limit), True
+    # Cache lookup precedes worker transport creation, including full cache replays.
+    progress.check_cancelled()
     try:
-        raw = manager.generate_brief(prompt + serialized, schema)
+        raw = _generate_json(manager, prompt + serialized, schema)
         result = _validate_items(raw, indexed, limit)
     except InvalidQACitation:
-        # Retry only this batch; never salvage or guess a citation.
+        # Preserve the existing citation correction; never salvage or guess one.
         correction = ('The previous attempt cited unavailable evidence. Copy IDs exactly from this batch. '
                       'Omit any answer without a valid citation.\n')
-        raw = manager.generate_brief(correction.rstrip() + ' ' + prompt + serialized, schema)
+        raw = _generate_json(manager, correction.rstrip() + ' ' + prompt + serialized, schema)
         result = _validate_items(raw, indexed, limit)
     if fingerprint is not None:
         with Session(engine) as db:
-            db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=fingerprint, evidence=[{'raw': raw}]))
+            # Identical evidence groups may complete concurrently. Retain the
+            # first successful cache rather than failing a valid generation.
+            db.execute(insert(ProjectHistoryBatch).values(
+                project_id=project_id, fingerprint=fingerprint, evidence=[{'raw': raw}]
+            ).on_conflict_do_nothing(index_elements=['project_id', 'fingerprint']))
             db.commit()
-    return result
+            # Resolve a concurrent winner exactly as a later cache replay does.
+            cached = db.get(ProjectHistoryBatch, (project_id, fingerprint))
+            if (cached is None or not isinstance(cached.evidence, list) or len(cached.evidence) != 1
+                    or not isinstance(cached.evidence[0], dict)):
+                raise CodexError('Saved Q&A draft cache is invalid.')
+            result = _validate_items(cached.evidence[0].get('raw'), indexed, limit)
+    return result, False
+
+
+def _draft_jobs(engine, project_id, manager, batches):
+    return _qa_jobs(project_id, manager, len(batches), lambda index: generate_items(
+        manager, batches[index], engine=engine, project_id=project_id),
+        phase='qa_draft', label='Generating Q&A drafts')
+
+
+def _qa_jobs(project_id, manager, count, generate, *, phase, label):
+    """Bound independent Q&A groups while retaining deterministic input order."""
+    workers = min(_worker_count(manager), max(1, count))
+    results = [None] * count
+    timings = {}
+    metadata = {}
+    completed = hits = 0
+    previous = progress.read(project_id, 'qa').get('diagnostics', {})
+    earlier_timings = previous.get(phase + '_batch_timings', [])
+    phase_run = max((row.get('phase_run', 1) for row in earlier_timings), default=0) + 1
+    progress.update(project_id, stage=label, batch_phase=phase,
+                    batch_total=count, batch_completed=0, cache_hits=0, batch_started_at=None)
+    progress.record_diagnostics(project_id, {
+        **previous, **archive_diagnostics(), phase + '_workers': workers,
+        phase + '_generated_batches': previous.get(phase + '_generated_batches', 0),
+        phase + '_cache_hits': previous.get(phase + '_cache_hits', 0),
+        phase + '_batch_timings': earlier_timings,
+    })
+
+    def record(index, value, elapsed, actual_metadata, active=None):
+        nonlocal completed, hits
+        results[index] = value[0]
+        completed += 1
+        hits += int(value[1])
+        row = {'phase': phase, 'phase_run': phase_run, 'batch': index + 1,
+               'seconds': round(elapsed, 3), 'cached': bool(value[1])}
+        timings[index] = row
+        if actual_metadata:
+            metadata[index] = actual_metadata
+        progress.record_diagnostics(project_id, {
+            **previous, **archive_diagnostics(), phase + '_workers': workers,
+            phase + '_generated_batches': previous.get(phase + '_generated_batches', 0) + completed - hits,
+            phase + '_cache_hits': previous.get(phase + '_cache_hits', 0) + hits,
+            phase + '_batch_timings': earlier_timings + [timings[key] for key in sorted(timings)],
+        })
+        progress.update(project_id, batch_completed=completed, cache_hits=hits,
+                        batch_started_at=active, last_batch_seconds=row['seconds'])
+
+    def run(index):
+        started = time.monotonic()
+        outcome = {}
+        token = _draft_result.set(outcome)
+        try:
+            items = generate(index)
+            return (items, outcome.get('cached', False)), time.monotonic() - started, outcome.get('metadata')
+        finally:
+            _draft_result.reset(token)
+
+    if workers == 1:
+        for index in range(count):
+            progress.check_cancelled()
+            progress.update(project_id, batch_started_at=utcnow())
+            value, elapsed, actual_metadata = run(index)
+            record(index, value, elapsed, actual_metadata)
+    else:
+        abort = threading.Event()
+        failures, failure_lock = [], threading.Lock()
+
+        def work(index):
+            try:
+                with progress.abort_on(abort):
+                    progress.check_cancelled()
+                    return run(index)
+            except BaseException as exc:
+                with failure_lock:
+                    if not failures:
+                        failures.append(exc)
+                    abort.set()
+                raise
+
+        def check_failure():
+            with failure_lock:
+                if failures:
+                    raise failures[0]
+
+        try:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-qa')
+        except (RuntimeError, OSError) as exc:
+            raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+        pending, next_index = {}, 0
+        try:
+            while next_index < count or pending:
+                progress.check_cancelled()
+                check_failure()
+                while next_index < count and len(pending) < workers:
+                    check_failure()
+                    context = copy_context()
+                    try:
+                        future = pool.submit(context.run, work, next_index)
+                    except (RuntimeError, OSError) as exc:
+                        check_failure()
+                        raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+                    pending[future] = (next_index, utcnow())
+                    next_index += 1
+                progress.update(project_id, batch_started_at=min(start for _, start in pending.values()))
+                ready, _ = wait(pending, timeout=.05, return_when=FIRST_COMPLETED)
+                check_failure()
+                for future in sorted(ready, key=lambda value: pending[value][0]):
+                    index, _ = pending.pop(future)
+                    value, elapsed, actual_metadata = future.result()
+                    active = min((start for _, start in pending.values()), default=None)
+                    record(index, value, elapsed, actual_metadata, active)
+        except BaseException:
+            abort.set()
+            for future in pending:
+                future.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+            if abort.is_set():
+                for future in sorted(pending, key=lambda value: pending[value][0]):
+                    if future.cancelled() or future.exception() is not None:
+                        continue
+                    index, _ = pending[future]
+                    value, elapsed, actual_metadata = future.result()
+                    try:
+                        record(index, value, elapsed, actual_metadata)
+                    except CodexError:
+                        pass  # Preserve the originating failure or cancellation.
+    progress.update(project_id, batch_started_at=None)
+    if metadata:
+        # Completion order must not choose which model metadata gets published.
+        manager.generation_metadata = deepcopy(metadata[max(metadata)])
+    return results
 
 
 def draft_batches(evidence):
@@ -226,9 +413,9 @@ def _consolidate_group(manager, candidates, max_items):
     )
     serialized = json.dumps(payload, ensure_ascii=False)
     try:
-        return _validate_reference(manager.generate_brief(prompt + serialized, schema), lookup, max_items)
+        return _validate_reference(_generate_json(manager, prompt + serialized, schema), lookup, max_items)
     except InvalidQACitation:
-        return _validate_reference(manager.generate_brief(
+        return _validate_reference(_generate_json(manager,
             prompt.rstrip() + ' Correct the previous attempt: copy only supplied source_ids.\n' + serialized,
             schema), lookup, max_items)
 
@@ -275,20 +462,33 @@ def _validate_reference(raw, lookup, max_items):
     return items
 
 
-def consolidate_items(manager, items, max_items):
+def consolidate_items(manager, items, max_items, project_id=None):
     # For larger requests retain the group results as well as a global shortlist.
     # This bounds each Codex call without imposing a ceiling on the saved set.
     had_candidates = bool(items)
     overflow = []
+    round_number = 0
     while len(items) > _GROUP_SIZE:
+        round_number += 1
         keep_overflow = not overflow and max_items > DEFAULT_QA_MAX_ITEMS
         group_limit = min(max_items, _GROUP_SIZE - 1) if keep_overflow else DEFAULT_QA_MAX_ITEMS
-        reduced = [item for start in range(0, len(items), _GROUP_SIZE)
-                   for item in _consolidate_group(manager, items[start:start + _GROUP_SIZE], group_limit)]
+        groups = [items[start:start + _GROUP_SIZE] for start in range(0, len(items), _GROUP_SIZE)]
+        if project_id is None:
+            grouped = [_consolidate_group(manager, group, group_limit) for group in groups]
+        else:
+            grouped = _qa_jobs(project_id, manager, len(groups), lambda index: _consolidate_group(
+                manager, groups[index], group_limit), phase='qa_consolidate',
+                label=f'Consolidating Q&A groups (round {round_number})')
+        reduced = [item for group in grouped for item in group]
         if keep_overflow:
             overflow = reduced
         items = reduced
+    if project_id is not None:
+        progress.update(project_id, stage='Ranking Q&A', batch_phase='qa_rank',
+                        batch_total=int(bool(items)), batch_completed=0, cache_hits=0)
     ranked = _consolidate_group(manager, items, min(max_items, _GROUP_SIZE)) if items else []
+    if project_id is not None:
+        progress.update(project_id, batch_completed=int(bool(items)))
     if had_candidates and not ranked:
         raise CodexError('Q&A consolidation returned no supported answers. The previous saved Q&A is preserved.')
     if overflow and max_items > _GROUP_SIZE:
@@ -337,13 +537,12 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         items, sources = [], {}
         # Reverse group order, without claiming chronology across sessions.
         batches = draft_batches(evidence)
-        for index, batch in enumerate(reversed(batches), 1):
-            progress.update(project_id, stage=f'Generating Q&A batch {index} of {len(batches)}')
-            for item, cited in generate_items(manager, batch, engine=engine, project_id=project_id):
+        for drafted in _draft_jobs(engine, project_id, manager, list(reversed(batches))):
+            for item, cited in drafted:
                 items.append(item)
                 sources.update(cited)
         progress.update(project_id, stage='Consolidating and ranking Q&A')
-        items = consolidate_items(manager, items, max_items)
+        items = consolidate_items(manager, items, max_items, project_id)
         items = [with_question_id(item) for item in items]
         cited_ids = dict.fromkeys(source_id for item in items for answer in (item, *item.get('variants', []))
                                  for source_id in answer['source_ids'])
