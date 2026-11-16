@@ -10,11 +10,16 @@ def save_revision(db, project_id, kind, snapshot):
 
 
 def list_revisions(db, project_id, kind, offset):
-    rows = list(db.scalars(select(GenerationRevision).where(
+    # Extract only the listing metadata in SQLite. Loading whole ORM entities
+    # deserializes eleven potentially large snapshots just to return ten labels.
+    rows = db.execute(select(
+        GenerationRevision.id, GenerationRevision.generated_at,
+        GenerationRevision.snapshot['generation'].label('generation'),
+    ).where(
         GenerationRevision.project_id == project_id, GenerationRevision.kind == kind,
-    ).order_by(GenerationRevision.id.desc()).offset(offset).limit(11)))
+    ).order_by(GenerationRevision.id.desc()).offset(offset).limit(11)).mappings().all()
     return {
         'results': [{'id': row.id, 'generated_at': row.generated_at,
-                     'generation': row.snapshot.get('generation')} for row in rows[:10]],
+                     'generation': row.generation} for row in rows[:10]],
         'next_offset': offset + 10 if len(rows) > 10 else None,
     }

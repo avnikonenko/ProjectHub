@@ -1,11 +1,23 @@
-from typing import Literal
+from typing import Annotated, Literal
 from copy import deepcopy
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, create_model
 
 Priority = Literal['low', 'medium', 'high', 'critical']
 QuestionStatus = Literal['open', 'under_discussion', 'awaiting_validation', 'resolved', 'reopened']
 DecisionStatus = Literal['proposed', 'accepted', 'superseded', 'rejected']
 TaskStatus = Literal['backlog', 'ready', 'in_progress', 'blocked', 'completed', 'not_planned']
+NOTE_CONTENT_MAX_BYTES = 16 * 1024 * 1024
+
+
+def _note_content_bytes(value):
+    # Count UTF-8 in chunks so rejecting a multi-byte value does not first create
+    # another complete, potentially much larger byte string in memory.
+    size = 0
+    for start in range(0, len(value), 65536):
+        size += len(value[start:start + 65536].encode('utf-8'))
+        if size > NOTE_CONTENT_MAX_BYTES:
+            raise ValueError('Note content exceeds 16 MiB of UTF-8 text')
+    return value
 
 
 class Input(BaseModel):
@@ -82,7 +94,10 @@ class TaskBulkCreate(Input):
 
 class NoteCreate(Input):
     title: str = Field(min_length=1, max_length=500)
-    content: str = ''
+    # Imported documents and shared conversations can exceed the generic field
+    # limit. Preserve their exact content when opened and saved in the editor.
+    content: Annotated[str, StringConstraints(max_length=NOTE_CONTENT_MAX_BYTES, strip_whitespace=False),
+                       AfterValidator(_note_content_bytes)] = ''
     kind: Literal['note', 'ai_note', 'assumption', 'technical_assumption', 'scientific_assumption', 'evidence', 'limitation', 'document', 'proposal'] = 'note'
     reference: str = ''
 

@@ -53,11 +53,17 @@ def create_app(data_dir=None):
         if request.method not in ('GET','HEAD','OPTIONS'):
             if request.headers.get('sec-fetch-site') == 'cross-site': return JSONResponse({'detail':'Cross-site request denied'},status_code=403)
             # Bound request bytes before JSON or multipart parsing, including chunked input.
-            limit = 3 * 1024 * 1024
+            # Note content can originate from a 16 MiB transcript import. JSON
+            # escaping can expand one byte to six; other writes keep the small cap.
+            note_write = ((request.method == 'POST' and re.fullmatch(
+                r'/api/projects/[1-9]\d*/notes', request.url.path))
+                or (request.method == 'PATCH' and re.fullmatch(
+                    r'/api/projects/[1-9]\d*/notes/[1-9]\d*', request.url.path)))
+            limit = (6 * 16 + 3) * 1024 * 1024 if note_write else 3 * 1024 * 1024
             chunks, size = [], 0
             async for chunk in request.stream():
                 size += len(chunk)
-                if size > limit: return JSONResponse({'detail':'Request exceeds 3 MiB'},status_code=413)
+                if size > limit: return JSONResponse({'detail':f'Request exceeds {limit // (1024 * 1024)} MiB'},status_code=413)
                 chunks.append(chunk)
             request._body = b''.join(chunks)
         response = await call_next(request)

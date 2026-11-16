@@ -92,15 +92,25 @@ def _knowledge(db, project_id, terms, offset):
     fields_sql = " || ' ' || ".join(f"coalesce(json_extract(item.value,'$.{field}'),'')" for field in fields)
     evidence = """coalesce((SELECT group_concat(
         coalesce(json_extract(e.value,'$.excerpt'),'') || ' ' || coalesce(json_extract(e.value,'$.label'),'') || ' ' ||
-        coalesce((SELECT json_extract(s.value,'$.label') FROM json_each(k.snapshot,'$.sources') s
-                  WHERE json_extract(s.value,'$.id')=json_extract(e.value,'$.source_id')
-                  AND (json_extract(s.value,'$.project_id') IS NULL OR json_extract(s.value,'$.project_id')=:pid)
-                  LIMIT 1),'') ,' ')
-        FROM json_each(item.value,'$.evidence') e),'')"""
+        coalesce(labels.label,'') ,' ')
+        FROM json_each(item.value,'$.evidence') e
+        LEFT JOIN source_labels labels ON labels.id=json_extract(e.value,'$.source_id')),'')"""
     body = fields_sql + " || ' ' || " + evidence
     params = {'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset}
     where = _contains_terms(body, terms, params)
     rows = db.execute(text(
+        # Materialize and index source labels once, rather than rescanning the
+        # complete source array for every evidence reference of every item.
+        # If malformed legacy data repeats an ID, retain the first valid source
+        # just as the previous LIMIT 1 lookup did.
+        "WITH source_labels AS MATERIALIZED ("
+        "SELECT id,label FROM (SELECT json_extract(s.value,'$.id') AS id, "
+        "json_extract(s.value,'$.label') AS label, "
+        "row_number() OVER (PARTITION BY json_extract(s.value,'$.id') ORDER BY CAST(s.key AS INTEGER)) AS ordinal "
+        "FROM project_knowledge owner, json_each(owner.snapshot,'$.sources') s "
+        "WHERE owner.project_id=:pid AND json_extract(owner.snapshot,'$.project_id')=:pid "
+        "AND (json_extract(s.value,'$.project_id') IS NULL OR json_extract(s.value,'$.project_id')=:pid)) "
+        "WHERE ordinal=1) "
         "SELECT json_extract(item.value,'$.id') AS id, "
         "json_extract(k.snapshot,'$.publication_id') AS publication, "
         "substr(json_extract(item.value,'$.statement'),1,500) AS title, "
