@@ -13,6 +13,14 @@ Every abbreviated path below beginning `/{pid}` means `/api/projects/{pid}`. Fro
 - `POST /api/projects`: name required; description, goals, status, repository_path, git_remote, tags and architecture_mermaid optional.
 - `GET /{pid}` and `PATCH /{pid}`: project detail and supported edits.
 - `GET /{pid}/overview`: `{project, questions, decisions, tasks, notes, sessions, activity}`. Questions include nested `answers`; activity is newest first; other collections are stable ID order.
+- `GET /{pid}/overview?compact=true&note_content=false`: lightweight browser loading; omits retired workflow collections, note content and activity before/after bodies. Note metadata includes `content_loaded:false`. `GET /{pid}/notes/{id}` retrieves full project-scoped content on demand. Existing overview defaults retain full data.
+
+## Resource bounds and exports
+
+- `GET /{pid}/audit` retains the complete array response by default; optional `offset` and `limit` (1–1000) page through it. Audit and project export responses are assembled into private temporary files and sent in 64 KiB chunks, retaining neither all historical entities nor the entire encoded response in memory.
+- `GET /{pid}/export` preserves its existing fields and `schema_version:1`, and adds `brief`, `qa`, `scheme`, `knowledge`, `ai_instructions`, `generation_revisions`, `history_batches`, `history_turns` and `history_index`. Singleton values are serialized saved rows or null. All rows are scoped to the project; brief and Knowledge are read in the same SQLite transaction. Managed upload files and global Codex authentication are not included; the application-data backup remains necessary for file-level restoration.
+- Note `content` supports up to 16 MiB of UTF-8 text and preserves original whitespace, matching imported transcript limits. Other string constraints remain unchanged. Only note POST/PATCH routes permit the larger JSON envelope needed for escaped text; other mutation requests retain the 3 MiB body limit. Partial PATCH remains supported.
+- Knowledge source-label search uses a materialized SQLite CTE (SQLite 3.35+). Revision summaries select generation metadata without loading all historical snapshots. Repository inspection enforces both output-byte and time limits and reports failures rather than returning incomplete counts.
 
 Project: `{id,name,description,goals,status,repository_path,git_remote,tags,architecture_mermaid,created_at,updated_at}`.
 

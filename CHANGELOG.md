@@ -18,6 +18,11 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Bound Codex transport writes by request deadlines and cancellation, release clients when sessions are unlinked, and retire obsolete or oversized duplicate-history caches.
+- Mount expanded Knowledge content on demand, paginate related records, share published snapshots, and stop redundant idle or hidden tag polling.
+- Read revision metadata without historical snapshot bodies, accelerate Knowledge source-label search, and allow exact full-content edits of large imported notes.
+- Include saved AI results and provenance in project JSON exports, spool exports and audit history to disk, support audit pagination, and bound repository status output and deterministic summary reads.
+
 - Keep all saved review responses reachable through independent paging, even after long raw-event histories; serialize and abort browser polling so older requests cannot overwrite newer results.
 - Mark review requests failed on terminal Codex errors instead of leaving them stuck as sent, while retaining matching later completion evidence and protecting newer running turns from delayed older completions.
 
