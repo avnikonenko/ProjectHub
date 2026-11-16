@@ -12,6 +12,7 @@ import { api, patch, post } from './api';
 import { NoteCard } from './NoteCard';
 import { LazyNote, useLoadedNote } from './LazyNote';
 import { noteEditPatch } from './noteEditing';
+import { createEditorIdentity } from './editorIdentity';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
@@ -267,7 +268,21 @@ function ProjectWorkspace({
   onLeaveHistory: () => void;
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
-  const [selectedView, setView] = useState('Dashboard');
+  const [selectedView, setSelectedView] = useState('Dashboard');
+  const editorIdentity = useRef(createEditorIdentity());
+  const activeFormIdentity = useRef<number | null>(null);
+  const noteEditIntent = useRef<number | null>(null);
+  const [pendingNoteEdit, setPendingNoteEdit] = useState<{ id: number; identity: number } | null>(null);
+  function cancelPendingNoteEdit(identity = noteEditIntent.current) {
+    if (identity === null || noteEditIntent.current !== identity) return;
+    noteEditIntent.current = null;
+    if (editorIdentity.current.current(identity)) editorIdentity.current.invalidate();
+    if (alive.current) setPendingNoteEdit(null);
+  }
+  function setView(next: string) {
+    cancelPendingNoteEdit();
+    setSelectedView(next);
+  }
   const view = historyLink ? 'History' : knowledgeLink ? 'Knowledge' : selectedView;
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
@@ -284,6 +299,7 @@ function ProjectWorkspace({
   }, [generation]);
   const [error, setError] = useState('');
   const [form, setForm] = useState<{
+    identity: number;
     title: string;
     fields: Field[];
     initial?: any;
@@ -322,10 +338,14 @@ function ProjectWorkspace({
     });
     return () => {
       alive.current = false;
+      editorIdentity.current.invalidate();
+      activeFormIdentity.current = null;
+      noteEditIntent.current = null;
       controller.abort();
     };
   }, [load]);
   async function run(action: () => Promise<unknown>) {
+    cancelPendingNoteEdit();
     setError('');
     setBusy(true);
     try {
@@ -337,14 +357,38 @@ function ProjectWorkspace({
       if (alive.current) setBusy(false);
     }
   }
+  function showForm(definition: Omit<NonNullable<typeof form>, 'identity'>, requestedIdentity?: number) {
+    if (!alive.current || activeFormIdentity.current !== null) return;
+    const identity = requestedIdentity ?? editorIdentity.current.begin();
+    if (!editorIdentity.current.current(identity)) return;
+    activeFormIdentity.current = identity;
+    noteEditIntent.current = null;
+    setPendingNoteEdit(null);
+    setForm({ ...definition, identity, save: async data => {
+      if (!editorIdentity.current.current(identity)) throw new Error('This editor is no longer current. Open the record again.');
+      await definition.save(data);
+    } });
+  }
+  function closeForm(identity: number) {
+    if (editorIdentity.current.current(identity)) editorIdentity.current.invalidate();
+    if (activeFormIdentity.current === identity) activeFormIdentity.current = null;
+    setForm(previous => previous?.identity === identity ? null : previous);
+  }
+  function requestNoteEdit(id: number) {
+    if (!alive.current || activeFormIdentity.current !== null) return;
+    const identity = editorIdentity.current.begin();
+    noteEditIntent.current = identity;
+    setPendingNoteEdit({ id, identity });
+  }
   function edit(
     title: string,
     fields: Field[],
     endpoint: string,
     initial?: any,
     transform: (d: any) => any = (d) => d,
+    requestedIdentity?: number,
   ) {
-    setForm({
+    showForm({
       title,
       fields,
       initial,
@@ -352,8 +396,9 @@ function ProjectWorkspace({
         await (initial ? patch : post)(`${base}${endpoint}`, transform(data));
         await load();
       },
-    });
+    }, requestedIdentity);
   }
+  useEffect(() => { cancelPendingNoteEdit(); }, [view, historyLink, knowledgeLink, results]);
   const repository = useRepositoryOverview(base, view === 'Dashboard' && !results
     ? overview?.project.repository_path ?? null : null);
   if (!overview)
@@ -468,7 +513,7 @@ function ProjectWorkspace({
           <button
             className="secondary"
             onClick={() =>
-              setForm({
+              showForm({
                 title: 'Edit project',
                 fields: projectFields,
                 initial: { ...project, tags: project.tags.join(', ') },
@@ -509,7 +554,7 @@ function ProjectWorkspace({
           className="search-bar"
           onSubmit={async (e) => {
             e.preventDefault();
-            if (search.trim()) setResults(search.trim());
+            if (search.trim()) { cancelPendingNoteEdit(); setResults(search.trim()); }
           }}
         >
           <span aria-hidden="true">⌕</span>
@@ -768,10 +813,13 @@ function ProjectWorkspace({
                 <PagedItems label="Note pages">{matchingNotes.map((n) => (
                   <NoteCard key={n.id} base={base} note={n} shared={isChatGPTShare(n)} busy={busy}
                     reveal={searchTarget?.kind === 'notes'}
-                    onEdit={loaded => edit('Edit note', [titleField,
+                    editRequest={pendingNoteEdit?.id === n.id ? pendingNoteEdit.identity : undefined}
+                    onEditIntent={() => requestNoteEdit(n.id)}
+                    onEditCancel={cancelPendingNoteEdit}
+                    onEditReady={(loaded, identity) => edit('Edit note', [titleField,
                       { name: 'content', label: 'Markdown content', type: 'textarea' },
                       { name: 'kind', label: 'Kind' }, { name: 'reference', label: 'Reference' },
-                    ], `/notes/${n.id}`, loaded, values => noteEditPatch(values, loaded))}
+                    ], `/notes/${n.id}`, loaded, values => noteEditPatch(values, loaded), identity)}
                     onDelete={() => {
                       if (window.confirm(`Delete note “${n.title}”?`)) {
                         void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));
@@ -826,11 +874,12 @@ function ProjectWorkspace({
       </main>
       {form && (
         <Form
+          key={`${base}:${form.identity}`}
           title={form.title}
           fields={form.fields}
           initial={form.initial}
           onSave={form.save}
-          onClose={() => setForm(null)}
+          onClose={() => closeForm(form.identity)}
         />
       )}
     </>
