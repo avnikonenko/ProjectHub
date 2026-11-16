@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Optional Codex notes-skill installation during setup, with a standalone installer, checkout-linked updates, and protection for existing skills.
+
 - Terminal TODO creation accepts related Markdown notes; the agent skill uses short titles with details stored on the same task.
 
 - Scheme colors distinguish entry blocks, intermediate components, and outputs in both themes, including saved diagrams without regeneration.

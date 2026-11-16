@@ -49,7 +49,20 @@ ProjectHub runs locally. AI generation sends selected project context to OpenAI 
 The included [projecthub-notes skill](skills/projecthub-notes/SKILL.md) lets terminal
 agents read project notes and TODOs, save Markdown AI notes, add or complete tasks,
 and link the current Codex session to a project through the `projecthub` command.
-ProjectHub must be running; installing the app does not automatically install the skill.
+ProjectHub must be running. The installer offers an optional Codex skill step
+(default: skip). For unattended installation, choose explicitly:
+
+```bash
+bash scripts/install.sh --install-skill
+# Or install only the skill later:
+bash scripts/install-skill.sh
+```
+
+The skill is linked into `~/.agents/skills/projecthub-notes`, so checkout updates
+also update the installed skill. Keep the checkout and open a new Codex session
+after installation. Existing skills are never overwritten. Unattended installs
+skip the skill unless `--install-skill` is supplied; `--skip-skill` suppresses the
+interactive question.
 
 Once the skill is available to your agent, ask, for example:
 
