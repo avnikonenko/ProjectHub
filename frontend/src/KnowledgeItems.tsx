@@ -56,8 +56,12 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     const current = evidenceAvailability(item, availability);
     return <details key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
       id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`} open={item.id === selected || undefined}>
-      <summary><span><AIEmphasis text={item.statement} /></span><small>{display(item.design_status)} · {item.scope} · {item.evidence.length} evidence references
-        {item.reconciliation_state === 'unresolved' && ' · Needs context review'}</small></summary>
+      <summary><span className="knowledge-item-title"><AIEmphasis text={item.statement} /></span>
+        <small className="knowledge-item-meta"><span>{display(item.design_status)}</span><span>{item.scope}</span>
+          <span>{item.evidence.length} {item.evidence.length === 1 ? 'reference' : 'references'}</span>
+          {item.reconciliation_state === 'unresolved' && <span>Needs context review</span>}
+        </small>
+      </summary>
       <div className="knowledge-item-body">
         <p className="muted">Extracted interpretation</p>
         <dl className="knowledge-fields">
@@ -104,28 +108,31 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     </details>;
   }
   return <div className="knowledge-items">
-    <div className="knowledge-filters">
+    <div className="knowledge-filters knowledge-primary-filters">
       <label>Search knowledge<input type="search" value={query} onChange={event => { setQuery(event.target.value); setLimits({}); }} /></label>
-      <label>Design status<select value={status} onChange={(event) => { setStatus(event.target.value); setLimits({}); }}><option value="">All statuses</option>
+      <label>Design status<select aria-label="Design status" value={status} onChange={(event) => { setStatus(event.target.value); setLimits({}); }}><option value="">All statuses</option>
         {statuses.filter((value) => snapshot.items.some((item) => item.design_status === value)).map((value) => <option key={value} value={value}>{display(value)}</option>)}
-      </select></label>
-      <label>Category<select value={category} onChange={(event) => { setCategory(event.target.value); setLimits({}); }}><option value="">All categories</option>
-        {[...new Set(snapshot.items.map((item) => item.category))].sort().map((value) => <option key={value} value={value}>{display(value)}</option>)}
       </select></label>
       <TopicPicker choices={topics} selected={topic} search={tagSearch} ariaLabel="Knowledge tags"
         onSearch={value => { setTagSearch(value); setLimits({}); }}
         onSelect={id => { setTopic(id); setLimits({}); }} />
-      <button className="secondary" type="button" onClick={reset}>Reset filters</button>
     </div>
     <details className="knowledge-advanced-filters">
-      <summary>Advanced filters{scope && ` · Scope: ${scope}`}</summary>
+      <summary>More filters{(category || scope) && ` (${[category, scope].filter(Boolean).length} active)`}</summary>
       <div className="knowledge-filters">
-        <label>Scope<select value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
+        <label>Category<select aria-label="Category" value={category} onChange={(event) => { setCategory(event.target.value); setLimits({}); }}><option value="">All categories</option>
+          {[...new Set(snapshot.items.map((item) => item.category))].sort().map((value) => <option key={value} value={value}>{display(value)}</option>)}
+        </select></label>
+        <label>Scope<select aria-label="Scope" value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
           {[...new Set(snapshot.items.map((item) => item.scope))].sort().map((value) => <option key={value} value={value}>{value}</option>)}
         </select></label>
       </div>
     </details>
-    <p role="status">{items.length} of {snapshot.items.length} knowledge items</p>
+    <div className="knowledge-filter-footer">
+      <p role="status">{items.length} of {snapshot.items.length} knowledge items</p>
+      {(query || status || category || scope || tagSearch || topic !== ALL_TOPICS) &&
+        <button className="quiet" type="button" onClick={reset}>Reset filters</button>}
+    </div>
     {selected && !byId.has(selected) && <p role="status">The selected knowledge item is unavailable in this snapshot.</p>}
     {!items.length && <p>{snapshot.items.length ? 'No items match these filters.' : 'This snapshot contains no knowledge items.'}</p>}
     {statuses.map((value) => {
