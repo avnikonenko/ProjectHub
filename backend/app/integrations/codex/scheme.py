@@ -81,12 +81,17 @@ def _keys(item, keys):
         raise CodexError('Scheme generation returned an invalid structure.')
 
 
-def _references(value, available):
-    if (not isinstance(value, list) or not 1 <= len(value) <= 6
-            or any(not isinstance(ref, str) or ref not in available for ref in value)
-            or len(set(value)) != len(value)):
-        raise CodexError('Scheme generation cited missing or foreign evidence.')
-    return value
+def _references(value, available, location='source_ids'):
+    if not isinstance(value, list):
+        raise CodexError(f'Scheme generation returned a non-list evidence reference field at {location}.')
+    if not 1 <= len(value) <= 6:
+        raise CodexError(f'Scheme generation must cite 1–6 evidence references at {location}.')
+    if any(not isinstance(ref, str) for ref in value):
+        raise CodexError(f'Scheme generation returned a non-string evidence reference at {location}.')
+    if any(ref not in available for ref in value):
+        raise CodexError(f'Scheme generation cited missing or foreign evidence at {location}.')
+    # Repeated valid citations add no evidence; retain their first-seen order.
+    return list(dict.fromkeys(value))
 
 
 def _validate_graph(graph, kind, sources):
@@ -97,7 +102,7 @@ def _validate_graph(graph, kind, sources):
         raise CodexError('Scheme generation exceeded the graph size limit.')
     _text(graph['explanation'], 1000)
     identifiers = set()
-    for node in nodes:
+    for index, node in enumerate(nodes):
         _keys(node, ('id', 'label', 'description', 'type', 'status', 'source_ids', 'paths'))
         identifier = _text(node['id'], 64)
         if (identifier != node['id'] or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', identifier)
@@ -108,14 +113,14 @@ def _validate_graph(graph, kind, sources):
         _text(node['description'], 400)
         if node['type'] not in _NODE_TYPES[kind] or node['status'] not in STATUSES:
             raise CodexError('Scheme generation returned an invalid component classification.')
-        _references(node['source_ids'], sources)
+        node['source_ids'] = _references(node['source_ids'], sources, f'{kind}.nodes[{index}].source_ids')
         paths = node['paths']
         allowed_paths = {sources[ref].get('path') for ref in node['source_ids']}
         if (not isinstance(paths, list) or len(paths) > 6
                 or any(not isinstance(path, str) or path not in allowed_paths for path in paths)):
             raise CodexError('Scheme generation referenced a path without supporting evidence.')
     seen_edges = set()
-    for edge in edges:
+    for index, edge in enumerate(edges):
         _keys(edge, ('source', 'target', 'label', 'type', 'status', 'source_ids'))
         if (not isinstance(edge['source'], str) or edge['source'] not in identifiers
                 or not isinstance(edge['target'], str) or edge['target'] not in identifiers):
@@ -124,7 +129,7 @@ def _validate_graph(graph, kind, sources):
         relation_type = _text(edge['type'], 50)
         if edge['status'] not in STATUSES:
             raise CodexError('Scheme generation returned an invalid relationship classification.')
-        _references(edge['source_ids'], sources)
+        edge['source_ids'] = _references(edge['source_ids'], sources, f'{kind}.edges[{index}].source_ids')
         key = (edge['source'], edge['target'], relation_type)
         if key in seen_edges:
             raise CodexError('Scheme generation returned duplicate relationships.')
@@ -147,14 +152,14 @@ def validate_output(raw, evidence):
         raise CodexError('Scheme generation returned invalid dependency explanations.')
     declared = {item['id']: item for item in evidence['dependencies']}
     explanations = {}
-    for item in result['dependencies']:
+    for index, item in enumerate(result['dependencies']):
         _keys(item, ('id', 'purpose', 'source_ids'))
         identifier = item['id']
         if not isinstance(identifier, str) or identifier not in declared or identifier in explanations:
             raise CodexError('Scheme generation invented or repeated a dependency.')
-        _references(item['source_ids'], sources)
+        refs = _references(item['source_ids'], sources, f'dependencies[{index}].source_ids')
         explanations[identifier] = {
-            'purpose': _text(item['purpose'], 300), 'purpose_source_ids': item['source_ids'],
+            'purpose': _text(item['purpose'], 300), 'purpose_source_ids': refs,
         }
     dependencies = [{**item, **explanations.get(item['id'], {})} for item in evidence['dependencies']]
     return architecture, workflow, dependencies
@@ -225,6 +230,8 @@ def refresh_scheme(engine, project_id, manager):
             'unless that is the project itself. Cover the project as a whole rather than only its most recently '
             'discussed feature. Use about 8–15 major nodes when useful, never more than 20 '
             'nodes or 40 edges per graph. Every node and edge must cite supplied source_ids. '
+            'For every source_ids list, copy 1–6 distinct IDs exactly from the top-level sources list. '
+            'Do not use IDs from citations embedded in source text, shared-session aliases, or dependency IDs. '
             'Use observed for static evidence, proposed for plans, uncertain for unsupported or conflicting '
             'relationships. Observed code does not prove functionality or runtime correctness. Do not infer '
             'calls from similar names. A supplied syntactic call is evidence of code-level use, not proof of '

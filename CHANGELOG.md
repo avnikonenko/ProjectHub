@@ -22,6 +22,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Normalize repeated valid Scheme citations and identify the exact citation field when reference types, counts or IDs are invalid. Continue rejecting unknown and cross-project references and preserving the last saved Scheme on failure.
+
 - Knowledge generation makes one shared correction attempt for unsupported agreement or invalid quotations, then fully revalidates the result. Unsupported decisions remain rejected; source ownership errors do not trigger a retry, and failed output never replaces saved results.
 
 - Quote-selection retries use one source-owned selector instead of independently choosing source and quote IDs. Restore exact source identity and text before validation; reject redundant identity fields.
