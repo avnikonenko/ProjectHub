@@ -14,6 +14,9 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Recheck previously untagged records when the available topic catalog changes, while preserving existing positive assignments and zero-call reuse when unchanged.
+- Clear transient AI-tag progress errors when polling recovers without hiding actual generation failures. Reject malformed saved tag records explicitly before sizing input.
+
 - Use shared-topic compact classification by default for large AI tag jobs, with shorter tag-only context and packed numeric output. Keep small results to one call, preserve reasoning settings and existing worker counts, and retain the legacy strategy through `PROJECTHUB_COMPACT_TAGS=0`.
 
 - Review newly untagged records once in experimental compact tagging, extend the shared catalog with missing subjects, and reassign only those records. Preserve existing assignments and cache review results; unchanged repeated runs make no new model calls.

@@ -150,3 +150,11 @@ requests. The known isolation, migration and persistence requirements gained
 relevant tags. Thirty-four records remain untagged, including four requirements;
 coverage is not proof of semantic correctness. At the time of this earlier evaluation the path was opt-in; no
 production result was modified by it.
+
+
+Negative tag assignments also track their topic catalog. When new subjects become
+available, previously untagged records are checked against that catalog without
+reclassifying already-tagged records. Older snapshots without this marker may
+require one negative-only recheck. Unchanged catalogs and records remain eligible
+for zero-call reuse. Transient progress-read errors clear when polling recovers;
+actual generation errors are retained.

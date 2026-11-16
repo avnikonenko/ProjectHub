@@ -26,6 +26,7 @@ export function TagGeneration(props: Props) {
   const [busy, setBusy] = useState(false);
   const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState('');
+  const [progressError, setProgressError] = useState('');
   const [cancelled, setCancelled] = useState(false);
   const callbacks = useRef(props);
   callbacks.current = props;
@@ -42,6 +43,7 @@ export function TagGeneration(props: Props) {
       try {
         const status = await api<{ state: string; error?: string }>(`${base}/codex/generation/status?kind=tags`, { signal: controller.signal });
         if (controller.signal.aborted) return;
+        setProgressError('');
         const running = status.state === 'running';
         setBusy(running);
         if (running) sawRunning = true;
@@ -53,7 +55,7 @@ export function TagGeneration(props: Props) {
         }
       } catch (e) {
         if (controller.signal.aborted) return;
-        setError(`Could not recover AI tag progress: ${(e as Error).message}`);
+        setProgressError(`Could not recover AI tag progress: ${(e as Error).message}`);
       }
       if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
     }
@@ -93,6 +95,7 @@ export function TagGeneration(props: Props) {
       <p>Sends this saved version’s item statements or questions and answers to OpenAI through Codex to organize AI tags.</p>
     </SettingsHelp>
     <ErrorBox error={error} />
+    <ErrorBox error={progressError} />
     {cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
     {(busy || localBusy) && <GenerationStatus base={base} kind="tags" label="AI tag generation" />}
   </div>;
