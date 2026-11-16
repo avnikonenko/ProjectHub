@@ -1,6 +1,7 @@
 import { Feedback } from './Feedback';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
+import { startReviewPolling } from './reviewPolling';
 
 type IndexStatus = { indexed_at: string | null; indexed_turns: number };
 
@@ -18,25 +19,17 @@ export function HistorySearch({
   const [error, setError] = useState('');
   const [syncError, setSyncError] = useState('');
   const [autoSync, setAutoSync] = useState(true);
-  useEffect(() => {
-    const abort = new AbortController();
-    const poll = async () => {
-      try {
-        const status = await api<IndexStatus & { enabled: boolean; error: string | null }>(
-          `${base}/codex/history/sync`, { signal: abort.signal });
-        if (!abort.signal.aborted) {
-          setAutoSync(status.enabled);
-          setSyncError(status.error ?? '');
-          setIndex(status);
-        }
-      } catch {
-        if (!abort.signal.aborted) setSyncError('Could not check automatic history sync. Manual refresh is still available.');
-      }
-    };
-    void poll();
-    const timer = window.setInterval(() => void poll(), 15000);
-    return () => { abort.abort(); window.clearInterval(timer); };
-  }, [base]);
+  useEffect(() => startReviewPolling(
+    signal => api<IndexStatus & { enabled: boolean; error: string | null }>(
+      `${base}/codex/history/sync`, { signal }),
+    status => {
+      setAutoSync(status.enabled);
+      setSyncError(status.error ?? '');
+      setIndex(status);
+    },
+    () => setSyncError('Could not check automatic history sync. Manual refresh is still available.'),
+    15000,
+  ), [base]);
   useEffect(() => {
     const abort = new AbortController();
     setStatusLoading(true);

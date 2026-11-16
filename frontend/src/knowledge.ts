@@ -151,6 +151,12 @@ export function visibleKnowledgeGroups(groups: KnowledgePassageGroup[], limit: n
   if (selected && !visible.includes(selected)) visible.push(selected);
   return visible;
 }
+export function visibleRelatedKnowledge(items: KnowledgeItem[], limit: number, selectedId?: string) {
+  const visible = items.slice(0, limit);
+  const selected = items.find(item => item.id === selectedId);
+  if (selected && !visible.includes(selected)) visible.push(selected);
+  return visible;
+}
 export function importantKnowledge(snapshot: KnowledgeSnapshot, availability: Record<string, string> = {}) {
   // Stable ID order is a display fallback, not a chronology or importance score.
   const conflictTargets = new Set(snapshot.items.flatMap((item) => item.conflicts_with || []));

@@ -5,6 +5,7 @@ import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } f
 import { Feedback } from './Feedback';
 import { ErrorBox } from './ui';
 import { parseTopicGroups, type TopicGroup } from './topicGroups';
+import { tagProgress, type TagProgressState } from './tagProgress';
 
 export type TagResult = {
   target: 'knowledge_preview' | 'knowledge' | 'qa';
@@ -17,17 +18,18 @@ type Props = {
   itemIds: string[]; hasTags: boolean; disabled?: boolean;
   generation: { model: string; effort: string };
   onResult: (result: TagResult) => void; onRecovered: () => void;
-  onBusyChange?: (busy: boolean) => void;
+  onBusyChange?: (busy: boolean) => void; visible?: boolean;
 };
 
 // Opening a result only reads progress. Codex is contacted only by the explicit button.
 export function TagGeneration(props: Props) {
-  const { base, target, publicationId, generatedAt, itemIds, hasTags, disabled, generation } = props;
+  const { base, target, publicationId, generatedAt, itemIds, hasTags, disabled, generation, visible = true } = props;
   const [busy, setBusy] = useState(false);
   const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState('');
   const [progressError, setProgressError] = useState('');
   const [cancelled, setCancelled] = useState(false);
+  const [shared, setShared] = useState<TagProgressState>({ progress: null, error: '', starting: false });
   const callbacks = useRef(props);
   callbacks.current = props;
   const request = useRef<AbortController | null>(null);
@@ -35,41 +37,46 @@ export function TagGeneration(props: Props) {
   useEffect(() => {
     callbacks.current.onBusyChange?.(busy || localBusy);
   }, [busy, localBusy]);
+  const terminalSeen = useRef('');
+  const sawRunning = useRef(false);
   useEffect(() => {
-    const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let sawRunning = false;
-    async function poll() {
-      try {
-        const status = await api<{ state: string; error?: string }>(`${base}/codex/generation/status?kind=tags`, { signal: controller.signal });
-        if (controller.signal.aborted) return;
-        setProgressError('');
-        const running = status.state === 'running';
-        setBusy(running);
-        if (running) sawRunning = true;
-        if (sawRunning && !running) {
-          sawRunning = false;
-          callbacks.current.onRecovered();
-          if (status.state === 'failed') setError(status.error || 'AI tag generation failed. Saved tags are preserved.');
-          if (status.state === 'cancelled') setCancelled(true);
-        }
-      } catch (e) {
-        if (controller.signal.aborted) return;
-        setProgressError(`Could not recover AI tag progress: ${(e as Error).message}`);
-      }
-      if (!controller.signal.aborted) timer = setTimeout(poll, 1500);
-    }
-    void poll();
+    terminalSeen.current = '';
+    sawRunning.current = false;
+    setBusy(false);
+    setLocalBusy(false);
+    setError(''); setProgressError(''); setCancelled(false);
+    setShared({ progress: null, error: '', starting: false });
     return () => {
-      controller.abort(); request.current?.abort(); request.current = null;
-      if (timer) clearTimeout(timer);
+      request.current?.abort(); request.current = null;
       callbacks.current.onBusyChange?.(false);
     };
-  }, [base, identity]);
+  }, [identity]);
+  useEffect(() => {
+    if (!visible && !busy && !localBusy) return;
+    return tagProgress.subscribe(base, state => {
+      setShared(state);
+      setProgressError(state.error ? `Could not recover AI tag progress: ${state.error}` : '');
+      const status = state.progress;
+      const running = status?.state === 'running';
+      setBusy(running || state.starting);
+      if (running) sawRunning.current = true;
+      if (status && status.state !== 'running' && status.state !== 'idle' && !state.starting) {
+        const terminal = JSON.stringify([status.started_at, status.state]);
+        if (terminalSeen.current !== terminal) {
+          terminalSeen.current = terminal;
+          callbacks.current.onRecovered();
+          if (sawRunning.current && status.state === 'failed') setError(status.error || 'AI tag generation failed. Saved tags are preserved.');
+          if (sawRunning.current && status.state === 'cancelled') setCancelled(true);
+        }
+        sawRunning.current = false;
+      }
+    });
+  }, [base, identity, visible, busy, localBusy]);
   async function generate() {
     if (disabled || busy || localBusy || request.current || !itemIds.length) return;
     const controller = new AbortController(); request.current = controller;
     setLocalBusy(true); setError(''); setCancelled(false);
+    tagProgress.begin(base);
     try {
       const result = await api<TagResult>(`${base}/codex/tags`, { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ confirmed: true, target, publication_id: publicationId, generated_at: generatedAt,
@@ -85,6 +92,7 @@ export function TagGeneration(props: Props) {
         else setError((e as Error).message);
       }
     } finally {
+      tagProgress.end(base);
       if (request.current === controller) { request.current = null; setLocalBusy(false); }
     }
   }
@@ -96,7 +104,10 @@ export function TagGeneration(props: Props) {
     </SettingsHelp>
     <ErrorBox error={error} />
     <ErrorBox error={progressError} />
+    {progressError && <button type="button" className="quiet" onClick={() => void tagProgress.refresh(base)}>Retry progress check</button>}
     {cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
-    {(busy || localBusy) && <GenerationStatus base={base} kind="tags" label="AI tag generation" />}
+    {(busy || localBusy) && <GenerationStatus base={base} kind="tags" label="AI tag generation"
+      sharedProgress={shared.progress?.state === 'running' ? shared.progress : null}
+      onProgressUpdate={progress => tagProgress.update(base, progress)} />}
   </div>;
 }

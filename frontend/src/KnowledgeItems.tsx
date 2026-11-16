@@ -1,6 +1,7 @@
 import { AIEmphasis } from './AIEmphasis';
+import { DeferredDetails } from './DeferredDetails';
 import { useEffect, useId, useRef, useState } from 'react';
-import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, knowledgeSourceHref, statusOrder,
+import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, visibleRelatedKnowledge, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
 import { ALL_TOPICS, filterTopicItems, topicChoices } from './topicGroups';
 import { TopicPicker } from './TopicPicker';
@@ -19,11 +20,12 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   const [scope, setScope] = useState('');
   const [selected, setSelected] = useState(selectedItemId);
   const [selectionRequest, setSelectionRequest] = useState(0);
+  const [relatedLimits, setRelatedLimits] = useState<Record<string, number>>({});
   const [limits, setLimits] = useState<Record<string, number>>({});
   const instanceId = useId();
   const selectedRef = useRef<HTMLDetailsElement | null>(null);
   const identity = `${snapshot.project_id}:${snapshot.publication_id || snapshot.generated_at || ''}`;
-  const reset = () => { setQuery(''); setTagSearch(''); setTopic(ALL_TOPICS); setStatus(''); setCategory(''); setScope(''); setLimits({}); };
+  const reset = () => { setQuery(''); setTagSearch(''); setTopic(ALL_TOPICS); setStatus(''); setCategory(''); setScope(''); setLimits({}); setRelatedLimits({}); };
   useEffect(() => { reset(); setSelected(selectedItemId); }, [identity, selectedItemId]);
   useEffect(() => {
     if (selectedRef.current && selected) {
@@ -54,15 +56,15 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
   }
   function itemDetails(item: KnowledgeItem) {
     const current = evidenceAvailability(item, availability);
-    return <details key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
-      id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`} open={item.id === selected || undefined}>
+    return <DeferredDetails key={item.id} className="knowledge-item" ref={item.id === selected ? selectedRef : undefined}
+      id={`${instanceId}-knowledge-item-${encodeURIComponent(item.id)}`}
+      openKey={item.id === selected ? `${identity}:${item.id}:${selectionRequest}` : undefined} summary={
       <summary><span className="knowledge-item-title"><AIEmphasis text={item.statement} /></span>
         <small className="knowledge-item-meta"><span>{display(item.design_status)}</span><span>{item.scope}</span>
           <span>{item.evidence.length} {item.evidence.length === 1 ? 'reference' : 'references'}</span>
           {item.reconciliation_state === 'unresolved' && <span>Needs context review</span>}
         </small>
-      </summary>
-      <div className="knowledge-item-body">
+      </summary>}>{() => <div className="knowledge-item-body">
         <p className="muted">Extracted interpretation</p>
         <dl className="knowledge-fields">
           <dt>Design status</dt><dd>{display(item.design_status)}</dd>
@@ -84,7 +86,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
               ? <button className="quiet" type="button" onClick={() => select(relation.target!)}>{byId.get(relation.target)!.statement}</button>
               : <code>{relation.target}</code>}</>}</li>
         ))}</ul></details>}
-        <details className="knowledge-evidence"><summary>Original evidence ({item.evidence.length})</summary>
+        <DeferredDetails className="knowledge-evidence" summary={<summary>Original evidence ({item.evidence.length})</summary>}>{() => <>
           {!item.evidence.length && <p>No recorded evidence excerpts.</p>}
           {item.evidence.map((evidence, index) => {
             const source = sources.get(evidence.source_id);
@@ -103,9 +105,8 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
                 : <small>Original navigation unavailable; the saved excerpt remains available.</small>}
             </article>;
           })}
-        </details>
-      </div>
-    </details>;
+        </>}</DeferredDetails>
+      </div>}</DeferredDetails>;
   }
   return <div className="knowledge-items">
     <div className="knowledge-filters knowledge-primary-filters">
@@ -149,22 +150,27 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
         <h3>{display(value)} ({group.length})</h3>
         {shown.map(({ primary, related }) => <div key={primary.id}>
           {itemDetails(primary)}
-          {!!related.length && <details className="knowledge-related" open={related.some(item => item.id === selected) || undefined}>
-            <summary>Interpretations from the same passage ({related.length + 1} records)</summary>
+          {!!related.length && <DeferredDetails className="knowledge-related"
+            openKey={related.some(item => item.id === selected) ? `${identity}:${selected}:${selectionRequest}` : undefined}
+            summary={<summary>Interpretations from the same passage ({related.length + 1} records)</summary>}>{() => <>
             <p className="muted">These records cite the same user passage. Their statements and evidence remain separate.</p>
-            {related.map(itemDetails)}
-          </details>}
+            {visibleRelatedKnowledge(related, relatedLimits[primary.id] || 10, selected).map(itemDetails)}
+            {related.length > visibleRelatedKnowledge(related, relatedLimits[primary.id] || 10, selected).length
+              && <button type="button" className="secondary" onClick={() => setRelatedLimits(previous => ({
+                ...previous, [primary.id]: (previous[primary.id] || 10) + 10,
+              }))}>Show more related records</button>}
+          </>}</DeferredDetails>}
         </div>)}
         {passages.length > shown.length && <button className="secondary" type="button"
           onClick={() => setLimits((previous) => ({ ...previous, [value]: limit + 10 }))}>Show more {display(value).toLowerCase()} items</button>}
       </section>;
     })}
-    <details className="knowledge-coverage"><summary className="source-disclosure">Knowledge coverage</summary>
+    <DeferredDetails className="knowledge-coverage" summary={<summary className="source-disclosure">Knowledge coverage</summary>}>{() => <>
       <p>Knowledge is a derived interpretation. Missing extracted information does not establish that it was never discussed.</p>
       {Object.entries(snapshot.coverage || {}).map(([key, entries]) => <details key={key}><summary>{display(key)} ({entries.length})</summary>
         <ul>{entries.map((entry, index) => <li key={index}>{entry}</li>)}</ul>
       </details>)}
       {snapshot.extraction_version && <p>Extraction version <code>{snapshot.extraction_version}</code></p>}
-    </details>
+    </>}</DeferredDetails>
   </div>;
 }

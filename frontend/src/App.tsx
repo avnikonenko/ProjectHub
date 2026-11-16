@@ -539,7 +539,7 @@ function ProjectWorkspace({
         )}
         {(visited.qa || view === 'AI Q&A') && (
           <div hidden={view !== 'AI Q&A' || !!results}>
-            <ProjectQA base={base} generation={generation}
+            <ProjectQA base={base} generation={generation} visible={view === 'AI Q&A' && !results}
               targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
               recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, qa: active })); }} />
@@ -1203,7 +1203,7 @@ function isValidQALimit(value: number) {
   return Number.isSafeInteger(value) && value >= 1;
 }
 
-function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [tagsBusy, setTagsBusy] = useState(false);
   const [tagRecovery, setTagRecovery] = useState(0);
@@ -1335,7 +1335,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
-        {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa"
+        {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
           generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
           onBusyChange={setTagsBusy} onRecovered={() => { if (revisionId === null) setTagRecovery(value => value + 1); }}

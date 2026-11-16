@@ -5,7 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
 import {
-  matchesPublication, parseKnowledgeResponse, parseKnowledgePreview,
+  matchesPublication, parseKnowledgePreview,
   type KnowledgeLink, type KnowledgeResponse,
 } from './knowledge';
 import { Empty, ErrorBox } from './ui';
@@ -13,6 +13,7 @@ import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } f
 import type { Brief } from './BriefContent';
 import { knowledgePreviewExport, recoverKnowledgePreview, type KnowledgePreview } from './knowledgePreviewRecovery';
 import { activateKnowledgeResult } from './knowledgePublication';
+import { readPublishedKnowledge, subscribePublishedKnowledge, updatePublishedKnowledge } from './publishedKnowledge';
 
 type LoadState = { base: string; key: string; loading: boolean; data: KnowledgeResponse | null; error: string };
 type PreviewState = { base: string; busy: boolean; result: KnowledgePreview | null; error: string; started: number; loading?: boolean; cancelled?: boolean };
@@ -56,24 +57,17 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     && !matchesPublication(snapshot, projectId, expectedPublication);
   const selectedItemId = dismissedLink === requestKey ? undefined : projectLink?.itemId;
 
+  useEffect(() => subscribePublishedKnowledge(base, state => {
+    setLoad({ base, key: loadKey, ...state });
+  }), [base, loadKey]);
+  const lastRefresh = useRef('');
   useEffect(() => {
-    setLoad(previous => ({ base, key: loadKey, loading: true,
-      data: previous.key === loadKey ? previous.data : null, error: '' }));
     if (!visible) return;
-    const controller = new AbortController();
-    api<unknown>(`${base}/codex/knowledge`, { signal: controller.signal })
-      .then((raw) => {
-        if (!controller.signal.aborted) {
-          const data = parseKnowledgeResponse(raw, projectId);
-          setLoad({ base, key: loadKey, loading: false, data, error: '' });
-        }
-      })
-      .catch((error: Error) => {
-        if (!controller.signal.aborted) setLoad(previous => ({ base, key: loadKey,
-          loading: false, data: previous.key === loadKey ? previous.data : null, error: error.message }));
-      });
-    return () => controller.abort();
-  }, [base, projectId, retry, visible, loadKey]);
+    const refreshKey = `${base}:${retry}`;
+    const refresh = retry > 0 && lastRefresh.current !== refreshKey;
+    lastRefresh.current = refreshKey;
+    void readPublishedKnowledge(base, { refresh, publicationId: publicationKey || undefined });
+  }, [base, retry, visible, publicationKey]);
 
   useEffect(() => () => {
     active.current?.controller.abort();
@@ -156,10 +150,10 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     try {
       const result = await activateKnowledgeResult(base, projectId, candidate.knowledge.publication_id!, controller.signal);
       if (!controller.signal.aborted && activating.current === run) {
-        setLoad({ base, key: loadKey, loading: false, error: '', data: {
+        updatePublishedKnowledge(base, () => ({
           snapshot: result.knowledge, paired_with_current_brief: true,
           current_evidence_availability: {}, coverage: result.knowledge.coverage || {},
-        } });
+        }));
         setActivation({ base, busy: false, error: '', notice: 'Knowledge and Overview updated.' });
         onPublished?.();
         setRetry(value => value + 1);
@@ -214,13 +208,13 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>
         <small>Current knowledge{snapshot.generated_at && ` · ${new Date(snapshot.generated_at).toLocaleString()}`}</small>
-        <TagGeneration key={`${base}:tags:${snapshot.publication_id}`} base={base} target="knowledge"
+        <TagGeneration key={`${base}:tags:${snapshot.publication_id}`} base={base} visible={visible} target="knowledge"
           publicationId={snapshot.publication_id} itemIds={snapshot.items.map(item => item.id)}
           generation={generation} hasTags={!!snapshot.topic_groups?.length} disabled={busy || publishing || !snapshot.publication_id}
           onBusyChange={setPublishedTagsBusy} onRecovered={() => setRetry(value => value + 1)}
-          onResult={result => setLoad(previous => previous.base === base && previous.data && previous.data.snapshot && previous.data.snapshot.publication_id === result.publication_id
-            ? { ...previous, data: { ...previous.data, snapshot: { ...previous.data.snapshot,
-              topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } } : previous)} />
+          onResult={result => updatePublishedKnowledge(base, current => current && current.snapshot && current.snapshot.publication_id === result.publication_id
+            ? { ...current, snapshot: { ...current.snapshot,
+              topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } : current)} />
         {mismatch ? <Feedback>
           <p>This overview references another knowledge publication. Its selected record is not being substituted with the current version.</p>
           <button className="secondary" onClick={() => setDismissedLink(requestKey)}>Explore current knowledge</button>
@@ -256,7 +250,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       <GenerationDetails diagnostics={candidate.diagnostics} />
       {renderBrief(candidate.brief)}
       <h3>Knowledge</h3>
-      <TagGeneration key={`${base}:preview-tags:${candidate.knowledge.publication_id}`} base={base} target="knowledge_preview"
+      <TagGeneration key={`${base}:preview-tags:${candidate.knowledge.publication_id}`} base={base} visible={visible} target="knowledge_preview"
         publicationId={candidate.knowledge.publication_id} itemIds={candidate.knowledge.items.map(item => item.id)}
         generation={generation} hasTags={!!candidate.knowledge.topic_groups?.length} disabled={busy || publishing || !candidate.knowledge.publication_id}
         onBusyChange={setPreviewTagsBusy} onRecovered={() => setRetry(value => value + 1)}

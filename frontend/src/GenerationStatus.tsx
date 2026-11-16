@@ -8,7 +8,7 @@ export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
 const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
 
 export type GenerationProvenance = { account: string; model: string; effort: string };
-type Progress = {
+export type Progress = {
   state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage: string;
   sessions: number;
@@ -122,14 +122,18 @@ function durationLabel(seconds: number) {
 }
 
 export function GenerationStatus({
-  base, kind, label, onRunningChange,
+  base, kind, label, onRunningChange, sharedProgress, onProgressUpdate,
 }: {
   base: string;
   kind: GenerationKind;
   label?: string;
   onRunningChange?: (running: boolean) => void;
+  sharedProgress?: Progress | null;
+  onProgressUpdate?: (progress: Progress) => void;
 }) {
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [localProgress, setProgress] = useState<Progress | null>(null);
+  const externallyManaged = sharedProgress !== undefined;
+  const progress = externallyManaged ? sharedProgress : localProgress;
   const [error, setError] = useState('');
   const [cancelError, setCancelError] = useState('');
   const [cancellingFor, setCancellingFor] = useState<string | null>(null);
@@ -145,6 +149,19 @@ export function GenerationStatus({
     return () => clearInterval(timer);
   }, [startedAt, progress?.state]);
   useEffect(() => {
+    if (!externallyManaged) return;
+    if (sharedProgress?.state === 'running') {
+      const started = Date.parse(sharedProgress.started_at ?? '');
+      if (Number.isFinite(started)) {
+        setStartedAt(started);
+        setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
+      }
+    }
+    if (sharedProgress?.cancel_requested || sharedProgress?.state === 'cancelled') setCancelError('');
+  }, [externallyManaged, sharedProgress]);
+  useEffect(() => () => { cancelRequest.current?.abort(); cancelRequest.current = null; }, [base, kind]);
+  useEffect(() => {
+    if (externallyManaged) return;
     const abort = new AbortController();
     setProgress(null);
     setCancelError('');
@@ -181,7 +198,7 @@ export function GenerationStatus({
       cancelRequest.current = null;
       if (timer) clearTimeout(timer);
     };
-  }, [base, kind]);
+  }, [base, kind, externallyManaged]);
   async function cancel() {
     if (progress?.state !== 'running' || !progress.started_at || cancelRequest.current
         || progress.cancel_requested || cancellingFor === progress.started_at) return;
@@ -194,7 +211,7 @@ export function GenerationStatus({
       // Tab changes must not abort a cancellation already requested by the user.
       // The controller guards local state updates; the server request continues.
       const result = await post(`${base}/codex/generation/cancel`, { kind, started_at: started }) as Progress;
-      if (!controller.signal.aborted) setProgress(result);
+      if (!controller.signal.aborted) { setProgress(result); onProgressUpdate?.(result); }
     } catch (e) {
       if (!controller.signal.aborted) {
         setCancellingFor(null);

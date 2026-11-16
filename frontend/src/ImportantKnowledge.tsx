@@ -1,27 +1,23 @@
 import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
-import { api } from './api';
-import { importantKnowledge, knowledgeHref, knowledgePassageGroups, matchesPublication, parseKnowledgeResponse, type KnowledgeResponse } from './knowledge';
+import { readPublishedKnowledge, subscribePublishedKnowledge } from './publishedKnowledge';
+import { importantKnowledge, knowledgeHref, knowledgePassageGroups, matchesPublication, type KnowledgeResponse } from './knowledge';
 
 export function ImportantKnowledge({ base, publicationId, visible }: {
   base: string; publicationId?: string; visible: boolean;
 }) {
   const projectId = Number(base.split('/')[2]);
-  const [loaded, setLoaded] = useState<{ base: string; publicationId: string; data?: KnowledgeResponse; error?: string } | null>(null);
+  const [loaded, setLoaded] = useState<{ base: string; publicationId: string; data?: KnowledgeResponse; error?: string; loading: boolean } | null>(null);
   useEffect(() => {
-    if (!visible || !publicationId) return;
-    const controller = new AbortController();
-    api<unknown>(`${base}/codex/knowledge`, { signal: controller.signal })
-      .then(raw => {
-        const data = parseKnowledgeResponse(raw, projectId);
-        if (!controller.signal.aborted) setLoaded({ base, publicationId, data });
-      })
-      .catch(error => {
-        if (!controller.signal.aborted) setLoaded({ base, publicationId, error: error.message });
-      });
-    return () => controller.abort();
-  }, [base, projectId, publicationId, visible]);
+    if (!publicationId) return;
+    return subscribePublishedKnowledge(base, state => {
+      setLoaded({ base, publicationId, data: state.data ?? undefined, error: state.error, loading: state.loading });
+    });
+  }, [base, publicationId]);
+  useEffect(() => {
+    if (visible && publicationId) void readPublishedKnowledge(base, { publicationId });
+  }, [base, publicationId, visible]);
   if (!publicationId) return null;
   const current = loaded?.base === base && loaded.publicationId === publicationId ? loaded : null;
   const snapshot = current?.data?.snapshot;
@@ -32,7 +28,7 @@ export function ImportantKnowledge({ base, publicationId, visible }: {
       .map(group => [group.primary.id, group.related.length + 1]) : []);
   return <section className="card important-knowledge" aria-label="Important choices">
     <h2>Important choices</h2>
-    {!current && <Feedback>Loading associated knowledge…</Feedback>}
+    {(!current || (current.loading && !snapshot)) && <Feedback>Loading associated knowledge…</Feedback>}
     {current?.error && <Feedback tone="error">Could not load associated knowledge: {current.error}</Feedback>}
     {current?.data && !matching && <p>The published knowledge does not match this overview. Open Knowledge to inspect the current snapshot separately.</p>}
     {matching && <>
