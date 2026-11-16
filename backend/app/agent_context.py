@@ -120,8 +120,12 @@ def _read(db, pid, kind, offset=0, limit=5, record_id=None, text_offset=0, chars
         where += f' AND {identity}=:record_id'
         params['record_id'] = str(record_id)
     if query:
-        where += f" AND instr(lower(coalesce({searchable},'')),lower(:query))>0"
-        params['query'] = query
+        # Match the Unicode folding used by project search without changing data.
+        db.connection().connection.driver_connection.create_function(
+            'projecthub_search_fold', 1, lambda value: str(value or '').casefold(),
+            deterministic=True)
+        where += f" AND instr(projecthub_search_fold(coalesce({searchable},'')),:query)>0"
+        params['query'] = query.casefold()
     if active and kind == 'tasks':
         where += " AND t.status NOT IN ('completed','not_planned')"
     if active and kind == 'notes':
