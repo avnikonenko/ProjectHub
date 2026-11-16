@@ -26,6 +26,7 @@ from .generation_metrics import begin_model_request
 from . import progress
 
 log = logging.getLogger(__name__)
+_REVIEW_EXECUTION_ERROR = 'Codex reported an execution error; inspect session status.'
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
 _tag_generation_context = ContextVar('projecthub_tag_generation_context', default=False)
 _TAG_CONTEXT_VERSION = 'tag-classification-v1'
@@ -282,7 +283,7 @@ class CodexManager:
                 return
             params = {'item': {'type': 'agentMessage', 'text': str(item.get('text', ''))[:100_000]}}
         elif method == 'error':
-            params = {'message': 'Codex reported an execution error; inspect session status.',
+            params = {'message': _REVIEW_EXECUTION_ERROR,
                       'will_retry': bool(params.get('willRetry', False))}
         elif method in ('turn/started', 'turn/completed'):
             turn = params.get('turn', {})
@@ -298,18 +299,46 @@ class CodexManager:
                 if method == 'turn/started':
                     session.status = 'running'
                 elif method == 'turn/completed':
-                    status = params['turn']['status']
-                    session.status = 'idle' if status == 'completed' else (status or 'failed')
-                    for delivery in db.scalars(select(Delivery).where(Delivery.session_id == session_id,
-                            Delivery.turn_id == params['turn']['id'], Delivery.status.in_(('sending', 'sent')))):
+                    status, turn_id = params['turn']['status'], params['turn']['id']
+                    matching = list(db.scalars(select(Delivery).where(
+                        Delivery.project_id == session.project_id, Delivery.session_id == session_id,
+                        Delivery.turn_id == turn_id))) if isinstance(turn_id, str) and turn_id else []
+                    latest_start = db.scalar(select(CodexEvent).where(
+                        CodexEvent.project_id == session.project_id, CodexEvent.session_id == session_id,
+                        CodexEvent.method == 'turn/started',
+                    ).order_by(CodexEvent.id.desc()))
+                    started = latest_start.payload.get('turn', {}) if latest_start else {}
+                    observed_id = started.get('id') if isinstance(started, dict) else None
+                    pending = db.scalar(select(Delivery).where(
+                        Delivery.project_id == session.project_id, Delivery.session_id == session_id,
+                        Delivery.status.in_(('sending', 'sent')),
+                    ).order_by(Delivery.id.desc()))
+                    matched_id = max((delivery.id for delivery in matching), default=0)
+                    newer_request = pending is not None and (
+                        (matched_id and pending.id > matched_id)
+                        or (not matched_id and pending.turn_id is not None and pending.turn_id != turn_id))
+                    # Always preserve the old request's result, but a delayed
+                    # notification must not make a newer local/external turn idle.
+                    current_turn = (isinstance(turn_id, str) and bool(turn_id) and not newer_request
+                                    and (not observed_id or observed_id == turn_id))
+                    for delivery in matching:
+                        retryable_error = (delivery.decision_id is None and delivery.status == 'failed'
+                                           and delivery.error == _REVIEW_EXECUTION_ERROR)
+                        if delivery.status not in ('sending', 'sent') and not retryable_error:
+                            continue
                         delivery.status = status if status in ('completed', 'failed', 'interrupted') else 'failed'
-                        if status != 'completed':
-                            delivery.error = 'Codex turn ' + str(status)
-                    if status != 'completed':
-                        session.last_error = 'Codex turn ' + str(status)
+                        delivery.error = '' if status == 'completed' else 'Codex turn ' + str(status)
+                    if current_turn:
+                        session.status = 'idle' if status == 'completed' else (
+                            status if status in ('failed', 'interrupted') else 'failed')
+                        session.last_error = '' if status == 'completed' else 'Codex turn ' + str(status)
                 elif method == 'error' and not params['will_retry']:
                     session.status = 'failed'
                     session.last_error = params['message']
+                    db.execute(update(Delivery).where(
+                        Delivery.project_id == session.project_id, Delivery.session_id == session_id,
+                        Delivery.decision_id.is_(None), Delivery.status.in_(('sending', 'sent')),
+                    ).values(status='failed', error=_REVIEW_EXECUTION_ERROR))
                 db.commit()
         except Exception:
             log.exception('Could not persist Codex event for session %s', session_id)
@@ -889,6 +918,10 @@ class CodexManager:
                 content, thread_id = delivery.content, session.thread_id
                 session_id = session.id
                 project_id = session.project_id
+                start_before = db.scalar(select(CodexEvent.id).where(
+                    CodexEvent.project_id == project_id, CodexEvent.session_id == session_id,
+                    CodexEvent.method == 'turn/started',
+                ).order_by(CodexEvent.id.desc())) or 0
                 db.commit()
             submitted = False
             try:
@@ -914,13 +947,39 @@ class CodexManager:
                     return record_dict(delivery)
             with Session(self.engine) as db:
                 delivery = db.get(Delivery, delivery_id)
-                delivery.status, delivery.turn_id = 'sent', turn_id
+                # A terminal error notification can precede the acknowledgement.
+                # Do not turn that failed review back into a perpetual sent request.
+                terminal_error = (delivery.decision_id is None and delivery.status == 'failed'
+                                  and delivery.error == _REVIEW_EXECUTION_ERROR)
+                delivery.turn_id = turn_id
+                if not terminal_error:
+                    delivery.status = 'sent'
                 # Completion notifications may precede the turn/start response.
-                for event in db.scalars(select(CodexEvent).where(CodexEvent.session_id == session_id,
+                for event in db.scalars(select(CodexEvent).where(
+                        CodexEvent.project_id == project_id, CodexEvent.session_id == session_id,
                         CodexEvent.method == 'turn/completed').order_by(CodexEvent.id.desc()).limit(10)):
                     observed = event.payload.get('turn', {})
                     if observed.get('id') == turn_id:
-                        delivery.status = observed.get('status') or 'failed'
+                        status = observed.get('status')
+                        delivery.status = status if status in ('completed', 'failed', 'interrupted') else 'failed'
+                        delivery.error = '' if status == 'completed' else 'Codex turn ' + str(status)
+                        latest_start = db.scalar(select(CodexEvent).where(
+                            CodexEvent.project_id == project_id, CodexEvent.session_id == session_id,
+                            CodexEvent.method == 'turn/started',
+                        ).order_by(CodexEvent.id.desc()))
+                        newer_request = db.scalar(select(Delivery.id).where(
+                            Delivery.project_id == project_id, Delivery.session_id == session_id,
+                            Delivery.id > delivery_id, Delivery.status.in_(('sending', 'sent')),
+                        ).limit(1))
+                        # The returned turn ID resolves an early completion even
+                        # without turn/started; older observed starts cannot veto
+                        # it. A genuinely newer start or submission still wins.
+                        current = (latest_start is None or latest_start.id <= start_before
+                                   or latest_start.payload.get('turn', {}).get('id') == turn_id)
+                        if current and newer_request is None:
+                            session = db.get(CodexSession, session_id)
+                            session.status = 'idle' if status == 'completed' else delivery.status
+                            session.last_error = delivery.error
                         break
                 db.commit(); db.refresh(delivery)
                 return record_dict(delivery)
