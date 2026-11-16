@@ -167,3 +167,45 @@ test('legacy bounded and single-pass overview diagnostics do not imply staged sy
   assert.equal(singlePass.overview_selection, undefined);
   assert.deepEqual(singlePass, { synthesis_requests: 1 });
 });
+
+const synthesisTiming = { level: 0, batch: 1, input_chars: 140000, seconds: 15.75,
+  model_seconds: 15, cache_lookup_seconds: 0.05, local_seconds: 0.7, cached: false, completed: true };
+
+test('parallel synthesis workers and exact batch timings survive preview parsing and JSON export', () => {
+  const diagnostics = { overview_selection: { synthesis_workers: 4, synthesis_batch_timings: [synthesisTiming,
+    { ...synthesisTiming, level: 1, batch: 1, seconds: 0, model_seconds: 0, cache_lookup_seconds: 0,
+      local_seconds: 0, cached: true, completed: false }] } };
+  const raw = rawPreview(diagnostics); const before = structuredClone(raw);
+  const parsed = parseKnowledgePreview(raw, 2);
+  assert.deepEqual(parsed.diagnostics, diagnostics);
+  assert.deepEqual(JSON.parse(knowledgePreviewExport(parsed, 2).text).diagnostics, diagnostics);
+  assert.deepEqual(raw, before);
+});
+
+test('malformed synthesis timings are ignored without invalidating a saved preview', () => {
+  const invalid = [null, [], 'not timings', { ...synthesisTiming, level: -1 },
+    { ...synthesisTiming, batch: 0 }, { ...synthesisTiming, input_chars: '140000' },
+    { ...synthesisTiming, seconds: Infinity }, { ...synthesisTiming, model_seconds: -1 },
+    { ...synthesisTiming, cache_lookup_seconds: true }, { ...synthesisTiming, local_seconds: NaN },
+    { ...synthesisTiming, cached: 'false' }, { ...synthesisTiming, completed: 1 }];
+  const parsed = parseKnowledgePreview(rawPreview({ overview_selection: {
+    synthesis_workers: 0, synthesis_batch_timings: [...invalid, synthesisTiming],
+  } }), 2);
+  assert.equal(parsed.diagnostics!.overview_selection!.synthesis_workers, undefined);
+  assert.deepEqual(parsed.diagnostics!.overview_selection!.synthesis_batch_timings, [synthesisTiming]);
+  assert.equal(parseGenerationDiagnostics({ overview_selection: { synthesis_workers: true } })!.overview_selection!.synthesis_workers, undefined);
+  assert.equal(parseGenerationDiagnostics({ overview_selection: { synthesis_batch_timings: 'invalid' } })!.overview_selection!.synthesis_batch_timings, undefined);
+});
+
+test('oversized synthesis timing lists are bounded and visibly marked through export', () => {
+  const timings = Array.from({ length: 4097 }, (_, index) => ({ ...synthesisTiming, batch: index + 1 }));
+  const raw = rawPreview({ overview_selection: { synthesis_workers: 2,
+    synthesis_batch_timings: timings } });
+  const parsed = parseKnowledgePreview(raw, 2);
+  assert.equal(parsed.diagnostics!.overview_selection!.synthesis_batch_timings!.length, 4096);
+  assert.equal(parsed.diagnostics!.overview_selection!.synthesis_batch_timings_truncated, true);
+  const saved = JSON.parse(knowledgePreviewExport(parsed, 2).text);
+  const restored = parseKnowledgePreview(saved, 2);
+  assert.deepEqual(restored.diagnostics, parsed.diagnostics);
+  assert.equal(timings.length, 4097);
+});

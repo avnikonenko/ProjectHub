@@ -9,6 +9,12 @@ export type GenerationProfileSettings = {
   configured_generation_profile: GenerationProfileId;
   generation_profiles: GenerationProfileOption[];
 };
+export type SynthesisBatchTiming = {
+  level: number; batch: number; input_chars: number;
+  seconds: number; model_seconds: number; cache_lookup_seconds: number; local_seconds: number;
+  cached: boolean; completed: boolean;
+};
+const MAX_SYNTHESIS_TIMINGS = 4096;
 export type GenerationDiagnostics = {
   duration_seconds?: number; ai_requests?: number; cache_hits?: number;
   synthesis_requests?: number; synthesis_cache_hits?: number; model_requests?: number;
@@ -25,6 +31,8 @@ export type GenerationDiagnostics = {
     synthesis_requests?: number; synthesis_cache_hits?: number;
     synthesis_batches_total?: number; synthesis_batches_completed?: number;
     synthesis_levels?: number; full_input_chars?: number; input_chars?: number;
+    synthesis_workers?: number; synthesis_batch_timings?: SynthesisBatchTiming[];
+    synthesis_batch_timings_truncated?: boolean;
   };
   profile?: {
     id?: string; label?: string; window_chars?: number; source_budget_chars?: number | null;
@@ -44,6 +52,17 @@ const count = (value: unknown): value is number =>
 const text = (value: unknown): value is string => typeof value === 'string' && value.length <= 500;
 const profileId = (value: unknown): value is GenerationProfileId =>
   value === 'quality' || value === 'balanced' || value === 'economy';
+const seconds = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0;
+
+function synthesisTiming(raw: unknown): SynthesisBatchTiming[] {
+  if (!object(raw) || !count(raw.level) || !count(raw.batch) || raw.batch < 1 || !count(raw.input_chars)
+      || !seconds(raw.seconds) || !seconds(raw.model_seconds) || !seconds(raw.cache_lookup_seconds)
+      || !seconds(raw.local_seconds) || typeof raw.cached !== 'boolean' || typeof raw.completed !== 'boolean') return [];
+  return [{ level: raw.level, batch: raw.batch, input_chars: raw.input_chars,
+    seconds: raw.seconds, model_seconds: raw.model_seconds, cache_lookup_seconds: raw.cache_lookup_seconds,
+    local_seconds: raw.local_seconds, cached: raw.cached, completed: raw.completed }];
+}
 
 /** Old worker-only servers have no profile fields; partial/malformed contracts fail visibly. */
 export function parseGenerationProfileSettings(raw: unknown): GenerationProfileSettings | null {
@@ -107,6 +126,15 @@ export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics 
       if (count(raw.overview_selection[field])) selection[field] = raw.overview_selection[field];
     for (const field of ['partial', 'staged_synthesis'] as const)
       if (typeof raw.overview_selection[field] === 'boolean') selection[field] = raw.overview_selection[field];
+    if (count(raw.overview_selection.synthesis_workers) && raw.overview_selection.synthesis_workers > 0)
+      selection.synthesis_workers = raw.overview_selection.synthesis_workers;
+    if (Array.isArray(raw.overview_selection.synthesis_batch_timings)) {
+      selection.synthesis_batch_timings = raw.overview_selection.synthesis_batch_timings
+        .slice(0, MAX_SYNTHESIS_TIMINGS).flatMap(synthesisTiming);
+      if (raw.overview_selection.synthesis_batch_timings.length > MAX_SYNTHESIS_TIMINGS
+          || raw.overview_selection.synthesis_batch_timings_truncated === true)
+        selection.synthesis_batch_timings_truncated = true;
+    }
     result.overview_selection = selection;
   }
   if (object(raw.profile)) {

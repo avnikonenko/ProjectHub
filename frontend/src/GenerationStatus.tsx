@@ -82,6 +82,7 @@ function describeProgress(stage: string, kind: GenerationKind) {
     case 'Reading project sessions': return 'Finding linked conversations';
     case 'Summarizing history batch': return 'Summarizing conversations';
     case 'Summarizing overview batch': return 'Summarizing part of the overview';
+    case 'Summarizing overview batches': return 'Summarizing overview sections in parallel';
     case 'Combining overview batches': return 'Combining overview sections';
     case 'Reusing cached evidence batch': return 'Reusing a previously saved summary';
     case 'Combining evidence': return 'Waiting for Codex to combine the evidence';

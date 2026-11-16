@@ -398,6 +398,8 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                 raise
     progress.check_cancelled()
     requests, hits = catalog_requests, 0
+    reassignment_timings = []
+    reassignment_run = 0
     catalog = {group['id']: group for group in taxonomy}
     for batch_taxonomy, assigned, cached in results:
         hits += int(cached)
@@ -410,7 +412,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
 
     def assign_existing(records, taxonomy, *, stage):
         """Recheck negative memberships once without proposing further topics."""
-        nonlocal requests, hits
+        nonlocal requests, hits, workers, reassignment_run
         progress.check_cancelled()
         if len(taxonomy) > MAX_CATALOG_GROUPS:
             raise CodexError('Knowledge topic grouping exceeded the topic limit.')
@@ -424,6 +426,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                         batch_started_at=None)
         stage_hits = 0
         fingerprint = _catalog_fingerprint(taxonomy)
+        reassignment_run += 1
 
         def assign(batch):
             progress.check_cancelled()
@@ -444,10 +447,16 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
             results[index] = value
             completed += 1
             stage_hits += int(value[1])
+            reassignment_timings.append({'phase': stage, 'phase_run': reassignment_run,
+                                         'batch': index + 1, 'seconds': value[2],
+                                         'cached': bool(value[1]), 'workers': stage_workers})
+            reassignment_timings.sort(key=lambda row: (row['phase_run'], row['batch']))
             progress.update(project_id, batch_completed=completed, cache_hits=stage_hits,
                             last_batch_seconds=value[2], batch_started_at=active)
 
         stage_workers = min(_extraction_workers(manager), max(1, len(batches)))
+        if batches:
+            workers = max(workers, stage_workers)
         if stage_workers == 1:
             for index, batch in enumerate(batches):
                 progress.check_cancelled()
@@ -563,6 +572,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                                'assignment_catalog_fingerprint': _catalog_fingerprint(taxonomy),
                                'ai_requests': requests, 'cache_hits': hits, 'reused_items': reused,
                                'workers': workers, 'batch_timings': batch_timings,
+                               'reassignment_batch_timings': reassignment_timings,
                                **({'review_configuration': review_configuration,
                                    'reviewed_fingerprints': review_markers,
                                    'reviewed_items': reviewed_count} if compact_assignment else {})}}

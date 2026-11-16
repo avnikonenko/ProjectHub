@@ -143,3 +143,56 @@ def test_reassignment_failure_stops_dispatch_and_does_not_cache_invalid_batches(
     finally:
         if failure == 'cancel':
             progress.finish(1, progress.GenerationCancelled())
+
+
+def test_followup_only_run_reports_actual_workers_and_separate_ordered_timings(setup):
+    engine, records = setup
+
+    class FollowupOnlyManager(Manager):
+        def reply(self, prompt, schema, transport):
+            assert _marker.get() == 'copied'
+            payload = json.loads(prompt.rsplit('\n', 1)[1])
+            with self.lock:
+                self.calls.append(payload)
+            if 'sample' in payload:
+                labels = ['Storage', 'Security'] if 'topics' in payload else ['Storage']
+                return json.dumps({'topics': [{'label': label, 'description': label + ' policy.'}
+                                              for label in labels]})
+            labels = {row['label']: row['i'] for row in payload['topics']}
+            followup = 'Security' in labels
+            if followup:
+                index = int(payload['records'][0]['statement'].split()[-1])
+                with self.lock:
+                    self.active += 1
+                    self.peak = max(self.peak, self.active)
+                try:
+                    if index in (1, 2):
+                        self.barrier.wait(timeout=3)
+                finally:
+                    with self.lock:
+                        self.active -= 1
+            label = 'Security' if followup else 'Storage'
+            return json.dumps({'assignments': [{'i': row['i'], 't': [labels[label]]}
+                                              for row in payload['records']]})
+
+    manager = FollowupOnlyManager()
+    previous = run(engine, records, manager)
+    # Model a saved catalog with unchanged records and three untagged memberships.
+    # All four records retain matching fingerprints, so initial assignment is empty.
+    previous['topic_groups'][0]['item_ids'] = ['0']
+    manager.peak = 0
+    token = _marker.set('copied')
+    try:
+        result = topics.group_records(engine, 1, manager, records,
+                                      previous=previous, compact_assignment=True)
+    finally:
+        _marker.reset(token)
+    details = result['topic_grouping']
+    assert manager.peak == details['workers'] == 2
+    assert details['batch_timings'] == []
+    timings = details['reassignment_batch_timings']
+    assert [row['batch'] for row in timings] == [1, 2, 3]
+    assert all(row['phase'] == 'Assigning reviewed AI tags' and row['phase_run'] == 1
+               and row['workers'] == 2 and row['seconds'] >= 0 and row['cached'] is False
+               for row in timings)
+    assert details['ai_requests'] == 4  # One catalog review and three assignments.

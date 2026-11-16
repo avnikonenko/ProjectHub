@@ -14,7 +14,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from ...models import ProjectHistoryBatch
+from ...models import ProjectHistoryBatch, utcnow
 from . import progress
 from .knowledge import extraction_configuration, _extraction_workers
 from .overview_context import build_overview_companions
@@ -263,6 +263,7 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         return len(_encode_synthesis(records, candidate, bundle, repository)[2])
 
     completion_lock = threading.Lock()
+    active_batches = {}
     diagnostics.update(synthesis_workers=1, synthesis_batch_timings=[])
 
     def prepare(records, original_groups, level, batch):
@@ -289,6 +290,9 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         started = time.monotonic()
         success = False
         try:
+            with completion_lock:
+                active_batches[level, batch] = utcnow()
+                progress.update(project_id, batch_started_at=min(active_batches.values()))
             result = _synthesize(proxy, candidate, bundle, repository, _sources=records,
                                  _groups=stage_groups, _stage=True, _stage_references=entry_references)
             proxy.save_validated()
@@ -297,6 +301,7 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         finally:
             elapsed = time.monotonic() - started
             with completion_lock:
+                active_batches.pop((level, batch), None)
                 diagnostics['synthesis_requests'] += local['synthesis_requests']
                 diagnostics['synthesis_cache_hits'] += local['synthesis_cache_hits']
                 if success:
@@ -315,7 +320,9 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
                 # was committed; never replace its originating exception.
                 if success:
                     progress.update(project_id, batch_completed=diagnostics['synthesis_batches_completed'],
-                                    cache_hits=diagnostics['synthesis_cache_hits'])
+                                    cache_hits=diagnostics['synthesis_cache_hits'],
+                                    last_batch_seconds=round(elapsed, 3),
+                                    batch_started_at=min(active_batches.values(), default=None))
 
     def run_level(batches, original_groups, level):
         workers = min(_extraction_workers(manager), max(1, len(batches)))
@@ -323,7 +330,8 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         progress.update(project_id, stage='Combining overview batches' if level else 'Summarizing overview batches',
                         batch_phase='overview synthesis', batch_total=diagnostics['synthesis_batches_total'],
                         batch_completed=diagnostics['synthesis_batches_completed'],
-                        cache_hits=diagnostics['synthesis_cache_hits'])
+                        cache_hits=diagnostics['synthesis_cache_hits'],
+                        batch_started_at=None, last_batch_seconds=None)
         if workers == 1:
             return [run(prepare(records, original_groups, level, index), manager)
                     for index, records in enumerate(batches)]

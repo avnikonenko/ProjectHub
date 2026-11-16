@@ -7,6 +7,7 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
   const profile = diagnostics.profile;
   const selection = diagnostics.source_selection;
   const overview = diagnostics.overview_selection;
+  const synthesisTimings = overview?.synthesis_batch_timings;
   const overviewCoverageAvailable = overview?.selected_items !== undefined
     && overview.available_items !== undefined && overview.selected_items <= overview.available_items;
   const overviewStagesAvailable = overview?.synthesis_batches_completed !== undefined
@@ -27,6 +28,9 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
       {(diagnostics.synthesis_cache_hits !== undefined || overview?.synthesis_cache_hits !== undefined) && <>
         <dt>Reused synthesis stages</dt><dd>{diagnosticCount(diagnostics.synthesis_cache_hits ?? overview?.synthesis_cache_hits)}</dd>
       </>}
+      {overview?.synthesis_workers !== undefined && <>
+        <dt>Parallel synthesis workers</dt><dd>{diagnosticCount(overview.synthesis_workers)}</dd>
+      </>}
       {profile?.effective_effort && <><dt>Effective reasoning effort</dt><dd>{profile.effective_effort}</dd></>}
     </dl>
     {coverageAvailable && <p>Extraction coverage: {diagnosticCount(selection.selected_primary_fragments)} of {diagnosticCount(selection.available_primary_fragments)} primary fragments
@@ -35,6 +39,21 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
     {overviewCoverageAvailable && <p>Overview input: {diagnosticCount(overview.selected_items)} of {diagnosticCount(overview.available_items)} active knowledge items processed
       {(overview.partial || overview.selected_items! < overview.available_items!) && ' · Partial input'}</p>}
     {overviewStagesAvailable && <p>Synthesis stages completed: {diagnosticCount(overview.synthesis_batches_completed)} of {diagnosticCount(overview.synthesis_batches_total)}</p>}
+    {!!synthesisTimings?.length && <details>
+      <summary>Synthesis batch timings</summary>
+      <p><small>Batch times can overlap; do not add them to the total duration.</small></p>
+      <div className="scheme-table-scroll"><table>
+        <thead><tr><th>Level</th><th>Batch</th><th>Input characters</th><th>Total (s)</th><th>Model (s)</th><th>Cache lookup (s)</th><th>Local work (s)</th><th>Result</th></tr></thead>
+        <tbody>{synthesisTimings.slice(0, 100).map((timing, index) => <tr key={index}>
+          <td>{timing.level}</td><td>{timing.batch}</td><td>{diagnosticCount(timing.input_chars)}</td>
+          <td>{timing.seconds.toFixed(2)}</td><td>{timing.model_seconds.toFixed(2)}</td>
+          <td>{timing.cache_lookup_seconds.toFixed(2)}</td><td>{timing.local_seconds.toFixed(2)}</td>
+          <td>{timing.completed ? timing.cached ? 'Reused' : 'Completed' : 'Incomplete'}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {synthesisTimings.length > 100 && <p><small>Showing the first 100 of {diagnosticCount(synthesisTimings.length)} recorded batch timings.</small></p>}
+      {overview?.synthesis_batch_timings_truncated && <p><small>Some timing records were omitted because the result was too large.</small></p>}
+    </details>}
     {overviewCoverageAvailable && <p><small>Processed input does not mean every item appears in the final overview.</small></p>}
     {!!profile?.notes.length && <ul>{profile.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
     {!usage || usage.status === 'unavailable' ? <p>Token usage is unavailable for this run.</p> : <>

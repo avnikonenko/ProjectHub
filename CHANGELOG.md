@@ -22,6 +22,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Preserve Overview synthesis worker counts and timings in the interface and preview exports. Reset stale extraction progress during synthesis, track active batch times, and report follow-up tagging workers and timings accurately.
+
 - Run independent staged Overview summaries and follow-up AI tag assignments in parallel within the configured worker limit. Preserve sequential dependent stages, stable source ordering, cancellation and validated caches; record per-batch synthesis timings.
 
 - Normalize repeated valid Scheme citations and identify the exact citation field when reference types, counts or IDs are invalid. Continue rejecting unknown and cross-project references and preserving the last saved Scheme on failure.

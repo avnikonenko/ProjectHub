@@ -181,3 +181,31 @@ def test_worker_metadata_uses_input_order_not_completion_order(state, monkeypatc
     staged_overview.staged_synthesis(model, candidate, {'project': {'id': 1}}, {}, sources, groups,
                                     engine=engine, project_id=1, full_input_chars=10000)
     assert completions == ['Leaf 1', 'Leaf 0']
+
+
+def test_progress_replaces_extraction_timestamps_and_records_synthesis_durations(state):
+    engine, candidate = state
+    model = Model()
+    original_reply = model.reply
+    observed = []
+    def reply(prompt, schema, worker):
+        status = progress.read(1, 'knowledge')
+        if model.calls < 2:
+            assert status['batch_phase'] == 'overview synthesis'
+            assert status['last_batch_seconds'] is None
+        assert status['batch_started_at'] is not None
+        observed.append(status['batch_started_at'])
+        return original_reply(prompt, schema, worker)
+    model.reply = reply
+    progress.begin(1, 'knowledge')
+    try:
+        progress.update(1, batch_phase='knowledge extraction', batch_started_at='old extraction start',
+                        last_batch_seconds=9876)
+        generate(engine, candidate, model, {})
+        status = progress.read(1, 'knowledge')
+        assert observed
+        assert 'old extraction start' not in observed
+        assert status['batch_started_at'] is None
+        assert 0 <= status['last_batch_seconds'] < 9876
+    finally:
+        progress.finish(1)
