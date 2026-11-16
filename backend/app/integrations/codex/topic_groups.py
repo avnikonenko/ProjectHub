@@ -381,6 +381,51 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         for group in batch_taxonomy:
             catalog.setdefault(group['id'], group)
         memberships.update(assigned)
+    review_markers, reviewed_count = {}, 0
+    if compact_assignment:
+        review_configuration = _digest({'prompt': wire.REVIEW_PROMPT, 'schema': wire.REVIEW_SCHEMA})
+        if (metadata.get('version') == VERSION
+                and metadata.get('configuration_fingerprint') == configuration_fingerprint
+                and metadata.get('review_configuration') == review_configuration):
+            old_markers = metadata.get('reviewed_fingerprints', {})
+            if not isinstance(old_markers, dict):
+                raise CodexError('Saved untagged review metadata is invalid.')
+            review_markers = {identifier: value for identifier, value in old_markers.items()
+                              if fingerprints.get(identifier) == value}
+        unreviewed = [record for record in compact if not memberships.get(record['id'])
+                      and review_markers.get(record['id']) != fingerprints[record['id']]]
+        if unreviewed:
+            progress.update(project_id, stage='Reviewing missing AI topics', batch_phase='AI tagging',
+                            batch_total=1, batch_completed=0, batch_started_at=utcnow())
+            review_taxonomy, cached = cached_stage(
+                'untagged-review-' + review_configuration, wire.REVIEW_PROMPT,
+                wire.review_payload(unreviewed, list(catalog.values())), wire.REVIEW_SCHEMA,
+                lambda raw: wire.parse_review(raw, list(catalog.values())))
+            requests += int(not cached)
+            hits += int(cached)
+            review_batches = list(_batches(unreviewed, compact=True))
+            progress.update(project_id, stage='Assigning reviewed AI tags', batch_phase='AI tagging',
+                            batch_total=len(review_batches), batch_completed=0, cache_hits=0,
+                            batch_started_at=None)
+            review_hits = 0
+            for index, batch in enumerate(review_batches):
+                progress.check_cancelled()
+                start = time.monotonic()
+                progress.update(project_id, batch_started_at=utcnow())
+                assigned, cached = cached_stage(
+                    'assign', wire.ASSIGNMENT_PROMPT, wire.assignment_payload(batch, review_taxonomy),
+                    wire.assignment_schema(batch, review_taxonomy),
+                    lambda raw, batch=batch: wire.parse_assignments(raw, batch, review_taxonomy),
+                    item_ids=[record['id'] for record in batch])
+                memberships.update(assigned)
+                requests += int(not cached)
+                hits += int(cached)
+                review_hits += int(cached)
+                progress.update(project_id, batch_completed=index + 1, cache_hits=review_hits,
+                                last_batch_seconds=round(time.monotonic() - start, 3), batch_started_at=None)
+            catalog = {group['id']: group for group in review_taxonomy}
+            review_markers.update({record['id']: fingerprints[record['id']] for record in unreviewed})
+            reviewed_count = len(unreviewed)
     used_topics = {identifier for assigned in memberships.values() for identifier in assigned}
     taxonomy = [group for identifier, group in catalog.items() if identifier in used_topics]
     if len(taxonomy) > MAX_CATALOG_GROUPS:
@@ -394,4 +439,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                                'configuration_fingerprint': configuration_fingerprint,
                                'record_fingerprints': fingerprints, 'taxonomy': taxonomy,
                                'ai_requests': requests, 'cache_hits': hits, 'reused_items': reused,
-                               'workers': workers, 'batch_timings': batch_timings}}
+                               'workers': workers, 'batch_timings': batch_timings,
+                               **({'review_configuration': review_configuration,
+                                   'reviewed_fingerprints': review_markers,
+                                   'reviewed_items': reviewed_count} if compact_assignment else {})}}

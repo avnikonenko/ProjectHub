@@ -252,8 +252,9 @@ def test_shared_catalog_cached_independently_and_reused_for_delta(engine):
     records = [record(str(i)) for i in range(241)] + [record('unrelated', 'Unrelated')]
     original = deepcopy(records)
     first = topics.group_records(engine, 1, manager, records, compact_assignment=True)
-    assert [len(call['records']) for call in manager.calls if 'records' in call] == [240, 2]
-    assert first['topic_grouping']['ai_requests'] == 3
+    assert [len(call['records']) for call in manager.calls if 'records' in call] == [240, 2, 1]
+    assert first['topic_grouping']['ai_requests'] == 5
+    assert first['topic_grouping']['reviewed_items'] == 1
     assert first['topic_groups'][0]['item_ids'] == [row['id'] for row in records[:-1]]
     assert records == original
     warm = topics.group_records(engine, 1, manager, records, compact_assignment=True)
@@ -264,3 +265,40 @@ def test_shared_catalog_cached_independently_and_reused_for_delta(engine):
     assert delta['topic_grouping']['reused_items'] == len(records)
     assert delta['topic_grouping']['ai_requests'] == 1
     assert delta['topic_groups'][0]['item_ids'][-1] == 'new'
+    manager.generation_effort = 'high'
+    changed = topics.group_records(engine, 1, manager, [*records, record('new')],
+                                   previous=delta, compact_assignment=True)
+    assert changed['topic_grouping']['reviewed_items'] == 1
+    assert changed['topic_grouping']['ai_requests'] > 0
+
+
+def test_review_recovers_only_untagged_and_skips_unchanged_replay(engine):
+    class ReviewManager:
+        calls = []
+
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.rsplit('\n', 1)[1])
+            self.calls.append(payload)
+            if 'sample' in payload:
+                label = 'Security' if 'topics' in payload else 'Storage'
+                return json.dumps({'topics': [{'label': label, 'description': label + ' policy'}]})
+            labels = {row['label']: row['i'] for row in payload['topics']}
+            return json.dumps({'assignments': [
+                {'i': row['i'], 't': [labels['Storage']] if row['statement'] == 'Use SQLite.'
+                 else [labels['Security']] if 'Security' in labels else []}
+                for row in payload['records']]})
+
+    records = [record('storage'), record('security', 'Keep credentials isolated.')]
+    original = deepcopy(records)
+    manager = ReviewManager()
+    result = topics.group_records(engine, 1, manager, records, compact_assignment=True)
+    assert [(g['label'], g['item_ids']) for g in result['topic_groups']] == [
+        ('Storage', ['storage']), ('Security', ['security'])]
+    assert result['topic_grouping']['reviewed_items'] == 1
+    review_assignment = manager.calls[-1]
+    assert [row['statement'] for row in review_assignment['records']] == ['Keep credentials isolated.']
+    assert len(manager.calls) == 4
+    replay = topics.group_records(engine, 1, manager, records, previous=result, compact_assignment=True)
+    assert replay['topic_groups'] == result['topic_groups']
+    assert replay['topic_grouping']['ai_requests'] == 0
+    assert len(manager.calls) == 4 and records == original
