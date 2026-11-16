@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from sqlalchemy import create_engine, event
+from sqlalchemy import URL, create_engine, event
 from sqlalchemy.orm import Session
 from fastapi import Request
 from alembic import command
@@ -19,7 +19,8 @@ def initialize(data_dir):
     db_path = data_dir / 'projecthub.sqlite3'
     if db_path.is_symlink():
         raise ValueError('Database must not be a symlink')
-    engine = create_engine('sqlite:///' + str(db_path), connect_args={'check_same_thread': False, 'timeout': 15})
+    engine = create_engine(URL.create('sqlite', database=str(db_path)),
+                           connect_args={'check_same_thread': False, 'timeout': 15})
     @event.listens_for(engine, 'connect')
     def setup(connection, _):
         connection.execute('PRAGMA foreign_keys=ON')

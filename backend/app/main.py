@@ -174,6 +174,8 @@ def create_app(data_dir=None):
 
     @app.post('/api/projects/{project_id}/decisions/{decision_id}/tasks',status_code=201)
     def decision_task(project_id:int,decision_id:int,payload:DecisionTask,db:Session=db_dep):
+        # Serialize status validation and insertion with accept/reopen/revision.
+        db.execute(text('BEGIN IMMEDIATE'))
         d=scoped(db,Decision,project_id,decision_id)
         if d.status!='accepted':raise HTTPException(409,'Only accepted decisions can create implementation tasks')
         t=make_task(db,project_id,d,payload.model_dump(exclude_none=True));db.commit();return serialize(t)
@@ -235,6 +237,9 @@ def create_app(data_dir=None):
         ).limit(1)
         if db.scalar(existing) is not None:
             raise HTTPException(409, 'This shared conversation is already saved in this project.')
+        # Release the read connection while fetching. No write lock is held
+        # during network access or parsing, which may be slow or fail.
+        db.rollback()
         try:
             title, content = chatgpt_share.read_transcript(url)
             # Validate the extracted text, not just the downloaded page: indexed
@@ -244,6 +249,12 @@ def create_app(data_dir=None):
             raise HTTPException(502, str(exc)) from exc
         except ValidationError as exc:
             raise HTTPException(502, 'The extracted conversation exceeds supported note limits or contains invalid text.') from exc
+        # Another import can finish while this request is fetching. Recheck
+        # ownership and uniqueness in the same write transaction as insertion.
+        db.execute(text('BEGIN IMMEDIATE'))
+        require_project(db, project_id)
+        if db.scalar(existing) is not None:
+            raise HTTPException(409, 'This shared conversation is already saved in this project.')
         note = Note(project_id=project_id, **values)
         db.add(note)
         audit(db, project_id, note, 'created')
