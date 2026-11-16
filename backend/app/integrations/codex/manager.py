@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ...models import (Project, Question, Decision, Task, CodexSession,
                        ContextPackage, Delivery, CodexEvent)
-from .protocol import AppServerClient, CodexError
+from .protocol import AppServerClient, CodexError, JSONFormattingError
 from .ai_instructions import ai_instructions, read_project_instructions
 from .generation_metrics import begin_model_request
 from . import progress
@@ -563,7 +563,8 @@ class CodexManager:
 
         The complete canonical contract remains explicit in the prompt. Only
         extraction's existing local validator decides whether a result is valid.
-        Other brief, review, Q&A and Scheme generation keeps its existing schema.
+        Direct generate_brief calls keep their existing schema; callers using
+        this adapter must validate the canonical bounds locally.
         """
         contract = ('Required extraction output contract (trusted application schema):\n'
                     + json.dumps(canonical_schema, ensure_ascii=False, separators=(',', ':'))
@@ -645,8 +646,9 @@ class CodexManager:
                             return
                         formatting_guards[key] = _JsonFormattingGuard()
                     if formatting_guards[key].feed(params.get('delta')):
-                        error = ('Codex emitted excessive whitespace while formatting a JSON response. '
-                                 'Generation stopped; the previous saved result is unchanged.')
+                        error = JSONFormattingError(
+                            'Codex emitted excessive whitespace while formatting a JSON response. '
+                            'Generation stopped; the previous saved result is unchanged.')
                         formatting_errors[message_turn] = error
                         if message_turn == turn_id:
                             state['error'] = error
@@ -745,6 +747,8 @@ class CodexManager:
                         done.set()
                 wait_for_generation(done, timeout)
                 if 'error' in state:
+                    if isinstance(state['error'], JSONFormattingError):
+                        raise state['error']
                     raise CodexError(state['error'])
                 with event_lock:
                     turn = completed.get(turn_id, {})

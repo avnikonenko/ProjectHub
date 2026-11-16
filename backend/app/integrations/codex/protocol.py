@@ -14,6 +14,10 @@ class CodexError(RuntimeError):
     pass
 
 
+class JSONFormattingError(CodexError):
+    """Generation stopped after excessive formatting whitespace in JSON output."""
+
+
 # Per-process overrides never alter the user's global configuration. Discussion
 # threads deliberately disable execution, connectors, browser tools and hooks.
 DISABLED_FEATURES = ('apps', 'shell_tool', 'unified_exec', 'browser_use',
