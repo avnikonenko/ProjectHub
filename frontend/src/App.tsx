@@ -1479,7 +1479,6 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
   );
 }
 
-function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, onNoteSaved }: {
 function SharedChatTranscript({ base, share, passageNotes }: {
   base: string; share: RecordData; passageNotes: PassageNoteContext;
 }) {
@@ -1500,6 +1499,7 @@ function SharedChatTranscript({ base, share, passageNotes }: {
 }
 
   base: string;
+function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, onNoteSaved }: {
   projectId: number;
   historyLink: HistoryLink | null;
   notes: RecordData[];

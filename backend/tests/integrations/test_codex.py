@@ -484,8 +484,7 @@ def test_register_codex_directory_persists_routes_and_deduplicates(setup, tmp_pa
     assert {'id': key, 'label': 'Work profile'} in data['options']
     assert 'private sentinel' not in result.text
     duplicate = setup.client.post(base + '/accounts', json={'name': 'Duplicate', 'directory': str(home / '.')})
-    assert duplicate.status_code == 200 and duplicate.json()['registered_id'] == key
-    assert not duplicate.json()['added']
+    assert duplicate.status_code == 409
     with Session(setup.engine) as db:
         assert len(list(db.scalars(select(CodexProfile)))) == 1
     assert accounts.account_home(key, setup.engine) == str(home.resolve())
@@ -495,7 +494,7 @@ def test_register_codex_directory_persists_routes_and_deduplicates(setup, tmp_pa
         engine=setup.engine, data_dir=setup.path, codex_manager=setup.manager)), 1)
     assert child.client_factory.keywords['codex_home'] == str(home)
     assert sentinel.read_text() == 'private sentinel, never read by ProjectHub'
-    assert probes == [str(home), str(home)]
+    assert probes == [str(home)]
 
 
 def test_codex_directory_rejects_missing_and_unlogged_profiles_before_registering(setup, tmp_path, monkeypatch):
