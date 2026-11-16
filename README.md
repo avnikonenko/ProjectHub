@@ -41,6 +41,8 @@ Open **http://127.0.0.1:8766**. Stop with Ctrl+C. If the command is outside your
 
 Run `projecthub config` to locate your editable configuration. See [config.example.toml](config.example.toml). Environment variables override file settings; restart after changes.
 
+When started with `projecthub`, use **Settings → Restart ProjectHub** to load backend changes. Restart is blocked during active work. After reconnecting, **Reload page** loads interface changes; save unfinished edits first. Direct Uvicorn launches use their existing external process controls.
+
 AI features use your existing **Codex ChatGPT sign-in**: install Codex separately and run `codex login`. No OpenAI API key is required. Choose an existing profile, model, and reasoning effort in Settings; edit project AI instructions there too.
 
 ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.

@@ -35,6 +35,7 @@ import { TextSizeControl } from './TextSizeControl';
 import { ExtractionWorkersControl } from './ExtractionWorkersControl';
 import { PaletteControl } from './PaletteControl';
 import { SettingsHelp } from './SettingsHelp';
+import { RestartControl } from './RestartControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
 
@@ -1077,6 +1078,7 @@ function AppSettings() {
             <p>Register an existing Codex sign-in directory, then choose the profile in project AI settings. ProjectHub checks its login without copying credentials.</p>
           </SettingsHelp>
           <Feedback tone="success">{profileMessage}</Feedback>
+          <RestartControl active={open} />
         </div>
       </details>
       {addingProfile && <Form

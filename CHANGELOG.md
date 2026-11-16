@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Restart ProjectHub from Settings when using the managed launcher. Block restart during active work, reconnect to the new server instance, and offer an optional page reload while preserving unfinished browser edits.
+
 - Searchable Knowledge scopes under More filters: type a partial name to match related scopes or choose an existing scope suggestion.
 
 - Optional Codex notes-skill installation during setup, with a standalone installer, checkout-linked updates, and protection for existing skills.
