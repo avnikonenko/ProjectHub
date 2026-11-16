@@ -99,11 +99,13 @@ export function readKnowledgeLink(hash: string): KnowledgeLink | null {
   return { projectId, itemId: query.get('item') || undefined, publicationId: query.get('publication') || undefined };
 }
 export const normalizeKnowledgeText = (text: string) => text.toLocaleLowerCase().replace(/\s+/g, ' ').trim();
-export function filterKnowledge(items: KnowledgeItem[], query = '', status = '', category = '', scope = '', sources: KnowledgeSource[] = []) {
+export function filterKnowledge(items: KnowledgeItem[], query = '', status = '', category = '', scope = '', sources: KnowledgeSource[] = [], scopeQuery = '') {
   const needle = normalizeKnowledgeText(query);
+  const scopeNeedle = normalizeKnowledgeText(scopeQuery);
   const titles = new Map(sources.map((source) => [source.id, source.label || '']));
   return items.filter((item) => (!status || item.design_status === status) && (!category || item.category === category)
-    && (!scope || item.scope === scope) && (!needle || normalizeKnowledgeText([
+    && (!scope || item.scope === scope) && (!scopeNeedle || normalizeKnowledgeText(item.scope).includes(scopeNeedle))
+    && (!needle || normalizeKnowledgeText([
       item.statement, item.rationale, item.alternatives, item.limitations, item.scope, item.category, item.design_status,
       ...item.evidence.flatMap((ref) => [ref.excerpt, ref.label, titles.get(ref.source_id)]),
     ].filter(Boolean).join(' ')).includes(needle)));
