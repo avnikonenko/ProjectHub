@@ -103,7 +103,7 @@ export function BriefPreview({ brief, prefix }: { brief: Brief; prefix: string }
   const sources = citedSources(brief.sources, briefSections(brief).flatMap(({ entries }) => entries.flatMap(entry => entry.source_ids)));
   return <>
     <BriefContent brief={brief} prefix={prefix} />
-    <details><summary>Preview sources ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
-    {!!brief.coverage.length && <details><summary>Preview coverage</summary><ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
+    <details><summary className="source-disclosure">Preview sources ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
+    {!!brief.coverage.length && <details><summary className="source-disclosure">Preview coverage</summary><ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
   </>;
 }

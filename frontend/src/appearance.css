@@ -101,7 +101,7 @@
   color: color-mix(in srgb, var(--accent) 90%, #000);
 }
 
-:root[data-palette] :is(.brief-reference, .citation-source, .brief-sources li > details > summary, .brief-sources h4) {
+:root[data-palette] :is(.brief-reference, .citation-source, .source-disclosure, .brief-sources summary, .brief-sources h4) {
   color: var(--muted);
 }
 

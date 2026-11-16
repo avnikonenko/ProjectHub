@@ -36,7 +36,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     reset(); setSelected(id); setSelectionRequest((value) => value + 1); onSelectItem?.(id);
   }
   const topics = topicChoices(snapshot.items, snapshot.topic_groups, item => item.id, item => item.design_status);
-  const items = filterTopicItems(filterKnowledge(snapshot.items, query, status, category, scope, snapshot.sources),
+  const items = filterTopicItems(filterKnowledge(snapshot.items, query, status, category, '', snapshot.sources, scope),
     topic, topics, item => item.id, tagSearch);
   const byId = new Map(snapshot.items.map((item) => [item.id, item]));
   const sources = new Map(snapshot.sources.map((source) => [source.id, source]));
@@ -123,10 +123,14 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
         <label>Category<select aria-label="Category" value={category} onChange={(event) => { setCategory(event.target.value); setLimits({}); }}><option value="">All categories</option>
           {[...new Set(snapshot.items.map((item) => item.category))].sort().map((value) => <option key={value} value={value}>{display(value)}</option>)}
         </select></label>
-        <label>Scope<select aria-label="Scope" value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }}><option value="">All scopes</option>
-          {[...new Set(snapshot.items.map((item) => item.scope))].sort().map((value) => <option key={value} value={value}>{value}</option>)}
-        </select></label>
+        <label>Scope<input type="search" aria-label="Scope" list={`${instanceId}-scope-options`}
+          placeholder="Search scopes…" value={scope} onChange={(event) => { setScope(event.target.value); setLimits({}); }} />
+          <datalist id={`${instanceId}-scope-options`}>
+            {[...new Set(snapshot.items.map((item) => item.scope))].filter(Boolean).sort().map((value) => <option key={value} value={value} />)}
+          </datalist>
+        </label>
       </div>
+      <p className="muted">Type a word such as CDK2 to match all scopes containing it, or choose a suggested scope.</p>
     </details>
     <div className="knowledge-filter-footer">
       <p role="status">{items.length} of {snapshot.items.length} knowledge items</p>
@@ -155,7 +159,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           onClick={() => setLimits((previous) => ({ ...previous, [value]: limit + 10 }))}>Show more {display(value).toLowerCase()} items</button>}
       </section>;
     })}
-    <details className="knowledge-coverage"><summary>Knowledge coverage</summary>
+    <details className="knowledge-coverage"><summary className="source-disclosure">Knowledge coverage</summary>
       <p>Knowledge is a derived interpretation. Missing extracted information does not establish that it was never discussed.</p>
       {Object.entries(snapshot.coverage || {}).map(([key, entries]) => <details key={key}><summary>{display(key)} ({entries.length})</summary>
         <ul>{entries.map((entry, index) => <li key={index}>{entry}</li>)}</ul>

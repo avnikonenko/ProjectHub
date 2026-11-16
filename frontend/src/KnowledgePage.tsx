@@ -230,7 +230,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
             snapshot={snapshot} availability={load.data?.current_evidence_availability}
             selectedItemId={absentItem ? undefined : selectedItemId} />
           {!!Object.values(load.data?.coverage ?? {}).some(values => values.length > 0) && <details>
-            <summary>Current source coverage</summary>
+            <summary className="source-disclosure">Current source coverage</summary>
             {Object.entries(load.data?.coverage ?? {}).filter(([, values]) => values.length > 0).map(([name, values]) => <div key={name}>
               <strong>{name.replaceAll('_', ' ')}{name === 'limitations' ? '' : ` (${values.length})`}</strong>
               <ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul>
