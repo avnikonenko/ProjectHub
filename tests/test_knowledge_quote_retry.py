@@ -69,6 +69,7 @@ def selected(item, *, bad_selector=False, wrong_owner=False, wrong_role=False):
         assert quote['id'] in schema['properties']['items']['items']['properties']['evidence']['items']['properties']['excerpt']['enum']
         value = deepcopy(item)
         ref = value['evidence'][0]
+        ref.pop('source_id')
         ref['excerpt'] = 'unknown-selector' if bad_selector else quote['id']
         if wrong_owner:
             ref['source_id'] = payload['sources'][1]['id']
@@ -198,6 +199,7 @@ def test_oversized_fresh_quote_uses_one_bounded_selector_retry(quote_batch):
         assert ''.join(quote['text'] for quote in quotes) == original
         assert all(len(quote['text']) <= 1600 for quote in quotes)
         value = deepcopy(item)
+        value['evidence'][0].pop('source_id')
         value['evidence'][0]['excerpt'] = quotes[0]['id']
         return response(value)
 
@@ -279,6 +281,7 @@ def test_parallel_candidate_counts_each_worker_retry_without_cross_run_leak(quot
                 self.barrier.wait(timeout=5)
                 value['evidence'][0]['excerpt'] = 'A model-modified quotation absent from either source.'
             else:
+                value['evidence'][0].pop('source_id')
                 value['evidence'][0]['excerpt'] = source['literal_quotes'][0]['id']
             return json.dumps(response(value))
 

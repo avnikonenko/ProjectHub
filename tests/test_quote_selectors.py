@@ -27,7 +27,7 @@ def response(identifier, selector):
                        'category': 'PROPOSAL', 'design_status': 'PROPOSED', 'scope': 'CLI configuration',
                        'rationale': '', 'limitations': '', 'alternatives': '', 'agreement_basis': 'none',
                        'revises_statement': '', 'conflicting_statements': [],
-                       'evidence': [{'source_id': identifier, 'role': 'assistant', 'excerpt': selector}]}]}
+                       'evidence': [{'role': 'assistant', 'excerpt': selector}]}]}
 
 
 def test_source_text_is_rendered_once_losslessly_with_schema_bounded_chunks():
@@ -50,6 +50,9 @@ def test_source_text_is_rendered_once_losslessly_with_schema_bounded_chunks():
     expected_schema = deepcopy(schema)
     expected_schema['properties']['items']['items']['properties']['evidence']['items']['properties']['excerpt']['enum'] = [
         identifier for identifier, (_, literal) in catalog.items() if literal.strip()]
+    ref_schema = expected_schema['properties']['items']['items']['properties']['evidence']['items']
+    del ref_schema['properties']['source_id']
+    ref_schema['required'].remove('source_id')
     assert wire_schema == expected_schema
     assert (original, schema) == before
 
@@ -99,7 +102,7 @@ def test_code_typo_and_all_other_output_fields_restore_exactly_without_repair():
     before = deepcopy((result, wire, dict(catalog)))
     restored = json.loads(restore_quote_selection(json.dumps(result), catalog, knowledge.MAX_RESPONSE_CHARS))
     expected = deepcopy(result)
-    expected['items'][0]['evidence'][0]['excerpt'] = text
+    expected['items'][0]['evidence'][0].update(excerpt=text, source_id='original-code')
     assert restored == expected
     assert (result, wire, dict(catalog)) == before
     window = {'sources': original['sources'], 'primary_ids': original['primary_ids'], 'context_ids': []}
@@ -113,8 +116,15 @@ def test_identical_source_text_does_not_make_quote_owners_interchangeable():
     first_id = wire['sources'][0]['literal_quotes'][0]['id']
     second_id = wire['sources'][1]['literal_quotes'][0]['id']
     assert first_id != second_id and catalog[first_id][1] == catalog[second_id][1]
-    with pytest.raises(CodexError, match='owned by another source'):
-        restore_quote_selection(json.dumps(response('second', first_id)), catalog, knowledge.MAX_RESPONSE_CHARS)
+    for owner, selector in [('first', first_id), ('second', second_id)]:
+        restored = json.loads(restore_quote_selection(
+            json.dumps(response(owner, selector)), catalog, knowledge.MAX_RESPONSE_CHARS))
+        assert restored['items'][0]['evidence'][0]['source_id'] == owner
+    for owner in ('first', 'second'):
+        contradictory = response(owner, first_id)
+        contradictory['items'][0]['evidence'][0]['source_id'] = owner
+        with pytest.raises(CodexError, match='invalid evidence'):
+            restore_quote_selection(json.dumps(contradictory), catalog, knowledge.MAX_RESPONSE_CHARS)
 
 
 @pytest.mark.parametrize('selector', ['missing', 'Exact quote text.', None, [], 1])
