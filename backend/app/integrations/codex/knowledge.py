@@ -356,8 +356,6 @@ def validate_extraction(raw, window, project_id, extraction_version):
             evidence.append({**ref, 'excerpt': quote, **{key: source.get(key) for key in (
                 'revision', 'conversation_id', 'order', 'source_key', 'timestamp', 'message_revision')},
                 'label': source.get('label', identifier)})
-        if not any(ref['source_id'] in primary for ref in evidence):
-            raise CodexError('Knowledge item cites only overlapping context.')
         users = [ref for ref in evidence if ref['role'] == 'user']
         if item['design_status'] in ('AGREED', 'REJECTED'):
             if not users or item['agreement_basis'] == 'none':
@@ -371,6 +369,11 @@ def validate_extraction(raw, window, project_id, extraction_version):
             elif any(_short_acceptance(indexed[ref['source_id']]['text']) for ref in users):
                 raise CodexError('A short acceptance requires proposal context, not direct agreement.')
         if excerpt_error is not None:
+            continue
+        # Neighboring messages support interpretation, but are extracted in
+        # their own primary window. Ignore duplicate context-only candidates
+        # only after all citation and agreement checks have succeeded.
+        if not any(ref['source_id'] in primary for ref in evidence):
             continue
         item.update(id='knowledge:' + _digest([project_id, item['category'], item['scope'],
                     item['design_status'], _normalized(item['statement'])])[:32], project_id=project_id,

@@ -18,6 +18,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Knowledge extraction no longer fails an entire generation when an item cites only neighboring context. Fully validated overlap-only candidates are excluded from that batch; primary evidence, quotation and agreement checks remain enforced.
+
 - Generate independent AI Q&A drafts and consolidation groups using the saved parallel worker setting, with phase-specific progress and timings, deterministic ordering, and reusable completed caches. Retry an explicit JSON whitespace-formatting failure once on a fresh transport through the existing structural-schema adapter, preserving local output limits and citation validation without retrying unrelated generation errors.
 
 - Keep delayed AI Q&A reloads from replacing a selected historical version or newer changes. Bind cached Q&A drafts to the original evidence content and revision, while retaining cache reuse for unchanged evidence.
