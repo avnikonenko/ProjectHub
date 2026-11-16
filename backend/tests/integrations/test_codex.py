@@ -628,8 +628,10 @@ def test_review_response_pages_survive_noisy_raw_event_history(setup):
 
 def test_completed_response_retains_turn_identity_only(setup):
     sid = create_session(setup)
+    with Session(setup.engine) as db:
+        thread_id = db.get(CodexSession, sid).thread_id
     setup.manager._event(sid, 'item/completed', {
-        'turnId': 'review-turn', 'threadId': 'not-retained',
+        'turnId': 'review-turn', 'threadId': thread_id,
         'item': {'type': 'agentMessage', 'text': 'Answer', 'extra': 'not-retained'},
     })
     with Session(setup.engine) as db:

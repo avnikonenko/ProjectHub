@@ -43,7 +43,10 @@ def audit(db, project_id, obj, action, before=None):
 
 def validate_repository(value, *, env=None):
     if value is None or value == '': return None
-    path = Path(value).expanduser()
+    try:
+        path = Path(value).expanduser()
+    except (RuntimeError, OSError) as exc:
+        raise HTTPException(422, 'Repository user home could not be resolved') from exc
     if not path.is_absolute() or '..' in path.parts or any(ord(c) < 32 for c in str(path)):
         raise HTTPException(422, 'Repository must be an absolute path without traversal')
     # Reject symlinks in every component, so registration cannot resolve elsewhere.

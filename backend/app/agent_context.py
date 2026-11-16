@@ -15,8 +15,14 @@ def _project(db, project_id):
 
 
 def _prose(expression, name):
-    return (f"substr(coalesce({expression},''),:start,:chars) AS {name}, "
-            f"length(coalesce({expression},'')) AS {name}_length")
+    value = f"coalesce({expression},'')"
+    # SQLite text length/substr stop at NUL. Legacy content must not silently
+    # appear complete at that point. Only that rare case uses Python slicing;
+    # ordinary large notes retain their bounded SQL projection.
+    return (f"CASE WHEN instr({value},char(0))>0 THEN projecthub_text_window({value},:start,:chars) "
+            f"ELSE substr({value},:start,:chars) END AS {name}, "
+            f"CASE WHEN instr({value},char(0))>0 THEN projecthub_text_length({value}) "
+            f"ELSE length({value}) END AS {name}_length")
 
 
 def _refs(expression):
@@ -54,7 +60,10 @@ def _definition(kind):
                 + _prose("json_extract(j.value,'$.text')", 'text') + ','
                 + _refs("json_extract(j.value,'$.source_ids')"), ('text',), "json_extract(j.value,'$.text')")
     if kind == 'knowledge':
-        return ("project_knowledge k,json_each(k.snapshot,'$.items') j", 'k.project_id=:pid',
+        return ("project_knowledge k,json_each(k.snapshot,'$.items') j",
+                "k.project_id=:pid AND (json_extract(k.snapshot,'$.project_id') IS NULL "
+                "OR json_extract(k.snapshot,'$.project_id')=:pid) "
+                "AND (json_extract(j.value,'$.project_id') IS NULL OR json_extract(j.value,'$.project_id')=:pid)",
                 "json_extract(j.value,'$.id')", "CASE json_extract(j.value,'$.design_status') WHEN 'AGREED' THEN 0 "
                 "WHEN 'UNRESOLVED' THEN 1 ELSE 2 END,json_extract(j.value,'$.id')",
                 "substr(json_extract(j.value,'$.id'),1,300) AS id,"
@@ -86,7 +95,9 @@ def _definition(kind):
             "json_object('kind','relationship','items',json_extract(graph.value,'$.edges')),"
             "json_object('kind','explanation','items',json_array(json_object('description',"
             "json_extract(graph.value,'$.explanation')))))) part,json_each(part.value,'$.items') j",
-            "s.project_id=:pid AND graph.value IS NOT NULL",
+            "s.project_id=:pid AND graph.value IS NOT NULL "
+            "AND (json_extract(s.snapshot,'$.project_id') IS NULL OR json_extract(s.snapshot,'$.project_id')=:pid) "
+            "AND (json_extract(j.value,'$.project_id') IS NULL OR json_extract(j.value,'$.project_id')=:pid)",
             "graph.key || ':' || json_extract(part.value,'$.kind') || ':' || j.key",
             "graph.key,json_extract(part.value,'$.kind'),CAST(j.key AS INTEGER)",
             "graph.key || ':' || json_extract(part.value,'$.kind') || ':' || j.key AS id,graph.key AS graph,"
@@ -114,6 +125,10 @@ def _saved_at(db, pid, kind):
 
 def _read(db, pid, kind, offset=0, limit=5, record_id=None, text_offset=0, chars=CHARS, query='', active=False):
     import json
+    connection = db.connection().connection.driver_connection
+    connection.create_function('projecthub_text_window', 3,
+                               lambda value, start, size: value[start - 1:start - 1 + size], deterministic=True)
+    connection.create_function('projecthub_text_length', 1, len, deterministic=True)
     table, where, identity, order, columns, fields, searchable = _definition(kind)
     params = {'pid': pid, 'offset': offset, 'limit': limit + 1, 'start': text_offset + 1, 'chars': chars}
     if record_id is not None:

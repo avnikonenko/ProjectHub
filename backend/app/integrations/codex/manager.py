@@ -275,28 +275,40 @@ class CodexManager:
         if method not in ('turn/started', 'turn/completed', 'item/completed', 'error',
                           'projecthub/approvalDenied'):
             return
-        # Save model responses and status, not command output, account messages,
-        # tool parameters, or unrelated global server notifications.
-        if method == 'item/completed':
-            item = params.get('item', {})
-            if item.get('type') != 'agentMessage':
-                return
-            turn_id = params.get('turnId')
-            params = {'item': {'type': 'agentMessage', 'text': str(item.get('text', ''))[:100_000]}}
-            if isinstance(turn_id, str) and turn_id:
-                params['turnId'] = turn_id
-        elif method == 'error':
-            params = {'message': _REVIEW_EXECUTION_ERROR,
-                      'will_retry': bool(params.get('willRetry', False))}
-        elif method in ('turn/started', 'turn/completed'):
-            turn = params.get('turn', {})
-            params = {'turn': {'id': turn.get('id'), 'status': turn.get('status')},
-                      'threadId': params.get('threadId')}
+        if not isinstance(params, dict):
+            return
+        if method == 'item/completed' and (
+                not isinstance(params.get('item'), dict) or params['item'].get('type') != 'agentMessage'):
+            return
+        # Keep transport identity before reducing the notification to stored
+        # fields. A callback belongs to one session, but an explicitly different
+        # thread must never be recorded under that session or alter its state.
+        has_thread = 'threadId' in params
+        event_thread = params.get('threadId')
         try:
             with Session(self.engine) as db:
                 session = db.get(CodexSession, session_id)
                 if session is None:
                     return
+                if has_thread and event_thread != session.thread_id:
+                    return
+                # Save model responses and status, not command output, account messages,
+                # tool parameters, or unrelated global server notifications.
+                if method == 'item/completed':
+                    item = params.get('item', {})
+                    if item.get('type') != 'agentMessage':
+                        return
+                    turn_id = params.get('turnId')
+                    params = {'item': {'type': 'agentMessage', 'text': str(item.get('text', ''))[:100_000]}}
+                    if isinstance(turn_id, str) and turn_id:
+                        params['turnId'] = turn_id
+                elif method == 'error':
+                    params = {'message': _REVIEW_EXECUTION_ERROR,
+                              'will_retry': bool(params.get('willRetry', False))}
+                elif method in ('turn/started', 'turn/completed'):
+                    turn = params.get('turn', {})
+                    params = {'turn': {'id': turn.get('id'), 'status': turn.get('status')},
+                              'threadId': params.get('threadId')}
                 db.add(CodexEvent(project_id=session.project_id, session_id=session.id,
                                   method=method, payload=params))
                 if method == 'turn/started':
