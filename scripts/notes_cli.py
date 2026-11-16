@@ -144,13 +144,13 @@ def main(argv=None):
             print(json.dumps(request('GET', path), ensure_ascii=False))
             return 0
         if args.command == 'projects':
-            projects = request('GET', '/projects')
+            projects = request('GET', '/projects?compact=true')
             print(json.dumps([{'id': p['id'], 'name': p['name']} for p in projects], ensure_ascii=False))
             return 0
         if args.command == 'todo' and args.action in ('complete', 'done'):
             if args.todo_id <= 0:
                 raise ValueError('TODO ID must be a positive integer.')
-            project = resolve_project(request('GET', '/projects'), args)
+            project = resolve_project(request('GET', '/projects?compact=true'), args)
             path = f"/projects/{project['id']}/tasks"
             rows = request('GET', path)
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -175,7 +175,7 @@ def main(argv=None):
                     raise ValueError('Provide a valid --session or run from a Codex session with CODEX_THREAD_ID.')
                 if args.title is not None and not 1 <= len(args.title.strip()) <= 200:
                     raise ValueError('Session title must contain 1–200 characters.')
-            project = resolve_project(request('GET', '/projects'), args)
+            project = resolve_project(request('GET', '/projects?compact=true'), args)
             path = f"/projects/{project['id']}/codex/sessions"
             rows = request('GET', path)
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -199,7 +199,7 @@ def main(argv=None):
                               'already_linked': existing is not None}, ensure_ascii=False))
             return 0
         if args.action == 'list':
-            project = resolve_project(request('GET', '/projects'), args)
+            project = resolve_project(request('GET', '/projects?compact=true'), args)
             collection = 'tasks' if args.command == 'todo' else 'notes'
             items = request('GET', f"/projects/{project['id']}/{collection}")
             if args.command == 'todo' and not args.all:
@@ -221,7 +221,7 @@ def main(argv=None):
             payload = {'title': title}
             if details is not None:
                 payload['description'] = details
-            project = resolve_project(request('GET', '/projects'), args)
+            project = resolve_project(request('GET', '/projects?compact=true'), args)
             result = request('POST', f"/projects/{project['id']}/tasks", payload)
             if (not isinstance(result, dict) or not isinstance(result.get('id'), int)
                     or result.get('project_id') != project['id']):
@@ -240,7 +240,7 @@ def main(argv=None):
         session = args.session if args.session is not None else os.environ.get('CODEX_THREAD_ID', '')
         if session and not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', session):
             raise ValueError('Session ID must contain only letters, numbers, underscores, or hyphens.')
-        project = resolve_project(request('GET', '/projects'), args)
+        project = resolve_project(request('GET', '/projects?compact=true'), args)
         result = request('POST', f"/projects/{project['id']}/notes", {
             'title': title, 'content': content, 'kind': 'ai_note',
             'reference': f'AI terminal session {session}' if session else 'AI terminal session (ID not supplied)',

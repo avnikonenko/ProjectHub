@@ -28,6 +28,40 @@ def test_ambiguous_project_never_writes():
                                   SimpleNamespace(project_id=None, project='Same'))
 
 
+@pytest.mark.parametrize('command', [
+    ['note', 'list'], ['notes', 'list'],
+    ['todo', 'list'], ['todo', 'list', '--all'],
+    ['note', 'add', '--title', 'Finding', '--content', 'Text'],
+    ['notes', 'add', '--title', 'Finding', '--content', 'Text'],
+    ['todo', 'add', '--title', 'Check'],
+    ['todo', 'complete', '--todo-id', '7'],
+    ['todo', 'done', '--todo-id', '7'],
+    ['session', 'list'], ['session', 'link', '--session', 'thread-1'],
+])
+def test_legacy_commands_resolve_only_compact_projects(monkeypatch, capsys, command):
+    calls = []
+
+    def request(method, path, payload=None):
+        calls.append((method, path, payload))
+        assert (method, path, payload) == ('GET', '/projects?compact=true', None)
+        return []
+
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main([*command, '--project-id', '2']) == 1
+    assert calls == [('GET', '/projects?compact=true', None)]
+    assert not capsys.readouterr().out
+
+
+def test_projects_command_reads_compact_metadata_and_keeps_output(monkeypatch, capsys):
+    def request(method, path, payload=None):
+        assert (method, path, payload) == ('GET', '/projects?compact=true', None)
+        return [{'id': 2, 'name': 'Example', 'status': 'planning'}]
+
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert notes_cli.main(['projects']) == 0
+    assert json.loads(capsys.readouterr().out) == [{'id': 2, 'name': 'Example'}]
+
+
 def test_failed_post_is_not_retried(monkeypatch):
     calls = []
     def request(method, path, payload=None):
@@ -47,7 +81,7 @@ def test_failed_post_is_not_retried(monkeypatch):
 def test_read_notes_and_todos_does_not_write(monkeypatch, capsys, command, expected):
     def request(method, path, payload=None):
         assert method == 'GET'
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 2, 'name': 'Example'}]
         assert path == f'/projects/2/{expected}'
         return [{'id': 1, 'status': 'backlog'}, {'id': 2, 'status': 'completed'}]
@@ -94,7 +128,7 @@ def test_session_list_reads_only_selected_project(monkeypatch, capsys, selector)
 
     def request(method, path, payload=None):
         calls.append((method, path, payload))
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 3, 'name': 'Website'}, {'id': 4, 'name': 'Other'}]
         assert path == '/projects/3/codex/sessions'
         return [session]
@@ -115,7 +149,7 @@ def test_session_link_uses_current_or_explicit_thread_once(monkeypatch, capsys, 
 
     def request(method, path, payload=None):
         calls.append((method, path, payload))
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 3, 'name': 'Website'}]
         assert path == '/projects/3/codex/sessions'
         if method == 'GET':
@@ -145,7 +179,7 @@ def test_session_link_is_idempotent_and_can_relink(monkeypatch, capsys, linked):
 
     def request(method, path, payload=None):
         calls.append((method, path, payload))
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 3, 'name': 'Website'}]
         assert path == '/projects/3/codex/sessions'
         if method == 'GET':
@@ -192,12 +226,12 @@ def test_session_link_ambiguous_project_does_not_write(monkeypatch):
 
     def request(method, path, payload=None):
         calls.append((method, path))
-        assert method == 'GET' and path == '/projects'
+        assert method == 'GET' and path == '/projects?compact=true'
         return [{'id': 3, 'name': 'Website'}, {'id': 4, 'name': 'Website'}]
 
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['session', 'link', '--project', 'Website', '--session', 'thread-1']) == 1
-    assert calls == [('GET', '/projects')]
+    assert calls == [('GET', '/projects?compact=true')]
 
 
 @pytest.mark.parametrize('response', [
@@ -211,7 +245,7 @@ def test_session_link_rejects_unconfirmed_or_foreign_response(monkeypatch, capsy
     posts = []
 
     def request(method, path, payload=None):
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 3, 'name': 'Website'}]
         if method == 'GET':
             return []
@@ -231,7 +265,7 @@ def test_session_link_failed_submission_is_not_retried(monkeypatch, capsys):
 
     def request(method, path, payload=None):
         calls.append((method, path, payload))
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 3, 'name': 'Website'}]
         if method == 'GET':
             return []
@@ -247,7 +281,7 @@ def test_session_link_failed_submission_is_not_retried(monkeypatch, capsys):
 def test_session_link_invalid_session_list_fails_without_write(monkeypatch, capsys, response):
     def request(method, path, payload=None):
         assert method == 'GET'
-        return [{'id': 3, 'name': 'Website'}] if path == '/projects' else response
+        return [{'id': 3, 'name': 'Website'}] if path == '/projects?compact=true' else response
 
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['session', 'link', '--project-id', '3', '--session', 'thread-1']) == 1
@@ -257,7 +291,7 @@ def test_session_link_rejects_malformed_session_list(monkeypatch, capsys):
     monkeypatch.setenv('CODEX_THREAD_ID', 'current-thread')
     def request(method, path, payload=None):
         assert method == 'GET'
-        return [{'id': 1, 'name': 'One'}] if path == '/projects' else [None]
+        return [{'id': 1, 'name': 'One'}] if path == '/projects?compact=true' else [None]
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['session', 'link', '--project-id', '1']) == 1
     assert 'Unexpected session list response' in capsys.readouterr().err
@@ -269,7 +303,7 @@ def test_complete_todo_scoped_and_idempotent(monkeypatch, capsys, action, status
     calls = []
     def request(method, path, payload=None):
         calls.append((method, path, payload))
-        if path == '/projects':
+        if path == '/projects?compact=true':
             return [{'id': 2, 'name': 'Example'}]
         item = {'id': 7, 'project_id': 2, 'status': status}
         if method == 'GET':
@@ -287,7 +321,7 @@ def test_complete_todo_scoped_and_idempotent(monkeypatch, capsys, action, status
 def test_complete_missing_todo_never_writes(monkeypatch):
     def request(method, path, payload=None):
         assert method == 'GET'
-        return [{'id': 2, 'name': 'Example'}] if path == '/projects' else []
+        return [{'id': 2, 'name': 'Example'}] if path == '/projects?compact=true' else []
     monkeypatch.setattr(notes_cli, 'request', request)
     assert notes_cli.main(['todo', 'complete', '--project-id', '2', '--todo-id', '99']) == 1
 
