@@ -1593,14 +1593,6 @@ a:focus-visible {
 .scheme-color-key .scheme-key-start::before { background: #357a62; }
 .scheme-color-key .scheme-key-end::before { background: #80549f; }
 
-.review-followups {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: .5rem 1rem;
-  margin: .75rem 0 1.25rem;
-}
 .review-discussion-toggle { cursor: pointer; padding-block: .5rem; }
 .answer time { display: block; font-size: .85rem; }
 

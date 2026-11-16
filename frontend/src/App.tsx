@@ -781,13 +781,6 @@ function ProjectWorkspace({
             {view === 'Reviews' && (
               <>
                 <AskProject base={base} projectId={projectId} generation={generation} />
-                <div className="review-followups">
-                  <span className="muted">Open TODOs and recorded limitations</span>
-                  <button className="secondary" disabled={busy}
-                    onClick={() => run(async () => setReport(await api(`${base}/review`)))}>
-                    Review follow-ups
-                  </button>
-                </div>
                 <details>
                   <summary className="review-discussion-toggle">Continue a Codex discussion</summary>
                   <CodexReview base={base} generation={generation} onNotesChanged={load}
