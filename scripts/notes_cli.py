@@ -19,12 +19,9 @@ class NoRedirect(HTTPRedirectHandler):
 
 def request(method, path, payload=None):
     from backend.app.config import load_settings
-    try:
-        port = load_settings().port
-        if not 1 <= port <= 65535:
-            raise ValueError()
-    except ValueError:
-        raise ValueError('PROJECTHUB_PORT must be a valid local port.')
+    # Settings validation already checks the port. Preserve its actual error:
+    # an invalid profile, budget or config file is not a port problem.
+    port = load_settings().port
     data = None if payload is None else json.dumps(payload).encode('utf-8')
     req = Request(f'http://127.0.0.1:{port}/api{path}', data=data, method=method,
                   headers={'Content-Type': 'application/json'})

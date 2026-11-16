@@ -78,7 +78,10 @@ class Settings:
 def _absolute_path(value, name):
     if not isinstance(value, str) or not value.strip() or '\x00' in value:
         raise ConfigError(f'{name} must be an absolute path.')
-    path = Path(value).expanduser()
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError as exc:
+        raise ConfigError(f'{name} refers to an unavailable home directory.') from exc
     if not path.is_absolute():
         raise ConfigError(f'{name} must be an absolute path.')
     return path
