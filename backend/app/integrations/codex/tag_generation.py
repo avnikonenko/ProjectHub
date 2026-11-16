@@ -75,6 +75,8 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                 token = deepcopy(row.snapshot if target != 'qa' else previous)
                 row_id = row.id if target == 'knowledge_preview' else None
             records = previous.get('items', [])
+            if not isinstance(records, list) or any(not isinstance(item, dict) for item in records):
+                raise CodexError('The saved result has invalid tag records. Previous tags are preserved.')
             if target == 'qa':
                 records = [{
                     'id': item['id'], 'category': 'Q&A', 'design_status': 'UNKNOWN', 'scope': 'Project',

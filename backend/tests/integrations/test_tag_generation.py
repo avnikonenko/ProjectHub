@@ -134,3 +134,15 @@ def test_optimized_tags_default_and_small_results_avoid_extra_calls(saved, monke
     tags.generate_tags(saved, 1, object(), target='knowledge', publication_id='publication')
     assert options == ({'compact_assignment': True} if setting != '0' and count > 120 else {})
     assert tag_context_version() is None
+
+
+@pytest.mark.parametrize('items', [None, {}, [None], ['invalid']])
+def test_malformed_saved_records_fail_explicitly_without_replacing_tags(saved, items):
+    with Session(saved) as db:
+        row = db.get(ProjectKnowledge, 1)
+        row.snapshot = {**row.snapshot, 'items': items}
+        db.commit()
+    before = snapshot(saved)
+    with pytest.raises(CodexError, match='invalid tag records'):
+        tags.generate_tags(saved, 1, object(), target='knowledge', publication_id='publication')
+    assert snapshot(saved) == before

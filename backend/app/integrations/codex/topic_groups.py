@@ -49,6 +49,10 @@ def _digest(value):
                                      separators=(',', ':')).encode()).hexdigest()
 
 
+def _catalog_fingerprint(taxonomy):
+    return _digest(sorted(taxonomy, key=lambda topic: topic['id']))
+
+
 def _text(value, maximum):
     return isinstance(value, str) and bool(value.strip()) and value == value.strip() and len(value) <= maximum
 
@@ -199,12 +203,12 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
     configuration = {'version': VERSION, 'prompt': PROMPT, 'instructions': ai_instructions(),
                      'identity': _requested_provenance(manager)}
     from .manager import tag_context_version
+    from . import compact_topic_wire as wire
     context_version = tag_context_version()
+    assignment_prompt = wire.PACKED_ASSIGNMENT_PROMPT if context_version else wire.ASSIGNMENT_PROMPT
+    assignment_schema = wire.packed_assignment_schema if context_version else wire.assignment_schema
+    assignment_parser = wire.parse_packed_assignments if context_version else wire.parse_assignments
     if compact_assignment:
-        from . import compact_topic_wire as wire
-        assignment_prompt = wire.PACKED_ASSIGNMENT_PROMPT if context_version else wire.ASSIGNMENT_PROMPT
-        assignment_schema = wire.packed_assignment_schema if context_version else wire.assignment_schema
-        assignment_parser = wire.parse_packed_assignments if context_version else wire.parse_assignments
         configuration.update(strategy='shared-catalog-v1', bootstrap=wire.BOOTSTRAP_PROMPT,
                              assignment=assignment_prompt)
     if context_version:
@@ -212,6 +216,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
     configuration_fingerprint = _digest(configuration)
     fingerprints = {record['id']: _digest(record) for record in compact}
     taxonomy, memberships, reused = [], {}, 0
+    assignment_catalogs = {}
     metadata = (previous or {}).get('topic_grouping', {})
     if not isinstance(metadata, dict):
         raise CodexError('Saved Knowledge topic grouping metadata is invalid.')
@@ -233,6 +238,9 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         for identifier in known:
             if old_fingerprints.get(identifier) == fingerprints[identifier]:
                 memberships[identifier] = [group['id'] for group in groups if identifier in group['item_ids']]
+                # Older snapshots did not track which catalog a negative result
+                # saw. Recheck those once, independently of taxonomy review.
+                assignment_catalogs[identifier] = metadata.get('assignment_catalog_fingerprint')
                 reused += 1
         # Validate the complete saved catalog first, then retire definitions whose
         # old memberships have no surviving records. Untagged records still reuse.
@@ -283,6 +291,11 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         taxonomy, cached = cached_stage('catalog', wire.BOOTSTRAP_PROMPT, wire.bootstrap_payload(compact),
                                          wire.BOOTSTRAP_SCHEMA, wire.parse_bootstrap)
         catalog_requests = int(not cached)
+    if compact_assignment and taxonomy:
+        fingerprint = _catalog_fingerprint(taxonomy)
+        pending = [record for record in compact if record['id'] not in memberships
+                   or (not memberships[record['id']]
+                       and assignment_catalogs.get(record['id']) != fingerprint)]
     batches = list(_batches(pending, compact=compact_assignment, packed=bool(context_version) and compact_assignment))
     fixed_taxonomy = deepcopy(taxonomy)
     progress.check_cancelled()
@@ -392,6 +405,43 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         for group in batch_taxonomy:
             catalog.setdefault(group['id'], group)
         memberships.update(assigned)
+        fingerprint = _catalog_fingerprint(fixed_taxonomy if compact_assignment else batch_taxonomy)
+        assignment_catalogs.update({identifier: fingerprint for identifier in assigned})
+
+    def assign_existing(records, taxonomy, *, stage):
+        """Recheck negative memberships once without proposing further topics."""
+        nonlocal requests, hits
+        progress.check_cancelled()
+        if len(taxonomy) > MAX_CATALOG_GROUPS:
+            raise CodexError('Knowledge topic grouping exceeded the topic limit.')
+        if not taxonomy:
+            memberships.update({record['id']: [] for record in records})
+            assignment_catalogs.update({record['id']: _catalog_fingerprint([]) for record in records})
+            return
+        batches = list(_batches(records, compact=True, packed=bool(context_version)))
+        progress.update(project_id, stage=stage, batch_phase='AI tagging',
+                        batch_total=len(batches), batch_completed=0, cache_hits=0,
+                        batch_started_at=None)
+        stage_hits = 0
+        fingerprint = _catalog_fingerprint(taxonomy)
+        for index, batch in enumerate(batches):
+            progress.check_cancelled()
+            start = time.monotonic()
+            progress.update(project_id, batch_started_at=utcnow())
+            assigned, cached = cached_stage(
+                'assign' if compact_assignment else 'assign-existing-' + _digest(assignment_prompt),
+                assignment_prompt, wire.assignment_payload(batch, taxonomy),
+                assignment_schema(batch, taxonomy),
+                lambda raw, batch=batch: assignment_parser(raw, batch, taxonomy),
+                item_ids=[record['id'] for record in batch])
+            memberships.update(assigned)
+            assignment_catalogs.update({identifier: fingerprint for identifier in assigned})
+            requests += int(not cached)
+            hits += int(cached)
+            stage_hits += int(cached)
+            progress.update(project_id, batch_completed=index + 1, cache_hits=stage_hits,
+                            last_batch_seconds=round(time.monotonic() - start, 3), batch_started_at=None)
+
     review_markers, reviewed_count = {}, 0
     if compact_assignment:
         review_configuration = _digest({'prompt': wire.REVIEW_PROMPT, 'schema': wire.REVIEW_SCHEMA})
@@ -414,29 +464,18 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                 lambda raw: wire.parse_review(raw, list(catalog.values())))
             requests += int(not cached)
             hits += int(cached)
-            review_batches = list(_batches(unreviewed, compact=True, packed=bool(context_version)))
-            progress.update(project_id, stage='Assigning reviewed AI tags', batch_phase='AI tagging',
-                            batch_total=len(review_batches), batch_completed=0, cache_hits=0,
-                            batch_started_at=None)
-            review_hits = 0
-            for index, batch in enumerate(review_batches):
-                progress.check_cancelled()
-                start = time.monotonic()
-                progress.update(project_id, batch_started_at=utcnow())
-                assigned, cached = cached_stage(
-                    'assign', assignment_prompt, wire.assignment_payload(batch, review_taxonomy),
-                    assignment_schema(batch, review_taxonomy),
-                    lambda raw, batch=batch: assignment_parser(raw, batch, review_taxonomy),
-                    item_ids=[record['id'] for record in batch])
-                memberships.update(assigned)
-                requests += int(not cached)
-                hits += int(cached)
-                review_hits += int(cached)
-                progress.update(project_id, batch_completed=index + 1, cache_hits=review_hits,
-                                last_batch_seconds=round(time.monotonic() - start, 3), batch_started_at=None)
+            review_records = unreviewed
+            if _catalog_fingerprint(review_taxonomy) != _catalog_fingerprint(list(catalog.values())):
+                review_records = [record for record in compact if not memberships.get(record['id'])]
+            assign_existing(review_records, review_taxonomy, stage='Assigning reviewed AI tags')
             catalog = {group['id']: group for group in review_taxonomy}
             review_markers.update({record['id']: fingerprints[record['id']] for record in unreviewed})
             reviewed_count = len(unreviewed)
+    fingerprint = _catalog_fingerprint(list(catalog.values()))
+    stale_negatives = [record for record in compact if not memberships.get(record['id'])
+                       and assignment_catalogs.get(record['id']) != fingerprint]
+    if catalog and stale_negatives:
+        assign_existing(stale_negatives, list(catalog.values()), stage='Rechecking untagged AI records')
     used_topics = {identifier for assigned in memberships.values() for identifier in assigned}
     taxonomy = [group for identifier, group in catalog.items() if identifier in used_topics]
     if len(taxonomy) > MAX_CATALOG_GROUPS:
@@ -449,6 +488,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
             'topic_grouping': {'version': VERSION, 'project_id': project_id,
                                'configuration_fingerprint': configuration_fingerprint,
                                'record_fingerprints': fingerprints, 'taxonomy': taxonomy,
+                               'assignment_catalog_fingerprint': _catalog_fingerprint(taxonomy),
                                'ai_requests': requests, 'cache_hits': hits, 'reused_items': reused,
                                'workers': workers, 'batch_timings': batch_timings,
                                **({'review_configuration': review_configuration,
