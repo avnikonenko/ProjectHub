@@ -18,6 +18,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Keep delayed AI Q&A reloads from replacing a selected historical version or newer changes. Bind cached Q&A drafts to the original evidence content and revision, while retaining cache reuse for unchanged evidence.
+
 - Give note-edit requests and forms workspace identities so delayed responses cannot replace another editor, discard unsaved values, or change its save target. Cancel pending edits on navigation and pagination.
 - Preserve literal special characters in SQLite data paths; serialize duplicate shared-chat import checks and accepted-decision task creation with their writes.
 - Verify inherited connector isolation before every AI generation, including pooled and parallel requests, without editing Codex account configuration.

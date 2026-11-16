@@ -1286,6 +1286,30 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const [tagSearch, setTagSearch] = useState('');
   useEffect(() => { setTopic(ALL_TOPICS); setTagSearch(''); setPage(0); }, [base, saved?.generated_at, revisionId, targetQuestion]);
   const path = `${base}/codex/qa`;
+  // All result reads share an identity with explicit selections and mutations.
+  // Cancelling transport alone is insufficient if a response already arrived.
+  const viewIdentity = useRef(createEditorIdentity());
+  const latestRead = useRef<AbortController | null>(null);
+  const selectedRevision = useRef<number | null>(null);
+  const selectingRevision = useRef(false);
+  const revisionRequestIdentity = useRef<number | null>(null);
+  const previousTargetQuestion = useRef(targetQuestion);
+  const deletingRef = useRef(false);
+  const mounted = useRef(true);
+  function invalidateRead() {
+    viewIdentity.current.invalidate();
+    latestRead.current?.abort();
+    latestRead.current = null;
+    setLoading(false);
+  }
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      viewIdentity.current.invalidate();
+      latestRead.current?.abort();
+    };
+  }, []);
   const limitStorageKey = `projecthub.qa-max-questions:${base}`;
   const [maxQuestions, setMaxQuestions] = useState(() => {
     try {
@@ -1295,24 +1319,45 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     return String(DEFAULT_QA_QUESTIONS);
   });
   useEffect(() => {
-    let active = true;
-    api<SavedQA | null>(path)
+    // Project search refers to the current saved Q&A, not a historical version.
+    if (previousTargetQuestion.current !== targetQuestion) {
+      previousTargetQuestion.current = targetQuestion;
+      // Search changes the view, but must not discard an in-flight mutation
+      // whose result will supply the current saved Q&A.
+      if (!generatingRef.current && !deletingRef.current) invalidateRead();
+      selectedRevision.current = null;
+      selectingRevision.current = false;
+      setRevisionId(null);
+      setRevisionLoading(false);
+    }
+    if (selectedRevision.current !== null || selectingRevision.current || generatingRef.current || deletingRef.current) return;
+    const abort = new AbortController();
+    latestRead.current?.abort();
+    latestRead.current = abort;
+    const identity = viewIdentity.current.begin();
+    const current = () => !abort.signal.aborted && mounted.current && viewIdentity.current.current(identity);
+    api<SavedQA | null>(path, { signal: abort.signal })
       .then((result) => {
-        if (active) {
+        if (current()) {
           setSaved(result);
           setError('');
           setLatestVersion(result?.generated_at ?? null);
           setRevisionId(null);
         }
       })
-      .catch((e) => { if (active) setError(e.message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+      .catch((e) => { if (current()) setError(e.message); })
+      .finally(() => {
+        if (current()) setLoading(false);
+        if (latestRead.current === abort) latestRead.current = null;
+      });
+    return () => { abort.abort(); };
   }, [path, recoveryVersion, targetQuestion, tagRecovery]);
   const generationDisabled = tagsBusy || loading || generating || recoveryBusy || deleting || revisionLoading;
   const validLimit = isValidQALimit(Number(maxQuestions));
   async function generate() {
     if (generationDisabled || generatingRef.current || !validLimit) return;
+    invalidateRead();
+    const identity = viewIdentity.current.begin();
     generatingRef.current = true;
     setGenerating(true);
     onGenerating(true);
@@ -1320,31 +1365,38 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     setCancelled(false);
     try {
       const result = await post(path, { confirmed: true, ...generationBody(generation), max_items: Number(maxQuestions) });
+      if (!mounted.current || !viewIdentity.current.current(identity)) return;
+      selectedRevision.current = null;
       setSaved(result);
       setRevisionId(null);
       setLatestVersion(result.generated_at);
       setPage(0);
     } catch (e) {
+      if (!mounted.current || !viewIdentity.current.current(identity)) return;
       if (isGenerationCancelled(e)) setCancelled(true);
       else setError((e as Error).message);
     } finally {
       generatingRef.current = false;
-      setGenerating(false);
-      onGenerating(false);
+      if (mounted.current) { setGenerating(false); onGenerating(false); }
     }
   }
   async function removeQuestion(question: string) {
     if (!saved || tagsBusy || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
     if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;
     const query = new URLSearchParams({ question, generated_at: saved.generated_at });
+    invalidateRead();
+    const identity = viewIdentity.current.begin();
+    deletingRef.current = true;
     setDeleting(true);
     setError('');
     try {
-      setSaved(await api<SavedQA>(`${path}/items?${query}`, { method: 'DELETE' }));
+      const result = await api<SavedQA>(`${path}/items?${query}`, { method: 'DELETE' });
+      if (mounted.current && viewIdentity.current.current(identity)) setSaved(result);
     } catch (e) {
-      setError((e as Error).message);
+      if (mounted.current && viewIdentity.current.current(identity)) setError((e as Error).message);
     } finally {
-      setDeleting(false);
+      deletingRef.current = false;
+      if (mounted.current) setDeleting(false);
     }
   }
   const pageSize = 5;
@@ -1391,8 +1443,18 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           </div>
         <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
-          disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={active => {
+            if (active) {
+              invalidateRead();
+              revisionRequestIdentity.current = viewIdentity.current.begin();
+            }
+            selectingRevision.current = active;
+            setRevisionLoading(active);
+          }}
           onSelect={(snapshot, id) => {
+            if (revisionRequestIdentity.current === null || !viewIdentity.current.current(revisionRequestIdentity.current)) return;
+            invalidateRead();
+            selectedRevision.current = id;
             setSaved(snapshot);
             setRevisionId(id);
             setPage(0);
@@ -1402,9 +1464,17 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
           generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
-          onBusyChange={setTagsBusy} onRecovered={() => { if (revisionId === null) setTagRecovery(value => value + 1); }}
-          onResult={result => setSaved(previous => previous && previous.generated_at === result.generated_at
-            ? { ...previous, topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } : previous)} />}
+          onBusyChange={setTagsBusy} onRecovered={() => {
+            if (selectedRevision.current === null && !selectingRevision.current && !generatingRef.current && !deletingRef.current)
+              setTagRecovery(value => value + 1);
+          }}
+          onResult={result => {
+            if (!mounted.current || selectedRevision.current !== null || selectingRevision.current || generatingRef.current || deletingRef.current
+                || result.generated_at !== saved.generated_at) return;
+            invalidateRead();
+            setSaved(previous => previous && previous.generated_at === result.generated_at
+              ? { ...previous, topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } : previous);
+          }} />}
         {saved && revisionId !== null && <small>AI tags can be generated for the current Q&A only.</small>}
         {!!saved && <div className="knowledge-filters">
           <TopicPicker choices={topics} selected={topic} search={tagSearch} disabled={targetQuestion !== undefined} onSearch={value => { setTagSearch(value); setPage(0); }}
