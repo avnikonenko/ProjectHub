@@ -91,3 +91,22 @@ The compact runs produced 8–9 broader tags versus 35. These counts measure
 coverage, not assignment accuracy. The full saved snapshot packs into 17
 compact assignment batches plus one catalog call versus 27 existing batches.
 A full cold run and detailed assignment review remain unverified.
+
+
+Compact tagging now includes one bounded review of newly untagged records. A
+48-record sample prioritizes decisions and requirements and spreads across scopes;
+AI may propose up to 12 new subjects without renaming existing topics. Only the
+untagged records are reassigned. This adds model calls and latency to the first
+review, but unchanged reviewed records are marked so later clicks do not repeat
+it. Model, instruction or review-policy changes invalidate the applicable review
+markers. A record can still remain Untagged; no match is forced.
+
+On an isolated copy of the full saved 3,162-record snapshot at medium reasoning,
+the review recovered tags for 275 of 309 untagged records and increased the
+catalog from 7 to 15 topics. It took 90.94 seconds, three model requests and
+58,877 reported tokens. Existing nonempty assignments, original records and source
+bytes remained unchanged. An unchanged repeat took 0.277 seconds and zero model
+requests. The known isolation, migration and persistence requirements gained
+relevant tags. Thirty-four records remain untagged, including four requirements;
+coverage is not proof of semantic correctness. The path remains opt-in and no
+production result was modified by this evaluation.
