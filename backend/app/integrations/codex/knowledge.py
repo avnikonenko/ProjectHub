@@ -25,6 +25,10 @@ class EvidenceExcerptError(CodexError):
     """A model excerpt cannot be resolved to bounded, literal source evidence."""
 
 
+class EvidenceAgreementError(CodexError):
+    """Valid sources do not establish the model's agreement classification."""
+
+
 CATEGORIES = ('DECISION', 'REQUIREMENT', 'PROPOSAL', 'OPEN_QUESTION', 'FINDING')
 STATUSES = ('AGREED', 'PROPOSED', 'UNDER_EVALUATION', 'REJECTED', 'UNRESOLVED', 'UNKNOWN')
 BASES = ('none', 'direct_user', 'proposal_acceptance')
@@ -290,6 +294,22 @@ def _source_excerpt(quote, text):
     return first[1]
 
 
+def _validate_agreement(item, evidence, indexed):
+    if item['design_status'] not in ('AGREED', 'REJECTED'):
+        return
+    users = [ref for ref in evidence if ref['role'] == 'user']
+    if not users or item['agreement_basis'] == 'none':
+        raise EvidenceAgreementError('Knowledge agreement requires identifiable user evidence.')
+    if item['agreement_basis'] == 'proposal_acceptance':
+        proposals = [ref for ref in evidence if ref['role'] == 'assistant']
+        if not any(proposal['conversation_id'] == user['conversation_id']
+                   and type(proposal['order']) is int and type(user['order']) is int
+                   and proposal['order'] < user['order'] for proposal in proposals for user in users):
+            raise EvidenceAgreementError('Knowledge acceptance requires its preceding proposal in the same conversation.')
+    elif any(_short_acceptance(indexed[ref['source_id']]['text']) for ref in users):
+        raise EvidenceAgreementError('A short acceptance requires proposal context, not direct agreement.')
+
+
 def validate_extraction(raw, window, project_id, extraction_version):
     if not isinstance(raw, str):
         raise CodexError('Knowledge extraction returned invalid JSON.')
@@ -313,6 +333,7 @@ def validate_extraction(raw, window, project_id, extraction_version):
     expected = set(OUTPUT_SCHEMA['properties']['items']['items']['properties'])
     validated = []
     excerpt_error = None
+    agreement_error = None
     for original in result['items']:
         if not isinstance(original, dict) or set(original) != expected:
             raise CodexError('Knowledge extraction returned an invalid item.')
@@ -344,8 +365,8 @@ def validate_extraction(raw, window, project_id, extraction_version):
                 quote = _source_excerpt(ref['excerpt'], source['text'])
             except EvidenceExcerptError as exc:
                 # Check every other field/reference before authorizing a
-                # quotation-only retry. Never mask foreign evidence, a wrong
-                # speaker or unsupported agreement behind an earlier typo.
+                # bounded repair. Never mask foreign evidence or a wrong
+                # speaker behind an earlier repairable error.
                 if excerpt_error is None:
                     excerpt_error = exc
                 quote = ref['excerpt'] if isinstance(ref['excerpt'], str) else ''
@@ -356,19 +377,12 @@ def validate_extraction(raw, window, project_id, extraction_version):
             evidence.append({**ref, 'excerpt': quote, **{key: source.get(key) for key in (
                 'revision', 'conversation_id', 'order', 'source_key', 'timestamp', 'message_revision')},
                 'label': source.get('label', identifier)})
-        users = [ref for ref in evidence if ref['role'] == 'user']
-        if item['design_status'] in ('AGREED', 'REJECTED'):
-            if not users or item['agreement_basis'] == 'none':
-                raise CodexError('Knowledge agreement requires identifiable user evidence.')
-            if item['agreement_basis'] == 'proposal_acceptance':
-                proposals = [ref for ref in evidence if ref['role'] == 'assistant']
-                if not any(proposal['conversation_id'] == user['conversation_id']
-                           and type(proposal['order']) is int and type(user['order']) is int
-                           and proposal['order'] < user['order'] for proposal in proposals for user in users):
-                    raise CodexError('Knowledge acceptance requires its preceding proposal in the same conversation.')
-            elif any(_short_acceptance(indexed[ref['source_id']]['text']) for ref in users):
-                raise CodexError('A short acceptance requires proposal context, not direct agreement.')
-        if excerpt_error is not None:
+        try:
+            _validate_agreement(item, evidence, indexed)
+        except EvidenceAgreementError as exc:
+            if agreement_error is None:
+                agreement_error = exc
+        if excerpt_error is not None or agreement_error is not None:
             continue
         # Neighboring messages support interpretation, but are extracted in
         # their own primary window. Ignore duplicate context-only candidates
@@ -383,6 +397,8 @@ def validate_extraction(raw, window, project_id, extraction_version):
                         'role', 'conversation_id', 'order', 'message_order', 'message_revision', 'source_key')},
                         'source_id': source['id'], 'revision': source['revision']} for source in window['sources']])
         validated.append(item)
+    if agreement_error is not None:
+        raise agreement_error
     if excerpt_error is not None:
         raise excerpt_error
     return validated
@@ -443,7 +459,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
     quote_selection = False
     try:
         items = validate_extraction(raw, window, project_id, version)
-    except EvidenceExcerptError:
+    except (EvidenceExcerptError, EvidenceAgreementError) as exc:
         from . import progress
         from .quote_selectors import (QUOTE_SELECTION_INSTRUCTIONS, prepare_quote_selection,
                                       restore_quote_selection)
@@ -456,6 +472,12 @@ def extract_batch(engine, project_id, manager, window, configuration):
                 counter['count'] += 1
         selected_raw = generate(
             PROMPT + continuation_instruction + QUOTE_SELECTION_INSTRUCTIONS
+            + ('The previous extraction failed agreement validation. Check every AGREED or REJECTED '
+               'item: cite an actual user decision with an appropriate agreement_basis; a short '
+               'acceptance also needs its preceding assistant proposal in the same conversation. '
+               'If the supplied evidence does not establish agreement, use a supported non-agreed '
+               'status and agreement_basis none. Never invent approval, quotes or chronology.\n'
+               if isinstance(exc, EvidenceAgreementError) else '')
             + json.dumps(retry_payload, ensure_ascii=False, separators=(',', ':')), retry_schema)
         raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS)
         items = validate_extraction(raw, window, project_id, version)

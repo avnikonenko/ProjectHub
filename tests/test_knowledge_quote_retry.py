@@ -152,7 +152,7 @@ def test_cancellation_before_fallback_prevents_second_request(quote_batch, monke
     assert len(manager.calls) == 1 and rows(engine) == []
 
 
-@pytest.mark.parametrize('failure', ['role', 'foreign', 'agreement', 'invalid_json', 'transport'])
+@pytest.mark.parametrize('failure', ['role', 'foreign', 'invalid_json', 'transport'])
 def test_non_quote_failures_do_not_retry(quote_batch, failure):
     engine, window, item = quote_batch
     output = deepcopy(item)
@@ -160,8 +160,6 @@ def test_non_quote_failures_do_not_retry(quote_batch, failure):
         output['evidence'][0]['role'] = 'user'
     elif failure == 'foreign':
         output['evidence'][0]['source_id'] = 'foreign'
-    elif failure == 'agreement':
-        output.update(design_status='AGREED', agreement_basis='direct_user')
     first = ('not JSON' if failure == 'invalid_json' else
              CodexError('Transport or authentication failed.') if failure == 'transport' else response(output))
     manager = Responses([first, selected(item)])
@@ -305,7 +303,7 @@ def test_parallel_candidate_counts_each_worker_retry_without_cross_run_leak(quot
             for actual, original in zip(replay['items'], candidate['items'])] == candidate['items']
 
 
-@pytest.mark.parametrize('violation', ['foreign', 'role', 'classification', 'agreement'])
+@pytest.mark.parametrize('violation', ['foreign', 'role', 'classification'])
 def test_later_non_quote_errors_are_not_masked_by_earlier_quote_error(quote_batch, violation):
     engine, window, item = quote_batch
     invalid = corrupted(item)
@@ -319,11 +317,7 @@ def test_later_non_quote_errors_are_not_masked_by_earlier_quote_error(quote_batc
         invalid['items'][0]['evidence'].append(ref)
     else:
         later = deepcopy(item)
-        if violation == 'classification':
-            later['category'] = 'INVALID'
-        else:
-            later['design_status'] = 'AGREED'
-            later['agreement_basis'] = 'direct_user'
+        later['category'] = 'INVALID'
         invalid['items'].append(later)
     manager = Responses([invalid])
     with pytest.raises(CodexError) as error:
@@ -332,3 +326,86 @@ def test_later_non_quote_errors_are_not_masked_by_earlier_quote_error(quote_batc
     assert len(manager.calls) == 1
     with Session(engine) as db:
         assert db.scalars(select(ProjectHistoryBatch)).all() == []
+
+
+def test_unsupported_agreement_gets_one_shared_repair_and_canonical_cache(quote_batch):
+    engine, window, item = quote_batch
+    unsupported = deepcopy(item)
+    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    manager = Responses([response(unsupported), selected(item)])
+    config = knowledge.extraction_configuration(manager)
+    items, hit = knowledge.extract_batch(engine, 1, manager, window, config)
+    assert not hit and len(manager.calls) == 2
+    assert 'previous extraction failed agreement validation' in manager.calls[1][0]
+    assert items[0]['design_status'] == 'PROPOSED'
+    assert items[0]['agreement_basis'] == 'none'
+    replay, hit = knowledge.extract_batch(engine, 1, manager, window, config)
+    assert hit and replay == items and len(manager.calls) == 2
+
+
+@pytest.mark.parametrize('first_error', ['agreement', 'quote'])
+def test_second_unsupported_agreement_fails_without_more_retries_or_cache(quote_batch, first_error):
+    engine, window, item = quote_batch
+    unsupported = deepcopy(item)
+    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    first = response(unsupported) if first_error == 'agreement' else corrupted(item)
+    manager = Responses([first, selected(unsupported)])
+    with pytest.raises(knowledge.EvidenceAgreementError):
+        knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert len(manager.calls) == 2 and rows(engine) == []
+
+
+@pytest.mark.parametrize('hard_error', ['foreign', 'role', 'shape'])
+def test_agreement_error_cannot_mask_later_hard_error(quote_batch, hard_error):
+    engine, window, item = quote_batch
+    unsupported = deepcopy(item)
+    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    later = deepcopy(item)
+    if hard_error == 'foreign':
+        later['evidence'][0]['source_id'] = 'foreign'
+    elif hard_error == 'role':
+        later['evidence'][0]['role'] = 'user'
+    else:
+        later.pop('scope')
+    manager = Responses([{'items': [unsupported, later]}])
+    with pytest.raises(CodexError) as error:
+        knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert not isinstance(error.value, (knowledge.EvidenceAgreementError, knowledge.EvidenceExcerptError))
+    assert len(manager.calls) == 1 and rows(engine) == []
+
+
+def test_repair_can_retain_agreement_when_actual_user_evidence_is_cited(quote_batch):
+    engine, window, item = quote_batch
+    user = {**window['sources'][0], 'id': 'user:decision', 'role': 'user',
+            'text': 'Use the stated expression for the change calculation.', 'order': 3}
+    window['sources'].append(user)
+    window['primary_ids'].append(user['id'])
+    unsupported = deepcopy(item)
+    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    def repair(prompt, schema):
+        payload = json.loads(prompt.rsplit('\n', 1)[1])
+        quote = payload['sources'][-1]['literal_quotes'][0]
+        result = deepcopy(unsupported)
+        result['evidence'] = [{'role': 'user', 'excerpt': quote['id']}]
+        return response(result)
+    manager = Responses([response(unsupported), repair])
+    items, _ = knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert items[0]['design_status'] == 'AGREED'
+    assert items[0]['evidence'][0]['source_id'] == user['id']
+    assert items[0]['evidence'][0]['excerpt'] == user['text']
+
+
+def test_cached_unsupported_agreement_does_not_invoke_repair(quote_batch):
+    engine, window, item = quote_batch
+    manager = Responses([response(item)])
+    config = knowledge.extraction_configuration(manager)
+    knowledge.extract_batch(engine, 1, manager, window, config)
+    unsupported = deepcopy(item)
+    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    with Session(engine) as db:
+        cached = db.scalars(select(ProjectHistoryBatch)).one()
+        cached.evidence = [{'raw': json.dumps(response(unsupported))}]
+        db.commit()
+    with pytest.raises(knowledge.EvidenceAgreementError):
+        knowledge.extract_batch(engine, 1, manager, window, config)
+    assert len(manager.calls) == 1

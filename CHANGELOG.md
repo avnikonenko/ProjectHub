@@ -22,6 +22,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Knowledge generation makes one shared correction attempt for unsupported agreement or invalid quotations, then fully revalidates the result. Unsupported decisions remain rejected; source ownership errors do not trigger a retry, and failed output never replaces saved results.
+
 - Quote-selection retries use one source-owned selector instead of independently choosing source and quote IDs. Restore exact source identity and text before validation; reject redundant identity fields.
 
 - Knowledge extraction no longer fails an entire generation when an item cites only neighboring context. Fully validated overlap-only candidates are excluded from that batch; primary evidence, quotation and agreement checks remain enforced.
