@@ -66,10 +66,23 @@ after installation. Existing skills are never overwritten. Unattended installs
 skip the skill unless `--install-skill` is supplied; `--skip-skill` suppresses the
 interactive question.
 
+**Bring context into Codex before continuing work.** The skill starts with a compact
+briefing: project purpose, dated AI overview, active Knowledge (decisions, reasons,
+requirements, and unresolved issues), related notes, and open TODOs. It reads more
+detail in bounded pages only when needed. Reading makes no AI request and changes
+no records; credentials, raw logs, full histories, and old reports are excluded
+from the starting briefing.
+
+```bash
+projecthub context --project 'Project X'
+projecthub read --project 'Project X' --kind knowledge
+```
+
+See [terminal-agent reading](docs/TERMINAL_AGENTS.md) for paging and optional search.
+
 Once the skill is available to your agent, ask, for example:
 
 - “Read ProjectHub context for Project X before we continue.”
-
 - “Save this explanation as a note in Project X.”
 - “Add a TODO to Project X: test the import.”
 - “Mark ‘test the import’ finished in Project X.”
