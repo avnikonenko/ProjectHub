@@ -6,6 +6,7 @@ publication identity and paired brief remain untouched.
 from contextlib import ExitStack
 from copy import deepcopy
 import os
+import json
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -19,7 +20,8 @@ from .knowledge_previews import PREVIEW_KIND, read_knowledge_preview
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .protocol import CodexError
 from .qa import read_qa
-from .topic_groups import group_records
+from .topic_groups import group_records, FIELDS, MAX_BATCH_CHARS, MAX_BATCH_ITEMS
+from .manager import tag_generation_context
 
 
 class TagGenerationConflict(CodexError):
@@ -80,7 +82,15 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                                             *[variant['answer'] for variant in item.get('variants', [])]]),
                 } for item in records]
             progress.update(project_id, stage='Generating tags for saved result')
-            grouping_options = {'compact_assignment': True} if os.getenv('PROJECTHUB_COMPACT_TAGS') == '1' else {}
+            optimized = os.getenv('PROJECTHUB_COMPACT_TAGS', '1') == '1'
+            compact_chars = sum(len(json.dumps({key: item[key] for key in FIELDS if key in item},
+                                               ensure_ascii=False, separators=(',', ':'))) + 1
+                                for item in records)
+            # A small result can build its catalog and assignments in one call.
+            use_catalog = optimized and (len(records) > MAX_BATCH_ITEMS or compact_chars > MAX_BATCH_CHARS)
+            grouping_options = {'compact_assignment': True} if use_catalog else {}
+            if optimized:
+                scope.enter_context(tag_generation_context())
             grouping = group_records(engine, project_id, manager, records, previous=previous, **grouping_options)
             progress.check_cancelled()
 

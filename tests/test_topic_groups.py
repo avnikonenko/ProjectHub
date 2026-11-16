@@ -302,3 +302,28 @@ def test_review_recovers_only_untagged_and_skips_unchanged_replay(engine):
     assert replay['topic_groups'] == result['topic_groups']
     assert replay['topic_grouping']['ai_requests'] == 0
     assert len(manager.calls) == 4 and records == original
+
+
+def test_tag_context_uses_packed_compact_output_and_larger_batches(engine):
+    from backend.app.integrations.codex.manager import tag_generation_context
+
+    class GroupedManager:
+        calls = []
+
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.rsplit('\n', 1)[1])
+            self.calls.append(payload)
+            if 'sample' in payload:
+                return json.dumps({'topics': [{'label': 'Storage', 'description': 'Storage choices'}]})
+            assert set(schema['properties']) == {'assignments'}
+            return json.dumps({'assignments': [[row['i'], 1] for row in payload['records']]})
+
+    manager = GroupedManager()
+    records = [record(str(i)) for i in range(601)]
+    with tag_generation_context():
+        result = topics.group_records(engine, 1, manager, records, compact_assignment=True)
+        assert [len(c['records']) for c in manager.calls if 'records' in c] == [600, 1]
+        assert result['topic_groups'][0]['item_ids'] == [r['id'] for r in records]
+        warm = topics.group_records(engine, 1, manager, records, previous=result, compact_assignment=True)
+        assert warm['topic_grouping']['ai_requests'] == 0
+    assert len(manager.calls) == 3

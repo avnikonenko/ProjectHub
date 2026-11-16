@@ -110,17 +110,27 @@ def test_cancelled_tags_preserve_saved_metadata(saved, monkeypatch):
     assert tags.progress.read(1, 'tags')['state'] == 'cancelled'
 
 
-@pytest.mark.parametrize('setting', [None, '1'])
-def test_compact_tagging_requires_opt_in(saved, monkeypatch, setting):
+@pytest.mark.parametrize('setting', [None, '1', '0'])
+@pytest.mark.parametrize('count', [0, 24, 121])
+def test_optimized_tags_default_and_small_results_avoid_extra_calls(saved, monkeypatch, setting, count):
     monkeypatch.delenv('PROJECTHUB_COMPACT_TAGS', raising=False)
     if setting is not None:
         monkeypatch.setenv('PROJECTHUB_COMPACT_TAGS', setting)
+    with Session(saved) as db:
+        row = db.get(ProjectKnowledge, 1)
+        row.snapshot = {**row.snapshot, 'items': [
+            {'id': str(i), 'statement': 'Use SQLite.', 'scope': 'Storage',
+             'category': 'DECISION', 'design_status': 'AGREED'} for i in range(count)]}
+        db.commit()
     options = {}
+    from backend.app.integrations.codex.manager import tag_context_version
 
     def generate(*args, previous, **kwargs):
+        assert bool(tag_context_version()) == (setting != '0')
         options.update(kwargs)
         return {'topic_groups': [], 'topic_grouping': {}}
 
     monkeypatch.setattr(tags, 'group_records', generate)
     tags.generate_tags(saved, 1, object(), target='knowledge', publication_id='publication')
-    assert options == ({'compact_assignment': True} if setting == '1' else {})
+    assert options == ({'compact_assignment': True} if setting != '0' and count > 120 else {})
+    assert tag_context_version() is None

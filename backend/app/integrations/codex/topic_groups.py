@@ -27,6 +27,9 @@ MAX_PROMPT_CHARS = 240_000
 MAX_BATCH_ITEMS = 120
 MAX_COMPACT_BATCH_ITEMS = 240
 MAX_BATCH_CHARS = 40_000
+MAX_COMPACT_BATCH_CHARS = 40_000
+MAX_PACKED_BATCH_ITEMS = 600
+MAX_PACKED_BATCH_CHARS = 100_000
 MAX_RESPONSE_CHARS = 120_000
 FIELDS = ('id', 'statement', 'category', 'design_status', 'scope', 'rationale')
 PROMPT = (
@@ -151,15 +154,16 @@ def _validate_reply(raw, batch, taxonomy):
     return updated, result
 
 
-def _batches(records, *, compact=False):
+def _batches(records, *, compact=False, packed=False):
     batch, size = [], 0
-    item_limit = MAX_COMPACT_BATCH_ITEMS if compact else MAX_BATCH_ITEMS
+    item_limit = MAX_PACKED_BATCH_ITEMS if packed else MAX_COMPACT_BATCH_ITEMS if compact else MAX_BATCH_ITEMS
+    char_limit = MAX_PACKED_BATCH_CHARS if packed else MAX_COMPACT_BATCH_CHARS if compact else MAX_BATCH_CHARS
     for record in records:
         size_record = [record['statement'], record['scope']] if compact else record
         chars = len(json.dumps(size_record, ensure_ascii=False, separators=(',', ':'))) + (24 if compact else 1)
-        if chars > MAX_BATCH_CHARS:
+        if chars > char_limit:
             raise CodexError('One Knowledge record exceeds the topic grouping input limit.')
-        if batch and (len(batch) >= item_limit or size + chars > MAX_BATCH_CHARS):
+        if batch and (len(batch) >= item_limit or size + chars > char_limit):
             yield batch
             batch, size = [], 0
         batch.append(record)
@@ -194,10 +198,17 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         compact.append({key: record[key] for key in FIELDS if key in record})
     configuration = {'version': VERSION, 'prompt': PROMPT, 'instructions': ai_instructions(),
                      'identity': _requested_provenance(manager)}
+    from .manager import tag_context_version
+    context_version = tag_context_version()
     if compact_assignment:
         from . import compact_topic_wire as wire
+        assignment_prompt = wire.PACKED_ASSIGNMENT_PROMPT if context_version else wire.ASSIGNMENT_PROMPT
+        assignment_schema = wire.packed_assignment_schema if context_version else wire.assignment_schema
+        assignment_parser = wire.parse_packed_assignments if context_version else wire.parse_assignments
         configuration.update(strategy='shared-catalog-v1', bootstrap=wire.BOOTSTRAP_PROMPT,
-                             assignment=wire.ASSIGNMENT_PROMPT)
+                             assignment=assignment_prompt)
+    if context_version:
+        configuration['tag_context'] = context_version
     configuration_fingerprint = _digest(configuration)
     fingerprints = {record['id']: _digest(record) for record in compact}
     taxonomy, memberships, reused = [], {}, 0
@@ -246,7 +257,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                 raise CodexError('Cached compact topic response is invalid.')
             raw = envelope[0]['topic_group_response'] if cached else None
         if not cached:
-            message = prompt + configuration['instructions'] + '\n' + json.dumps(
+            message = prompt + ('' if context_version else configuration['instructions']) + '\n' + json.dumps(
                 payload, ensure_ascii=False, separators=(',', ':'))
             if len(message) > MAX_PROMPT_CHARS:
                 raise CodexError('Knowledge topic grouping prompt exceeds the input limit.')
@@ -272,7 +283,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         taxonomy, cached = cached_stage('catalog', wire.BOOTSTRAP_PROMPT, wire.bootstrap_payload(compact),
                                          wire.BOOTSTRAP_SCHEMA, wire.parse_bootstrap)
         catalog_requests = int(not cached)
-    batches = list(_batches(pending, compact=compact_assignment))
+    batches = list(_batches(pending, compact=compact_assignment, packed=bool(context_version) and compact_assignment))
     fixed_taxonomy = deepcopy(taxonomy)
     progress.check_cancelled()
     progress.update(project_id, stage='Organizing AI tags', batch_phase='AI tagging',
@@ -305,9 +316,9 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
         progress.check_cancelled()
         if compact_assignment:
             assigned, cached = cached_stage(
-                'assign', wire.ASSIGNMENT_PROMPT, wire.assignment_payload(batch, fixed_taxonomy),
-                wire.assignment_schema(batch, fixed_taxonomy),
-                lambda raw: wire.parse_assignments(raw, batch, fixed_taxonomy),
+                'assign', assignment_prompt, wire.assignment_payload(batch, fixed_taxonomy),
+                assignment_schema(batch, fixed_taxonomy),
+                lambda raw: assignment_parser(raw, batch, fixed_taxonomy),
                 item_ids=[record['id'] for record in batch])
             return [], assigned, cached
         payload = {'topics': fixed_taxonomy, 'records': batch}
@@ -403,7 +414,7 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                 lambda raw: wire.parse_review(raw, list(catalog.values())))
             requests += int(not cached)
             hits += int(cached)
-            review_batches = list(_batches(unreviewed, compact=True))
+            review_batches = list(_batches(unreviewed, compact=True, packed=bool(context_version)))
             progress.update(project_id, stage='Assigning reviewed AI tags', batch_phase='AI tagging',
                             batch_total=len(review_batches), batch_completed=0, cache_hits=0,
                             batch_started_at=None)
@@ -413,9 +424,9 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                 start = time.monotonic()
                 progress.update(project_id, batch_started_at=utcnow())
                 assigned, cached = cached_stage(
-                    'assign', wire.ASSIGNMENT_PROMPT, wire.assignment_payload(batch, review_taxonomy),
-                    wire.assignment_schema(batch, review_taxonomy),
-                    lambda raw, batch=batch: wire.parse_assignments(raw, batch, review_taxonomy),
+                    'assign', assignment_prompt, wire.assignment_payload(batch, review_taxonomy),
+                    assignment_schema(batch, review_taxonomy),
+                    lambda raw, batch=batch: assignment_parser(raw, batch, review_taxonomy),
                     item_ids=[record['id'] for record in batch])
                 memberships.update(assigned)
                 requests += int(not cached)
