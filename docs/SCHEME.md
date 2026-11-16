@@ -68,6 +68,20 @@ Code structure displays at most 300 paths; that display limit does not restrict
 which files can be inspected. Coverage reports distinguish budget-stopped reading
 from inspected material omitted from the final AI input.
 
+Expand **Code structure → How ProjectHub inspected this repository** for saved
+counts: Git-listed paths, exclusions, eligible candidates, attempted and successful
+reads, prefix-only reads, and files represented in the final AI evidence package.
+The same disclosure records the limits and selection trade-offs. Counts describe
+processing coverage, not the percentage of project functionality understood.
+Ignored untracked files are outside the Git listing and are not counted.
+
+Counts belong to the saved generation and remain attached to its revisions.
+Older Schemes explicitly report that these counts were not recorded; a separately
+labeled current inspection can be viewed without generating a new Scheme.
+**Scheme details → Repository inspection diagnostics** shows recorded timing,
+bytes read, cache use and package size. Tool details stay collapsed, keeping the
+diagram focused on the project.
+
 Manual diagram editing and export are not currently available.
 
 See [installation](../README.md#install-and-run), [AI generation settings](AI_GENERATION.md),

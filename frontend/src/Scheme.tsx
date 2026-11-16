@@ -9,6 +9,7 @@ import { RevisionHistory } from './RevisionHistory';
 import { decodeSchemeText } from './SchemeText';
 import { schemeNodeRoles } from './schemeRoles';
 import { AIResultHeader } from './AIResultHeader';
+import { SchemeInspectionDetails, SchemeInspectionTiming, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -24,16 +25,16 @@ type SchemeEdge = {
 type SchemeGraph = { nodes: SchemeNode[]; edges: SchemeEdge[]; explanation: string; mermaid: string };
 type Dependency = { id: string; name: string; constraint: string; category: string; purpose: string; source_ids: string[]; purpose_source_ids?: string[] };
 type TreeEntry = { path: string; type: 'file' | 'directory' };
-type Coverage = { partial: boolean; limitations: string[]; files_inspected: number; conversation_excerpts: number };
+type Coverage = SchemeCoverage;
 type SchemeSnapshot = {
   generated_at: string; generation?: GenerationProvenance | null;
   architecture: SchemeGraph; workflow: SchemeGraph; dependencies: Dependency[];
-  sources: SchemeSource[]; tree: TreeEntry[]; coverage: Coverage; fingerprint: string;
+  sources: SchemeSource[]; tree: TreeEntry[]; coverage: Coverage; fingerprint: string; diagnostics?: SchemeDiagnostics | null;
 };
 type SchemeResult = {
   snapshot: SchemeSnapshot | null;
   freshness: { state: string; partial: boolean; limitations: string[] };
-  inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[] };
+  inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[]; diagnostics?: SchemeDiagnostics | null };
 };
 
 const freshnessLabels: Record<string, string> = {
@@ -196,7 +197,7 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
 }
 
 type Directory = { name: string; path: string; directory: boolean; children: Map<string, Directory> };
-function CodeStructure({ entries, highlighted }: { entries: TreeEntry[]; highlighted: Set<string> }) {
+function CodeStructure({ entries, highlighted, inspection, currentCoverage }: { entries: TreeEntry[]; highlighted: Set<string>; currentCoverage?: SchemeCoverage; inspection: ReturnType<typeof schemeInspectionForDisplay> }) {
   const root: Directory = { name: '', path: '', directory: true, children: new Map() };
   for (const entry of entries) {
     const parts = entry.path.split('/').filter(Boolean);
@@ -224,7 +225,10 @@ function CodeStructure({ entries, highlighted }: { entries: TreeEntry[]; highlig
   }
   return <details className="scheme-code-tree">
     <summary>Code structure</summary>
-    {entries.length ? branch(root) : <p>No inspected repository files.</p>}
+    {entries.length ? branch(root) : <p>No repository tree available for this result.</p>}
+    <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} />
+    {inspection.saved && !inspection.coverage?.file_counts && currentCoverage?.file_counts &&
+      <SchemeInspectionDetails coverage={currentCoverage} saved={false} current />}
   </details>;
 }
 
@@ -325,7 +329,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const sources = snapshot?.sources ?? result?.inspection.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
-  const coverage = snapshot?.coverage ?? result?.inspection.coverage;
+  const inspection = schemeInspectionForDisplay(snapshot, result?.inspection);
+  const coverage = inspection.coverage;
   const freshness = revisionId !== null ? undefined : result
     ? `${freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}${result.freshness.partial || coverage?.partial ? ' · Partial coverage' : ''}`
     : undefined;
@@ -358,10 +363,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <summary>Scheme details</summary>
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
-      {result && <details><summary>Coverage</summary>
-          {coverage && <p>{coverage.files_inspected} files inspected · {coverage.conversation_excerpts} conversation excerpts included</p>}
-          <ul>{[...new Set([...(coverage?.limitations ?? []), ...result.freshness.limitations])].map((item) => <li key={item}>{item}</li>)}</ul>
-        </details>}
+      <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} />
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
         disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
           selectingRevision.current = value;
@@ -391,7 +393,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       </>}
     </>}
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}
-      highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
+      highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} inspection={inspection} currentCoverage={revisionId === null ? result.inspection.coverage : undefined} />}
     {view === 'Dependencies' && <>
       {!dependencies.length && <Empty>No matching direct dependencies in the inspected evidence.</Empty>}
       {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)))}

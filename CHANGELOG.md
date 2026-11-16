@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Save Scheme file inventory, read/prefix/failure counts, exclusions and final AI evidence counts with each generation. Show inspection rules and trade-offs in collapsed Code structure details, with timing diagnostics in Scheme details and clear separation of saved, current and legacy coverage.
+
 - Restart ProjectHub from Settings when using the managed launcher. Block restart during active work, reconnect to the new server instance, and offer an optional page reload while preserving unfinished browser edits.
 
 - Searchable Knowledge scopes under More filters: type a partial name to match related scopes or choose an existing scope suggestion.
