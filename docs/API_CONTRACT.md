@@ -8,6 +8,9 @@ Every abbreviated path below beginning `/{pid}` means `/api/projects/{pid}`. Fro
 
 ## Projects and overview
 
+- `GET /api/settings/restart`: `{available,instance_id,restarting,reason}` for this app instance. Restart is available through the managed `projecthub` launcher.
+- `POST /api/settings/restart`: accepts `{}` and returns 202 `{status:"restarting",instance_id}` after reserving a graceful restart. Rejects active writes, AI generation, running Codex turns/deliveries and duplicate requests with 409; invalid configuration with 422; unmanaged launches with 503. New writes are blocked once reserved. Reconnect is confirmed only after a different, ready instance ID appears; health response fields remain unchanged.
+
 - `GET /api/health`: availability, without secrets.
 - `GET /api/projects`: project array.
 - `POST /api/projects`: name required; description, goals, status, repository_path, git_remote, tags and architecture_mermaid optional.

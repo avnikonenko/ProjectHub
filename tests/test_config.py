@@ -102,11 +102,19 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
     calls = []
-    def run(*args, **kwargs):
-        calls.append((args, kwargs, os.environ['PROJECTHUB_DATA_DIR'], os.environ['PROJECTHUB_GENERATION_TIMEOUT']))
-    monkeypatch.setitem(__import__('sys').modules, 'uvicorn', SimpleNamespace(run=run))
+    class Config:
+        def __init__(self, app_factory, **kwargs):
+            calls.append((callable(app_factory), kwargs, os.environ['PROJECTHUB_DATA_DIR'],
+                          os.environ['PROJECTHUB_GENERATION_TIMEOUT']))
+    class Server:
+        def __init__(self, config):
+            pass
+        def run(self):
+            pass
+    monkeypatch.setitem(__import__('sys').modules, 'uvicorn', SimpleNamespace(Config=Config, Server=Server))
+    monkeypatch.setattr(cli.os, 'execve', lambda *args: pytest.fail('Normal shutdown must not restart'))
     assert cli.main(['start']) == 0
-    assert calls == [(('backend.app.main:create_app',), {
+    assert calls == [(True, {
         'factory': True, 'host': '127.0.0.1', 'port': 8888,
     }, str(tmp_path / 'data'), '120')]
     assert capsys.readouterr().out.strip() == 'ProjectHub: http://127.0.0.1:8888'

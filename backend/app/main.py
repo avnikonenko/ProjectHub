@@ -29,11 +29,13 @@ def db_dependency(request: Request):
     yield from get_db(request)
 
 
-def create_app(data_dir=None):
+def create_app(data_dir=None, restart_controller=None):
     app = FastAPI(title='ProjectHub', version=VERSION)
     engine, directory = initialize(data_dir or default_data_dir())
     app.state.engine, app.state.data_dir = engine, directory
     db_dep = Depends(db_dependency)
+    from .restart import install_restart
+    install_restart(app, restart_controller)
 
     @app.middleware('http')
     async def local_only(request, call_next):
@@ -68,7 +70,15 @@ def create_app(data_dir=None):
                 if size > limit: return JSONResponse({'detail':f'Request exceeds {limit // (1024 * 1024)} MiB'},status_code=413)
                 chunks.append(chunk)
             request._body = b''.join(chunks)
-        response = await call_next(request)
+        if (restart_controller is not None and request.method not in ('GET', 'HEAD', 'OPTIONS')
+                and request.url.path != '/api/settings/restart'):
+            try:
+                with restart_controller.mutation():
+                    response = await call_next(request)
+            except HTTPException as exc:
+                return JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
+        else:
+            response = await call_next(request)
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'no-referrer'
         response.headers['X-Frame-Options'] = 'DENY'
@@ -426,6 +436,8 @@ def create_app(data_dir=None):
     @app.on_event('shutdown')
     def dispose_engine():
         engine.dispose()
+        if restart_controller is not None:
+            restart_controller.close()
     return app
 
 
