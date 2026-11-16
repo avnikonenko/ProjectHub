@@ -301,13 +301,14 @@ def test_brief_generation_uses_isolated_thread_and_waits_for_final_event(env, st
         assert 'private diagnostic' not in str(exc.value)
     assert clients[0].closed
     assert [m for m, _ in clients[0].calls] == (
-        ['account/read', 'thread/start'] + (['turn/start'] if ephemeral else []))
-    start = clients[0].calls[1][1]
+        ['account/read', 'config/read', 'thread/start']
+        + (['mcpServerStatus/list', 'turn/start'] if ephemeral else []))
+    start = next(params for method, params in clients[0].calls if method == 'thread/start')
     assert start['ephemeral'] is True and start['sandbox'] == 'read-only'
     assert 'Be compact by default' in start['developerInstructions']
     assert start.get('model') == model
     if ephemeral:
-        turn = clients[0].calls[2][1]
+        turn = next(params for method, params in clients[0].calls if method == 'turn/start')
         assert turn['outputSchema'] == {'type': 'object'}
         assert turn.get('effort') == ('high' if model else None)
         assert turn['sandboxPolicy']['networkAccess'] is False

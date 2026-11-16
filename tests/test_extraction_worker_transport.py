@@ -41,6 +41,10 @@ class ProtocolClient:
         self.calls.append((method, params))
         if method == 'account/read':
             return {'account': {'type': 'chatgpt'}}
+        if method == 'config/read':
+            return {'config': {'mcp_servers': {}}}
+        if method == 'mcpServerStatus/list':
+            return {'data': [], 'nextCursor': None}
         if method == 'thread/start':
             self.number += 1
             return {'thread': {'id': f'thread-{id(self)}-{self.number}', 'ephemeral': True}}

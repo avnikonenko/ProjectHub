@@ -22,6 +22,10 @@ class AppServerDouble:
         self.calls.append((method, params))
         if method == 'account/read':
             return {'account': {'type': 'chatgpt'}}
+        if method == 'config/read':
+            return {'config': {'mcp_servers': {}}}
+        if method == 'mcpServerStatus/list':
+            return {'data': [], 'nextCursor': None}
         if method == 'thread/start':
             return {'thread': {'id': 'private-thread', 'ephemeral': True}}
         if method == 'thread/unsubscribe':
@@ -72,7 +76,10 @@ def assert_read_only(client):
     assert start['sandbox'] == 'read-only'
     assert start['approvalPolicy'] == 'never'
     assert start['modelProvider'] == 'openai'
-    assert start['config'] == {'mcp_servers': {}, 'web_search': 'disabled'}
+    assert start['config'] == {'web_search': 'disabled'}
+    methods = [method for method, _ in client.calls]
+    assert methods.index('config/read') < methods.index('thread/start')
+    assert methods.index('mcpServerStatus/list') < methods.index('turn/start')
     turn = next(params for method, params in client.calls if method == 'turn/start')
     assert turn['approvalPolicy'] == 'never'
     assert turn['sandboxPolicy'] == {'type': 'readOnly', 'networkAccess': False}
