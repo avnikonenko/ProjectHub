@@ -3,7 +3,7 @@
 Cached replies are always validated again. Membership conveys no evidence or
 acceptance, and an unassigned record remains available through Other/All.
 """
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import copy_context
 from copy import deepcopy
 import hashlib
@@ -424,23 +424,95 @@ def group_records(engine, project_id, manager, records, *, previous=None, compac
                         batch_started_at=None)
         stage_hits = 0
         fingerprint = _catalog_fingerprint(taxonomy)
-        for index, batch in enumerate(batches):
+
+        def assign(batch):
             progress.check_cancelled()
             start = time.monotonic()
-            progress.update(project_id, batch_started_at=utcnow())
             assigned, cached = cached_stage(
                 'assign' if compact_assignment else 'assign-existing-' + _digest(assignment_prompt),
                 assignment_prompt, wire.assignment_payload(batch, taxonomy),
                 assignment_schema(batch, taxonomy),
                 lambda raw, batch=batch: assignment_parser(raw, batch, taxonomy),
                 item_ids=[record['id'] for record in batch])
+            return assigned, cached, round(time.monotonic() - start, 3)
+
+        results = [None] * len(batches)
+        completed = 0
+
+        def record(index, value, active=None):
+            nonlocal completed, stage_hits
+            results[index] = value
+            completed += 1
+            stage_hits += int(value[1])
+            progress.update(project_id, batch_completed=completed, cache_hits=stage_hits,
+                            last_batch_seconds=value[2], batch_started_at=active)
+
+        stage_workers = min(_extraction_workers(manager), max(1, len(batches)))
+        if stage_workers == 1:
+            for index, batch in enumerate(batches):
+                progress.check_cancelled()
+                progress.update(project_id, batch_started_at=utcnow())
+                record(index, assign(batch))
+        else:
+            abort = threading.Event()
+            failure, failure_lock = [], threading.Lock()
+
+            def run(batch):
+                try:
+                    with progress.abort_on(abort):
+                        return assign(batch)
+                except BaseException as exc:
+                    with failure_lock:
+                        if not failure:
+                            failure.append(exc)
+                        abort.set()
+                    raise
+
+            def check_failure():
+                with failure_lock:
+                    if failure:
+                        raise failure[0]
+
+            pending, next_index = {}, 0
+            try:
+                pool = ThreadPoolExecutor(max_workers=stage_workers, thread_name_prefix='projecthub-topic-recheck')
+            except (RuntimeError, OSError) as exc:
+                raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+            with pool:
+                try:
+                    while next_index < len(batches) or pending:
+                        progress.check_cancelled()
+                        check_failure()
+                        while next_index < len(batches) and len(pending) < stage_workers:
+                            check_failure()
+                            try:
+                                future = pool.submit(copy_context().run, run, batches[next_index])
+                            except (RuntimeError, OSError) as exc:
+                                check_failure()
+                                raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+                            pending[future] = (next_index, utcnow())
+                            next_index += 1
+                        progress.update(project_id, batch_started_at=min(start for _, start in pending.values()))
+                        ready, _ = wait(pending, timeout=.05, return_when=FIRST_COMPLETED)
+                        check_failure()
+                        for future in sorted(ready, key=lambda value: pending[value][0]):
+                            index, _ = pending.pop(future)
+                            value = future.result()
+                            record(index, value, min((start for _, start in pending.values()), default=None))
+                except BaseException:
+                    abort.set()
+                    for future in pending:
+                        future.cancel()
+                    check_failure()
+                    raise
+        # Merge only a complete stage, in original input order. Worker completion
+        # order must not affect memberships or expose partial reassignment.
+        progress.check_cancelled()
+        for assigned, cached, _ in results:
             memberships.update(assigned)
             assignment_catalogs.update({identifier: fingerprint for identifier in assigned})
             requests += int(not cached)
             hits += int(cached)
-            stage_hits += int(cached)
-            progress.update(project_id, batch_completed=index + 1, cache_hits=stage_hits,
-                            last_batch_seconds=round(time.monotonic() - start, 3), batch_started_at=None)
 
     review_markers, reviewed_count = {}, 0
     if compact_assignment:

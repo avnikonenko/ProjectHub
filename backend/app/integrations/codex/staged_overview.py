@@ -4,15 +4,19 @@ Intermediate points are interpretations, not new evidence. Every cited point is
 expanded back to exact original quotes and stable original source records before
 it can be supplied to a later stage. Stages never publish project state.
 """
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextvars import copy_context
 from copy import deepcopy
 import hashlib
 import json
+import threading
+import time
 
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch
 from . import progress
-from .knowledge import extraction_configuration
+from .knowledge import extraction_configuration, _extraction_workers
 from .overview_context import build_overview_companions
 from .protocol import CodexError
 
@@ -178,6 +182,7 @@ class _StageManager:
         self.fingerprint = _digest({'overview_stage_version': CACHE_VERSION, 'project_id': self.project_id,
                                     'identity': self.identity, 'prompt': prompt, 'schema': schema,
                                     'configuration': extraction_configuration(self.manager)})
+        lookup_started = time.monotonic()
         if self.engine is not None:
             with Session(self.engine) as db:
                 cached = db.get(ProjectHistoryBatch, (self.project_id, self.fingerprint))
@@ -188,10 +193,16 @@ class _StageManager:
                             or not isinstance(envelope[0].get('stage_response'), str)):
                         raise CodexError('Saved Overview batch cache is invalid; saved results are preserved.')
                     self.raw, self.cached = envelope[0]['stage_response'], True
+                    self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
                     return self.raw
+        self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
         self.diagnostics['synthesis_requests'] += 1
-        self.raw = self.manager.generate_brief(prompt, schema)
-        return self.raw
+        model_started = time.monotonic()
+        try:
+            self.raw = self.manager.generate_brief(prompt, schema)
+            return self.raw
+        finally:
+            self.diagnostics['model_seconds'] += time.monotonic() - model_started
 
     def save_validated(self):
         progress.check_cancelled()
@@ -251,48 +262,145 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         progress.check_cancelled()
         return len(_encode_synthesis(records, candidate, bundle, repository)[2])
 
-    def run(records, original_groups, level, batch, combining):
+    completion_lock = threading.Lock()
+    diagnostics.update(synthesis_workers=1, synthesis_batch_timings=[])
+
+    def prepare(records, original_groups, level, batch):
+        # Prepare shared source identities on the coordinator, before dispatch.
         progress.check_cancelled()
         size = measure(records)
         if size > MAX_SYNTHESIS_CHARS:
             raise CodexError('An Overview stage exceeds its synthesis input limit; saved results are preserved.')
         diagnostics['input_chars'] = max(diagnostics['input_chars'], size)
         diagnostics['synthesis_levels'] = max(diagnostics['synthesis_levels'], level + 1)
-        progress.update(project_id, stage='Combining overview batches' if combining else 'Summarizing overview batch',
-                        batch_phase='overview synthesis', batch_total=diagnostics['synthesis_batches_total'],
-                        batch_completed=diagnostics['synthesis_batches_completed'],
-                        cache_hits=diagnostics['synthesis_cache_hits'])
         if any(source['id'] not in original_groups for source in records):
             raise CodexError('An Overview batch has missing original source groups; saved results are preserved.')
         stage_groups = {source['id']: original_groups[source['id']] for source in records}
         _support_catalog(records, stage_groups)
-        proxy = _StageManager(manager, engine, project_id, identity(records, stage_groups), diagnostics)
-        # Cache hits run the same validators and original-source expansion again.
+        return records, stage_groups, identity(records, stage_groups), size, level, batch
+
+    def run(job, selected):
+        records, stage_groups, stage_identity, size, level, batch = job
+        progress.check_cancelled()
+        local = dict(synthesis_requests=0, synthesis_cache_hits=0,
+                     cache_lookup_seconds=0.0, model_seconds=0.0)
+        proxy = _StageManager(selected, engine, project_id, stage_identity, local)
         entry_references = {}
-        result = _synthesize(proxy, candidate, bundle, repository, _sources=records,
-                             _groups=stage_groups, _stage=True, _stage_references=entry_references)
-        proxy.save_validated()
-        diagnostics['synthesis_batches_completed'] += 1
-        progress.update(project_id, batch_completed=diagnostics['synthesis_batches_completed'],
+        started = time.monotonic()
+        success = False
+        try:
+            result = _synthesize(proxy, candidate, bundle, repository, _sources=records,
+                                 _groups=stage_groups, _stage=True, _stage_references=entry_references)
+            proxy.save_validated()
+            success = True
+            return result, entry_references, deepcopy(getattr(selected, 'generation_metadata', {})), proxy.cached
+        finally:
+            elapsed = time.monotonic() - started
+            with completion_lock:
+                diagnostics['synthesis_requests'] += local['synthesis_requests']
+                diagnostics['synthesis_cache_hits'] += local['synthesis_cache_hits']
+                if success:
+                    diagnostics['synthesis_batches_completed'] += 1
+                    if level == 0:
+                        processed.update(source['id'] for source in records if source['id'] in eligible)
+                        diagnostics['selected_items'] = len(processed)
+                diagnostics['synthesis_batch_timings'].append({
+                    'level': level, 'batch': batch + 1, 'input_chars': size,
+                    'seconds': round(elapsed, 3), 'model_seconds': round(local['model_seconds'], 3),
+                    'cache_lookup_seconds': round(local['cache_lookup_seconds'], 3),
+                    'local_seconds': round(max(0, elapsed - local['model_seconds'] - local['cache_lookup_seconds']), 3),
+                    'cached': proxy.cached, 'completed': success})
+                diagnostics['synthesis_batch_timings'].sort(key=lambda row: (row['level'], row['batch']))
+                # Cancellation can reject progress updates after a valid cache
+                # was committed; never replace its originating exception.
+                if success:
+                    progress.update(project_id, batch_completed=diagnostics['synthesis_batches_completed'],
+                                    cache_hits=diagnostics['synthesis_cache_hits'])
+
+    def run_level(batches, original_groups, level):
+        workers = min(_extraction_workers(manager), max(1, len(batches)))
+        diagnostics['synthesis_workers'] = max(diagnostics['synthesis_workers'], workers)
+        progress.update(project_id, stage='Combining overview batches' if level else 'Summarizing overview batches',
+                        batch_phase='overview synthesis', batch_total=diagnostics['synthesis_batches_total'],
+                        batch_completed=diagnostics['synthesis_batches_completed'],
                         cache_hits=diagnostics['synthesis_cache_hits'])
-        return result, entry_references
+        if workers == 1:
+            return [run(prepare(records, original_groups, level, index), manager)
+                    for index, records in enumerate(batches)]
+        jobs = [prepare(records, original_groups, level, index) for index, records in enumerate(batches)]
+        abort = threading.Event()
+        failure, failure_lock = [], threading.Lock()
+        results = [None] * len(jobs)
+
+        def execute(job):
+            try:
+                with progress.abort_on(abort):
+                    progress.check_cancelled()
+                    with manager.independent_generation() as selected:
+                        return run(job, selected)
+            except BaseException as exc:
+                with failure_lock:
+                    if not failure:
+                        failure.append(exc)
+                    abort.set()
+                raise
+
+        def check_failure():
+            with failure_lock:
+                if failure:
+                    raise failure[0]
+
+        try:
+            pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix='projecthub-overview')
+        except (RuntimeError, OSError) as exc:
+            raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+        pending, next_index = {}, 0
+        try:
+            while next_index < len(jobs) or pending:
+                progress.check_cancelled()
+                check_failure()
+                while next_index < len(jobs) and len(pending) < workers:
+                    check_failure()
+                    try:
+                        future = pool.submit(copy_context().run, execute, jobs[next_index])
+                    except (RuntimeError, OSError) as exc:
+                        raise CodexError('Unable to start AI workers. Reduce the parallel thread count and retry.') from exc
+                    pending[future] = next_index
+                    next_index += 1
+                ready, _ = wait(pending, timeout=.05, return_when=FIRST_COMPLETED)
+                check_failure()
+                for future in ready:
+                    if future.exception() is not None:
+                        future.result()
+                for future in sorted(ready, key=lambda value: pending[value]):
+                    results[pending.pop(future)] = future.result()
+        except BaseException:
+            abort.set()
+            for future in pending:
+                future.cancel()
+            raise
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)
+        # Provider metadata is selected by input order, never completion order.
+        for _, _, metadata, cached in results:
+            if metadata and not cached:
+                manager.generation_metadata = metadata
+        return results
 
     previous_size = measure(_unique(record for unit in units for record in unit))
     for level in range(MAX_LEVELS):
         batches = _partition(units, measure, MAX_SYNTHESIS_CHARS)
         diagnostics['synthesis_batches_total'] += len(batches)
         summaries, next_groups = [], {}
-        for batch_index, records in enumerate(batches):
-            result, entry_references = run(records, groups, level, batch_index, level > 0)
-            if level == 0:
-                processed.update(source['id'] for source in records if source['id'] in eligible)
-                diagnostics['selected_items'] = len(processed)
+        results = run_level(batches, groups, level)
+        for batch_index, (records, (result, entry_references, _, _)) in enumerate(zip(batches, results)):
             records, resolved = _summary_sources(result, records, groups, level, batch_index, entry_references)
             summaries.extend(records)
             next_groups.update(resolved)
         next_size = measure(summaries)
         if next_size <= MAX_SYNTHESIS_CHARS:
-            return run(summaries, next_groups, level + 1, 0, True)[0]
+            progress.update(project_id, stage='Combining overview batches')
+            return run(prepare(summaries, next_groups, level + 1, 0), manager)[0]
         if next_size >= previous_size:
             raise CodexError('Overview stages did not reduce the input enough to continue safely; '
                              'completed stage caches and saved results are preserved.')

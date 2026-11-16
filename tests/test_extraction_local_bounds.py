@@ -45,7 +45,12 @@ class Manager:
         fields = schema['properties']['items']['items']['properties']
         assert fields['statement']['maxLength'] == 600
         assert fields['evidence']['maxItems'] == 6
-        assert fields['evidence']['items']['properties']['source_id']['maxLength'] == 240
+        evidence = fields['evidence']['items']
+        if 'source_id' in evidence['properties']:
+            assert evidence['properties']['source_id']['maxLength'] == 240
+        else:
+            assert set(evidence['required']) == {'role', 'excerpt'}
+            assert evidence['properties']['excerpt']['enum']
         return self.raw
     def generate_brief(self, *_):
         pytest.fail('Extraction bypassed its dedicated transport helper')
@@ -76,7 +81,7 @@ def test_local_bounds_reject_structural_helper_output_without_caching(database, 
     manager = Manager(raw)
     with pytest.raises(CodexError):
         knowledge.extract_batch(database, 1, manager, window, knowledge.extraction_configuration(manager))
-    # Only quotation failures permit one source-ID encoding retry. The helper
+    # This fixture's quotation failure permits one quote-selector retry. The helper
     # deliberately returns the same invalid literal again; it must not be cached.
     assert manager.calls == (2 if case == 'excerpt' else 1)
     with Session(database) as db:

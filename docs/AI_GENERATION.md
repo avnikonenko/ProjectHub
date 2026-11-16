@@ -98,7 +98,9 @@ worker limit when it starts; saving a new value affects the next job. Independen
 legacy reduction groups overlap within a round, while dependent rounds retain
 their original order. A group is dispatched only when it is guaranteed necessary,
 so parallelism does not summarize a tail that could already fit unchanged.
-Final synthesis and Scheme generation remain single requests.
+Independent Overview summaries within a stage and follow-up tag assignments also
+share this worker limit. Dependent combining stages and Scheme generation remain
+single requests.
 Independent AI Q&A drafts and consolidation groups share this worker limit;
 their dependent final ranking remains sequential.
 
@@ -198,8 +200,10 @@ only after the complete result passes validation and freshness checks.
 
 Progress reports overview-synthesis stages separately from conversation extraction.
 Generation details show actual synthesis requests, cached stages and processed
-active input counts. Stages run sequentially; the parallel-reading control still
-applies to conversation extraction. All stages share the generation's overall
+active input counts. Independent summaries within each level run in parallel using
+the configured worker limit; the next level and final combination wait for their
+inputs. Diagnostics include `synthesis_workers` and ordered `synthesis_batch_timings`
+with model, cache-lookup and remaining local processing times. All stages share the generation's overall
 budget and cancellation state. Staging can add model calls and take longer than a
 small single-request overview; caching avoids repeating unchanged successful work.
 

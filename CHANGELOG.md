@@ -22,6 +22,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Run independent staged Overview summaries and follow-up AI tag assignments in parallel within the configured worker limit. Preserve sequential dependent stages, stable source ordering, cancellation and validated caches; record per-batch synthesis timings.
+
 - Normalize repeated valid Scheme citations and identify the exact citation field when reference types, counts or IDs are invalid. Continue rejecting unknown and cross-project references and preserving the last saved Scheme on failure.
 
 - Knowledge generation makes one shared correction attempt for unsupported agreement or invalid quotations, then fully revalidates the result. Unsupported decisions remain rejected; source ownership errors do not trigger a retry, and failed output never replaces saved results.
