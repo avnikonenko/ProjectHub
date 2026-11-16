@@ -62,7 +62,47 @@ validated against existing record IDs. Q&A deletion prunes current memberships
 while preserving historical revisions. The project taxonomy is bounded to 400 topics, with up to 40 new topics per reply;
 excess topics cause explicit failure rather than silent assignment truncation.
 
-### Experimental compact tagging
+### Optimized tag generation (default)
+
+Large saved results use a shared topic catalog, compact numeric inputs, and packed
+output rows: each row starts with the record ID followed by zero to four topic IDs.
+The parser requires every record exactly once and rejects foreign or duplicate IDs.
+Tag-only threads use a short classification base instruction; project instructions,
+read-only execution, denied tool approvals and strict source isolation remain.
+Ordinary Overview and Q&A generation are unchanged.
+
+Assignment batches contain up to 600 records or roughly 100,000 compact characters,
+with a separate 240,000-character check on the actual full prompt. The existing
+worker setting is respected. Small results that fit one legacy batch keep a single
+combined catalog-and-assignment call. Set `PROJECTHUB_COMPACT_TAGS=0` and restart to
+use the older strategy. No reasoning effort is lowered automatically.
+
+An isolated complete cold run on 3,162 records at medium reasoning with the saved
+eight-worker setting took **122.42 seconds**, ten model calls, and **252,473 reported
+tokens**. It produced 15 topics and tagged 3,130 records; all 32 untagged records
+remain accessible. Original records and source bytes were unchanged. An unchanged
+repeat took **0.238 seconds with zero model calls**.
+
+For comparison, cold four-worker observations were 299.20 seconds / 469,900 tokens
+before the context optimization; 261.06 seconds / 358,648 tokens with classification
+context; and 293.50 seconds / 271,009 tokens with larger batches but verbose output.
+These are individual runs, with differing worker counts in the final run, not a
+controlled attribution of every improvement or a universal timing guarantee.
+A grouped-by-topic output experiment was rejected after strict coverage validation
+caught omitted/conflicting record IDs; that format is not used.
+
+All nine previously selected requirement cases received tags. Independent review
+found some broad/weak assignments and material requirements among the untagged
+records. Assigned percentage is not semantic accuracy or proof of complete recall.
+Users retain All items, Untagged, original evidence, and the ability to inspect tags
+as AI interpretations. Generation stays explicit and preserves the previous result
+on failure or cancellation.
+
+### Historical experimental measurements
+
+The following measurements predate the optimized default above.
+
+#### Original compact tagging experiment
 
 Set `PROJECTHUB_COMPACT_TAGS=1` in the server environment and restart to try
 the compact path. The existing path remains the default. The compact path
@@ -108,5 +148,5 @@ catalog from 7 to 15 topics. It took 90.94 seconds, three model requests and
 bytes remained unchanged. An unchanged repeat took 0.277 seconds and zero model
 requests. The known isolation, migration and persistence requirements gained
 relevant tags. Thirty-four records remain untagged, including four requirements;
-coverage is not proof of semantic correctness. The path remains opt-in and no
-production result was modified by this evaluation.
+coverage is not proof of semantic correctness. At the time of this earlier evaluation the path was opt-in; no
+production result was modified by it.

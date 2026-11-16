@@ -14,6 +14,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Use shared-topic compact classification by default for large AI tag jobs, with shorter tag-only context and packed numeric output. Keep small results to one call, preserve reasoning settings and existing worker counts, and retain the legacy strategy through `PROJECTHUB_COMPACT_TAGS=0`.
+
 - Review newly untagged records once in experimental compact tagging, extend the shared catalog with missing subjects, and reassign only those records. Preserve existing assignments and cache review results; unchanged repeated runs make no new model calls.
 
 - Generate AI tags only through a separate explicit button for saved Knowledge and Q&A. Give tagging its own batch progress, cancellation and time budget; main results no longer wait for tag generation.
