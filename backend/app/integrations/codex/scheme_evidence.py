@@ -43,9 +43,16 @@ def _source(identifier, label, value, provenance, **metadata):
 
 def _bound_package(result):
     """Bound serialized metadata too, keeping whole sources and valid references."""
+    def update_file_counts():
+        counts = result['coverage'].get('file_counts')
+        if counts is not None:
+            counts['evidence_files'] = len({source['path'] for source in result['sources'] if source.get('path')})
+            counts['read_not_in_evidence'] = counts['read_files'] - counts['evidence_files']
+
     def serialized_size(value):
         return len(json.dumps(value, ensure_ascii=False))
 
+    update_file_counts()
     payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
     used = serialized_size(payload)
     if used > _MAX_PACKAGE_CHARS:
@@ -78,6 +85,7 @@ def _bound_package(result):
                 break
         coverage['conversation_excerpts'] = sum(
             source['provenance'] == 'Codex conversation' for source in result['sources'])
+    update_file_counts()
     return serialized_size(payload)
 
 
@@ -121,6 +129,7 @@ class _InspectionBudget:
         self.started = time.monotonic()
         self.deadline = self.started + _INSPECTION_SECONDS
         self.bytes_read = 0
+        self.prefix_read_files = 0
 
     def check(self):
         if time.monotonic() >= self.deadline:
@@ -150,11 +159,15 @@ def _read(root_fd, relative, *, allow_prefix=False, budget=None):
             data.extend(chunk)
         if b'\0' in data:
             raise ValueError('Binary file')
-        if len(data) > _MAX_BYTES:
+        prefix = len(data) > _MAX_BYTES
+        if prefix:
             if not allow_prefix:
                 raise ValueError('Oversized file')
             data = data[:_MAX_BYTES].rsplit(b'\n', 1)[0]
-        return data.decode('utf-8')
+        value = data.decode('utf-8')
+        if prefix and budget is not None:
+            budget.prefix_read_files += 1
+        return value
     finally:
         os.close(fd)
 
@@ -284,13 +297,14 @@ def _import_targets(value, relative, available):
     return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
 
 
-def _repository(repository_path, patterns):
+def _repository(repository_path, patterns, *, inventory=None):
     if not repository_path:
         return None, [], [], ['No repository is linked; diagrams can use saved discussions only.']
     deadline = time.monotonic() + 5
     root = _repository_root(repository_path, deadline)
     listed, _ = _git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', deadline=deadline)
     paths = sorted({os.fsdecode(v) for v in listed.split(b'\0') if v}, key=_code_order)
+    listed_count = len(paths)
     # Git's exclude rules apply to untracked files; explicit tracked ignored files are excluded too.
     ignored, _ = _git(root, 'ls-files', '-z', '--cached', '--ignored', '--exclude-standard', deadline=deadline)
     ignored_paths = {os.fsdecode(v) for v in ignored.split(b'\0') if v}
@@ -331,6 +345,10 @@ def _repository(repository_path, patterns):
             groups.append(group)
     if len(candidates) < len(paths):
         limits.append('Only selected source files and bounded declaration excerpts were inspected.')
+    if inventory is not None:
+        inventory.update(repository_paths_total=listed_count, excluded_paths=listed_count - len(paths),
+                         safe_paths=len(paths), eligible_files=len(set(candidates)),
+                         policy_omitted_paths=len(set(paths) - set(candidates)), listing_complete=True)
     return root, paths, candidates, limits
 
 
@@ -778,14 +796,22 @@ def collect_evidence(engine, project_id):
     limitations.update(record_limits)
     root = None
     paths, candidates, repo_limits = [], [], []
+    inventory = dict.fromkeys(('repository_paths_total', 'excluded_paths', 'safe_paths',
+                               'eligible_files', 'policy_omitted_paths'))
+    inventory['listing_complete'] = False
+    policy = {'max_read_bytes': _MAX_INSPECTION_BYTES, 'max_inspection_seconds': _INSPECTION_SECONDS,
+              'max_file_bytes': _MAX_BYTES, 'max_source_chars': _MAX_SOURCES_CHARS,
+              'max_package_chars': _MAX_PACKAGE_CHARS, 'max_tree_paths': _MAX_PATHS,
+              'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
     try:
         patterns = (*_exclusions(), *_CODE_PRIVATE)
-        root, paths, candidates, repo_limits = _repository(repository_path, patterns)
+        root, paths, candidates, repo_limits = _repository(repository_path, patterns, inventory=inventory)
     except (EvidenceReadError, OSError) as exc:
         freshness_unknown = True
         patterns = ()
         limitations.add(str(exc) if isinstance(exc, EvidenceReadError) else 'The repository is unavailable.')
     limitations.update(repo_limits)
+    eligible = set(candidates)
     try:
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW) if root else None
     except OSError:
@@ -801,11 +827,8 @@ def collect_evidence(engine, project_id):
             marked_paths = {relative for relative, _ in markers}
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v7', 'project_id': project_id,
-            'budgets': {'read_bytes': _MAX_INSPECTION_BYTES, 'inspection_seconds': _INSPECTION_SECONDS,
-                        'file_bytes': _MAX_BYTES, 'metadata_bytes': _MAX_METADATA_BYTES,
-                        'metadata_seconds': _METADATA_SECONDS, 'tree_paths': _MAX_PATHS,
-                        'source_chars': _MAX_SOURCES_CHARS, 'package_chars': _MAX_PACKAGE_CHARS},
+        key = _digest({'namespace': 'scheme-inspection-v8', 'project_id': project_id,
+            'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
             'freshness_unknown': freshness_unknown})
@@ -818,11 +841,13 @@ def collect_evidence(engine, project_id):
         sources, dependencies = list(records), []
         scanned = set()
         files_read = 0
+        decoded_reads = 0
         omitted_reasons = {}
         inspection_stop = None
         budget = _InspectionBudget()
         marker_by_path = dict(markers)
-        pending = list(candidates)
+        # A vanished repository has no directory descriptor to anchor safe reads.
+        pending = list(candidates) if root_fd is not None else []
         shared_stems = _shared_feature_stems(paths)
         priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in {'main', 'app', 'index', 'server', 'cli'}
                              else (1, -1) if PurePosixPath(path).stem.casefold() in shared_stems
@@ -860,11 +885,13 @@ def collect_evidence(engine, project_id):
                 is_code = (_code_category(relative) == 'code'
                            or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
+                decoded_reads += 1
                 declarations = _entrypoint_declarations(value, relative)
                 targets = _entrypoint_targets(declarations, relative, paths)
                 if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
                     limitations.add('Some declared entrypoint modules were unavailable within the safe bounded repository paths.')
                 for order, target in enumerate(targets):
+                    eligible.add(target)
                     entrypoint_paths.add(target)
                     priorities[target] = (-1, order)
                     if target not in scanned and target not in pending:
@@ -878,6 +905,7 @@ def collect_evidence(engine, project_id):
                         limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
                     linked = _import_targets(value, relative, code_paths)
                     for order, target in enumerate(linked):
+                        eligible.add(target)
                         if target not in scanned:
                             candidate_priority = (priorities.get(relative, (99, 0))[0] + 1, order)
                             priorities[target] = min(priorities.get(target, candidate_priority), candidate_priority)
@@ -898,6 +926,7 @@ def collect_evidence(engine, project_id):
                     provenance = 'dependency manifest'
                     for include in includes:
                         if include in paths and _safe_relative(include, patterns) and include not in scanned:
+                            eligible.add(include)
                             requirement_paths.add(include)
                             pending.insert(0, include)
                         else:
@@ -978,6 +1007,15 @@ def collect_evidence(engine, project_id):
             'coverage': {'partial': bool(limitations), 'freshness_unknown': freshness_unknown,
                          'limitations': sorted(limitations),
                          'inspection_stopped': inspection_stop, 'omitted_reason_counts': omitted_reasons,
+                         'inspection_policy': policy,
+                         'file_counts': {**inventory,
+                             'eligible_files': len(eligible) if inventory['listing_complete'] else None,
+                             'policy_omitted_paths': inventory['safe_paths'] - len(eligible) if inventory['listing_complete'] else None,
+                             'attempted_files': len(scanned), 'read_files': decoded_reads,
+                             'prefix_read_files': budget.prefix_read_files,
+                             'failed_reads': len(scanned) - decoded_reads,
+                             'not_attempted_files': len(eligible) - len(scanned) if inventory['listing_complete'] else None,
+                             'evidence_files': 0, 'read_not_in_evidence': decoded_reads},
                          'files_inspected': files_read, 'conversation_excerpts': excerpt_count},
             'diagnostics': {'cache_hits': 0, 'input_chars': size, 'files_inspected': files_read,
                             'files_attempted': len(scanned), 'bytes_read': budget.bytes_read,
@@ -990,8 +1028,11 @@ def collect_evidence(engine, project_id):
             input_chars=sum(len(source['text']) for source in result['sources']),
             conversation_excerpts=result['coverage']['conversation_excerpts'],
             duration_ms=round((time.monotonic() - started) * 1000))
+        # Inventory and policy describe the inspection, not changes to its sources.
+        fingerprint_coverage = {key: value for key, value in result['coverage'].items()
+                                if key not in {'file_counts', 'inspection_policy'}}
         result['fingerprint'] = _digest({key: result[key] for key in
-            ('sources', 'dependencies', 'tree', 'coverage')} | {'sessions': session_markers})
+            ('sources', 'dependencies', 'tree')} | {'coverage': fingerprint_coverage, 'sessions': session_markers})
         if inspection_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 if db.get(ProjectHistoryBatch, (project_id, key)) is None:

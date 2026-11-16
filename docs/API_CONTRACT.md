@@ -55,6 +55,7 @@ Task: `{id,project_id,title,description,priority,status,question_id,decision_id,
 
 ## Knowledge and derived views
 
+- `GET /{pid}/codex/scheme` keeps its saved snapshot and freshness fields; current `inspection` also returns optional `diagnostics`. New `coverage.file_counts` records Git-listed paths, explicit exclusions, safe paths, identified candidates, attempted and decoded reads, prefix-only reads, failed/unattempted reads, and distinct repository files retained in the final evidence package. Unknown listing totals are null; ignored untracked files are not enumerated. `coverage.inspection_policy` saves the numeric limits used. Saved snapshots/revisions retain their own counts; old snapshots are not backfilled from current inspection. Counts do not measure semantic completeness.
 - `POST /{pid}/notes`: `{title,content?,kind?,reference?}`.
 - `PATCH /{pid}/notes/{nid}`: note edits.
 - `POST /{pid}/documents`: bounded document import; exact encoding selected by backend/frontend together. Response is a document-kind note, never executed content.

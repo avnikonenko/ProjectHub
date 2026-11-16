@@ -497,7 +497,8 @@ def get_scheme(project_id: int, request: Request, db: DB):
         'snapshot': saved,
         'freshness': {'state': state, 'partial': coverage['partial'],
                       'limitations': coverage['limitations']},
-        'inspection': {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')},
+        'inspection': {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')}
+                      | {'diagnostics': evidence.get('diagnostics', {})},
     }
 
 
