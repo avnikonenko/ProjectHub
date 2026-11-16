@@ -148,6 +148,8 @@ class AppServerClient:
                 # Do not expose arbitrary server/config/auth details to browser clients.
                 code = result['error'].get('code', 'unknown')
                 message = result['error'].get('message')
+                if code == 'disconnected':
+                    raise CodexError('Codex disconnected; delivery may be unverified')
                 if (method == 'thread/resume' and code == -32600 and
                         isinstance(message, str) and 'already has an active writer' in message):
                     raise CodexError('Another Codex app or CLI owns this session. '
@@ -196,6 +198,8 @@ class AppServerClient:
                     if not isinstance(message, dict):
                         raise ValueError('Unsupported Codex frame')
                     if 'id' in message and 'method' not in message:
+                        if 'error' in message and not isinstance(message['error'], dict):
+                            raise ValueError('Unsupported Codex error envelope')
                         with self.lock:
                             target = self.pending.get(message['id'])
                         if target is not None:
@@ -209,9 +213,16 @@ class AppServerClient:
                         self._event(message.get('method', ''), message.get('params', {}))
                 if len(buffered) > maximum_chars * 4:
                     break
-        except (ValueError, OSError, CodexError, queue.Full):
+        except (ValueError, TypeError, RecursionError, OSError, CodexError, queue.Full):
             pass
         finally:
+            with self.lock:
+                unexpected = not self.closed
+            # EOF or invalid frames end the transport, not just its reader.
+            # Release the process/pipes before pending callers can mistake a
+            # dead reader for an open connection. close() is bounded and does
+            # not wait on buffered reader locks, including from this thread.
+            self.close()
             with self.lock:
                 pending = list(self.pending.values())
             for response in pending:
@@ -219,8 +230,12 @@ class AppServerClient:
                     response.put_nowait({'error': {'code': 'disconnected'}})
                 except queue.Full:
                     pass
-            if not self.closed:
-                self.on_disconnect()
+            if unexpected:
+                try:
+                    self.on_disconnect()
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception('Codex disconnect callback failed')
 
     def _event(self, method, params):
         try:
