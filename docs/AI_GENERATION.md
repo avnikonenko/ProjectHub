@@ -68,12 +68,18 @@ Changing profile, model or effort can require fresh extraction; returning to
 Quality reuses matching pre-profile caches when source/configuration inputs match.
 Changing settings does not invoke Codex or rewrite saved results.
 
-Expand **Generation details** under a new knowledge preview for its effective
+Expand **Coverage & technical details** under a saved result or knowledge preview for its effective
 profile/effort, elapsed time, request counts, extraction-cache hits, source coverage
 and reported token usage. JSON downloads retain these diagnostics. Older results
 without usage remain readable and show unavailable values rather than invented
 zeros. Failed/cancelled run diagnostics are also retained in generation status
 while that server process remains running.
+
+Overview, Knowledge, Q&A and Scheme use the same collapsed disclosure. Each shows
+only the measurements recorded for that result; file counts are available where
+the inspection recorded them. Scheme separates local file reads from files in the
+AI evidence package. Current source checks are labeled separately, and older
+revisions never borrow newer measurements. Opening the disclosure makes no AI call.
 
 Token counts come from the official App Server
 [`thread/tokenUsage/updated` notifications](https://learn.chatgpt.com/docs/app-server).
@@ -199,7 +205,7 @@ a distinct cache identity. Saved Knowledge, Overview and prior previews are repl
 only after the complete result passes validation and freshness checks.
 
 Progress reports overview-synthesis stages separately from conversation extraction.
-Generation details show actual synthesis requests, cached stages and processed
+Coverage & technical details shows actual synthesis requests, cached stages and processed
 active input counts. Independent summaries within each level run in parallel using
 the configured worker limit; the next level and final combination wait for their
 inputs. Diagnostics include `synthesis_workers` and ordered `synthesis_batch_timings`

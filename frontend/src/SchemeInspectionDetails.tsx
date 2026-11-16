@@ -1,3 +1,5 @@
+import { CoverageDetails } from './CoverageDetails';
+
 export type SchemeFileCounts = {
   repository_paths_total: number | null; excluded_paths: number | null;
   safe_paths: number | null; eligible_files: number | null; policy_omitted_paths: number | null;
@@ -46,13 +48,16 @@ const policyRows: [keyof SchemeInspectionPolicy, string, string][] = [
   ['max_package_chars', 'Evidence package limit', 'characters'], ['max_tree_paths', 'Tree path limit', 'paths'],
   ['max_metadata_bytes', 'Metadata byte limit', 'bytes'], ['max_metadata_seconds', 'Metadata time limit', 'seconds'],
 ];
-export function SchemeInspectionDetails({ coverage, saved, current = false }: { coverage?: SchemeCoverage; saved: boolean; current?: boolean }) {
+export function SchemeInspectionDetails({ coverage, saved, current = false, embedded = false }: { coverage?: SchemeCoverage; saved: boolean; current?: boolean; embedded?: boolean }) {
   const counts = coverage?.file_counts;
   const policy = coverage?.inspection_policy;
   const limitations = Array.isArray(coverage?.limitations) ? coverage.limitations.filter((item): item is string => typeof item === 'string') : [];
-  return <details className="scheme-inspection-details">
-    <summary>{current ? 'Current repository inspection' : 'How ProjectHub inspected this repository'}</summary>
+  const content = <>
     <p>{saved ? 'Inspection recorded with this saved Scheme.' : current ? 'Fresh inspection of the repository; these counts do not describe the evidence used by the saved Scheme.' : 'Current repository inspection.'}</p>
+    <dl>
+      <div><dt>Recorded conversation excerpts</dt><dd>{count(coverage?.conversation_excerpts)}</dd></div>
+      {!counts && <div><dt>Recorded inspected files</dt><dd>{count(coverage?.files_inspected)}</dd></div>}
+    </dl>
     {counts && typeof counts === 'object' ? <>
       <dl>{countRows.map(([key, title]) => <div key={key}><dt>{title}</dt><dd>{count(counts[key])}</dd></div>)}
         <div><dt>Repository listing complete</dt><dd>{typeof counts.listing_complete === 'boolean' ? counts.listing_complete ? 'Yes' : 'No' : 'Not recorded'}</dd></div>
@@ -71,16 +76,36 @@ export function SchemeInspectionDetails({ coverage, saved, current = false }: { 
     {!!limitations.length && <details><summary>Inspection limitations</summary><ul>
       {limitations.map((item, index) => <li key={index}>{item}</li>)}
     </ul></details>}
+  </>;
+  return embedded ? content : <details className="scheme-inspection-details">
+    <summary>{current ? 'Current repository inspection' : 'How ProjectHub inspected this repository'}</summary>
+    {content}
   </details>;
 }
-export function SchemeInspectionTiming({ diagnostics, saved }: { diagnostics?: SchemeDiagnostics | null; saved: boolean }) {
+export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }: { diagnostics?: SchemeDiagnostics | null; saved: boolean; embedded?: boolean }) {
   if (!diagnostics || !['bytes_read', 'inspection_seconds', 'cache_hits', 'package_chars'].some(key => nonnegative(diagnostics[key as keyof SchemeDiagnostics]))) return null;
-  return <details><summary>Repository inspection diagnostics</summary>
+  const content = <>
     <p>{saved ? 'Recorded with this saved Scheme.' : 'Current repository inspection.'}</p>
     <dl>{([
       ['inspection_seconds', 'Inspection duration', 'seconds'], ['bytes_read', 'Bytes read', 'bytes'],
       ['cache_hits', 'Inspection cache hits', ''], ['package_chars', 'Evidence package size', 'characters'],
     ] as const).filter(([key]) => nonnegative(diagnostics[key])).map(([key, title, unit]) =>
       <div key={key}><dt>{title}</dt><dd>{diagnostics[key]} {unit}</dd></div>)}</dl>
-  </details>;
+  </>;
+  return embedded ? content : <details><summary>Repository inspection diagnostics</summary>{content}</details>;
+}
+
+export function SchemeResultCoverage({ snapshot, current, showCurrent = false }: {
+  snapshot?: (Inspection & { generated_at?: string | null; sources?: unknown[] }) | null;
+  current?: Inspection & { sources?: unknown[] };
+  showCurrent?: boolean;
+}) {
+  const inspection = schemeInspectionForDisplay(snapshot, current);
+  return <CoverageDetails savedAt={snapshot?.generated_at}
+    note={inspection.saved ? undefined : 'Current inspection; no saved Scheme is selected.'}>
+    <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} embedded />
+    <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} embedded />
+    {showCurrent && inspection.saved && !inspection.coverage?.file_counts && current?.coverage?.file_counts &&
+      <SchemeInspectionDetails coverage={current.coverage} saved={false} current />}
+  </CoverageDetails>;
 }

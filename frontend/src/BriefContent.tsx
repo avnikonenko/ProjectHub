@@ -2,6 +2,8 @@ import { AIEmphasis } from './AIEmphasis';
 import { type GenerationProvenance } from './GenerationStatus';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
 import { Empty } from './ui';
+import { CoverageDetails } from './CoverageDetails';
+import type { GenerationDiagnostics } from './generationDiagnostics';
 
 export function validationCopy(text: string) {
   return text === 'No independently recorded test execution or scientific validation result is available. '
@@ -15,6 +17,7 @@ const evidenceLabels = { verified: 'Verified observation', reported: 'Reported',
 export type Brief = {
   generated_at: string;
   generation?: GenerationProvenance | null;
+  diagnostics?: GenerationDiagnostics;
   sections: {
     since_last_brief?: BriefEntry[];
     current_status?: BriefEntry[];
@@ -71,12 +74,10 @@ export function briefSections(brief: Brief | null) {
 }
 
 export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }) {
-  const selectionNotice = brief.coverage.find(item => item.startsWith('Overview uses '));
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief.sources ?? [], visibleSections.flatMap(({ entries }) => entries.flatMap((entry) => entry.source_ids)));
   const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return <>
-    {selectionNotice && <p className="muted" role="status">{selectionNotice}</p>}
     {visibleSections.map(({ key, title, collapsed, entries }) => {
       const points = (
         <ul className="brief-points">
@@ -96,6 +97,8 @@ export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }
       );
     })}
     {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
+    <CoverageDetails savedAt={brief.generated_at} sourceCount={brief.sources.length}
+      coverage={brief.coverage.map(validationCopy)} diagnostics={brief.diagnostics} />
   </>;
 }
 
@@ -104,6 +107,5 @@ export function BriefPreview({ brief, prefix }: { brief: Brief; prefix: string }
   return <>
     <BriefContent brief={brief} prefix={prefix} />
     <details><summary className="source-disclosure">Preview sources ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
-    {!!brief.coverage.length && <details><summary className="source-disclosure">Preview coverage</summary><ul>{brief.coverage.map((item, index) => <li key={index}>{item}</li>)}</ul></details>}
   </>;
 }

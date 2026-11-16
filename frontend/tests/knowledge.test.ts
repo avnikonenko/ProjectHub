@@ -100,3 +100,14 @@ test('unpublished previews require a paired project and safe brief source metada
     assert.throws(() => parseKnowledgePreview(changed, 2));
   }
 });
+
+test('saved Knowledge preserves only its own validated optional run diagnostics', () => {
+  const current = { ...snapshot(), diagnostics: { duration_seconds: 12.5, cache_hits: 7 } };
+  const before = structuredClone(current);
+  const parsed = parseKnowledgeResponse({ snapshot: current, diagnostics: { duration_seconds: 999 } }, 2);
+  assert.deepEqual(parsed.snapshot?.diagnostics, { duration_seconds: 12.5, cache_hits: 7 });
+  assert.deepEqual(current, before);
+  assert.equal(parseKnowledgeResponse({ snapshot: snapshot(), diagnostics: { duration_seconds: 999 } }, 2).snapshot?.diagnostics, undefined);
+  assert.deepEqual(parseKnowledgeResponse({ snapshot: { ...snapshot(), diagnostics: { duration_seconds: -1 } } }, 2).snapshot?.diagnostics, {});
+  assert.equal(parseKnowledgeResponse({ snapshot: { ...snapshot(), diagnostics: 'malformed' } }, 2).snapshot?.diagnostics, undefined);
+});

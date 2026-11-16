@@ -24,7 +24,7 @@ export type KnowledgeCoverage = Record<string, string[]>;
 export type KnowledgeSnapshot = {
   project_id: number; publication_id?: string; generated_at?: string;
   items: KnowledgeItem[]; sources: KnowledgeSource[]; coverage?: KnowledgeCoverage;
-  extraction_version?: string; source_manifest?: unknown;
+  extraction_version?: string; source_manifest?: unknown; diagnostics?: GenerationDiagnostics;
   topic_groups?: TopicGroup[]; topic_grouping?: Record<string, unknown>;
 };
 export type KnowledgeResponse = {
@@ -72,7 +72,10 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
     })
         || ['publication_id', 'generated_at', 'extraction_version'].some((key) => value[key] !== undefined && typeof value[key] !== 'string'))
       throw new Error('Invalid knowledge source metadata.');
-    snapshot = { ...value, coverage: coverage(value.coverage),
+    const { diagnostics: rawDiagnostics, ...stored } = value;
+    const diagnostics = parseGenerationDiagnostics(rawDiagnostics);
+    snapshot = { ...stored, coverage: coverage(value.coverage),
+      ...(diagnostics !== undefined ? { diagnostics } : {}),
       ...(value.topic_groups !== undefined ? { topic_groups: parseTopicGroups(value.topic_groups, ids) } : {}),
     } as KnowledgeSnapshot;
   }

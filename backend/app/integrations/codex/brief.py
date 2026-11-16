@@ -4,12 +4,14 @@ from contextlib import ExitStack
 import json
 import re
 import threading
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
-from .archive import archive_history, summarize_evidence, archive_worker_scope
+from .archive import archive_history, summarize_evidence, archive_worker_scope, archive_diagnostics
+from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
@@ -70,9 +72,32 @@ def read_brief(db, project_id):
     if row is None:
         return None
     result = {name: getattr(row, name) for name in ('generated_at', 'sections', 'sources', 'coverage', 'project_map', 'generation')}
+    result['generation'] = generation_for_read(row.generation)
+    metadata = saved_run_metadata(row.generation)
+    if 'diagnostics' in metadata:
+        result['diagnostics'] = metadata['diagnostics']
     if row.project_state is not None:
         result['project_state'] = row.project_state
     return result
+
+
+def saved_run_metadata(generation):
+    """Read only metadata recorded with this result, never current progress."""
+    if not isinstance(generation, dict):
+        return {}
+    result = {}
+    if isinstance(generation.get('diagnostics'), dict):
+        result['diagnostics'] = deepcopy(generation['diagnostics'])
+    coverage = generation.get('coverage')
+    if isinstance(coverage, list) and all(isinstance(item, str) for item in coverage):
+        result['coverage'] = list(coverage)
+    return result
+
+
+def generation_for_read(generation):
+    # Keep the existing provenance contract while exposing run details beside it.
+    return ({key: deepcopy(value) for key, value in generation.items()
+             if key not in ('diagnostics', 'coverage')} if isinstance(generation, dict) else generation)
 
 
 def note_evidence(db, project_id, *, shared_only=False):
@@ -231,8 +256,16 @@ def refresh_brief(engine, project_id, manager):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
     transport_scope = ExitStack()
+    started = time.monotonic()
+    metrics = GenerationMetrics()
+
+    def diagnostics():
+        return {**progress.read(project_id, 'brief').get('diagnostics', {}), **archive_diagnostics(),
+                **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
+
     try:
         progress.begin(project_id, 'brief')
+        transport_scope.enter_context(collect_generation_metrics(metrics))
         transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
         if callable(session):
@@ -399,6 +432,10 @@ def refresh_brief(engine, project_id, manager):
             if entry['text'] != validation_entry['text'] and set(entry['source_ids']) != {validation_id}
         )][:SECTION_LIMITS['validation']]
         cited = resolve_citations(sections, graph, source_groups)
+        run_diagnostics = {**diagnostics(), 'input_records': len(sources),
+                           'input_chars': sum(len(source.get('text', '')) for source in sources),
+                           'cited_source_count': len(cited)}
+        progress.record_diagnostics(project_id, run_diagnostics)
         with Session(engine) as db:
             row = db.get(ProjectBrief, project_id)
             if row is None:
@@ -406,7 +443,8 @@ def refresh_brief(engine, project_id, manager):
                 db.add(row)
             row.generated_at, row.sections = utcnow(), sections
             row.sources, row.coverage, row.project_map = cited, coverage, graph
-            row.generation = generation_metadata(manager)
+            row.generation = {**deepcopy(generation_metadata(manager)),
+                              'diagnostics': run_diagnostics, 'coverage': list(coverage)}
             row.project_state = {key: snapshot.get(key) for key in (
                 'fingerprint', 'git_checked_at', 'history_indexed_at', 'validation',
             )}
@@ -416,6 +454,7 @@ def refresh_brief(engine, project_id, manager):
             progress.finish(project_id)
             return read_brief(db, project_id)
     except Exception as exc:
+        progress.record_diagnostics(project_id, diagnostics())
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Brief generation failed. The previous saved brief is preserved.')
         raise
     finally:

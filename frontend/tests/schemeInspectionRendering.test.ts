@@ -7,12 +7,14 @@ let server: ViteDevServer;
 let details: any;
 let timing: any;
 let selectInspection: any;
+let resultCoverage: any;
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, entries: [] }, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   const module = await server.ssrLoadModule('/src/SchemeInspectionDetails.tsx');
   details = module.SchemeInspectionDetails;
   timing = module.SchemeInspectionTiming;
   selectInspection = module.schemeInspectionForDisplay;
+  resultCoverage = module.SchemeResultCoverage;
 });
 after(async () => { await server?.close(); });
 const coverage = { partial: true, limitations: [], files_inspected: 7, conversation_excerpts: 0,
@@ -39,7 +41,9 @@ test('legacy, null and malformed counts do not invent zero or expose invalid num
   for (const file_counts of [undefined, null, false, { read_files: -1, attempted_files: '8',
     evidence_files: NaN, prefix_read_files: 1.5, repository_paths_total: null, listing_complete: 'true' }]) {
     const html = renderToStaticMarkup(createElement(details, { coverage: { ...coverage, file_counts }, saved: true }));
-    assert.doesNotMatch(html, /<dd>(?:0|-1|8|NaN|1.5|Yes)<\/dd>/);
+    assert.doesNotMatch(html, /<dd>(?:-1|8|NaN|1.5|Yes)<\/dd>/);
+    assert.doesNotMatch(html, /(?:Files[^<]*|Prefix-only[^<]*)<\/dt><dd>0<\/dd>/);
+    assert.match(html, /Recorded conversation excerpts<\/dt><dd>0/);
     assert.match(html, /not recorded|Not recorded/);
   }
   const html = renderToStaticMarkup(createElement(details, { coverage: { ...coverage,
@@ -81,4 +85,44 @@ test('malformed legacy limitations remain safe and stop reasons use plain words'
     assert.doesNotMatch(html, /read_byte_limit/);
     if (Array.isArray(limitations)) assert.match(html, /Recorded limitation/);
   }
+});
+
+
+test('Scheme uses one closed standard coverage disclosure with saved accounting', () => {
+  const snapshot = { generated_at: '2026-11-16T12:00:00Z', coverage,
+    diagnostics: { inspection_seconds: 9, bytes_read: 100 } };
+  const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot,
+    current: { coverage: { ...coverage, file_counts: { ...coverage.file_counts, read_files: 913 } },
+      diagnostics: { inspection_seconds: 700, bytes_read: 8000 } } }));
+  assert.match(html, /^<details[^>]*><summary[^>]*>Coverage &amp; technical details<\/summary>/);
+  assert.equal((html.match(/Coverage &amp; technical details/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
+  assert.doesNotMatch(html, /<summary>How ProjectHub inspected|<summary>Repository inspection diagnostics/);
+  assert.match(html, /Inspection recorded with this saved Scheme/);
+  assert.match(html, /Files successfully read<\/dt><dd>7/);
+  assert.match(html, /9 seconds/);
+  assert.doesNotMatch(html, /913|8000|700 seconds/);
+});
+
+test('historical Scheme without counts shows unknowns instead of newer inspection figures', () => {
+  const snapshot = { generated_at: '2026-11-09T12:00:00Z', coverage: {
+    partial: false, limitations: [], files_inspected: 3, conversation_excerpts: 0 } };
+  const current = { coverage: { ...coverage, file_counts: { ...coverage.file_counts, read_files: 913 } } };
+  const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current }));
+  assert.match(html, /File counts were not recorded for this saved Scheme/);
+  assert.doesNotMatch(html, /Files successfully read|913/);
+  const disclosed = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current, showCurrent: true }));
+  assert.match(disclosed, /File counts were not recorded for this saved Scheme/);
+  assert.match(disclosed, /<summary>Current repository inspection<\/summary>/);
+  assert.match(disclosed, /these counts do not describe the evidence used by the saved Scheme/);
+  assert.match(disclosed, /Files successfully read<\/dt><dd>913/);
+  assert.doesNotMatch(disclosed, /<details[^>]*\bopen\b/);
+});
+
+test('inspection before first Scheme is clearly identified as current', () => {
+  const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot: null,
+    current: { coverage, diagnostics: { inspection_seconds: 0.5 } } }));
+  assert.match(html, /Current inspection; no saved Scheme is selected/);
+  assert.match(html, /Current repository inspection/);
+  assert.doesNotMatch(html, /Recorded with the result saved|Recorded with this saved Scheme/);
 });

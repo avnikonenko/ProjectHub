@@ -1,7 +1,7 @@
 import type { GenerationDiagnostics } from './generationDiagnostics';
 import { diagnosticCount } from './generationDiagnostics';
 
-export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDiagnostics }) {
+export function GenerationDetails({ diagnostics, embedded = false }: { diagnostics?: GenerationDiagnostics; embedded?: boolean }) {
   if (!diagnostics) return null;
   const usage = diagnostics.token_usage;
   const profile = diagnostics.profile;
@@ -16,11 +16,17 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
   const coverageAvailable = selection?.selected_primary_fragments !== undefined
     && selection.available_primary_fragments !== undefined
     && selection.selected_primary_fragments <= selection.available_primary_fragments;
-  return <details className="generation-details">
-    <summary>Generation details</summary>
+  const content = <>
     <dl>
       <dt>Profile</dt><dd>{profile?.label || profile?.id || 'Unavailable for this saved result'}</dd>
       <dt>Duration</dt><dd>{diagnostics.duration_seconds === undefined ? 'Unavailable' : `${diagnostics.duration_seconds.toFixed(1)} seconds`}</dd>
+      {diagnostics.input_records !== undefined && <><dt>Input records</dt><dd>{diagnosticCount(diagnostics.input_records)}</dd></>}
+      {diagnostics.input_chars !== undefined && <><dt>Input text characters</dt><dd>{diagnosticCount(diagnostics.input_chars)}</dd></>}
+      {diagnostics.archive_generated_batches !== undefined && <><dt>Fresh conversation summary batches</dt><dd>{diagnosticCount(diagnostics.archive_generated_batches)}</dd></>}
+      {diagnostics.archive_cache_hits !== undefined && <><dt>Reused conversation summary batches</dt><dd>{diagnosticCount(diagnostics.archive_cache_hits)}</dd></>}
+      {diagnostics.extraction_windows !== undefined && <><dt>Extraction batches</dt><dd>{diagnosticCount(diagnostics.extraction_windows)}</dd></>}
+      {diagnostics.extraction_workers !== undefined && <><dt>Extraction workers</dt><dd>{diagnosticCount(diagnostics.extraction_workers)}</dd></>}
+      {diagnostics.archive_workers !== undefined && <><dt>Conversation summary workers</dt><dd>{diagnosticCount(diagnostics.archive_workers)}</dd></>}
       <dt>Model requests</dt><dd>{diagnosticCount(diagnostics.model_requests)}</dd>
       <dt>Extraction cache hits</dt><dd>{diagnosticCount(diagnostics.cache_hits)}</dd>
       <dt>Fresh extraction requests</dt><dd>{diagnosticCount(diagnostics.ai_requests)}</dd>
@@ -33,6 +39,7 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
       </>}
       {profile?.effective_effort && <><dt>Effective reasoning effort</dt><dd>{profile.effective_effort}</dd></>}
     </dl>
+    {diagnostics.input_chars !== undefined && <p><small>Input text counts exclude instructions, schemas and repeated requests.</small></p>}
     {coverageAvailable && <p>Extraction coverage: {diagnosticCount(selection.selected_primary_fragments)} of {diagnosticCount(selection.available_primary_fragments)} primary fragments
       {(selection.partial || selection.selected_primary_fragments! < selection.available_primary_fragments!) && ' · Partial coverage'}</p>}
     {overview?.staged_synthesis && <p>Overview synthesis: summarized in stages, then combined.</p>}
@@ -69,5 +76,6 @@ export function GenerationDetails({ diagnostics }: { diagnostics?: GenerationDia
       </dl>
       <p><small>Counts are reported by Codex. Partial totals do not include unreported requests. Cached input and reasoning tokens are breakdowns, not extra tokens to add to the total.</small></p>
     </>}
-  </details>;
+  </>;
+  return embedded ? content : <details className="generation-details"><summary>Generation details</summary>{content}</details>;
 }

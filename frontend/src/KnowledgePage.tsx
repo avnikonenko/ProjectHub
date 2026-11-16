@@ -1,6 +1,6 @@
 import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
-import { GenerationDetails } from './GenerationDetails';
+import { CoverageDetails } from './CoverageDetails';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
@@ -223,16 +223,21 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           <KnowledgeItems key={`${base}:${snapshot.publication_id ?? snapshot.generated_at ?? 'published'}`}
             snapshot={snapshot} availability={load.data?.current_evidence_availability}
             selectedItemId={absentItem ? undefined : selectedItemId} />
-          {!!Object.values(load.data?.coverage ?? {}).some(values => values.length > 0) && <details>
-            <summary className="source-disclosure">Current source coverage</summary>
-            {Object.entries(load.data?.coverage ?? {}).filter(([, values]) => values.length > 0).map(([name, values]) => <div key={name}>
-              <strong>{name.replaceAll('_', ' ')}{name === 'limitations' ? '' : ` (${values.length})`}</strong>
-              <ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul>
-            </div>)}
-          </details>}
+          <CoverageDetails savedAt={snapshot.generated_at} sourceCount={snapshot.sources.length}
+            coverage={snapshot.coverage} diagnostics={snapshot.diagnostics}
+            note={!snapshot.diagnostics && Object.values(load.data?.coverage ?? {}).some(values => values.length > 0)
+              ? 'Processing counts and timings were not recorded for this saved result.' : undefined}>
+            {!!Object.values(load.data?.coverage ?? {}).some(values => values.length > 0) && <details>
+              <summary className="source-disclosure">Current source availability</summary>
+              <p><small>This check describes sources now, separately from the saved generation.</small></p>
+              {Object.entries(load.data?.coverage ?? {}).filter(([, values]) => values.length > 0).map(([name, values]) => <div key={name}>
+                <strong>{name.replaceAll('_', ' ')}{name === 'limitations' ? '' : ` (${values.length})`}</strong>
+                <ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul>
+              </div>)}
+            </details>}
+          </CoverageDetails>
           {!candidate && currentPreview?.result && <>
             <button className="secondary" onClick={downloadPreview}>Download JSON</button>
-            <GenerationDetails diagnostics={currentPreview.result.diagnostics} />
           </>}
         </>}
       </>}
@@ -247,8 +252,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       </div>
       <p>Use this result updates Knowledge and Overview together.</p>
       <button className="secondary" onClick={downloadPreview}>Download JSON</button>
-      <GenerationDetails diagnostics={candidate.diagnostics} />
-      {renderBrief(candidate.brief)}
+      {renderBrief({ ...candidate.brief, diagnostics: candidate.brief.diagnostics ?? candidate.diagnostics })}
       <h3>Knowledge</h3>
       <TagGeneration key={`${base}:preview-tags:${candidate.knowledge.publication_id}`} base={base} visible={visible} target="knowledge_preview"
         publicationId={candidate.knowledge.publication_id} itemIds={candidate.knowledge.items.map(item => item.id)}
@@ -258,6 +262,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           ? { ...previous, result: { ...previous.result, knowledge: { ...previous.result.knowledge,
             topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } } : previous)} />
       <KnowledgeItems key={`${base}:preview:${candidate.knowledge.publication_id}`} snapshot={candidate.knowledge} />
+      <CoverageDetails savedAt={candidate.knowledge.generated_at} sourceCount={candidate.knowledge.sources.length}
+        coverage={candidate.knowledge.coverage} diagnostics={candidate.knowledge.diagnostics ?? candidate.diagnostics} />
     </section>}
   </section>;
 }

@@ -5,6 +5,8 @@ import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './t
 import { TopicPicker } from './TopicPicker';
 import { KnowledgePage } from './KnowledgePage';
 import { BriefPreview, type Brief } from './BriefContent';
+import { CoverageDetails } from './CoverageDetails';
+import type { GenerationDiagnostics } from './generationDiagnostics';
 import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
@@ -938,6 +940,7 @@ function Report({ value }: { value: any }) {
 }
 
 type SavedQA = {
+  diagnostics?: GenerationDiagnostics; coverage?: string[];
   topic_grouping?: Record<string, unknown>;
   generated_at: string;
   generation?: GenerationProvenance | null;
@@ -1472,6 +1475,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
+        {saved && <CoverageDetails savedAt={saved.generated_at} sourceCount={saved.sources.length}
+          coverage={saved.coverage} diagnostics={saved.diagnostics} />}
         {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
           generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}

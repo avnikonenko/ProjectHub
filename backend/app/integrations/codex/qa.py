@@ -17,7 +17,8 @@ from sqlalchemy.orm import Session
 from ...models import Answer, Project, ProjectQA, ProjectHistoryBatch, Question, utcnow
 from .archive import archive_history, archive_worker_scope, archive_diagnostics, _worker_count
 from .brief import BriefBusy, generation_lock
-from .brief import note_evidence, recorded_evidence, generation_metadata
+from .brief import note_evidence, recorded_evidence, generation_metadata, saved_run_metadata, generation_for_read
+from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from . import progress
 from .revisions import save_revision
 from .protocol import CodexError, JSONFormattingError
@@ -45,11 +46,15 @@ _SCHEMA = {
 
 def read_qa(db, project_id):
     row = db.get(ProjectQA, project_id)
-    return None if row is None else {
+    if row is None:
+        return None
+    stored = row.generation if isinstance(row.generation, dict) else {}
+    return {
         'generated_at': row.generated_at, 'items': [with_question_id(item) for item in row.items], 'sources': row.sources,
-        'generation': row.generation,
-        'topic_groups': (row.generation or {}).get('topic_groups', []),
-        'topic_grouping': (row.generation or {}).get('topic_grouping', {}),
+        'generation': generation_for_read(row.generation),
+        'topic_groups': stored.get('topic_groups', []),
+        'topic_grouping': stored.get('topic_grouping', {}),
+        **saved_run_metadata(row.generation),
     }
 
 
@@ -507,13 +512,24 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
     if not generation_lock.acquire(blocking=False):
         raise BriefBusy('A brief or Q&A refresh is already running. Try again when it finishes.')
     transport_scope = ExitStack()
+    started = time.monotonic()
+    metrics = GenerationMetrics()
+
+    def diagnostics():
+        return {**progress.read(project_id, 'qa').get('diagnostics', {}), **archive_diagnostics(),
+                **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
+
     try:
         progress.begin(project_id, 'qa')
+        transport_scope.enter_context(collect_generation_metrics(metrics))
         transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
-        evidence, _ = archive_history(engine, project_id, manager)
+        evidence, coverage = archive_history(engine, project_id, manager)
+        coverage = [*coverage,
+                    'Q&A uses saved conversations, shared-chat documents, accepted solutions and decisions, '
+                    'and saved architecture; ordinary notes and TODOs are excluded.']
         with Session(engine) as db:
             project = db.get(Project, project_id)
             if project is None:
@@ -546,19 +562,25 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         items = [with_question_id(item) for item in items]
         cited_ids = dict.fromkeys(source_id for item in items for answer in (item, *item.get('variants', []))
                                  for source_id in answer['source_ids'])
+        run_diagnostics = {**diagnostics(), 'input_records': len(evidence),
+                           'input_chars': sum(len(source.get('text', '')) for source in evidence),
+                           'cited_source_count': len(cited_ids)}
+        progress.record_diagnostics(project_id, run_diagnostics)
         with Session(engine) as db:
             row = db.get(ProjectQA, project_id)
             if row is None:
                 row = ProjectQA(project_id=project_id)
                 db.add(row)
             row.generated_at, row.items, row.sources = utcnow(), items, [sources[source_id] for source_id in cited_ids]
-            row.generation = generation_metadata(manager)
+            row.generation = {**deepcopy(generation_metadata(manager)),
+                              'diagnostics': run_diagnostics, 'coverage': list(coverage)}
             db.flush()
             save_revision(db, project_id, 'qa', read_qa(db, project_id))
             progress.complete(project_id, db.commit)
             progress.finish(project_id)
             return read_qa(db, project_id)
     except Exception as exc:
+        progress.record_diagnostics(project_id, diagnostics())
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Q&A generation failed. The previous saved Q&A is preserved.')
         raise
     finally:

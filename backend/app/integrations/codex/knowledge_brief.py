@@ -432,7 +432,13 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
             row = ProjectBrief(project_id=project_id)
             db.add(row)
         for field in ('generated_at', 'sections', 'sources', 'coverage', 'project_map', 'generation', 'project_state'):
-            setattr(row, field, brief[field])
+            value = brief[field]
+            if field == 'generation' and isinstance(brief.get('diagnostics'), dict):
+                # Internal storage extras must not change the preview's public
+                # provenance shape or its equality during idempotent activation.
+                value = {**deepcopy(value), 'diagnostics': deepcopy(brief['diagnostics']),
+                         'coverage': list(brief['coverage'])}
+            setattr(row, field, value)
         db.flush()
         save_revision(db, project_id, 'knowledge', candidate)
         save_revision(db, project_id, 'brief', read_brief(db, project_id))
@@ -559,6 +565,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                                'synthesis_requests': overview_selection.get('synthesis_requests', 1),
                                'synthesis_cache_hits': overview_selection.get('synthesis_cache_hits', 0),
                                **({'overview_selection': overview_selection} if overview_selection else {})}
+            brief['diagnostics'] = deepcopy(run_diagnostics)
             candidate['diagnostics'] = deepcopy(run_diagnostics)
             progress.record_diagnostics(project_id, run_diagnostics)
             if publish:

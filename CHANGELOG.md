@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Collapsed Coverage & technical details for Overview, Knowledge, Q&A and Scheme, with saved-run counts, timing, cache reuse and available inspection limits. New results retain measurements through reloads and revision history; older results show missing measurements without borrowing current data.
+
 - Save Scheme file inventory, read/prefix/failure counts, exclusions and final AI evidence counts with each generation. Show inspection rules and trade-offs in collapsed Code structure details, with timing diagnostics in Scheme details and clear separation of saved, current and legacy coverage.
 
 - Restart ProjectHub from Settings when using the managed launcher. Block restart during active work, reconnect to the new server instance, and offer an optional page reload while preserving unfinished browser edits.
@@ -29,6 +31,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.
 
 ### Fixed
+
+- Preserve complete source evidence for long Scheme dependency manifests using bounded declaration chunks. Follow explicit imports into safe archive paths without promoting unreferenced backups, redact pip references with extras, and retain compatible-release version constraints.
 
 - Keep dependency-table headings on one line at larger text sizes, with horizontal scrolling on narrow screens.
 

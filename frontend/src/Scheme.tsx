@@ -9,7 +9,7 @@ import { RevisionHistory } from './RevisionHistory';
 import { decodeSchemeText } from './SchemeText';
 import { schemeNodeRoles } from './schemeRoles';
 import { AIResultHeader } from './AIResultHeader';
-import { SchemeInspectionDetails, SchemeInspectionTiming, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
+import { SchemeResultCoverage, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -197,7 +197,7 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
 }
 
 type Directory = { name: string; path: string; directory: boolean; children: Map<string, Directory> };
-function CodeStructure({ entries, highlighted, inspection, currentCoverage }: { entries: TreeEntry[]; highlighted: Set<string>; currentCoverage?: SchemeCoverage; inspection: ReturnType<typeof schemeInspectionForDisplay> }) {
+function CodeStructure({ entries, highlighted }: { entries: TreeEntry[]; highlighted: Set<string> }) {
   const root: Directory = { name: '', path: '', directory: true, children: new Map() };
   for (const entry of entries) {
     const parts = entry.path.split('/').filter(Boolean);
@@ -226,9 +226,6 @@ function CodeStructure({ entries, highlighted, inspection, currentCoverage }: { 
   return <details className="scheme-code-tree">
     <summary>Code structure</summary>
     {entries.length ? branch(root) : <p>No repository tree available for this result.</p>}
-    <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} />
-    {inspection.saved && !inspection.coverage?.file_counts && currentCoverage?.file_counts &&
-      <SchemeInspectionDetails coverage={currentCoverage} saved={false} current />}
   </details>;
 }
 
@@ -363,7 +360,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <summary>Scheme details</summary>
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
-      <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} />
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
         disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
           selectingRevision.current = value;
@@ -378,6 +374,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           setRevisionId(id);
         }} />
     </details>
+    {result && <SchemeResultCoverage snapshot={snapshot} current={result.inspection} showCurrent={revisionId === null} />}
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {(['Architecture', 'Workflow', 'Dependencies'] as const).map((name) =>
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
@@ -393,7 +390,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       </>}
     </>}
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}
-      highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} inspection={inspection} currentCoverage={revisionId === null ? result.inspection.coverage : undefined} />}
+      highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
     {view === 'Dependencies' && <>
       {!dependencies.length && <Empty>No matching direct dependencies in the inspected evidence.</Empty>}
       {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)))}

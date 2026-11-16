@@ -17,6 +17,8 @@ export type SynthesisBatchTiming = {
 const MAX_SYNTHESIS_TIMINGS = 4096;
 export type GenerationDiagnostics = {
   duration_seconds?: number; ai_requests?: number; cache_hits?: number;
+  input_records?: number; input_chars?: number; cited_source_count?: number;
+  archive_workers?: number; archive_generated_batches?: number; archive_cache_hits?: number;
   synthesis_requests?: number; synthesis_cache_hits?: number; model_requests?: number;
   extraction_windows?: number; extraction_workers?: number; default_generation_configuration?: boolean;
   batch_timings?: { batch: number; seconds: number; cached: boolean }[];
@@ -103,7 +105,8 @@ export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics 
   const result: GenerationDiagnostics = {};
   if (typeof raw.duration_seconds === 'number' && Number.isFinite(raw.duration_seconds) && raw.duration_seconds >= 0)
     result.duration_seconds = raw.duration_seconds;
-  for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'synthesis_cache_hits', 'model_requests', 'extraction_windows', 'extraction_workers'] as const)
+  for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'synthesis_cache_hits', 'model_requests', 'extraction_windows', 'extraction_workers', 'input_records', 'input_chars', 'cited_source_count',
+    'archive_workers', 'archive_generated_batches', 'archive_cache_hits'] as const)
     if (count(raw[field])) result[field] = raw[field];
   if (typeof raw.default_generation_configuration === 'boolean') result.default_generation_configuration = raw.default_generation_configuration;
   if (Array.isArray(raw.batch_timings)) result.batch_timings = raw.batch_timings.flatMap((value) =>
