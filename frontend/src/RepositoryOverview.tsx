@@ -1,11 +1,13 @@
 import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
-import { ErrorBox } from './ui';
+import { ErrorBox, PagedItems } from './ui';
 
 type RepositoryStatus = {
   branch: string | null;
   dirty: boolean;
+  branches?: string[];
+  branches_limited?: boolean;
   tracked_changes?: number;
   untracked_files?: number;
   github_issues_url?: string | null;
@@ -71,6 +73,15 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
           </p>
         )}
       </div>
+      {!!status?.branches?.length && <details className="repository-branches">
+        <summary>Local branches ({status.branches.length}{status.branches_limited ? '+' : ''})</summary>
+        <PagedItems label="Local branch pages" listClass="repository-branch-list" pageSize={10}>
+          {status.branches.map(branch => <li key={branch}>
+            <code>{branch}</code>{branch === status.branch && <span className="muted"> · Current</span>}
+          </li>)}
+        </PagedItems>
+        {status.branches_limited && <p className="muted">Showing up to {status.branches.length} local branches, including the current branch when available.</p>}
+      </details>}
       <button className="secondary" type="button" disabled={loading} onClick={reload}>Refresh Git snapshot</button>
     </div>
   );

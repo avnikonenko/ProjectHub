@@ -1607,3 +1607,6 @@ a:focus-visible {
 .project-name { overflow-wrap: anywhere; }
 .project-row .project-pin { flex: 0 0 2rem; min-height: 2rem; }
 .project-row .project-pin[aria-pressed="true"] { opacity: 1; color: var(--accent); }
+
+.repository-branches { margin-block: .75rem; }
+.repository-branches li { overflow-wrap: anywhere; }

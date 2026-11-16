@@ -97,6 +97,19 @@ def repository_snapshot(value, remote=''):
         return SimpleNamespace(stdout=output.decode('utf-8', errors='replace'), returncode=code)
 
     branch = git('symbolic-ref', '--quiet', '--short', 'HEAD', allowed=(0, 1))
+    current_branch = branch.stdout.strip() if branch.returncode == 0 else None
+    branch_names = git('for-each-ref', '--format=%(refname:short)', '--sort=refname',
+                       '--count=301', 'refs/heads').stdout.splitlines()
+    branches_limited = len(branch_names) > 300
+    branches = branch_names[:300]
+    # An unborn current branch has no refs/heads entry yet. Also keep the current
+    # branch visible when it falls beyond the bounded alphabetical listing.
+    if current_branch and current_branch not in branches:
+        if len(branches) == 300:
+            branches_limited = True
+            branches.pop()
+        branches.append(current_branch)
+        branches.sort()
     head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
     commits = []
     if head.returncode == 0:
@@ -134,7 +147,7 @@ def repository_snapshot(value, remote=''):
             if not next(entries, None):
                 raise HTTPException(503, 'Unable to parse repository status')
     target = repository_github_target(remote, path, validated=True)
-    return {'branch': branch.stdout.strip() if branch.returncode == 0 else None,
+    return {'branch': current_branch, 'branches': branches, 'branches_limited': branches_limited,
             'dirty': bool(status.stdout), 'commits': commits,
             'tracked_changes': tracked_changes, 'untracked_files': untracked_files,
             'github_issues_url': issues_url(target) if target else None}

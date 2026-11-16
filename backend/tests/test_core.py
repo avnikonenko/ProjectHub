@@ -372,7 +372,8 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     p = project(client, repository_path=str(repo))
     url = f"/api/projects/{p['id']}/repository"
     assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [],
-                                     'tracked_changes': 0, 'untracked_files': 0, 'github_issues_url': None}
+                                     'tracked_changes': 0, 'untracked_files': 0, 'github_issues_url': None,
+                                     'branches': ['work'], 'branches_limited': False}
     assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
     assert client.get('/api/projects/99999/repository').status_code == 404
 
@@ -395,6 +396,7 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     assert response.status_code == 200, response.text
     result = response.json()
     assert result['branch'] is None and result['dirty'] is True
+    assert result['branches'] == ['work'] and result['branches_limited'] is False
     assert result['tracked_changes'] == 1 and result['untracked_files'] == 0
     assert [commit['subject'] for commit in result['commits']] == ['Change 3', 'Change 2', 'Change 1']
     assert [commit['committed_at'] for commit in result['commits']] == [
@@ -524,3 +526,67 @@ def test_not_planned_tasks_are_retained_but_not_recommended(client):
     assert 'Deferred idea' not in client.get(f'{base}/summary').json()['markdown']
     assert client.patch(url, json={'status': 'backlog'}).status_code == 200
     assert any(f['entity_id'] == task['id'] for f in client.get(f'{base}/review').json()['findings'])
+
+
+def test_repository_snapshot_lists_local_branches_and_worktrees(client, tmp_path):
+    repo = tmp_path / 'branches'
+    repo.mkdir()
+
+    def git(*args, input=None):
+        return subprocess.run(['git', '-C', str(repo), *args], input=input, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    git('init', '-b', 'main')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    git('commit', '--allow-empty', '-m', 'Initial')
+    git('branch', 'zeta')
+    git('branch', 'alpha')
+    git('update-ref', 'refs/remotes/origin/remote-only', 'HEAD')
+    pid = project(client, repository_path=str(repo))['id']
+    url = f'/api/projects/{pid}/repository'
+    index = (repo / '.git/index').read_bytes() if (repo / '.git/index').exists() else None
+    result = client.get(url).json()
+    assert result['branches'] == ['alpha', 'main', 'zeta']
+    assert result['branch'] == 'main' and result['branches_limited'] is False
+    if index is not None:
+        assert (repo / '.git/index').read_bytes() == index
+    worktree = tmp_path / 'linked-worktree'
+    git('worktree', 'add', str(worktree), 'zeta')
+    linked = project(client, 'Worktree', repository_path=str(worktree))['id']
+    result = client.get(f'/api/projects/{linked}/repository').json()
+    assert result['branch'] == 'zeta' and result['branches'] == ['alpha', 'main', 'zeta']
+    git('checkout', '--detach')
+    result = client.get(url).json()
+    assert result['branch'] is None and result['branches'] == ['alpha', 'main', 'zeta']
+
+
+def test_repository_snapshot_limits_branch_list_but_keeps_current(client, tmp_path):
+    repo = tmp_path / 'many-branches'
+    repo.mkdir()
+
+    def git(*args, input=None):
+        return subprocess.run(['git', '-C', str(repo), *args], input=input, check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    git('init', '-b', 'zz-current')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    git('commit', '--allow-empty', '-m', 'Initial')
+    head = git('rev-parse', 'HEAD')
+    git('update-ref', '--stdin', input=''.join(
+        f'create refs/heads/branch-{index:03d} {head}\n' for index in range(305)))
+    pid = project(client, repository_path=str(repo))['id']
+    result = client.get(f'/api/projects/{pid}/repository').json()
+    assert len(result['branches']) == 300 and result['branches_limited'] is True
+    assert result['branches'] == sorted(result['branches'])
+    assert 'zz-current' in result['branches']
+
+    for index in range(6):
+        git('update-ref', '-d', f'refs/heads/branch-{index:03d}')
+    git('checkout', '--orphan', 'zzz-unborn')
+    result = client.get(f'/api/projects/{pid}/repository').json()
+    assert result['branch'] == 'zzz-unborn'
+    assert len(result['branches']) == 300 and result['branches_limited'] is True
+    assert 'zzz-unborn' in result['branches']
+    assert result['commits'] == []
