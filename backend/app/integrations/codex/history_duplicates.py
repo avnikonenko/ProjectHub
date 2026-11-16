@@ -35,14 +35,22 @@ def _signature(turn):
         sort_keys=True, ensure_ascii=True).encode()).digest()
 
 
-def indexed_sharing(db, project_id):
-    # Metadata only: text is streamed once per changed index, not per page.
-    markers = db.execute(text(
+def _markers(db, project_id):
+    return db.execute(text(
         'SELECT id,history_indexed_at,history_indexed_activity,thread_id,codex_account,codex_activity_at '
         'FROM codex_sessions WHERE project_id=:pid AND is_linked=1 '
         'AND history_indexed_at IS NOT NULL AND history_indexed_activity IS NOT NULL '
         'AND (codex_activity_at IS NULL OR codex_activity_at=history_indexed_activity) ORDER BY id LIMIT :limit'),
         {'pid': project_id, 'limit': MAX_CACHE_SESSIONS + 1}).all()
+
+
+class _IndexBudgetExceeded(Exception):
+    """Optional sharing metadata must never exceed its actual read budget."""
+
+
+def indexed_sharing(db, project_id):
+    # Metadata only: text is streamed once per changed index, not per page.
+    markers = _markers(db, project_id)
     engine = db.get_bind()
     if not markers or len(markers) > MAX_CACHE_SESSIONS:
         with _lock:
@@ -68,14 +76,22 @@ def indexed_sharing(db, project_id):
     if count > MAX_INDEX_TURNS or chars + marker_chars > MAX_ID_CHARS:
         return SharedPrefixIndex(), {}
     sharing, signatures = SharedPrefixIndex(), {}
-    for marker in markers:
-        session_id = marker[0]
+    actual_count, actual_chars = 0, marker_chars
 
-        def turns():
-            rows = db.execute(text('SELECT turn_id,status,messages FROM codex_history_turns '
-                'WHERE project_id=:pid AND session_id=:sid ORDER BY id'),
-                {'pid': project_id, 'sid': session_id})
+    def turns(session_id):
+        nonlocal actual_count, actual_chars
+        # A refresh can commit after the preflight query. Check what we really
+        # read, before decoding messages or retaining their hashes/references.
+        # Read only the remaining budget plus one sentinel row.
+        rows = db.execute(text('SELECT turn_id,status,messages FROM codex_history_turns '
+            'WHERE project_id=:pid AND session_id=:sid ORDER BY id LIMIT :limit'),
+            {'pid': project_id, 'sid': session_id, 'limit': MAX_INDEX_TURNS - actual_count + 1})
+        try:
             for row in rows:
+                actual_count += 1
+                actual_chars += len(str(row.turn_id))
+                if actual_count > MAX_INDEX_TURNS or actual_chars > MAX_ID_CHARS:
+                    raise _IndexBudgetExceeded
                 try:
                     messages = json.loads(row.messages)
                     if (not isinstance(messages, list) or any(
@@ -93,13 +109,24 @@ def indexed_sharing(db, project_id):
                 turn = {'id': row.turn_id, 'status': row.status, 'messages': messages}
                 signatures[(session_id, row.turn_id)] = signature
                 yield turn
+        finally:
+            rows.close()
 
-        sharing.add_session(session_id, turns())
+    try:
+        for marker in markers:
+            sharing.add_session(marker[0], turns(marker[0]))
+    except _IndexBudgetExceeded:
+        return SharedPrefixIndex(), {}
     # Only duplicate signatures are needed to check a live history page against
     # the saved index; originals can always remain visible.
     signatures = {ref: signatures[ref] for ref in sharing.canonical}
     result = sharing, signatures
     with _lock:
+        # Do not cache a mixture of sessions from different index revisions.
+        # Avoid a long SQLite read transaction: sync writers stay unblocked,
+        # while a changed index simply loses this optional optimization.
+        if tuple(tuple(row) for row in _markers(db, project_id)) != key[2]:
+            return SharedPrefixIndex(), {}
         _retire_project(engine, project_id)
         _cache[key] = result
         _cache.move_to_end(key)
