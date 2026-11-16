@@ -150,18 +150,34 @@ def validate_links(db, project_id, values):
             raise HTTPException(422, 'Answer does not belong to the linked question')
 
 
-def overview(db, project_id, *, compact=False):
+def overview(db, project_id, *, compact=False, note_content=True):
     data = {'project': serialize(require_project(db, project_id))}
     if not compact:
         data['questions'] = [question_dict(db, q) for q in records(db, Question, project_id)]
         data['decisions'] = [serialize(d) for d in records(db, Decision, project_id)]
     data['tasks'] = [serialize(t) for t in records(db, Task, project_id)]
-    data['notes'] = [serialize(n) for n in records(db, Note, project_id)]
+    if note_content:
+        data['notes'] = [serialize(n) for n in records(db, Note, project_id)]
+    else:
+        # Select metadata directly: deferring ORM content but serializing the
+        # entity would accidentally lazy-load every complete transcript again.
+        columns = [column for column in Note.__table__.columns if column.name != 'content']
+        data['notes'] = [{**dict(row), 'content_loaded': False} for row in db.execute(
+            select(*columns).where(Note.project_id == project_id).order_by(Note.id)
+        ).mappings()]
     if not compact:
         data['sessions'] = [serialize(s) for s in records(db, CodexSession, project_id)]
-    data['activity'] = [serialize(a) for a in db.scalars(
-        select(AuditEvent).where(AuditEvent.project_id == project_id).order_by(AuditEvent.id.desc()).limit(50)
-    )]
+    if note_content:
+        data['activity'] = [serialize(a) for a in db.scalars(
+            select(AuditEvent).where(AuditEvent.project_id == project_id).order_by(AuditEvent.id.desc()).limit(50)
+        )]
+    else:
+        # Audit snapshots can contain another full copy of a note/transcript.
+        # Activity navigation needs only metadata; retain the stored audit intact.
+        columns = [column for column in AuditEvent.__table__.columns if column.name not in ('before', 'after')]
+        data['activity'] = [{**dict(row), 'details_loaded': False} for row in db.execute(
+            select(*columns).where(AuditEvent.project_id == project_id).order_by(AuditEvent.id.desc()).limit(50)
+        ).mappings()]
     return data
 
 

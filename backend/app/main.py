@@ -91,8 +91,8 @@ def create_app(data_dir=None):
         apply_values(p,values);audit(db,project_id,p,'updated',before);db.commit();return serialize(p)
 
     @app.get('/api/projects/{project_id}/overview')
-    def get_overview(project_id: int, compact: bool = False, db: Session = db_dep):
-        return overview(db, project_id, compact=compact)
+    def get_overview(project_id: int, compact: bool = False, note_content: bool = True, db: Session = db_dep):
+        return overview(db, project_id, compact=compact, note_content=note_content)
 
     @app.get('/api/projects/{project_id}/questions')
     def get_questions(project_id:int,db:Session=db_dep):require_project(db,project_id);return [question_dict(db,q) for q in records(db,Question,project_id)]
@@ -205,6 +205,10 @@ def create_app(data_dir=None):
 
     @app.get('/api/projects/{project_id}/notes')
     def get_notes(project_id:int,db:Session=db_dep):require_project(db,project_id);return [serialize(n) for n in records(db,Note,project_id)]
+
+    @app.get('/api/projects/{project_id}/notes/{note_id}')
+    def get_note(project_id: int, note_id: int, db: Session = db_dep):
+        return serialize(scoped(db, Note, project_id, note_id))
 
     @app.post('/api/projects/{project_id}/notes',status_code=201)
     def create_note(project_id:int,payload:NoteCreate,db:Session=db_dep):

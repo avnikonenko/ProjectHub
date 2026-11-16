@@ -18,6 +18,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Load note and imported ChatGPT transcript content on demand instead of including it in every project load. Exclude duplicate audit bodies from the lightweight response, preserve source links and full-content editing, and retain existing export and API defaults.
+
 - Distinguish conditionally equivalent implementation optimizations from unresolved policy choices in Overview synthesis, without upgrading acceptance or claiming independent validation. Preserve Knowledge records and reusable source-stage caches.
 
 - Recheck previously untagged records when the available topic catalog changes, while preserving existing positive assignments and zero-call reuse when unchanged.

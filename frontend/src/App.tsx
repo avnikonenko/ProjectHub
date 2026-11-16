@@ -8,7 +8,8 @@ import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledg
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
 import { api, patch, post } from './api';
-import { NoteContent } from './NoteContent';
+import { NoteCard } from './NoteCard';
+import { LazyNote, useLoadedNote } from './LazyNote';
 import { completedMessages } from './codex';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
@@ -284,7 +285,7 @@ function ProjectWorkspace({
     setView('History');
   }
   const load = useCallback(async (signal?: AbortSignal) => {
-    const result = await api<Overview>(`${base}/overview?compact=true`, { signal });
+    const result = await api<Overview>(`${base}/overview?compact=true&note_content=false`, { signal });
     if (alive.current && !signal?.aborted) setOverview(result);
   }, [base]);
   useEffect(() => {
@@ -742,46 +743,18 @@ function ProjectWorkspace({
                 </div>
                 {!matchingNotes.length && <Empty>No notes yet.</Empty>}
                 <PagedItems label="Note pages">{matchingNotes.map((n) => (
-                  <section className="card note-card" key={n.id}>
-                    <div className="section-title">
-                      <h2>{n.title}</h2>
-                      <div className="note-actions">
-                        <Badge value={n.kind} />
-                        <EditButton label={`Edit note: ${n.title}`} disabled={busy}
-                          onClick={() =>
-                            edit(
-                              'Edit note',
-                              [
-                                titleField,
-                                {
-                                  name: 'content',
-                                  label: 'Markdown content',
-                                  type: 'textarea',
-                                },
-                                { name: 'kind', label: 'Kind' },
-                                { name: 'reference', label: 'Reference' },
-                              ],
-                              `/notes/${n.id}`,
-                              n,
-                            )
-                          }
-                        />
-                        <DeleteButton label={`Delete note: ${n.title}`} disabled={busy} onClick={() => {
-                          if (window.confirm(`Delete note “${n.title}”?`)) {
-                            void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));
-                          }
-                        }} />
-                      </div>
-                    </div>
-                    {isChatGPTShare(n)
-                      ? (
-                        <details>
-                          <summary>Read transcript</summary>
-                          <div className="shared-transcript">{n.content}</div>
-                        </details>
-                      )
-                      : <NoteContent content={n.content} reveal={searchTarget?.kind === 'notes'} />}
-                    {n.reference && (
+                  <NoteCard key={n.id} base={base} note={n} shared={isChatGPTShare(n)} busy={busy}
+                    reveal={searchTarget?.kind === 'notes'}
+                    onEdit={loaded => edit('Edit note', [titleField,
+                      { name: 'content', label: 'Markdown content', type: 'textarea' },
+                      { name: 'kind', label: 'Kind' }, { name: 'reference', label: 'Reference' },
+                    ], `/notes/${n.id}`, loaded)}
+                    onDelete={() => {
+                      if (window.confirm(`Delete note “${n.title}”?`)) {
+                        void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));
+                      }
+                    }} reference={
+                    n.reference && (
                       <p>
                         <strong>Reference:</strong>{' '}
                         {isChatGPTShare(n)
@@ -790,8 +763,8 @@ function ProjectWorkspace({
                           ? <a href={n.reference}>Open source conversation</a>
                           : <span>{n.reference}</span>}
                       </p>
-                    )}
-                  </section>
+                    )
+                    } />
                 ))}
                 </PagedItems>
               </>
@@ -1500,20 +1473,32 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
         </nav>
       )}
       {showHistory && passageNotes && shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
-        <details className="history-turn" key={share.id}>
-          <summary>{share.title}</summary>
-          <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
-          <SaveablePassage context={passageNotes} title={share.title ?? 'ChatGPT passage'}
-            reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id })}>
-            <div className="shared-transcript">{share.content}</div>
-          </SaveablePassage>
-        </details>
+        <SharedChatTranscript key={share.id} base={base} share={share} passageNotes={passageNotes} />
       ))}
     </section>
   );
 }
 
 function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, onNoteSaved }: {
+function SharedChatTranscript({ base, share, passageNotes }: {
+  base: string; share: RecordData; passageNotes: PassageNoteContext;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return <details className="history-turn" open={expanded}
+    onToggle={event => setExpanded(event.currentTarget.open)}>
+    <summary>{share.title}</summary>
+    {expanded && <>
+      <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
+      <LazyNote base={base} note={share}>{loaded => (
+        <SaveablePassage context={passageNotes} title={share.title ?? 'ChatGPT passage'}
+          reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id })}>
+          <div className="shared-transcript">{loaded.content}</div>
+        </SaveablePassage>
+      )}</LazyNote>
+    </>}
+  </details>;
+}
+
   base: string;
   projectId: number;
   historyLink: HistoryLink | null;
@@ -1582,7 +1567,23 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
   );
 }
 
-function IndexedChatGPTTranscript({ note, query, onClose, passageNotes }: {
+function IndexedChatGPTTranscript(props: {
+  note?: RecordData; query?: string; onClose: () => void; passageNotes: PassageNoteContext;
+}) {
+  const loaded = useLoadedNote(props.passageNotes.base, props.note ?? { id: 0 }, !!props.note);
+  if (!props.note || loaded.note) return <LoadedChatGPTTranscript {...props} note={loaded.note ?? undefined} />;
+  return <section className="card saved-history" aria-busy={loaded.loading}>
+    <div className="section-title">
+      <h2>{props.note.title || 'Saved ChatGPT transcript'}</h2>
+      <button className="secondary" onClick={props.onClose}>Browse conversations</button>
+    </div>
+    {loaded.loading && <Feedback>Loading saved content…</Feedback>}
+    <ErrorBox error={loaded.error} />
+    {loaded.error && <button type="button" className="secondary" onClick={loaded.retry}>Retry loading content</button>}
+  </section>;
+}
+
+function LoadedChatGPTTranscript({ note, query, onClose, passageNotes }: {
   note?: RecordData;
   query?: string;
   onClose: () => void;
