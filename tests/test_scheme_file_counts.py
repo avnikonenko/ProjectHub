@@ -26,7 +26,19 @@ def counts(result):
         assert value['repository_paths_total'] == value['safe_paths'] + value['excluded_paths']
         assert value['safe_paths'] == value['eligible_files'] + value['policy_omitted_paths']
         assert value['eligible_files'] == value['attempted_files'] + value['not_attempted_files']
+        omissions = result['coverage']['file_omissions']
+        assert omissions['total'] == value['eligible_files'] - value['evidence_files']
+        assert len(omissions['files']) == min(omissions['total'], evidence._MAX_RECORDED_FILE_OMISSIONS)
+        assert len({row['path'] for row in omissions['files']}) == len(omissions['files'])
+        assert {row['path'] for row in omissions['files']}.isdisjoint(
+            source['path'] for source in result['sources'] if source.get('path'))
+    else:
+        assert 'file_omissions' not in result['coverage']
     return value
+
+
+def omissions(result):
+    return {row['path']: row['reason'] for row in result['coverage']['file_omissions']['files']}
 
 
 def test_inventory_excludes_credentials_and_does_not_count_unlisted_ignored_files(tmp_path):
@@ -45,6 +57,7 @@ def test_inventory_excludes_credentials_and_does_not_count_unlisted_ignored_file
     assert value['safe_paths'] == 3
     assert value['eligible_files'] == value['read_files'] == value['evidence_files'] == 1
     assert value['policy_omitted_paths'] == 2
+    assert omissions(result) == {}
     assert 'SECRET' not in json.dumps(result)
 
 
@@ -62,6 +75,8 @@ def test_successful_reads_count_before_parser_failure_and_prefix_decode(tmp_path
     assert value['failed_reads'] == 1
     assert value['evidence_files'] == 1
     assert value['read_not_in_evidence'] == 2
+    assert omissions(result) == {'binary.py': 'unreadable_or_malformed', 'empty.py': 'no_usable_excerpt',
+                                 'pyproject.toml': 'unreadable_or_malformed'}
 
 
 @pytest.mark.parametrize('limit', ['bytes', 'metadata', 'time'])
@@ -82,8 +97,11 @@ def test_budget_denominator_survives_partial_inspection(tmp_path, monkeypatch, l
     assert value['not_attempted_files'] >= 2
     if limit == 'metadata':
         assert value['read_files'] == 1
+        assert omissions(result) == {'module1.py': 'metadata_byte_budget', 'module2.py': 'metadata_byte_budget'}
     else:
         assert value['evidence_files'] == 0
+        reason = 'byte_budget' if limit == 'bytes' else 'time_budget'
+        assert omissions(result) == {f'module{i}.py': reason for i in range(3)}
     assert result['coverage']['inspection_policy']['max_read_bytes'] == evidence._MAX_INSPECTION_BYTES
 
 
@@ -110,7 +128,9 @@ def test_final_package_drops_are_counted_and_cached_without_rereads(tmp_path, mo
         value = counts(result)
         assert value['read_files'] == 10
         assert value['evidence_files'] < 10
+        assert set(omissions(result).values()) == {'package_output_budget'}
         payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context')}
+        payload['coverage'] = {key: item for key, item in payload['coverage'].items() if key != 'file_omissions'}
         assert len(json.dumps(payload, ensure_ascii=False)) <= 4000
         assert result['diagnostics']['package_chars'] == len(json.dumps(payload, ensure_ascii=False))
         monkeypatch.setattr(evidence, '_read', lambda *a, **kw: pytest.fail('Cached evidence reread'))
@@ -158,6 +178,30 @@ def test_source_text_budget_omissions_are_successful_reads(tmp_path, monkeypatch
     assert value['read_files'] == value['read_not_in_evidence'] == 1
     assert value['evidence_files'] == 0
     assert result['coverage']['omitted_reason_counts']['source_output_budget'] > 0
+    assert omissions(result) == {'main.py': 'source_output_budget'}
+
+
+def test_manifest_with_one_retained_excerpt_is_not_a_skipped_file(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'requirements.txt').write_text(''.join(f'package{i:03}{"x" * 100}==1.0\n' for i in range(60)))
+    monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 3300)
+    result = inspect(tmp_path, repo)
+    value = counts(result)
+    assert value['eligible_files'] == value['evidence_files'] == 1
+    assert sum(source.get('path') == 'requirements.txt' for source in result['sources']) == 1
+    assert result['coverage']['omitted_reason_counts']['source_output_budget'] > 0
+    assert omissions(result) == {}
+
+
+def test_file_list_is_bounded_but_total_remains_exact(tmp_path):
+    repo = repository(tmp_path)
+    file_count = evidence._MAX_RECORDED_FILE_OMISSIONS + 4
+    for index in range(file_count):
+        (repo / f'module{index:03}.py').touch()
+    result = inspect(tmp_path, repo)
+    assert counts(result)['eligible_files'] == file_count
+    assert result['coverage']['file_omissions']['total'] == file_count
+    assert list(omissions(result)) == [f'module{i:03}.py' for i in range(evidence._MAX_RECORDED_FILE_OMISSIONS)]
 
 
 def test_repository_disappearing_after_listing_preserves_known_inventory_without_reads(tmp_path, monkeypatch):
@@ -171,10 +215,12 @@ def test_repository_disappearing_after_listing_preserves_known_inventory_without
         return original_open(path, *args, **kwargs)
 
     monkeypatch.setattr(evidence.os, 'open', unavailable_root)
-    value = counts(inspect(tmp_path, repo))
+    result = inspect(tmp_path, repo)
+    value = counts(result)
     assert value['listing_complete'] is True
     assert value['eligible_files'] == value['not_attempted_files'] == 1
     assert value['attempted_files'] == value['read_files'] == 0
+    assert omissions(result) == {'main.py': 'unsafe_or_unavailable'}
 
 
 def test_symlink_and_invalid_utf8_are_failed_reads(tmp_path):
@@ -183,6 +229,8 @@ def test_symlink_and_invalid_utf8_are_failed_reads(tmp_path):
     outside = tmp_path / 'outside.py'
     outside.write_text('class Outside: pass\n')
     (repo / 'link.py').symlink_to(outside)
-    value = counts(inspect(tmp_path, repo))
+    result = inspect(tmp_path, repo)
+    value = counts(result)
     assert value['eligible_files'] == value['attempted_files'] == value['failed_reads'] == 2
     assert value['read_files'] == 0
+    assert omissions(result) == {'binary.py': 'unreadable_or_malformed', 'link.py': 'unsafe_or_unavailable'}

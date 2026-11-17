@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- List skipped Scheme files with their individual omission reasons in coverage details.
+
 - Persistent generation results distinguish failed, timed-out, cancelled, interrupted and dependency-skipped attempts from earlier saved output. Checkboxes and Regenerate selected let users choose individual views; Retry unfinished runs only unsuccessful or missing views, reusing caches and preserving Knowledge-before-Scheme ordering. Abandoned work is marked Interrupted after restart. Reloading while Scheme waits for Knowledge continues tracking the queued job and reloads its saved result on completion.
 
 - Regenerate all runs idle Overview, Knowledge, Q&A and Implementation Choices jobs concurrently, then starts Scheme after Knowledge is successfully saved. Each project/view keeps its own progress, cancellation, cache and saving; duplicate jobs are blocked. Settings describes the worker count per job, while restart and source/account maintenance remain exclusive.

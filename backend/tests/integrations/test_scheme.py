@@ -249,6 +249,8 @@ def test_knowledge_publication_is_in_prompt_and_saved_with_scheme_atomically(tmp
         db.add(Project(name='One'))
         db.commit()
     context = knowledge_evidence()
+    omissions = {'total': 1, 'files': [{'path': 'local-only.py', 'reason': 'source_output_budget'}]}
+    context['coverage']['file_omissions'] = omissions
     monkeypatch.setattr(scheme, 'collect_evidence', lambda *args: context)
 
     class Manager:
@@ -259,6 +261,7 @@ def test_knowledge_publication_is_in_prompt_and_saved_with_scheme_atomically(tmp
         def generate_brief(self, prompt, schema):
             self.calls += 1
             assert json.dumps(context['knowledge_context']['publication_id']) in prompt
+            assert 'local-only.py' not in prompt
             assert 'also include ALL its supporting_source_ids' in prompt
             assert 'AGREED does not establish implementation' in prompt
             assert 'When evidence_selection_partial is true' in prompt
@@ -272,6 +275,7 @@ def test_knowledge_publication_is_in_prompt_and_saved_with_scheme_atomically(tmp
     manager = Manager()
     saved = scheme.refresh_scheme(engine, 1, manager)
     assert saved['knowledge_context'] == context['knowledge_context']
+    assert saved['coverage']['file_omissions'] == omissions
     assert manager.calls == 1
     context['knowledge_context']['publication_id'] = 'published-two'
     manager.raw = '{broken'

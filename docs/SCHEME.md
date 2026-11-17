@@ -110,6 +110,10 @@ processing coverage, not the percentage of project functionality understood.
 Ignored untracked files are outside the Git listing and are not counted.
 
 Counts belong to the saved generation and remain attached to its revisions.
+At the bottom of Scheme, **Coverage & technical details → Skipped files**
+lists up to 100 eligible paths left out of the AI input and the reason for each.
+Earlier generations may only record aggregate reasons. A file can contribute
+multiple excerpts, so aggregate omission counts can differ from file counts.
 Older Schemes explicitly report that these counts were not recorded; a separately
 labeled current inspection can be viewed without generating a new Scheme.
 **Scheme details → Repository inspection diagnostics** shows recorded timing,

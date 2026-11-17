@@ -35,6 +35,7 @@ _MAX_EXCERPT = 1600
 _MAX_DEPENDENCIES = 100
 _MAX_SOURCES_CHARS = 40_000
 _MAX_PACKAGE_CHARS = 140_000
+_MAX_RECORDED_FILE_OMISSIONS = 100
 _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
 
 
@@ -964,12 +965,14 @@ def collect_evidence(engine, project_id):
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
         markers, metadata_stop = _markers(root_fd, paths) if root_fd is not None else ([], None)
+        file_omission_reasons = {}
         if metadata_stop:
             limitations.add(f'The repository metadata {metadata_stop.replace("_", " ")} was reached; some paths were omitted.')
             marked_paths = {relative for relative, _ in markers}
+            file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v11', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v12', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1103,19 +1106,23 @@ def collect_evidence(engine, project_id):
             except _InspectionStopped as exc:
                 inspection_stop = exc.reason
                 omitted_reasons[exc.reason] = 1 + len(set(pending) - scanned)
+                file_omission_reasons[relative] = exc.reason
                 break
             except OSError:
                 omitted_reasons['unsafe_or_unavailable'] = omitted_reasons.get('unsafe_or_unavailable', 0) + 1
+                file_omission_reasons[relative] = 'unsafe_or_unavailable'
                 freshness_unknown = True
                 limitations.add('Some selected files could not be read safely; their freshness is unknown.')
             except (ValueError, TypeError, AttributeError, RecursionError):
                 omitted_reasons['unreadable_or_malformed'] = omitted_reasons.get('unreadable_or_malformed', 0) + 1
+                file_omission_reasons[relative] = 'unreadable_or_malformed'
                 limitations.add('Some selected files were unreadable, unsafe, malformed, binary, above 64 KiB, or too deeply nested.')
         inspection_seconds = round(time.monotonic() - budget.started, 6)
         if not inspection_stop and inspection_seconds >= _INSPECTION_SECONDS:
             inspection_stop = 'time_budget'
             omitted_reasons['time_budget'] = len(set(pending) - scanned)
         if inspection_stop:
+            file_omission_reasons.update(dict.fromkeys(set(pending) - scanned, inspection_stop))
             limitations.add(f'The source inspection {inspection_stop.replace("_", " ")} was reached; coverage may be incomplete.')
         # Prevent an unusually large manifest/dependency set from exhausting the AI input budget.
         bounded, size = [], 0
@@ -1198,14 +1205,32 @@ def collect_evidence(engine, project_id):
                             'omitted_reason_counts': omitted_reasons,
                             'conversation_excerpts': excerpt_count,
                             'duration_ms': round((time.monotonic() - started) * 1000)}}
+        selected_paths = {source['path'] for source in bounded if source.get('path')}
         package_chars = _bound_package(result)
+        # Attach local accounting only after the AI package has been finalized.
+        # A file with even one retained excerpt is counted as supplied.
+        if inventory['listing_complete']:
+            supplied_paths = {source['path'] for source in result['sources'] if source.get('path')}
+            prepared_paths = {source['path'] for source in repository_sources}
+            omitted_paths = eligible - supplied_paths
+            file_omission_reasons.update(dict.fromkeys(prepared_paths - selected_paths, 'source_output_budget'))
+            file_omission_reasons.update(dict.fromkeys(selected_paths - supplied_paths, 'package_output_budget'))
+            default_reason = 'unsafe_or_unavailable' if root_fd is None else 'not_attempted'
+            result['coverage']['file_omissions'] = {
+                'total': len(omitted_paths),
+                'files': [
+                    {'path': path, 'reason': file_omission_reasons.get(
+                        path, 'no_usable_excerpt' if path in scanned else default_reason)}
+                    for path in sorted(omitted_paths)[:_MAX_RECORDED_FILE_OMISSIONS]
+                ],
+            }
         result['diagnostics'].update(package_chars=package_chars,
             input_chars=sum(len(source['text']) for source in result['sources']),
             conversation_excerpts=result['coverage']['conversation_excerpts'],
             duration_ms=round((time.monotonic() - started) * 1000))
-        # Inventory and policy describe the inspection, not changes to its sources.
+        # Local coverage accounting describes the inspection, not changes to its sources.
         fingerprint_coverage = {key: value for key, value in result['coverage'].items()
-                                if key not in {'file_counts', 'inspection_policy'}}
+                                if key not in {'file_counts', 'inspection_policy', 'file_omissions'}}
         result['fingerprint'] = _digest({key: result[key] for key in
             ('sources', 'dependencies', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
                 'published_knowledge': knowledge['marker']})

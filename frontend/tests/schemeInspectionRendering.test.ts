@@ -55,6 +55,24 @@ test('legacy, null and malformed counts do not invent zero or expose invalid num
   assert.match(html, /Repository paths listed<\/dt><dd>Not recorded/);
   assert.match(html, /Current repository inspection/);
 });
+test('skipped file details use saved paths and distinguish file counts from excerpt counts', () => {
+  const html = renderToStaticMarkup(createElement(resultCoverage, {
+    snapshot: { coverage: { ...coverage, file_omissions: { total: 15, files: [
+      { path: 'src/worker.py', reason: 'source_output_budget' },
+      { path: 'src/extra.py', reason: 'no_usable_excerpt' },
+    ] } } },
+    current: { coverage: { ...coverage, file_omissions: {
+      total: 1, files: [{ path: 'current-only.py', reason: 'time_budget' }],
+    } } },
+  }));
+  assert.match(html, /<summary>Skipped files \(15\)<\/summary>/);
+  assert.match(html, /Showing 2 of 15 recorded files/);
+  assert.match(html, /src\/worker.py<\/code> · Source excerpt budget reached/);
+  assert.match(html, /src\/extra.py<\/code> · No usable excerpt produced/);
+  assert.doesNotMatch(html, /current-only.py/);
+  const earlier = renderToStaticMarkup(createElement(details, { coverage, saved: true }));
+  assert.match(earlier, /File names and individual reasons were not recorded/);
+});
 test('saved and historical accounting never falls through to latest inspection', () => {
   const current = { coverage, diagnostics: { inspection_seconds: 0.25, bytes_read: 2000 } };
   const legacy = { coverage: { partial: false, limitations: [], files_inspected: 3, conversation_excerpts: 0 } };

@@ -252,6 +252,9 @@ def test_metadata_deadline_partial_is_not_cached(tmp_path, monkeypatch):
         partial = evidence.collect_evidence(engine, 1)
         assert partial['coverage']['files_inspected'] == 1
         assert any('metadata time budget' in limit for limit in partial['coverage']['limitations'])
+        assert partial['coverage']['file_omissions'] == {
+            'total': 1, 'files': [{'path': 'other.py', 'reason': 'metadata_time_budget'}],
+        }
         monkeypatch.setattr(evidence, '_descriptor', original)
         complete = evidence.collect_evidence(engine, 1)
         assert complete['diagnostics']['cache_hits'] == 0
@@ -297,6 +300,7 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
         assert result['coverage']['files_inspected'] == 452
         assert result['coverage']['inspection_stopped'] is None
         payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context')}
+        payload['coverage'] = {key: value for key, value in payload['coverage'].items() if key != 'file_omissions'}
         assert len(json.dumps(payload, ensure_ascii=False)) <= evidence._MAX_PACKAGE_CHARS
         assert result['diagnostics']['package_chars'] == len(json.dumps(payload, ensure_ascii=False))
         assert result['coverage']['omitted_reason_counts']['package_output_budget'] > 0
@@ -309,6 +313,7 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
 
             def generate_brief(self, prompt, schema):
                 self.prompt_chars = len(prompt)
+                assert '"file_omissions"' not in prompt
                 graph = {'nodes': [], 'edges': [], 'explanation': 'Insufficient graph evidence.'}
                 return json.dumps({'architecture': graph, 'workflow': graph, 'dependencies': []})
 
@@ -316,6 +321,7 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
         snapshot = scheme.refresh_scheme(engine, 1, manager)
         assert 0 < manager.prompt_chars <= scheme.MAX_INPUT_CHARS
         assert snapshot['coverage']['files_inspected'] == 452
+        assert snapshot['coverage']['file_omissions'] == result['coverage']['file_omissions']
     finally:
         engine.dispose()
 

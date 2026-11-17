@@ -19,6 +19,7 @@ export type SchemeCoverage = {
   partial: boolean; limitations: string[]; files_inspected: number; conversation_excerpts: number;
   file_counts?: SchemeFileCounts | null; inspection_policy?: SchemeInspectionPolicy | null;
   inspection_stopped?: string | null; omitted_reason_counts?: Record<string, number>;
+  file_omissions?: { files: { path: string; reason: string }[]; total: number };
 };
 type Inspection = { coverage?: SchemeCoverage; diagnostics?: SchemeDiagnostics | null };
 
@@ -33,6 +34,22 @@ function nonnegative(value: unknown): value is number {
 }
 function count(value: unknown) {
   return nonnegative(value) && Number.isSafeInteger(value) ? String(value) : 'Not recorded';
+}
+const omissionLabels: Record<string, string> = {
+  not_attempted: 'Inspection did not reach this file',
+  time_budget: 'Inspection time limit reached',
+  byte_budget: 'Local read budget reached',
+  metadata_time_budget: 'File metadata inspection time limit reached',
+  metadata_byte_budget: 'File metadata inspection budget reached',
+  unsafe_or_unavailable: 'Could not safely open the file',
+  unreadable_or_malformed: 'File could not be read or parsed',
+  no_usable_excerpt: 'No usable excerpt produced',
+  source_output_budget: 'Source excerpt budget reached',
+  package_output_budget: 'Final evidence package limit reached',
+  knowledge_support_budget: 'Supporting evidence did not fit the input budget',
+};
+function omissionLabel(reason: string) {
+  return Object.hasOwn(omissionLabels, reason) ? omissionLabels[reason] : reason.replaceAll('_', ' ');
 }
 const countRows: [keyof Omit<SchemeFileCounts, 'listing_complete'>, string][] = [
   ['repository_paths_total', 'Repository paths listed'], ['excluded_paths', 'Explicitly excluded paths'],
@@ -54,6 +71,9 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
   const limitations = Array.isArray(coverage?.limitations) ? coverage.limitations.filter((item): item is string => typeof item === 'string') : [];
   const eligible = counts?.eligible_files;
   const evidence = counts?.evidence_files;
+  const omissions = coverage?.file_omissions;
+  const omittedFiles = Array.isArray(omissions?.files) ? omissions.files.slice(0, 100).filter(file =>
+    typeof file?.path === 'string' && typeof file?.reason === 'string') : [];
   const knownTotal = counts?.listing_complete === true && nonnegative(eligible) && Number.isSafeInteger(eligible)
     && nonnegative(evidence) && Number.isSafeInteger(evidence) && nonnegative(counts.read_files)
     && Number.isSafeInteger(counts.read_files) && evidence <= counts.read_files && counts.read_files <= eligible;
@@ -62,9 +82,9 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
     {counts && <>
       <p><strong>AI input:</strong> {knownTotal ? `${evidence} of ${eligible} eligible repository files supplied`
         : `${count(evidence)} files supplied; the eligible total is not established`}.</p>
-      <p><strong>Local reads:</strong> {count(counts.read_files)} files, including {count(counts.prefix_read_files)} prefix-only reads.
-        {' '}{count(counts.read_not_in_evidence)} read files were not included in the final AI input.</p>
-      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not supplied. Expand omission reasons below.</p>}
+      <p><strong>Local reads:</strong> {count(counts.read_files)} files, including {count(counts.prefix_read_files)} prefix-only {counts.prefix_read_files === 1 ? 'read' : 'reads'}.
+        {' '}{count(counts.read_not_in_evidence)} read files were left out of the final AI input.</p>
+      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not supplied.</p>}
       <p><small>Reading a file locally and supplying it to AI are different stages. Prefixes and selected excerpts do not cover the complete file; these counts do not establish correctness.</small></p>
     </>}
     <dl>
@@ -85,9 +105,20 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
       <dl>{policyRows.map(([key, title, unit]) => <div key={key}><dt>{title}</dt><dd>{nonnegative(policy[key]) ? `${policy[key]} ${unit}` : 'Not recorded'}</dd></div>)}</dl>
     </details> : <p>Inspection limits were not recorded for {saved ? 'this saved Scheme' : 'this inspection'}.</p>}
     {coverage?.inspection_stopped && <p>Inspection stopped: {String(coverage.inspection_stopped).replaceAll('_', ' ')}</p>}
-    {coverage?.omitted_reason_counts && typeof coverage.omitted_reason_counts === 'object' && <details><summary>Omission reasons</summary><dl>
-      {Object.entries(coverage.omitted_reason_counts).map(([reason, value]) => <div key={reason}><dt>{reason.replaceAll('_', ' ')}</dt><dd>{count(value)}</dd></div>)}
-    </dl></details>}
+    {!!omittedFiles.length && <details>
+      <summary>Skipped files ({count(omissions?.total)})</summary>
+      {typeof omissions?.total === 'number' && omissions.total > omittedFiles.length
+        && <p>Showing {omittedFiles.length} of {count(omissions.total)} recorded files.</p>}
+      <ul className="scheme-omitted-files">{omittedFiles.map(({ path, reason }, index) =>
+        <li key={index}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+    </details>}
+    {saved && knownTotal && evidence < eligible && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
+    {coverage?.omitted_reason_counts && typeof coverage.omitted_reason_counts === 'object'
+      && !!Object.keys(coverage.omitted_reason_counts).length && <details><summary>Omission reasons</summary>
+      <p><small>These totals count omitted evidence entries and inspection events. A file can contribute more than one excerpt.</small></p>
+      <dl>{Object.entries(coverage.omitted_reason_counts).map(([reason, value]) =>
+        <div key={reason}><dt>{omissionLabel(reason)}</dt><dd>{count(value)}</dd></div>)}</dl>
+    </details>}
     {!!limitations.length && <details><summary>Inspection limitations</summary><ul>
       {limitations.map((item, index) => <li key={index}>{item}</li>)}
     </ul></details>}

@@ -218,6 +218,7 @@ def refresh_scheme(engine, project_id, manager):
         if not evidence['sources']:
             raise CodexError('No project evidence is available for a scheme.')
         payload = {key: evidence[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+        payload['coverage'] = {key: value for key, value in evidence['coverage'].items() if key != 'file_omissions'}
         if isinstance(evidence.get('knowledge_context'), dict):
             payload['knowledge_context'] = evidence['knowledge_context']
         serialized = json.dumps(payload, ensure_ascii=False)

@@ -1339,6 +1339,7 @@ a:focus-visible {
 .scheme-code-tree ul { list-style: none; padding-left: 1.25rem; margin: .3rem 0; }
 .scheme-code-tree > ul { padding-left: 0; }
 .scheme-code-tree { overflow-wrap: anywhere; font-family: var(--font-mono, monospace); }
+.scheme-omitted-files { overflow-wrap: anywhere; }
 .scheme-referenced-file { font-weight: 700; text-decoration: underline; text-underline-offset: .2rem; }
 .scheme-table-scroll { overflow-x: auto; margin: 1rem 0; }
 .scheme-dependencies { width: 100%; border-collapse: collapse; text-align: left; }
