@@ -1,6 +1,6 @@
 # ProjectHub
 
-[![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub_Actions-2088ff)](.github/workflows/ci.yml)
+[![CI status](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml)
 [![Docs: Guides](https://img.shields.io/badge/docs-guides-2f7d5a)](docs/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)
 
