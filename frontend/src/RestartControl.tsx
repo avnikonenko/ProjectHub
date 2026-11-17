@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Feedback } from './Feedback';
-import { SettingsHelp } from './SettingsHelp';
 import { ErrorBox } from './ui';
 import { readRestartStatus, restartProjectHub, type RestartStatus } from './restart';
 
@@ -66,10 +65,6 @@ export function RestartControl({ active }: { active: boolean }) {
     <button type="button" className="secondary"
       disabled={!active || loading || busy || !status?.available || status.restarting}
       onClick={() => void restart()}>{busy ? 'Restarting…' : 'Restart ProjectHub'}</button>
-    <SettingsHelp title="About restarting ProjectHub">
-      <p>Restarts the ProjectHub server to load application changes. After reconnecting, reload this page to load interface changes.
-        Save any unfinished edits first. Restart is unavailable while AI work or a Codex discussion is active.</p>
-    </SettingsHelp>
     {(loading || busy || connected) && <Feedback tone={connected ? 'success' : 'info'}>
       {connected ? 'ProjectHub restarted and reconnected.' : busy ? 'Restarting… Waiting for ProjectHub to reconnect.' : 'Loading restart status…'}
     </Feedback>}
