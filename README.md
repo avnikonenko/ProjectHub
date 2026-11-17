@@ -71,12 +71,15 @@ See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub i
 
 Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 
-## Example: Use ProjectHub to work on ProjectHub
+## Example: Get back up to speed on Project X
 
-1. Click **Add project**, name it **ProjectHub**, and link your ProjectHub checkout as its local Git repository.
-2. In **Sources**, link a Codex session where you worked on ProjectHub, or use **Import shared chat** to add a conversation you want to keep.
+1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
+2. In **Sources**, link a Codex session about Project X or use **Import shared chat** to add a past discussion.
 3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Read the saved result and follow its citations to the original discussions.
-4. When you come back to the project, open **Reviews → Ask Project** and ask “Why did we keep the source installer alongside the wheel?” With the optional Codex skill, you can also ask a new session “Read ProjectHub context for ProjectHub before we continue.”
+4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
+5. In **Generation**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
+
+![Scheme architecture for Project X, showing how file import, validation, storage, and reporting are connected](docs/images/projecthub-scheme.png)
 
 ## Settings and AI
 
