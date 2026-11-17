@@ -22,11 +22,13 @@ See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and
 ## Progress, cancellation and timeouts
 
 Progress shows the stage, completed batches and cache reuse when available.
-**Cancel generation** may take time to reach an active request. A failure or
-cancellation preserves the saved result and lets a retry reuse matching batches.
+**Cancel generation** may take time to reach an active request. Failed and
+cancelled runs preserve earlier saved results.
 
-Reload the page to reconnect to a run on the same server. After a server restart,
-retry interrupted runs.
+After a timeout or interruption, click **Retry unfinished**. ProjectHub skips
+completed batches that still match the current inputs, even after a server
+restart. Unfinished or invalidated batches run again. Reload the page to
+reconnect to a run still active on the same server.
 
 **Settings → Overall time budget (seconds)** allows 30 to 7,200 seconds per run,
 with a default of 900 (15 minutes). Each response also has a separate timeout.
