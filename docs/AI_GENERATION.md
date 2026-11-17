@@ -174,6 +174,25 @@ action skips its dependent Scheme rather than attaching to an unidentified run.
 Tags remain a separate action. A server crash can still interrupt in-memory work;
 saved results and successful extraction caches remain durable.
 
+The project shows the latest outcome for each generated view independently of its
+saved result: Saved, Not generated, Running, Waiting for Knowledge, Timed out,
+Failed, Cancelled, Interrupted or Skipped. A failed latest attempt can therefore
+show an earlier saved result without implying that the refresh succeeded. Attempt
+details retain start/end times and the reported error, not prompts or responses.
+They survive restart; abandoned running/waiting jobs become Interrupted.
+
+**Retry unfinished** starts only missing or unsuccessful idle views. It does not
+refresh successful results merely because they may be stale. Failed Scheme alone
+retries against saved Knowledge; when both Knowledge and Scheme are unfinished,
+Knowledge retries first and requests Scheme only after saving. Existing matching
+batch caches are reused, but a single interrupted model request cannot resume.
+Use the checkboxes and **Regenerate selected** to choose views explicitly;
+unfinished views are selected initially. **Select all** selects idle views, and
+running/waiting jobs cannot be selected for duplicate generation. Selecting only
+Scheme uses saved Knowledge; selecting both keeps Knowledge before Scheme.
+Attempt tracking starts with this version; outcomes already lost before tracking
+cannot be reconstructed from the existence or absence of a saved result.
+
 Concurrency validation used real SQLite with simultaneous Overview/Scheme saves
 and cancellation, plus isolated Firefox checks of all five actions and a failed
 Limits job while siblings continued. The browser generation requests were

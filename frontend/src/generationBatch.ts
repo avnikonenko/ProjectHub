@@ -15,9 +15,63 @@ export type KnowledgeGenerationOutcome = {
   schemeRequested?: boolean;
 };
 export type KnowledgeSchemeDependency = { project: string; request: number };
+export type GenerationPlan = {
+  start: ProjectGenerationKind[];
+  waitForKnowledge: boolean;
+  schemeSkippedForKnowledge: boolean;
+};
+export type GenerationRetryView = {
+  kind: ProjectGenerationKind;
+  state: string;
+  saved_at: string | null;
+  retryable: boolean;
+  showing_previous?: boolean;
+};
+const unfinishedGenerationStates = new Set([
+  'not_generated', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped',
+]);
+
+/** Only unfinished views are retried. A successful view is never refreshed here. */
+export function planRetryProjectGeneration(views: readonly GenerationRetryView[],
+  busy: Partial<Record<ProjectGenerationKind, boolean>>): GenerationPlan {
+  const byKind = new Map(views.map(view => [view.kind, view]));
+  const start = projectGenerationKinds.filter(kind => {
+    const view = byKind.get(kind);
+    return !!view?.retryable && unfinishedGenerationStates.has(view.state) && !busy[kind];
+  });
+  if (!start.includes('scheme')) return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
+  const knowledge = byKind.get('knowledge');
+  if (busy.knowledge || knowledge?.state === 'running' || knowledge?.state === 'waiting')
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
+  if (start.includes('knowledge'))
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: true, schemeSkippedForKnowledge: false };
+  if (knowledge?.state !== 'saved')
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
+  return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
+}
+
+/** Explicit selection may refresh saved views, but never starts a busy sibling. */
+export function planSelectedProjectGeneration(selected: readonly ProjectGenerationKind[],
+  views: readonly GenerationRetryView[], busy: Partial<Record<ProjectGenerationKind, boolean>>): GenerationPlan {
+  const requested = new Set(selected);
+  const byKind = new Map(views.map(view => [view.kind, view]));
+  const start = projectGenerationKinds.filter(kind => requested.has(kind) && !busy[kind]
+    && !!byKind.get(kind) && !['running', 'waiting'].includes(byKind.get(kind)!.state));
+  if (!start.includes('scheme')) return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
+  const knowledge = byKind.get('knowledge');
+  if (busy.knowledge || knowledge?.state === 'running' || knowledge?.state === 'waiting')
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
+  if (start.includes('knowledge'))
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: true, schemeSkippedForKnowledge: false };
+  const hasSavedKnowledge = knowledge?.state === 'saved' || knowledge?.showing_previous === true
+    || (knowledge?.saved_at !== undefined && knowledge.saved_at !== null);
+  if (!hasSavedKnowledge)
+    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
+  return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
+}
 
 /** Scheme must never use older Knowledge just because its generation is idle. */
-export function planProjectGeneration(busy: Partial<Record<ProjectGenerationKind, boolean>>) {
+export function planProjectGeneration(busy: Partial<Record<ProjectGenerationKind, boolean>>): GenerationPlan {
   const idle = idleGenerationKinds(busy);
   return {
     start: idle.filter(kind => kind !== 'scheme'),

@@ -40,6 +40,20 @@ own SQLite transactions and atomic cancellation checks. Legacy matching summarie
 Opening a view only reads saved results and lightweight progress/freshness data.
 Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
 
+### Durable generation outcomes
+
+`ProjectGenerationAttempt` stores one small latest outcome per project/view,
+independently from output snapshots and revisions. Begin and terminal transitions
+are persisted; batch updates stay in memory. Successful outcomes stage in the same
+SQLite transaction as their result. Run-identity checks prevent stale workers from
+overwriting retries. Startup marks abandoned running/waiting attempts Interrupted.
+The read-only generation summary reads scalar artifact metadata and attempt rows;
+it does not inspect repositories, load complete snapshots or call a model.
+
+Scheme dependency waiting/skipped states are durable and are superseded only by
+the matching queue outcome or a newer real Scheme attempt. Retry selection reuses
+the normal generation actions and preserves the Knowledge-to-Scheme dependency.
+
 ### Implementation choices and project-specific limits
 
 `parameter_evidence.py` performs bounded, read-only extraction from the registered

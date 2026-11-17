@@ -1,6 +1,7 @@
-import { planProjectGeneration, resolveKnowledgeSchemeDependency, useGenerationRequest,
+import { planProjectGeneration, planRetryProjectGeneration, planSelectedProjectGeneration, resolveKnowledgeSchemeDependency, useGenerationRequest,
   type GenerationRequestProps, type ProjectGenerationKind, type KnowledgeGenerationOutcome,
-  type KnowledgeSchemeDependency } from './generationBatch';
+  type KnowledgeSchemeDependency, type GenerationPlan } from './generationBatch';
+import { GenerationResults, initializeGenerationSelection, type GenerationResultsState, type GenerationSelection } from './GenerationResults';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
@@ -302,6 +303,9 @@ function ProjectWorkspace({
   const [bulkSkipped, setBulkSkipped] = useState<ProjectGenerationKind[]>([]);
   const [bulkRequested, setBulkRequested] = useState(false);
   const [bulkAttemptCount, setBulkAttemptCount] = useState(0);
+  const [generationResultsVersion, setGenerationResultsVersion] = useState(0);
+  const [generationResultsState, setGenerationResultsState] = useState<GenerationResultsState>({ base: '', data: null, loading: true, error: '' });
+  const [generationSelection, setGenerationSelection] = useState<GenerationSelection | null>(null);
   const bulkDispatching = useRef(false);
   const pendingScheme = useRef<KnowledgeSchemeDependency | null>(null);
   const [bulkScheme, setBulkScheme] = useState<'none' | 'waiting' | 'requested' | 'skipped'>('none');
@@ -335,10 +339,20 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
+  const onGenerationResultsState = useCallback((state: GenerationResultsState) => {
+    if (state.base !== base) return;
+    setGenerationResultsState(state);
+    if (state.data && !state.loading && !state.error)
+      setGenerationSelection(previous => initializeGenerationSelection(previous, state.data!));
+  }, [base]);
+  const onGenerationSelection = useCallback((selected: ProjectGenerationKind[]) => {
+    setGenerationSelection({ project_id: projectId, selected });
+  }, [projectId]);
   const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true, includeParameters: true });
   const recheckGeneration = useRef(recovery.recheck); recheckGeneration.current = recovery.recheck;
   const observedGeneration = useRef<Record<ProjectGenerationKind, boolean>>({ brief: false, knowledge: false, scheme: false, qa: false, parameters: false });
   const observeGeneration = useCallback((kind: ProjectGenerationKind, active: boolean) => {
+    if (observedGeneration.current[kind] !== active) setGenerationResultsVersion(value => value + 1);
     if (active) recovery.clearError(kind);
     else if (observedGeneration.current[kind]) recheckGeneration.current(kind);
     observedGeneration.current[kind] = active;
@@ -349,24 +363,48 @@ function ProjectWorkspace({
   const onParameterState = useCallback((state: { busy: boolean; running: boolean }) => {
     setParameterState(state); observeGeneration('parameters', state.running);
   }, [observeGeneration]);
-  function regenerateAll() {
-    if (recovery.checking || bulkDispatching.current) return;
-    const plan = planProjectGeneration({
+  const currentGenerationResults = generationResultsState.base === base ? generationResultsState : null;
+  const generationBusy = {
       brief: running.brief || recovery.running.brief, qa: running.qa || recovery.running.qa,
       scheme: running.scheme || recovery.running.scheme,
       knowledge: analysisState.running || recovery.running.knowledge,
       parameters: parameterState.running || recovery.running.parameters,
-    });
+  };
+  if (currentGenerationResults?.data && !currentGenerationResults.error) {
+    for (const view of currentGenerationResults.data.views)
+      if (view.state === 'running' || view.state === 'waiting') generationBusy[view.kind] = true;
+  }
+  const retryPlan = currentGenerationResults?.data && !currentGenerationResults.error
+    ? planRetryProjectGeneration(currentGenerationResults.data.views, generationBusy) : null;
+  const selectedGenerations = generationSelection?.project_id === projectId ? generationSelection.selected : [];
+  const selectedPlan = currentGenerationResults?.data && !currentGenerationResults.error
+    ? planSelectedProjectGeneration(selectedGenerations, currentGenerationResults.data.views, generationBusy) : null;
+  function dispatchGenerationPlan(plan: GenerationPlan) {
     setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
     setBulkAttemptCount(plan.start.length + Number(plan.waitForKnowledge));
     pendingScheme.current = plan.waitForKnowledge ? { project: base, request: bulkRequests.knowledge + 1 } : null;
     setBulkScheme(plan.waitForKnowledge ? 'waiting' : plan.schemeSkippedForKnowledge ? 'skipped' : 'none');
     if (!plan.start.length) return;
     bulkDispatching.current = true; setBulkPending(plan.start);
+    setGenerationResultsVersion(value => value + 1);
     setVisited({ brief: true, qa: true, scheme: true, knowledge: true }); setParametersVisited(true);
     setBulkRequests(previous => {
       const next = { ...previous }; for (const kind of plan.start) next[kind]++; return next;
     });
+  }
+  function regenerateAll() {
+    if (recovery.checking || bulkDispatching.current) return;
+    dispatchGenerationPlan(planProjectGeneration(generationBusy));
+  }
+  function retryUnfinished() {
+    if (recovery.checking || bulkDispatching.current || !currentGenerationResults
+        || currentGenerationResults.loading || currentGenerationResults.error || !retryPlan) return;
+    dispatchGenerationPlan(retryPlan);
+  }
+  function regenerateSelected() {
+    if (recovery.checking || bulkDispatching.current || !currentGenerationResults
+        || currentGenerationResults.loading || currentGenerationResults.error || !selectedPlan?.start.length) return;
+    dispatchGenerationPlan(selectedPlan);
   }
   function bulkHandled(kind: ProjectGenerationKind, started: boolean) {
     if (!started) setBulkSkipped(previous => previous.includes(kind) ? previous : [...previous, kind]);
@@ -610,9 +648,16 @@ function ProjectWorkspace({
           <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
             {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
           </button>
+          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'
+            || !currentGenerationResults || currentGenerationResults.loading || !!currentGenerationResults.error
+            || !retryPlan?.start.length} onClick={retryUnfinished}>Retry unfinished</button>
           <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
         </div>
       </div>
+      <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
+        selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
+        onRegenerateSelected={regenerateSelected} regenerateDisabled={recovery.checking || bulkPending.length > 0
+          || bulkScheme === 'waiting' || !selectedPlan?.start.length} />
       <nav className="tabs" aria-label="Project sections">
         {tabs.map((t) => (
           <button
