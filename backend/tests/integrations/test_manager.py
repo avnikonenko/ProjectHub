@@ -134,6 +134,30 @@ def test_actual_sqlite_ambiguous_timeout_preserved(env):
         env.manager.send(did)
 
 
+@pytest.mark.parametrize('notify', [False, True])
+def test_resume_reports_transport_lost_during_callback_binding(env, monkeypatch, notify):
+    sid, _ = session_and_delivery(env)
+    bind = env.manager._bind_session_callbacks
+
+    def bind_and_disconnect(client, session):
+        bind(client, session)
+        client.close()
+        if notify:
+            client.on_disconnect()
+
+    with Session(env.engine) as db:
+        session = db.get(CodexSession, sid)
+        with monkeypatch.context() as patch:
+            patch.setattr(env.manager, '_bind_session_callbacks', bind_and_disconnect)
+            with pytest.raises(CodexError, match='disconnected while resuming'):
+                env.manager.resume(session, env.project)
+        db.refresh(session)
+        assert session.status == 'interrupted'
+        assert 'disconnected' in session.last_error
+        assert sid not in env.manager.clients
+        assert env.manager.resume(session, env.project)['status'] == 'idle'
+
+
 def test_actual_sqlite_inherited_connector_fails_closed(env):
     sid, did = session_and_delivery(env)
     env.manager.clients[sid].connectors = True

@@ -944,13 +944,23 @@ class CodexManager:
                 if result['thread'].get('status', {}).get('type') == 'active':
                     raise CodexError('Thread is busy elsewhere; no input was sent.')
                 self._bind_session_callbacks(client, session)
-                with Session(self.engine) as db:
+                # The reader can disconnect after returning the resume result.
+                # Serialize the final readiness check with callback writes.
+                with self._transport_lock, Session(self.engine) as db:
+                    db.execute(text('BEGIN IMMEDIATE'))
                     row = db.get(CodexSession, session.id)
+                    if not getattr(client, 'connected', not getattr(client, 'closed', False)):
+                        row.status = 'interrupted'
+                        row.last_error = 'App Server disconnected while resuming. Explicitly resume before continuing.'
+                        error = row.last_error
+                        db.commit()
+                        raise CodexError(error)
                     row.status, row.last_error = 'idle', ''
                     db.commit()
                     db.refresh(row)
                     return record_dict(row)
             except Exception:
+                self._detach_session_client(session.id)
                 client.close()
                 raise
 
@@ -1012,7 +1022,12 @@ class CodexManager:
                 turn_id = result['turn']['id']
             except Exception as exc:
                 with Session(self.engine) as db:
+                    db.execute(text('BEGIN IMMEDIATE'))
                     delivery = db.get(Delivery, delivery_id)
+                    if (delivery.decision_id is None and delivery.status == 'failed'
+                            and delivery.error == _REVIEW_EXECUTION_ERROR):
+                        # A terminal notification can precede a failed acknowledgement.
+                        return record_dict(delivery)
                     delivery.status = 'unverified' if submitted else 'failed'
                     delivery.error = str(exc)[:300] if isinstance(exc, CodexError) else 'Unexpected Codex integration failure.'
                     session = db.get(CodexSession, session_id)

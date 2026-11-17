@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from backend.app.integrations.codex.manager import CodexManager
+from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import Base, CodexSession, Decision, Delivery, Project
 
 
@@ -69,8 +70,8 @@ def test_late_actual_completion_reconciles_terminal_review_error(review_manager)
         assert db.get(CodexSession, 1).last_error == ''
 
 
-@pytest.mark.parametrize('complete', [False, True])
-def test_error_before_start_ack_does_not_restore_sent_status(review_manager, complete):
+@pytest.mark.parametrize('outcome', ['acknowledged', 'completed', 'ack_failed'])
+def test_error_before_start_ack_preserves_terminal_status(review_manager, outcome):
     engine, manager = review_manager
 
     class Client:
@@ -83,20 +84,27 @@ def test_error_before_start_ack_does_not_restore_sent_status(review_manager, com
                 return {'data': [], 'nextCursor': None}
             if method == 'turn/start':
                 manager._event(1, 'error', {'willRetry': False})
-                if complete:
+                if outcome == 'completed':
                     manager._event(1, 'turn/completed', {'turn': {'id': 'ack-turn', 'status': 'completed'}})
+                if outcome == 'ack_failed':
+                    raise CodexError('App Server disconnected')
                 return {'turn': {'id': 'ack-turn'}}
             raise AssertionError(method)
 
     manager.clients[1] = Client()
     with Session(engine) as db:
         db.get(CodexSession, 1).status = 'idle'
-        db.get(Delivery, 1).status = 'queued'
+        delivery = db.get(Delivery, 1)
+        delivery.status, delivery.turn_id = 'queued', None
         db.commit()
     result = manager.send(1)
-    assert result['turn_id'] == 'ack-turn'
-    assert result['status'] == ('completed' if complete else 'failed')
-    assert bool(result['error']) is not complete
+    assert result['turn_id'] == (None if outcome == 'ack_failed' else 'ack-turn')
+    assert result['status'] == ('completed' if outcome == 'completed' else 'failed')
+    assert bool(result['error']) is (outcome != 'completed')
+    if outcome == 'ack_failed':
+        assert 'execution error' in result['error']
+        with Session(engine) as db:
+            assert db.get(CodexSession, 1).last_error == result['error']
 
 
 @pytest.mark.parametrize('old_status', ['completed', 'failed', 'interrupted'])
