@@ -91,21 +91,22 @@
   color: var(--emphasis);
 }
 
-:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic, :where(.brief-section + .coverage-details) > summary) {
+:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
   font-weight: 750;
   color: var(--accent);
   color: color-mix(in srgb, var(--accent) 82%, #000);
 }
 
-:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic, :where(.brief-section + .coverage-details) > summary) {
+:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
   color: color-mix(in srgb, var(--accent) 90%, #000);
 }
 
-:root[data-palette] :is(.brief-reference, .citation-source, .source-disclosure, .brief-sources summary:where(:not(.brief-topic))) {
+:root[data-palette] :is(.brief-reference, .citation-source, .source-disclosure, .brief-sources ol summary) {
   color: var(--muted);
 }
 
-:is(.coverage-details, .knowledge-coverage) > summary {
+:is(.coverage-details, .knowledge-coverage, .brief-sources) > summary,
+.result-support > details > summary {
   color: var(--text);
 }
 

@@ -73,30 +73,25 @@ before(async () => {
 });
 after(async () => { await server?.close(); });
 
-test('the saved summary has its own title and calls the shared renderer in the published context', () => {
+test('the saved Knowledge Summary has a narrative card followed by a supporting details card', () => {
   const current = parseKnowledgeResponse({ snapshot: snapshot() }, 2).snapshot!;
-  const calls: string[] = [];
-  const html = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, {
-    snapshot: current, renderBrief: (value: unknown, context: string) => {
-      assert.equal(value, current.summary); calls.push(context);
-      return createElement('p', null, 'Detailed chemical requirements.');
-    },
-  }));
+  const html = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: current }));
   assert.match(html, /<h2>Knowledge Summary<\/h2>/);
   assert.match(html, /Saved separately from Project Overview/);
-  assert.match(html, /Detailed chemical requirements/);
-  assert.deepEqual(calls, ['published']);
+  assert.match(html, /Detailed chemical requirements.*<\/section><[^>]*class="card result-support">/);
+  assert.match(html, /<summary>Coverage<\/summary>/);
+  assert.match(html, /Knowledge Summary sources \(1\)/);
+  assert.match(html, /Retain the molecular graph\./);
   assert.doesNotMatch(html, /Overview preview|Use this result/);
 });
 
 test('legacy and mismatched summary displays never render unrelated content', () => {
-  const renderBrief = () => { throw new Error('An unrelated summary must not render'); };
   const legacy = snapshot(); delete (legacy as any).summary;
-  assert.equal(renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: legacy, renderBrief })), '');
+  assert.equal(renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: legacy })), '');
   const mismatched = snapshot(brief('other-publication'));
-  const html = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: mismatched, renderBrief }));
+  const html = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: mismatched }));
   assert.match(html, /does not match this Knowledge version/);
-  assert.doesNotMatch(html, /Detailed chemical requirements/);
+  assert.doesNotMatch(html, /Detailed chemical requirements|result-support/);
 });
 
 test('earlier saved Knowledge retains content, sources and coverage as a read-only version', () => {
@@ -106,14 +101,7 @@ test('earlier saved Knowledge retains content, sources and coverage as a read-on
     brief: brief(), diagnostics: { duration_seconds: 5 }, baseline_brief: null };
   const before = structuredClone(result);
   let downloads = 0;
-  const contexts: string[] = [];
-  const html = renderToStaticMarkup(createElement(EarlierKnowledgeResult, {
-    result, onDownload: () => { downloads++; },
-    renderBrief: (value: ReturnType<typeof brief>, context: string) => {
-      contexts.push(context);
-      return createElement('blockquote', null, value.sources[0].text);
-    },
-  }));
+  const html = renderToStaticMarkup(createElement(EarlierKnowledgeResult, { result, onDownload: () => { downloads++; } }));
   assert.match(html, /Earlier Knowledge Summary/);
   assert.match(html, /Saved result/);
   assert.match(html, /Download JSON/);
@@ -122,7 +110,8 @@ test('earlier saved Knowledge retains content, sources and coverage as a read-on
   assert.match(html, /Retain the molecular graph/);
   assert.match(html, /Preserve chemistry/);
   assert.match(html, /Earlier bounded extraction/);
-  assert.equal((html.match(/<summary>Coverage<\/summary>/g) ?? []).length, 1);
+  assert.equal((html.match(/<summary>Coverage<\/summary>/g) ?? []).length, 2);
+  assert.match(html, /Earlier version sources \(1\)/);
   assert.match(html, /Extraction version <code>earlier-extractor<\/code>/);
   assert.doesNotMatch(html, /Knowledge coverage|Current source availability/);
   assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /[Pp]ublished|[Uu]npublished|[Pp]review|Save Knowledge Summary|Use this result/);
@@ -130,7 +119,6 @@ test('earlier saved Knowledge retains content, sources and coverage as a read-on
   const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map(match => match[1].replace(/<[^>]*>/g, ' '));
   assert(buttons.includes('Download JSON') && buttons.includes('Summary') && buttons.includes('Knowledge records'));
   assert(buttons.every(label => !/Save|Use this|Generate|Delete|Remove/i.test(label)));
-  assert.deepEqual(contexts, ['preview']); // Internal renderer compatibility is unchanged.
   assert.equal(downloads, 0);
   assert.deepEqual(result, before);
 });

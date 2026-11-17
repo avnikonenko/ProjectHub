@@ -2,7 +2,7 @@ import { useGenerationRequest, type GenerationRequestProps, type KnowledgeGenera
 import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
 import { CoverageDetails } from './CoverageDetails';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
 import {
@@ -11,7 +11,7 @@ import {
 } from './knowledge';
 import { Empty, ErrorBox } from './ui';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
-import type { Brief } from './BriefContent';
+import { BriefContent, BriefPreview, BriefSupport } from './BriefContent';
 import { generateAndSaveKnowledge, knowledgePreviewExport, recoverPublishedKnowledge, type KnowledgePreview } from './knowledgePreviewRecovery';
 import { readPublishedKnowledge, subscribePublishedKnowledge, updatePublishedKnowledge } from './publishedKnowledge';
 
@@ -24,7 +24,6 @@ type Props = {
   generation: { model: string; effort: string };
   link?: KnowledgeLink | null;
   visible?: boolean;
-  renderBrief: (brief: Brief, context?: 'published' | 'preview') => ReactNode;
   onPublished?: () => void;
   showRecords?: boolean;
   externalBusy?: boolean;
@@ -35,22 +34,23 @@ type Props = {
   onBusyChange?: (state: { busy: boolean; running: boolean }) => void;
 };
 
-export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
-  snapshot: KnowledgeSnapshot;
-  renderBrief: (brief: Brief, context?: 'published' | 'preview') => ReactNode;
-}) {
+export function PublishedKnowledgeSummary({ snapshot }: { snapshot: KnowledgeSnapshot }) {
   if (!snapshot.summary && !snapshot.summary_error) return null;
   const summary = snapshot.summary && matchesPublication(snapshot, snapshot.project_id,
     snapshot.summary.project_state?.publication_id) ? snapshot.summary : null;
   const summaryError = snapshot.summary_error || (snapshot.summary && !summary
     ? 'The saved Knowledge Summary does not match this Knowledge version. Records remain available.' : '');
-  return <section className="card knowledge-summary" aria-label="Saved Knowledge Summary">
-    <div className="section-title"><div><h2>Knowledge Summary</h2>
-      <small>Saved separately from Project Overview</small></div></div>
-    <p>Project choices, their reasons, trade-offs, and open questions.</p>
-    <ErrorBox error={summaryError} />
-    {summary && renderBrief(summary, 'published')}
-  </section>;
+  const prefix = `${snapshot.project_id}-knowledge-published-${snapshot.publication_id ?? 'legacy'}`;
+  return <>
+    <section className="card knowledge-summary" aria-label="Saved Knowledge Summary">
+      <div className="section-title"><div><h2>Knowledge Summary</h2>
+        <small>Saved separately from Project Overview</small></div></div>
+      <p>Project choices, their reasons, trade-offs, and open questions.</p>
+      <ErrorBox error={summaryError} />
+      {summary && <BriefContent brief={summary} prefix={prefix} perspective="knowledge" />}
+    </section>
+    {summary && <BriefSupport brief={summary} prefix={prefix} perspective="knowledge" sourceLabel="Knowledge Summary sources" />}
+  </>;
 }
 
 function KnowledgeRecordCoverage({ snapshot, diagnostics = snapshot.diagnostics, currentCoverage }: {
@@ -75,9 +75,8 @@ function KnowledgeRecordCoverage({ snapshot, diagnostics = snapshot.diagnostics,
 }
 
 /** Earlier results are read-only references; generation saves the current result automatically. */
-export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
+export function EarlierKnowledgeResult({ result, onDownload }: {
   result: KnowledgePreview;
-  renderBrief: Props['renderBrief'];
   onDownload: () => void;
 }) {
   const [view, setView] = useState<'summary' | 'knowledge'>('summary');
@@ -94,7 +93,9 @@ export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
         onClick={() => setView('knowledge')}>Knowledge records</button>
     </div>
     <div role="tabpanel" aria-label="Earlier Knowledge Summary" hidden={view !== 'summary'}>
-      {renderBrief({ ...result.brief, diagnostics: result.brief.diagnostics ?? result.diagnostics }, 'preview')}
+      <BriefPreview brief={{ ...result.brief, diagnostics: result.brief.diagnostics ?? result.diagnostics }}
+        prefix={`${result.knowledge.project_id}-knowledge-preview-${result.brief.project_state?.publication_id ?? 'legacy'}`}
+        perspective="knowledge" sourceLabel="Earlier version sources" />
     </div>
     <div role="tabpanel" aria-label="Knowledge records" hidden={view !== 'knowledge'}>
       <KnowledgeItems snapshot={result.knowledge} />
@@ -103,7 +104,7 @@ export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
   </details>;
 }
 
-export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false }: Props) {
+export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -307,7 +308,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     || currentNotice?.notice || currentPreview?.cancelled || busy);
   const absentItem = snapshot && selectedItemId && !snapshot.items.some((item) => item.id === selectedItemId);
   return <section className="knowledge-page">
-    {showRecords && snapshot && !mismatch && <PublishedKnowledgeSummary snapshot={snapshot} renderBrief={renderBrief} />}
+    {showRecords && snapshot && !mismatch && <PublishedKnowledgeSummary snapshot={snapshot} />}
     {!showRecords && hasFeedback && <section className="card" aria-label="Project analysis status">{feedback}</section>}
     <section className="card" hidden={!showRecords} aria-busy={isLoading}>
       <div className="section-title">
@@ -352,7 +353,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       {legacyOpen && currentLegacy?.loaded && !currentLegacy.loading && !currentLegacy.error && !candidate
         && <p>No earlier saved version is available.</p>}
       {candidate && <EarlierKnowledgeResult key={`${base}:${candidate.knowledge.publication_id}`}
-        result={candidate} renderBrief={renderBrief} onDownload={downloadPreview} />}
+        result={candidate} onDownload={downloadPreview} />}
     </details>
   </section>;
 }

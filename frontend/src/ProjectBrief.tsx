@@ -1,6 +1,6 @@
 import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
 import { Feedback } from './Feedback';
-import { BriefContent, briefSections, validationCopy, type Brief } from './BriefContent';
+import { BriefContent, BriefCoverage, briefSections, validationCopy, type Brief } from './BriefContent';
 import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
@@ -172,45 +172,48 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
           </>
         )}
       </section>
+      <div className="card result-support">
+        {brief && <BriefCoverage brief={brief} sourceCount={sources.length} />}
+        <details className="brief-details" aria-label="Project Overview details">
+          <summary>{brief ? `Summary details & sources (${sources.length})` : 'Generation details'}</summary>
+          {brief?.generation && <SavedGeneration generation={brief.generation} />}
+          <p className="brief-note">
+            Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
+            historical decisions, architecture, and the previous summary to OpenAI.
+          </p>
+          <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
+            disabled={loading || generating || recoveryBusy || externalBusy} selectedId={revisionId} onLoadingChange={active => {
+              selectingRevision.current = active;
+              if (active) { request.current++; setLoading(false); }
+              setRevisionLoading(active);
+            }}
+            onSelect={(snapshot, id) => {
+              request.current++;
+              selectedRevision.current = id;
+              setBrief(snapshot);
+              setRevisionId(id);
+              if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
+            }} />
+          {brief && revisionId === null && evidence && (
+            <details>
+              <summary>Evidence freshness</summary>
+              <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
+              <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
+              <p>{validationCopy(evidence.validation)}</p>
+              {evidence.git?.change_detection_limited && <p>Git changes could only be checked partially.</p>}
+              {evidence.git_error && <p>Git evidence unavailable: {evidence.git_error}</p>}
+            </details>
+          )}
+          {brief && (
+            <details className="brief-sources" aria-label="Project Overview sources">
+              <summary>Sources ({sources.length})</summary>
+              <BriefSources sources={sources.map((source) => source.id === 'evidence:validation'
+                ? { ...source, text: validationCopy(source.text) } : source)} prefix={base.split('/')[2] + '-brief'} />
+            </details>
+          )}
+        </details>
+      </div>
       <ImportantKnowledge base={base} publicationId={brief?.project_state?.publication_id} visible={visible} />
-      <details className="card brief-details" aria-label="Project Overview details">
-        <summary>{brief ? `Summary details & sources (${sources.length})` : 'Generation details'}</summary>
-        {brief?.generation && <SavedGeneration generation={brief.generation} />}
-        <p className="brief-note">
-          Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
-          historical decisions, architecture, and the previous summary to OpenAI.
-        </p>
-        <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
-          disabled={loading || generating || recoveryBusy || externalBusy} selectedId={revisionId} onLoadingChange={active => {
-            selectingRevision.current = active;
-            if (active) { request.current++; setLoading(false); }
-            setRevisionLoading(active);
-          }}
-          onSelect={(snapshot, id) => {
-            request.current++;
-            selectedRevision.current = id;
-            setBrief(snapshot);
-            setRevisionId(id);
-            if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
-          }} />
-        {brief && revisionId === null && evidence && (
-          <details>
-            <summary>Evidence freshness</summary>
-            <p>Git inspected: {evidence.git_checked_at ? new Date(evidence.git_checked_at).toLocaleString() : 'No repository inspection available'}</p>
-            <p>History indexed: {evidence.history_indexed_at ? new Date(evidence.history_indexed_at).toLocaleString() : 'Not indexed'}</p>
-            <p>{validationCopy(evidence.validation)}</p>
-            {evidence.git?.change_detection_limited && <p>Git changes could only be checked partially.</p>}
-            {evidence.git_error && <p>Git evidence unavailable: {evidence.git_error}</p>}
-          </details>
-        )}
-        {brief && (
-          <details className="brief-sources" aria-label="Project Overview sources">
-            <summary>Sources ({sources.length})</summary>
-            <BriefSources sources={sources.map((source) => source.id === 'evidence:validation'
-              ? { ...source, text: validationCopy(source.text) } : source)} prefix={base.split('/')[2] + '-brief'} />
-          </details>
-        )}
-      </details>
     </>
   );
 }

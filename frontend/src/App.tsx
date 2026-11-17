@@ -9,7 +9,6 @@ import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './t
 import { TopicPicker } from './TopicPicker';
 import { KnowledgePage } from './KnowledgePage';
 import { ProjectParameters } from './ProjectParameters';
-import { BriefPreview, type Brief } from './BriefContent';
 import { CoverageDetails } from './CoverageDetails';
 import type { GenerationDiagnostics } from './generationDiagnostics';
 import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
@@ -764,10 +763,7 @@ function ProjectWorkspace({
               showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               onGenerationOutcome={onKnowledgeOutcome}
-              generateSchemeAfter={bulkScheme === 'waiting'}
-              renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
-                prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
-                perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Earlier version sources'} />} />
+              generateSchemeAfter={bulkScheme === 'waiting'} />
             </div>
             {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
               <ProjectParameters base={base} generation={generation}
@@ -1646,9 +1642,6 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
-        {saved && <CoverageDetails savedAt={saved.generated_at} sourceCount={saved.sources.length}
-          coverage={saved.coverage} diagnostics={saved.diagnostics}
-          fileCoverage={<p>Q&amp;A uses saved project evidence without inspecting repository files directly.</p>} />}
         {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
           generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
@@ -1700,12 +1693,15 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           </article>
         ))}
       </section>
-      {!!sources.length && (
-        <details className="card brief-sources" aria-label="Q&A sources">
-          <summary className="brief-topic">Sources ({sources.length})</summary>
+      {saved && <div className="card result-support">
+        <CoverageDetails savedAt={saved.generated_at} sourceCount={saved.sources.length}
+          coverage={saved.coverage} diagnostics={saved.diagnostics}
+          fileCoverage={<p>Q&amp;A uses saved project evidence without inspecting repository files directly.</p>} />
+        {!!sources.length && <details className="brief-sources" aria-label="Q&A sources">
+          <summary>Sources ({sources.length})</summary>
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-qa'} />
-        </details>
-      )}
+        </details>}
+      </div>}
     </>
   );
 }

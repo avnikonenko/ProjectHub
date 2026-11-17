@@ -543,8 +543,7 @@ main {
   padding-top: 0.85rem;
 }
 .brief-meta summary,
-.brief-section > summary,
-.brief-section + .coverage-details > summary {
+.brief-section > summary {
   cursor: pointer;
 }
 .project-brief .brief-note,
@@ -583,7 +582,7 @@ main {
 .revision-history li + li {
   margin-top: 0.6rem;
 }
-.brief-section + :is(.brief-section, .coverage-details) {
+.brief-section + .brief-section {
   margin-top: 1rem;
 }
 .brief-section h3 {
@@ -1480,6 +1479,13 @@ a:focus-visible {
 }
 .brief-details[open] > summary {
   margin-bottom: 1rem;
+}
+.result-support > details + details {
+  margin-block-start: 0.6rem;
+}
+.result-support > details > summary {
+  cursor: pointer;
+  font-weight: 550;
 }
 .brief-details .brief-meta {
   margin-bottom: 0.8rem;

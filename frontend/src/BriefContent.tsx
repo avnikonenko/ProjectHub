@@ -97,17 +97,31 @@ export function BriefContent({ brief, prefix, perspective = 'project' }: { brief
       );
     })}
     {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
-    <CoverageDetails savedAt={brief.generated_at} sourceCount={sources.length}
-      coverage={brief.coverage.map(validationCopy)} diagnostics={brief.diagnostics} />
   </>;
 }
 
-export function BriefPreview({ brief, prefix, perspective = 'project', sourceLabel = 'Preview sources' }: {
+export function BriefCoverage({ brief, sourceCount }: { brief: Brief; sourceCount: number }) {
+  return <CoverageDetails savedAt={brief.generated_at} sourceCount={sourceCount}
+    coverage={brief.coverage.map(validationCopy)} diagnostics={brief.diagnostics} />;
+}
+
+type BriefViewProps = {
   brief: Brief; prefix: string; perspective?: 'project' | 'knowledge'; sourceLabel?: string;
-}) {
-  const sources = citedSources(brief.sources, briefSections(brief).flatMap(({ entries }) => entries.flatMap(entry => entry.source_ids)));
+};
+
+export function BriefSupport({ brief, prefix, perspective = 'project', sourceLabel = 'Preview sources' }: BriefViewProps) {
+  const sources = citedSources(brief.sources, briefSections(brief, perspective).flatMap(({ entries }) => entries.flatMap(entry => entry.source_ids)));
+  return <div className="card result-support">
+    <BriefCoverage brief={brief} sourceCount={sources.length} />
+    <details className="brief-sources"><summary>{sourceLabel} ({sources.length})</summary>
+      <BriefSources sources={sources} prefix={prefix} />
+    </details>
+  </div>;
+}
+
+export function BriefPreview({ brief, prefix, perspective = 'project', sourceLabel }: BriefViewProps) {
   return <>
     <BriefContent brief={brief} prefix={prefix} perspective={perspective} />
-    <details><summary className="source-disclosure">{sourceLabel} ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
+    <BriefSupport brief={brief} prefix={prefix} perspective={perspective} sourceLabel={sourceLabel} />
   </>;
 }
