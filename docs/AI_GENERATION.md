@@ -20,17 +20,31 @@ budget. Increasing this setting does not increase the separate per-response time
 It covers Project status, AI Q&A, Scheme, Knowledge generation, and Ask Project AI
 responses. Ordinary Codex discussion sessions use their own lifecycle.
 
-Refreshing the browser restores progress for an ongoing Project status or AI Q&A
+Refreshing the browser restores progress for an ongoing project analysis or AI Q&A
 request after reopening its project. It does not start another generation.
 Progress recovery requires the same ProjectHub server process to remain running.
 
-Knowledge previews also recover their active progress after a browser refresh.
-The last successful unpublished preview is saved separately from published
-knowledge and the project overview. Opening Knowledge loads the saved result
-without calling Codex; a failed or cancelled replacement keeps
-the previous result. Use **Download JSON** to inspect or share its complete
-brief, knowledge and source references. A server restart stops active work but
-does not erase a successfully saved preview.
+## One analysis, two views
+
+**Refresh project analysis** in Overview or Knowledge uses the same pipeline.
+Overview summarizes purpose, architecture, active work, problems and next steps;
+Knowledge retains detailed choices, requirements, reasons and original evidence.
+Architecture describes components and data flow. Accepted requirements alone do
+not establish current work; that section may be empty when activity is unknown.
+
+Generation saves an **Unpublished analysis** with Overview and Knowledge preview
+views. **Use this result** publishes both together under one publication ID.
+Opening either view makes no AI call. Failed or cancelled generation preserves
+the saved pair and previous successful preview. Older unpublished previews remain
+inspectable but cannot replace a newer published analysis from the interface.
+**Download JSON** exports the complete preview and references. Browser refresh
+recovers active progress; a server restart stops work but keeps saved results.
+
+The canonical endpoints are `POST /projects/{id}/codex/analysis/preview` and
+`POST /projects/{id}/codex/analysis/publish`; `GET` on the preview endpoint reads
+the saved candidate. Existing Knowledge endpoints remain compatible. Legacy
+`POST /projects/{id}/codex/brief` publishes the shared pair and retains its Brief
+response shape. Existing saved overviews and revisions remain readable.
 
 Generation status includes elapsed time and completed-stage durations
 (`elapsed_seconds`, `stage_seconds`). Server logs record stage duration without
@@ -55,8 +69,8 @@ consume tokens. Larger batches can omit details even when all available source
 fragments were sent. Neither experimental profile guarantees lower consumption or
 equivalent recall.
 
-Profiles affect the opt-in knowledge pipeline, including its generated brief.
-Legacy Overview refresh, Q&A and Scheme keep their existing settings. Evidence
+Profiles affect the shared project-analysis pipeline, including its Overview.
+Q&A and Scheme keep their existing settings. Evidence
 validation, agreement rules and project isolation are identical across profiles.
 Worker count is independent: parallelism changes resource use and latency, not the
 amount of source text or number of requests required by a selected profile.

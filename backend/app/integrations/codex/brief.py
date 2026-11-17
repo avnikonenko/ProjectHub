@@ -26,13 +26,29 @@ SECTION_TEXT_LIMITS = {name: (1000 if name == 'overview' else 600 if name in ('a
                        for name in SECTION_NAMES}
 generation_lock = threading.Lock()
 
+SECTION_ROLE_GUIDANCE = (
+    'Use section roles consistently. Architecture describes the main components, their responsibilities '
+    'and how inputs, intermediate data and outputs flow between them. Reconstruct that structure from '
+    'supplied code and original discussions when no architecture document exists; label inferred links '
+    'and never invent missing components. An algorithm or parameter choice may explain the relevant '
+    'component, but a list of accepted algorithms, settings or release decisions is not a system '
+    'architecture. Keep detailed choices and rationale in Knowledge instead of repeating that register. '
+    'Current_status means Current work: include only an explicitly ongoing development task, active '
+    'review or the latest supported delivered improvement. A requirement, agreed design choice, '
+    'release boundary or proposal does not establish that somebody is currently implementing it. '
+    'Code existence and agreement status are not activity timestamps. Use supplied chronology and '
+    'original activity statements, not the order of extracted items. Leave current_status empty when '
+    'no qualifying activity is supported; do not fill it with stable requirements or generic uncertainty. '
+    'Do not reclassify the underlying Knowledge or discard agreed choices to satisfy these presentation roles. '
+)
+
 OUTPUT_SCHEMA = {
     'type': 'object', 'additionalProperties': False, 'required': ['sections', 'project_map'],
     'properties': {'sections': {
         'type': 'object', 'additionalProperties': False, 'required': list(SECTION_NAMES),
         'properties': {name: {
             'type': 'array', 'maxItems': SECTION_LIMITS[name],
-            **({'minItems': 1} if name in ('overview', 'current_status', 'architecture') else {}),
+            **({'minItems': 1} if name in ('overview', 'architecture') else {}),
             'items': {'type': 'object', 'additionalProperties': False,
                      'required': ['text', 'source_ids', 'classification'], 'properties': {
                          'classification': {'type': 'string', 'enum': list(CLASSIFICATIONS)},
@@ -157,8 +173,6 @@ def validate_sections(raw, sources):
     sections = result['sections']
     if not isinstance(sections, dict) or set(sections) != set(SECTION_NAMES):
         raise CodexError('Brief generation omitted or added sections.')
-    if not sections['current_status']:
-        raise CodexError('Brief generation omitted the current status.')
     if not sections['overview'] or not sections['architecture']:
         raise CodexError('Brief generation omitted the overview or reported architecture.')
     allowed = {source['id'] for source in sources}
@@ -336,6 +350,7 @@ def refresh_brief(engine, project_id, manager):
                         'origins': [validation_source['label']], 'classification': 'verified',
                         'origin_classifications': ['verified']})
         prompt = ('Write a compact current project-state handoff for someone returning to this project. '
+                  + SECTION_ROLE_GUIDANCE +
                   'Use plain text, one concrete point per entry, without repetition across sections. '
                   'Lead with a useful project description, not a verification audit. '
                   'overview: required; explain what THIS project does, for whom, and its main working capabilities '
@@ -349,8 +364,9 @@ def refresh_brief(engine, project_id, manager):
                   'Saved indexed excerpts may predate newly read live summaries; do not treat them as newer '
                   'solely because they are original or labeled recent. '
                   'Explain the application rather than assessing whether the available evidence is sufficient. '
-                  'current_status: the single Current work section, with one or two distinct concrete points about '
-                  'active work or the latest delivered improvement. Leave work_in_progress empty; its legacy '
+                  'current_status: the single Current work section, with at most two distinct concrete points about '
+                  'supported active work or the latest delivered improvement; leave it empty if neither is '
+                  'established. Leave work_in_progress empty; its legacy '
                   'field must not duplicate Current work. Do not repeat these points in implemented or changes. '
                   'Never use a stale project status field such as planning as proof that development is unclear; '
                   'it is manually maintained metadata. Say reported implementation when only discussion supports it. '

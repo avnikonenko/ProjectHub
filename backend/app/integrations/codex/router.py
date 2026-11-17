@@ -361,14 +361,25 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
     if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags'):
         raise HTTPException(422, 'Unknown generation kind.')
-    return progress.read(project_id, kind)
+    status = progress.read(project_id, kind)
+    if kind == 'brief':
+        # Older clients monitor brief generation. New project analysis produces
+        # both views under one shared run; keep those clients on its progress.
+        shared = progress.read(project_id, 'knowledge')
+        if shared['state'] != 'idle' and (status['state'] == 'idle' or
+                (shared.get('started_at') or '') >= (status.get('started_at') or '')):
+            return shared
+    return status
 
 
 @router.post('/generation/cancel')
 def cancel_generation(project_id: int, body: CancelGenerationInput, db: DB):
     project(db, project_id)
     try:
-        return progress.cancel(project_id, body.kind, body.started_at)
+        kind = body.kind
+        if kind == 'brief' and progress.read(project_id, 'knowledge').get('started_at') == body.started_at:
+            kind = 'knowledge'
+        return progress.cancel(project_id, kind, body.started_at)
     except CodexError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -411,17 +422,11 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
-    try:
-        manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
-        instructions = read_project_instructions(db, project_id)
-        db.rollback()
-        with use_project_instructions(instructions):
-            return refresh_brief(request.app.state.engine, project_id, selected)
-    except BriefBusy as exc:
-        raise HTTPException(409, str(exc)) from exc
-    except CodexError as exc:
-        raise HTTPException(503, str(exc)) from exc
+    # Preserve the legacy response shape, but never independently overwrite the
+    # Overview while leaving published Knowledge on a different analysis.
+    result = knowledge_brief(project_id,
+        KnowledgeGenerationInput(**body.model_dump(), publish=True), request, db)
+    return result['brief']
 
 
 @router.get('/knowledge')
@@ -444,6 +449,7 @@ def get_knowledge(project_id: int, request: Request, db: DB):
             'current_source_manifest': current['manifest'], 'coverage': current['coverage']}
 
 
+@router.get('/analysis/preview')
 @router.get('/knowledge/preview')
 def get_knowledge_preview(project_id: int, db: DB):
     project(db, project_id)
@@ -453,11 +459,17 @@ def get_knowledge_preview(project_id: int, db: DB):
         raise HTTPException(503, str(exc)) from exc
 
 
+@router.post('/analysis/preview')
+def generate_analysis_preview(project_id: int, body: GenerationInput, request: Request, db: DB):
+    return knowledge_brief(project_id,
+        KnowledgeGenerationInput(**body.model_dump(), publish=False), request, db)
+
+
 @router.post('/knowledge/brief')
 def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
-        raise HTTPException(422, 'Confirm sending primary project evidence to Codex for the knowledge pilot.')
+        raise HTTPException(422, 'Confirm sending project evidence to Codex to refresh the project analysis.')
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
@@ -471,6 +483,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         raise HTTPException(503, str(exc)) from exc
 
 
+@router.post('/analysis/publish')
 @router.post('/knowledge/preview/publish')
 def publish_knowledge_preview(project_id: int, body: KnowledgePublicationInput, request: Request, db: DB):
     project(db, project_id)

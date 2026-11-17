@@ -2,15 +2,15 @@ import { Feedback } from './Feedback';
 import { BriefContent, briefSections, validationCopy, type Brief } from './BriefContent';
 import { ImportantKnowledge } from './ImportantKnowledge';
 import { useEffect, useRef, useState } from 'react';
-import { api, post } from './api';
-import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
+import { api } from './api';
+import { SavedGeneration } from './GenerationStatus';
 import { AIResultHeader } from './AIResultHeader';
 import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
 
 
-type GenerationProps = { base: string; generation: { model: string; effort: string }; evidenceVersion?: string };
+type GenerationProps = { base: string; evidenceVersion?: string };
 type EvidenceFreshness = {
   analysis_generated_at: string | null;
   stale: boolean | null;
@@ -21,24 +21,20 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-function generationBody({ model, effort }: GenerationProps['generation']) {
-  return { model: model || null, effort: effort || null };
-}
-
-
-export function ProjectBrief({ base, generation, evidenceVersion, visible, onGenerating, recoveryVersion, recoveryBusy }: GenerationProps & { visible: boolean; onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean }) {
+export function ProjectBrief({ base, evidenceVersion, visible, onRefresh, analysisBusy, analysisRunning, recoveryVersion }: GenerationProps & {
+  visible: boolean; onRefresh: () => void; analysisBusy: boolean; analysisRunning: boolean; recoveryVersion: number;
+}) {
   const [brief, setBrief] = useState<Brief | null>(null);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [generating, setGenerating] = useState(false);
-  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [evidence, setEvidence] = useState<EvidenceFreshness | null>(null);
   const [evidenceError, setEvidenceError] = useState('');
   const request = useRef(0);
-  const generatingRef = useRef(false);
+  const selectedRevision = useRef<number | null>(null);
+  const selectingRevision = useRef(false);
   useEffect(() => {
     if (loading || !visible) return;
     const abort = new AbortController();
@@ -54,14 +50,14 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
     return () => abort.abort();
   }, [base, latestVersion, loading, evidenceVersion, visible]);
   useEffect(() => {
+    if (!visible || selectingRevision.current) return;
     const id = ++request.current;
     api<Brief | null>(`${base}/codex/brief`)
       .then((result) => {
         if (request.current === id) {
-          setBrief(result);
+          if (selectedRevision.current === null) setBrief(result);
           setError('');
           setLatestVersion(result?.generated_at ?? null);
-          setRevisionId(null);
         }
       })
       .catch((e) => {
@@ -71,52 +67,23 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
         if (request.current === id) setLoading(false);
       });
     return () => { request.current += 1; };
-  }, [base, recoveryVersion]);
-  async function generate() {
-    if (generatingRef.current || loading || revisionLoading || recoveryBusy) return;
-    generatingRef.current = true;
-    const id = ++request.current;
-    setGenerating(true);
-    onGenerating(true);
-    setError('');
-    setNotice('');
-    try {
-      const result = await post(`${base}/codex/brief`, { confirmed: true, ...generationBody(generation) });
-      if (request.current === id) {
-        setBrief(result);
-        setRevisionId(null);
-        setLatestVersion(result.generated_at);
-      }
-    } catch (e) {
-      if (request.current === id) {
-        if (isGenerationCancelled(e)) setNotice(cancelledGenerationMessage);
-        else setError((e as Error).message);
-      }
-    } finally {
-      generatingRef.current = false;
-      if (request.current === id) {
-        setGenerating(false);
-        onGenerating(false);
-      }
-    }
-  }
+  }, [base, recoveryVersion, visible]);
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
     entries.flatMap((entry) => entry.source_ids),
   ));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
+      <section className="card project-brief" aria-busy={loading || analysisBusy}>
         <AIResultHeader title="Project status" savedAt={brief?.generated_at} previous={revisionId !== null}
           freshness={brief && revisionId === null ? evidence?.stale === true ? 'Project changes detected. Refresh to include them.'
             : evidence?.stale === false ? 'No changes detected in checked evidence' : 'Freshness not checked' : undefined}
-          action={<button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={generate}>
-            {generating || recoveryBusy ? 'Generating…' : brief ? 'Refresh project status' : 'Generate project status'}
+          action={<button disabled={loading || analysisBusy || revisionLoading} onClick={onRefresh}>
+            {analysisRunning ? 'Generating…' : 'Refresh project analysis'}
           </button>} />
         <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         <ErrorBox error={error} />
         <ErrorBox error={evidenceError} />
-        <Feedback>{notice}</Feedback>
         {revisionLoading && <Feedback>Loading saved version…</Feedback>}
         {loading && <Feedback>Loading saved project status…</Feedback>}
         {!loading && !brief && <Empty>No saved project status yet.</Empty>}
@@ -135,8 +102,14 @@ export function ProjectBrief({ base, generation, evidenceVersion, visible, onGen
           historical decisions, architecture, and the previous summary to OpenAI.
         </p>
         <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
-          disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={setRevisionLoading}
+          disabled={loading || analysisBusy} selectedId={revisionId} onLoadingChange={active => {
+            selectingRevision.current = active;
+            if (active) { request.current++; setLoading(false); }
+            setRevisionLoading(active);
+          }}
           onSelect={(snapshot, id) => {
+            request.current++;
+            selectedRevision.current = id;
             setBrief(snapshot);
             setRevisionId(id);
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);

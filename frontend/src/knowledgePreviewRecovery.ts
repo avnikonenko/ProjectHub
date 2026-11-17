@@ -38,7 +38,7 @@ export async function recoverKnowledgePreview(
   wait: (signal: AbortSignal) => Promise<void> = pause,
 ) {
   const saved = async () => {
-    const raw = await request(`${base}/codex/knowledge/preview`, { signal });
+    const raw = await request(`${base}/codex/analysis/preview`, { signal });
     if (!signal.aborted) notify({ type: 'saved', result: raw === null ? null : parseKnowledgePreview(raw, projectId) });
   };
   const status = async () => progressResponse(await request(`${base}/codex/generation/status?kind=knowledge`, { signal }));

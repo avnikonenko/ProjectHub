@@ -8,7 +8,7 @@ export async function activateKnowledgeResult(base: string, projectId: number, p
   signal: AbortSignal, request: Request = api) {
   if (base !== `/projects/${projectId}` || !publicationId.trim())
     throw new Error('The saved result does not identify this project.');
-  const raw = await request(`${base}/codex/knowledge/preview/publish`, {
+  const raw = await request(`${base}/codex/analysis/publish`, {
     method: 'POST', signal, body: JSON.stringify({ publication_id: publicationId }),
   });
   if (!raw || typeof raw !== 'object' || !('published' in raw) || raw.published !== true

@@ -25,6 +25,17 @@ The frontend requests a project overview bundle and uses project-scoped mutation
 
 ## Knowledge lifecycle
 
+### Shared generated analysis
+
+Overview and Knowledge share the existing evidence extraction, reconciliation and
+brief synthesis pipeline. A saved unpublished candidate contains both views;
+publication updates both atomically with the same publication ID and preserves
+generation revisions. The frontend keeps one generation controller across tabs.
+Opening a view only reads saved results and lightweight progress/freshness data.
+Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
+
+### Legacy acceptance records
+
 Answer acceptance is a single database transaction: validate ownership, preserve previous state, supersede any prior linked accepted decision, select the answer, resolve the question, create the new accepted decision, optionally create a task, and append an audit event. The overview and summary are derived from committed records, avoiding stale summary caches.
 
 Reopening clears the question's current acceptance and supersedes the previous linked accepted decision. It preserves answers, decision records, and audit snapshots. Editing accepted decisions must preserve before/after snapshots in audit history. Scientific hypotheses remain notes or proposed decisions until a user explicitly accepts them.

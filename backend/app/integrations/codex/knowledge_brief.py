@@ -14,7 +14,7 @@ from ...generation_profiles import get_generation_profile
 from ...models import ProjectBrief, ProjectKnowledge, utcnow
 from ...project_evidence import collect_project_evidence, collect_repository_code
 from . import progress
-from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, generation_lock, generation_metadata,
+from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, SECTION_ROLE_GUIDANCE, generation_lock, generation_metadata,
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources
@@ -235,6 +235,7 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         bounded_guidance += EQUIVALENCE_GUIDANCE
     prompt = (
         'Generate a compact project brief from the supplied reconciled knowledge and independent code evidence. '
+        + SECTION_ROLE_GUIDANCE +
         'Knowledge statements are replaceable interpretations; their exact cited evidence remains primary. '
         'For source records containing item, interpretation_source_defaults supplies omitted kind and '
         'classification fields. Explicit source fields override these defaults; defaults never apply to '
@@ -289,7 +290,7 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         'Superseded items remain history, not the current choice. Conflicts remain unresolved unless the '
         'provided relationship and original evidence establish a scoped revision. '
         'Overview: purpose and main workflow in two complete sentences. Architecture: supported component '
-        'responsibilities and the reasons for the approach; say briefly if not established. '
+        'responsibilities and connections, with material reasons for the approach in that context. '
         'Explain the system through its main data flow, domain-specific constraints and reasons, '
         'rather than a catalogue of libraries. Where supported, include the material preservation, '
         'retention, safety or integrity policies that distinguish this project. Compactly connect '
@@ -297,7 +298,8 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         'The interface already displays evidence-classification labels; do not prefix a point '
         'with Reported, Inference or Unresolved again. Use Agreed or Proposed only when needed '
         'to distinguish design acceptance, and do not repeat status prefixes within a point. '
-        'Current_status: current direction without inventing implementation or repeating overview/open issues. '
+        'Current_status: supported ongoing work or a recent delivered improvement, without inventing '
+        'implementation or repeating overview/open issues; leave empty if no such activity is established. '
         'Keep each current-status point to one focused project fact; put component roles in Architecture '
         'and leave supporting evidence mechanics in the linked sources. '
         'Unresolved_problems: supported '

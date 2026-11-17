@@ -290,6 +290,8 @@ function ProjectWorkspace({
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
   const [knowledgePublicationVersion, setKnowledgePublicationVersion] = useState(0);
+  const [analysisRefreshRequest, setAnalysisRefreshRequest] = useState(0);
+  const [analysisState, setAnalysisState] = useState({ busy: true, running: false });
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
@@ -317,7 +319,7 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
-  const recovery = useGenerationRecovery(base);
+  const recovery = useGenerationRecovery(base, { includeBrief: false, includeKnowledge: true });
   useEffect(() => {
     if (historyLink || knowledgeLink) {
       setResults(null);
@@ -588,21 +590,26 @@ function ProjectWorkspace({
         {!results && searchTarget && <p role="status">Showing the selected search result.{' '}
           <button type="button" className="quiet" onClick={() => setSearchTarget(null)}>Show all</button>
         </p>}
-        {(['brief', 'qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
-          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project status' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
+        {(['qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
+          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
+        {(analysisState.running || recovery.running.knowledge) && (view !== 'Dashboard' && view !== 'Knowledge' || !!results) &&
+          <GenerationStatus base={base} kind="knowledge" label="Project analysis"
+            sharedProgress={recovery.running.knowledge ? recovery.progress.knowledge : undefined} />}
         <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
-            <ProjectBrief base={base} generation={generation} evidenceVersion={project.updated_at}
-              visible={view === 'Dashboard' && !results}
-              recoveryVersion={recovery.version.brief + knowledgePublicationVersion} recoveryBusy={recovery.checking || recovery.running.brief}
-              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, brief: active })); }} />
+            <ProjectBrief base={base} evidenceVersion={project.updated_at}
+              visible={view === 'Dashboard' && !results} recoveryVersion={knowledgePublicationVersion}
+              analysisBusy={analysisState.busy} analysisRunning={analysisState.running}
+              onRefresh={() => setAnalysisRefreshRequest(value => value + 1)} />
           </div>
         )}
-        {(visited.knowledge || view === 'Knowledge') && (
-          <div hidden={view !== 'Knowledge' || !!results}>
-            <KnowledgePage base={base} generation={generation} link={knowledgeLink} visible={view === 'Knowledge' && !results}
+        {(visited.brief || visited.knowledge || view === 'Dashboard' || view === 'Knowledge') && (
+          <div hidden={(view !== 'Dashboard' && view !== 'Knowledge') || !!results}>
+            <KnowledgePage base={base} generation={generation} link={knowledgeLink}
+              visible={(view === 'Dashboard' || view === 'Knowledge') && !results}
+              showRecords={view === 'Knowledge'} refreshRequest={analysisRefreshRequest} onBusyChange={setAnalysisState}
               onPublished={() => setKnowledgePublicationVersion(value => value + 1)}
               renderBrief={(candidate) => <BriefPreview brief={candidate as Brief} prefix={`${projectId}-knowledge-preview`} />} />
           </div>

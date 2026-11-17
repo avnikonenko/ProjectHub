@@ -228,10 +228,12 @@ def test_structured_status_certifies_observations_and_preserves_last_success(pro
         assert list(db.scalars(select(GenerationRevision.snapshot))) == [status]
     codex.invalid_status = False
     codex.missing_status = True
-    with pytest.raises(CodexError, match='omitted the current status'):
-        refresh_brief(project_db, 1, codex)
+    without_activity = refresh_brief(project_db, 1, codex)
+    assert without_activity['sections']['current_status'] == []
+    assert without_activity['sections']['overview'] == status['sections']['overview']
+    assert without_activity['sections']['architecture'] == status['sections']['architecture']
     with Session(project_db) as db:
-        assert read_brief(db, 1) == status
+        assert read_brief(db, 1) == without_activity
 
 
 def test_status_does_not_save_sources_for_discarded_validation_points(project_db):

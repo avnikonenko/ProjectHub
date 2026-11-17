@@ -26,6 +26,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Unify Overview and Knowledge as two views of one project analysis. Refresh either view, inspect a paired unpublished preview, and publish both together. Preserve progress across tabs and reloads, retain previous revisions, and describe architecture as components and data flow without treating agreed requirements as current work.
+
 - Collapse conversation index status and manual refresh into Source details in History. Automatic sync continues, with a compact attention indicator when a sync or refresh fails.
 
 - Keep Scheme diagrams focused on project capabilities rather than CLI wrappers and storage details. Read feature guides and preserve their original purpose, prioritize current application evidence over backups, and include source-linked Conda/pip environment dependencies with CPU/GPU constraints. Separate CI, build and documentation requirements from runtime declarations.

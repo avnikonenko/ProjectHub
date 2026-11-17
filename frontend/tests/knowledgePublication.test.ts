@@ -13,7 +13,7 @@ test('using a saved result posts only its identity and validates the resulting p
   const signal = new AbortController().signal;
   const raw = activated(); const original = structuredClone(raw);
   const result = await activateKnowledgeResult('/projects/2', 2, 'saved-result', signal, async (path, options) => {
-    assert.equal(path, '/projects/2/codex/knowledge/preview/publish');
+    assert.equal(path, '/projects/2/codex/analysis/publish');
     assert.equal(options.method, 'POST');
     assert.equal(options.signal, signal);
     assert.deepEqual(JSON.parse(String(options.body)), { publication_id: 'saved-result' });

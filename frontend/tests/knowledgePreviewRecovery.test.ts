@@ -16,7 +16,7 @@ test('saved unpublished preview recovers with project-scoped GETs and no generat
   await recoverKnowledgePreview('/projects/2', 2, new AbortController().signal, (event) => events.push(event),
     async (path) => { calls.push(path); return path.endsWith('/preview') ? raw : { state: 'completed' }; });
   assert.deepEqual(calls.sort(), ['/projects/2/codex/generation/status?kind=knowledge',
-    '/projects/2/codex/knowledge/preview', '/projects/2/codex/knowledge/preview']);
+    '/projects/2/codex/analysis/preview', '/projects/2/codex/analysis/preview'].sort());
   assert.equal(events.find((event) => event.type === 'saved').result.knowledge.publication_id, 'preview-1');
   assert.deepEqual(raw, before);
 });

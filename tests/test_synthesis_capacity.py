@@ -62,7 +62,7 @@ class Capture:
 
 @pytest.mark.parametrize('count', [8, 339])
 def test_normal_synthesis_keeps_pre_fallback_prompt_and_no_selection_metadata(monkeypatch, count):
-    """Compatibility snapshot apart from the explicit equivalence bug fix.
+    """Section-role policy snapshot apart from the explicit equivalence guidance.
 
     Deliberately independent of Git at test runtime. This checks both ordinary
     and compacted complete inputs, not model compliance with the instructions.
@@ -75,7 +75,7 @@ def test_normal_synthesis_keeps_pre_fallback_prompt_and_no_selection_metadata(mo
     assert module.EQUIVALENCE_GUIDANCE in manager.instructions
     unchanged = manager.instructions.replace(module.EQUIVALENCE_GUIDANCE, '')
     assert sha256((unchanged + '\n').encode()).hexdigest() == (
-        'f8580ba885694a13129783ea1ac969eab82ffc48dbca4181f843ddadeb677f71')
+        '15c31e1f01022d94372ac9fc4125e345c1bb96777930fec4a79ee8ba42bf3e73')
     assert 'overview_selection' not in manager.payload
     assert diagnostics == {}
     assert len(manager.payload['sources']) == count

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme';
+type RecoveryKind = SavedGenerationKind | 'knowledge';
 export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
 const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
 
@@ -25,21 +26,25 @@ export type Progress = {
   elapsed_seconds?: number;
 };
 
-export function useGenerationRecovery(base: string) {
+export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false }: { includeBrief?: boolean; includeKnowledge?: boolean } = {}) {
   const [checking, setChecking] = useState(true);
-  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
-  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0 });
-  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '' });
+  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
+  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0, knowledge: 0 });
+  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '', knowledge: '' });
+  const [progress, setProgress] = useState<Partial<Record<RecoveryKind, Progress>>>({});
   useEffect(() => {
     const abort = new AbortController();
-    const timers: Partial<Record<SavedGenerationKind, ReturnType<typeof setTimeout>>> = {};
+    const timers: Partial<Record<RecoveryKind, ReturnType<typeof setTimeout>>> = {};
     const checked = new Set<string>();
-    function poll(kind: SavedGenerationKind, recovering = false) {
+    const kinds: RecoveryKind[] = includeBrief ? [...generationKinds] : generationKinds.filter(kind => kind !== 'brief');
+    if (includeKnowledge) kinds.push('knowledge');
+    function poll(kind: RecoveryKind, recovering = false) {
       void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
         .then((status) => {
           if (abort.signal.aborted) return;
           checked.add(kind);
-          if (checked.size === generationKinds.length) setChecking(false);
+          setProgress(previous => ({ ...previous, [kind]: status }));
+          if (checked.size === kinds.length) setChecking(false);
           setErrors((previous) => ({ ...previous, [kind]: '' }));
           if (status.state === 'running') {
             setRunning((previous) => ({ ...previous, [kind]: true }));
@@ -61,15 +66,15 @@ export function useGenerationRecovery(base: string) {
           timers[kind] = setTimeout(() => poll(kind, recovering), 1500);
         });
     }
-    generationKinds.forEach((kind) => poll(kind));
+    kinds.forEach((kind) => poll(kind));
     return () => {
       abort.abort();
       Object.values(timers).forEach(clearTimeout);
     };
-  }, [base]);
+  }, [base, includeBrief, includeKnowledge]);
   return {
-    checking, running, version, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
-    clearError: () => setErrors({ brief: '', qa: '', scheme: '' }),
+    checking, running, version, progress, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
+    clearError: () => setErrors({ brief: '', qa: '', scheme: '', knowledge: '' }),
   };
 }
 

@@ -1,0 +1,27 @@
+{
+  "description": "Fictional semantic evaluation: distinguish stable requirements, architecture, and actual current activity. This is not user project data.",
+  "project": {"id": 1, "name": "FrameScope", "description": "FrameScope turns trajectory contact traces into recurring-state reports.", "goals": "Explain recurring interaction patterns."},
+  "records": [
+    {"id": "architecture", "role": "assistant", "category": "FINDING", "design_status": "UNKNOWN", "agreement_basis": "none", "statement": "The loader supplies contact frames to a metadata adapter, the clustering engine groups frame fingerprints, and the report builder exports population tables and plots.", "scope": "System architecture"},
+    {"id": "algorithm", "role": "user", "category": "DECISION", "design_status": "AGREED", "agreement_basis": "direct_user", "statement": "Use complete-linkage Jaccard clustering after compressing identical fingerprints; restore frame counts before reporting populations.", "scope": "Clustering design"},
+    {"id": "dashboard", "role": "user", "category": "REQUIREMENT", "design_status": "AGREED", "agreement_basis": "direct_user", "statement": "Agreed: include a timeline, occurrence chart and contact heatmap by default in the first-release dashboard.", "scope": "First-release dashboard"},
+    {"id": "identifier", "role": "user", "category": "DECISION", "design_status": "AGREED", "agreement_basis": "direct_user", "statement": "Remove the medoid-derived state_uid from the first release; retain state_id as the population rank within an analysis.", "scope": "First-release identifiers"},
+    {"id": "activity", "role": "assistant", "category": "FINDING", "design_status": "UNKNOWN", "agreement_basis": "none", "statement": "The current development task is reviewing pipeline orchestration and the report metadata adapter. That review is in progress; no completion is reported yet.", "scope": "Current development"}
+  ],
+  "repository": {
+    "sources": [{"id": "repository:file:pipeline.py", "label": "pipeline.py", "text": "def analyze(path):\n    frames = loader.read_contacts(path)\n    fingerprints = metadata_adapter.encode(frames)\n    modes = clustering.group(fingerprints)\n    return report_builder.export(modes)\n"}],
+    "coverage": ["Fictional, supplied source excerpt only; no code was executed."]
+  },
+  "expectations": {
+    "architecture_source_ids": ["original:architecture", "repository:file:pipeline.py"],
+    "current_activity_source_ids": ["original:activity"],
+    "stable_requirement_source_ids": ["original:algorithm", "original:dashboard", "original:identifier"],
+    "manual_rubric": [
+      "Overview describes the project's purpose and main workflow.",
+      "Architecture explains components, their responsibilities and data flow; clustering parameters alone are insufficient.",
+      "Current work describes the in-progress orchestration/adapter review and does not list accepted dashboard or identifier requirements as ongoing work.",
+      "Without the activity record, Current work is empty rather than inferred from agreement or source-file existence.",
+      "Stable accepted requirements and reasons remain available in Knowledge, with their original evidence and status unchanged."
+    ]
+  }
+}
