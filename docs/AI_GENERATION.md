@@ -1,94 +1,81 @@
 # AI generation
 
-ProjectHub sends selected project evidence to OpenAI when you request generation.
-Browsing, searching and opening saved results use local data. Source references
-help you check an AI claim against the original evidence.
+Generation sends selected project evidence to OpenAI. Browsing and searching use
+local data. Follow source links to check claims against the original evidence.
 
 ## Generate or retry
 
-Open the project's **Generation** tab. Select **Overview**, **Knowledge**,
-**Scheme**, **Q&A** or **Implementation Choices & Limits**, then click
-**Regenerate selected**. Results save automatically after validation.
+Open **Generation**, select the views you want, and click **Regenerate selected**.
+Results save automatically after validation. Use **Previous versions** where
+available to open earlier results.
 
-- **Overview** summarizes the project, its architecture, current work and next
-  steps. **Knowledge** saves a separate summary and records of choices,
-  requirements, reasons and supporting evidence.
-- **Regenerate all** starts available views in parallel. Scheme waits for a
-  successful Knowledge generation when both are started together. Generating
-  Scheme alone uses the currently saved Knowledge.
-- **Retry unfinished** starts only missing or unsuccessful views. The latest
-  attempt status appears alongside any earlier saved result.
+- **Regenerate all** runs available views in parallel. When both Scheme and
+  Knowledge are queued, Scheme starts after Knowledge saves successfully. Scheme
+  can also run on its own using saved Knowledge, when available.
+- **Retry unfinished** reruns missing or unsuccessful views. Earlier results remain
+  visible alongside the latest attempt status.
 - **Generate AI tags** is a separate action on saved Knowledge and Q&A.
 
-Open **Previous versions** where available to read an earlier saved result.
-See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and [Scheme](SCHEME.md)
-for the individual views.
+See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and
+[Scheme](SCHEME.md) for the individual views.
 
 ## Progress, cancellation and timeouts
 
-Progress shows the current stage, completed batches and cache reuse when available.
-Use **Cancel generation** to stop a run. A cancellation may take some time to
-reach an active request. Failures and cancellations preserve earlier saved results
-and completed batches. A retry can reuse matching batches.
+Progress shows the stage, completed batches and cache reuse when available.
+**Cancel generation** may take time to reach an active request. A failure or
+cancellation preserves the saved result and lets a retry reuse matching batches.
 
-Reloading the page reconnects to an active run on the same ProjectHub server.
-An interrupted run can be retried after a server restart.
+Reload the page to reconnect to a run on the same server. After a server restart,
+retry interrupted runs.
 
-Change **Settings → Overall time budget (seconds)** to set the total allowance
-for the next run. The default is 900 seconds (15 minutes), with a range of 30 to
-7,200 seconds. The separate per-response timeout still applies. Increase the
-overall budget if a job needs more time across its stages. Changing the model or
-reasoning effort may also help with requests that stall.
+**Settings → Overall time budget (seconds)** allows 30 to 7,200 seconds per run,
+with a default of 900 (15 minutes). Each response also has a separate timeout.
+Raise the overall budget if a run needs more time across stages. For stalled
+requests, try a different model or reasoning effort.
 
 ## Settings for quality and resource use
 
-**Knowledge generation profile** controls how much conversation context Knowledge
-reads and how it groups that context.
+**Knowledge generation profile** sets how much conversation context Knowledge
+reads and how it batches that context.
 
 | Profile | When to use it |
 | --- | --- |
-| **Quality** (default) | Smaller batches help retain detail across the available source material. |
-| **Balanced** (experimental) | Larger batches cover the available sources with potentially fewer calls. Some details may be missed. |
-| **Economy** (experimental) | Larger batches and a source limit can reduce usage. Check Coverage for omitted conversation text. |
+| **Quality** (default) | Smaller batches help retain detail across available sources. |
+| **Balanced** (experimental) | Larger batches may reduce calls and miss details. |
+| **Economy** (experimental) | Larger batches and a source limit can reduce usage. Check Coverage for omitted text. |
 
-Explicit model and reasoning settings take precedence. Economy can default to
-low reasoning for a selected model that supports it. Changing the profile, model
-or instructions can require fresh processing.
+Explicit model and reasoning settings take precedence. Economy can use low
+reasoning by default when the selected model supports it. Changing the profile,
+model or instructions can require fresh processing.
 
-**AI workers per job** sets the maximum number of independent batches running
-in parallel. The default is 10, and 1 runs batches in sequence. Concurrent jobs
-each get the configured limit. Higher values can increase memory use and account
-requests. Start with the default or lower it if you hit resource or account limits.
+**AI workers per job** limits parallel batches for each job. The default is 10.
+Set it to 1 to run batches in sequence, or lower it if you hit memory or account
+limits.
 
-Settings save automatically and apply to the next generation. Dropdowns save
-on selection. Number fields save after a short pause, on Enter, or when you leave
-the field. Startup environment overrides can take precedence after restart.
-See the [configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml). Scheme has its own
+Settings save automatically and apply to the next run. Startup environment
+overrides can take precedence after restart. See the
+[configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml). Scheme has separate
 [inspection and excerpt settings](SCHEME.md#freshness-and-coverage).
 
 ## Check coverage and costs
 
 Expand **Coverage** below a generated result.
 
-- **Files used and missed** shows supplied excerpts and recorded omissions. A
-  file can be read locally while only part of it is sent to AI.
-- **Detailed coverage** shows available conversation and repository counts, source
-  scope and limitations.
-- **Processing diagnostics** shows timing, worker counts, cache reuse or token
-  usage when recorded. Token usage can be partial and reflects the reported
-  requests for that run.
+- **Files used and missed** shows supplied excerpts and omissions. A local file
+  read may contribute only an excerpt to generation.
+- **Detailed coverage** shows conversation and repository counts, scope and limits.
+- **Processing diagnostics** shows recorded timing, workers, cache reuse and
+  token usage. Token totals can be partial.
 
-Older results may have fewer recorded measurements. The counts explain what was
-processed. Check the cited passages to judge whether a result accurately describes
-your project.
+Older results may have fewer measurements. Check cited passages to judge accuracy.
 
 ## History sync
 
 ProjectHub checks linked Codex history locally about once a minute by default.
-Use **Pause automatic sync** in **Sources** for a session that is unavailable.
-Use **History** for a manual refresh. Imported ChatGPT shares remain saved snapshots.
-This sync runs locally without generating an AI result. The interval and default
-sync behavior are available in the [configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml).
+Pause a session's sync in **Sources** or refresh it manually from **History**.
+Imported ChatGPT shares stay as saved snapshots. See the
+[configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)
+for sync settings.
 
 Contributors can find extraction, synthesis and diagnostic details in the
 [Knowledge pipeline reference](KNOWLEDGE_PIPELINE.md).

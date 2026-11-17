@@ -1,36 +1,28 @@
 # ProjectHub
 
-ProjectHub is a local workspace for keeping project context across Codex sessions,
-ChatGPT conversations, and Git repositories. Search past decisions, ask questions
-with source citations, and track follow-up tasks. Generate project summaries and
-architecture diagrams when you need to get back up to speed.
+ProjectHub brings Codex sessions, ChatGPT conversations, and Git repositories into
+one local workspace for searchable knowledge, project summaries, and diagrams.
 
 ![ProjectHub overview with example data](images/projecthub-dashboard.png)
 
 ## Use and configuration
 
-- [Install and run](GETTING_STARTED.md)
-- [AI generation, settings, and troubleshooting](AI_GENERATION.md)
-- [Project evidence and freshness](PROJECT_EVIDENCE.md)
-- [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md)
-- [Scheme](SCHEME.md)
-- [Terminal-agent context and reading](TERMINAL_AGENTS.md)
-- [Configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)
+- [Install ProjectHub and start a project](GETTING_STARTED.md)
+- [Generate, refresh, or retry results](AI_GENERATION.md)
+- [Browse Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md)
+- [Read diagrams and dependencies in Scheme](SCHEME.md)
+- [Check evidence and freshness](PROJECT_EVIDENCE.md)
+- [Use ProjectHub from a terminal agent](TERMINAL_AGENTS.md)
 
 ## For contributors
 
-- [Architecture](ARCHITECTURE.md)
-- [HTTP API contract](API_CONTRACT.md)
-- [Data model](DATA_MODEL.md)
-- [Knowledge pipeline and isolated testing](KNOWLEDGE_PIPELINE.md)
-- [Knowledge interface API and implementation](KNOWLEDGE_UI_INTERNALS.md)
-- [Security and deployment boundaries](SECURITY_REVIEW.md)
-- [Engineering decisions](DECISIONS.md)
-- [Scheme implementation reference](scheme-implementation.md)
+- [Architecture](ARCHITECTURE.md), [HTTP API](API_CONTRACT.md), and [data model](DATA_MODEL.md)
+- [Knowledge pipeline](KNOWLEDGE_PIPELINE.md), [Knowledge interface](KNOWLEDGE_UI_INTERNALS.md), and [Scheme implementation](scheme-implementation.md)
+- [Security boundaries](SECURITY_REVIEW.md) and [engineering decisions](DECISIONS.md)
 
 ### Validate a release
 
-From a clean checkout, set up the project and run the automated and smoke checks.
+Run these from a clean checkout.
 
 ```bash
 bash scripts/setup.sh
@@ -38,29 +30,26 @@ bash scripts/check.sh
 .venv/bin/python scripts/smoke.py
 ```
 
-The check script runs backend and frontend tests, TypeScript checks, and the
-production build. Before release, use temporary XDG data and configuration
-directories to test import, search, TODOs, reviews, and persistence after restart
-in a browser. Verify Codex sign-in and a completed read-only generation separately
-with the installed Codex version. Record the commit, environment, results, and
-which checks used simulated or live services.
+- **Automated checks** cover backend and frontend tests, TypeScript, and the production build.
+- **Browser checks** use temporary XDG directories to verify import, search, TODOs, reviews, and persistence after restart.
+- **Live Codex checks** verify sign-in and a completed read-only generation with the installed Codex version.
+
+Record the commit, environment, results, and which checks used simulated services.
 
 ### Preview the documentation
 
-From the repository root, install the documentation tools in a separate Python
-virtual environment and start the preview server.
+Use a separate Python environment from the repository root.
 
 ```bash
 python -m pip install -r docs/requirements.txt
 python -m mkdocs serve
 ```
 
-Run `python -m mkdocs build --strict` to check for documentation build warnings.
+Check for warnings with `python -m mkdocs build --strict`.
 
 ### Build a wheel
 
-From a source checkout, use Node.js 22.18+ and npm to build the frontend, then
-build the wheel with Python:
+Use Node.js 22.18+ and npm from a source checkout.
 
 ```bash
 npm --prefix frontend ci
@@ -68,14 +57,10 @@ npm --prefix frontend run build
 python3 -m pip wheel --no-deps --wheel-dir dist .
 ```
 
-Install the resulting wheel with pipx or pip in a virtual environment. Its frontend, migrations, shared AI
-instructions, and optional Codex skill are included. Use an isolated data directory
-when testing a release build.
+[Install the wheel](GETTING_STARTED.md#install-a-wheel) and test it with an isolated data directory.
 
 ### Reload local development changes
 
-When running the managed `projecthub` launcher, use **Settings → Restart ProjectHub**
-to load backend changes. Finish active jobs before restarting. After
-reconnecting, save any unfinished browser edits, then use **Reload page** to load
-the updated interface. If you started Uvicorn directly, restart its process from
-the terminal.
+Finish active jobs, then use **Settings → Restart ProjectHub** to load backend
+changes. If you started Uvicorn directly, restart it from the terminal. After
+reconnecting, save unfinished edits before reloading the page.

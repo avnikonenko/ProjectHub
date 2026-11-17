@@ -2,6 +2,7 @@ site_name: ProjectHub
 site_description: User guides and developer reference for ProjectHub.
 site_url: !ENV READTHEDOCS_CANONICAL_URL
 repo_url: https://github.com/avnikonenko/ProjectHub
+edit_uri: edit/main/docs/
 
 site_dir: build/docs
 theme: readthedocs

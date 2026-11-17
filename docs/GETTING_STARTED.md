@@ -2,24 +2,21 @@
 
 ## Install from source
 
-On Linux, install Python 3.11 or later with `venv`, Git, and Node.js 22.18 or
-later with npm. Clone or download the repository, then run the installer from
-the checkout. [ProjectHub on GitHub](https://github.com/avnikonenko/ProjectHub)
+On Linux, install Python 3.11+ with `venv`, Git, and Node.js 22.18+ with npm.
+Run these commands from your [ProjectHub checkout](https://github.com/avnikonenko/ProjectHub).
 
 ```bash
 bash scripts/install.sh
 projecthub
 ```
 
-Keep the checkout. If the launcher is outside your `PATH`, use
-`bash scripts/projecthub` from the checkout.
+Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/projecthub`.
 
 ## Install a wheel
 
-Check [GitHub Releases](https://github.com/avnikonenko/ProjectHub/releases) for
-a wheel, or [build one from source](README.md#build-a-wheel). The wheel runs on
-Linux with Python 3.11 or later and includes the built interface and database
-migrations. Use the filename of the wheel you downloaded or built.
+[Download the v0.2.1 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.1/projecthub_local-0.2.1-py3-none-any.whl)
+or [build one from source](README.md#build-a-wheel). The wheel includes the
+interface and migrations and runs on Linux with Python 3.11+.
 
 ### With pipx
 
@@ -33,9 +30,6 @@ terminal.
 
 ### With Conda
 
-You can install the wheel alongside an existing source launcher using a named
-Conda environment.
-
 ```bash
 conda create -n projecthub -c conda-forge python=3.12 pip
 conda activate projecthub
@@ -43,23 +37,17 @@ python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
 projecthub
 ```
 
-Install Git separately to inspect local repositories from a wheel installation.
+Use your downloaded wheel's filename. Install Git for repository inspection.
 
 ## Start a project
 
-1. Open `http://127.0.0.1:8766` after starting ProjectHub.
-2. Click **Add project** and optionally link its local Git repository.
-3. In **Sources**, link a Codex session or add a public ChatGPT shared conversation. You can then browse and search the saved history.
-4. To generate a summary, install Codex separately and sign in with `codex login`. Then open **Generation**, select **Overview** and **Knowledge**, and click **Regenerate selected**. See the [AI generation guide](AI_GENERATION.md) for settings, progress, and coverage.
+1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
+2. In **Sources**, link a Codex session or import a public ChatGPT share.
+3. For AI generation, install Codex and run `codex login`. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
 
 Press Ctrl+C in the terminal to stop ProjectHub.
 
 ## Configuration and backups
 
-Run `projecthub config` to locate the editable settings file, which defaults to
-`~/.config/projecthub/config.toml`. Environment variables override file settings
-at startup. Restart ProjectHub after editing the file. See the
-[configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml).
-
-Source and wheel installations store project data in `~/.local/share/projecthub` by
-default. Back up this directory to preserve saved history, notes, and tasks.
+- **Settings.** Run `projecthub config` for the file path. The default is `~/.config/projecthub/config.toml`. Environment variables take precedence at startup. Restart after file edits. [Example configuration](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)
+- **Backups.** Source and wheel installations default to `~/.local/share/projecthub`. Back up that directory to preserve history, notes, and tasks.

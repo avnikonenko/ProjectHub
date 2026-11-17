@@ -1,70 +1,59 @@
 # Project Overview and Knowledge
 
-**Overview** describes the project's purpose, architecture and current work.
-**Knowledge Summary & records** explains extracted choices, requirements and
-reasons, with links to original evidence. Each view has its own saved result.
+- **Overview** summarizes the project's purpose, architecture, current work
+  and next steps.
+- **Knowledge Summary & records** shows extracted choices, requirements, reasons
+  and original evidence.
 
-## Implementation Choices & Limits
-
-Open **Knowledge → Implementation Choices & Limits** to inspect code behavior
-such as caps, filters and fallbacks. Generate the view from the **Generation**
-tab. Expand a finding to see saved excerpts for its declaration and use. The view
-distinguishes documented behavior from inference, and code defaults from
-configuration declarations. Follow the usage evidence to check where a limit
-applies. Runtime values can differ.
-
-Inspection supports Python and simple values in JSON, TOML and YAML. ProjectHub
-excludes sensitive declarations and leaves repository code untouched. Check
-**Coverage** for gaps in the inspection. Search and component filters work on the
-saved result. Open **Generation & saved versions** to read older results.
+Each view has its own saved result.
 
 ## Use
 
-Open a project and select **Knowledge**. Use project-wide search to find saved
-records across views, or **Search knowledge** to narrow the Knowledge list.
+Open **Knowledge** and use **Search knowledge** to narrow the list. Project-wide
+search finds saved records across views.
 
-- Use **Design status** to filter the records. Open **More filters** for
-  **Category** and **Scope**. Type part of a scope name or pick a suggestion.
-- Expand a record to see its reasons, exact evidence and related records. Use
-  **Show more** in long groups and **Reset filters** to start over.
-- Open **Interpretations from the same passage** when several records share the
-  same supporting passage. The group keeps the individual records accessible.
+- Filter by **Design status** or open **More filters** for **Category** and
+  **Scope**. Type a scope or pick a suggestion.
+- Expand a record for reasons, exact evidence and related records. Open
+  **Interpretations from the same passage** for individual records that share
+  evidence.
+- Use **Show more** in long groups and **Reset filters** to start over.
 
-Saved excerpts remain readable if their original sources become unavailable.
-Open available source links to check the surrounding context. **Coverage**
-shows the inputs recorded for the saved result, and **Current source
-availability** describes what can be checked now. Read the original evidence
-before relying on a choice or claim.
+**Coverage** lists the inputs recorded for the saved result. **Current source
+availability** shows which originals you can check now. Saved excerpts remain
+readable if the original source becomes unavailable.
 
 ## Generate and use a result
 
-1. Open **Generation** and select **Overview**, **Knowledge**, or
-   **Implementation Choices & Limits**.
-2. Click **Regenerate selected**.
-3. Return to the related view. ProjectHub saves successful results automatically.
-   Use the view's version controls to read earlier results.
+In **Generation**, select **Overview**, **Knowledge**, or **Implementation
+Choices & Limits**, then click **Regenerate selected**. Return to the view to
+read its saved result or open an earlier version.
 
-Generation uses the project's selected Codex account, model, effort and
-instructions. It sends selected project evidence to Codex. Browsing or filtering
-saved results makes no AI request. A failed or cancelled generation keeps the
-previous saved result and successful caches.
+Generation uses the project's Codex account, model, reasoning effort and
+instructions. See [AI generation](AI_GENERATION.md) for progress, cancellation
+and retries.
 
-**Regenerate all** starts Knowledge, Overview, Q&A and Implementation Choices.
-Scheme follows after Knowledge saves successfully. If you generate only Scheme,
-it uses the current saved Knowledge when available. See
-[AI generation](AI_GENERATION.md) for progress, cancellation and retries.
+## Implementation Choices & Limits
+
+Open **Knowledge → Implementation Choices & Limits** to inspect code caps,
+filters and fallbacks. Expand a finding to see saved declaration and usage
+excerpts. The view separates code defaults, configuration declarations and
+inferences. Runtime values can differ.
+
+Inspection reads Python and simple values in JSON, TOML and YAML, excludes
+sensitive declarations, and leaves repository code untouched. Check **Coverage**
+for gaps. Search and filter saved findings by component, or open
+**Generation & saved versions** for earlier results.
 
 ## AI topic tags
 
-Choose **Generate AI tags** to organize saved Knowledge or Q&A. Tagging runs
-separately from report generation and preserves the underlying records and
-evidence. If tagging fails or is cancelled, existing tags remain available.
+Choose **Generate AI tags** on saved Knowledge or Q&A. Tagging preserves records
+and evidence. Failed or cancelled runs keep existing tags.
 
-- Type a tag name to filter the list, or use **Browse tags** to see descriptions
-  and item counts.
-- Combine tags with other filters. Tags can overlap. Counts show membership
-  before other filters narrow the list.
-- Choose **All items** to clear the tag selection or **Untagged** to find records
+- Type a tag or use **Browse tags** for descriptions and counts.
+- Items can have several tags. Each tag count is calculated before other filters
+  apply.
+- Choose **All items** to clear the selection or **Untagged** to find records
   without tags.
 
 For API and implementation details, see the

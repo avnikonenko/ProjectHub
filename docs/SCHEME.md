@@ -1,65 +1,60 @@
 # Scheme
 
-Scheme shows how a project is organized and how it works. Opening saved diagrams
-and dependencies makes no AI request.
+Scheme shows a project's components, workflows, and dependencies. Browsing saved
+results makes no AI request.
 
 ![Example Scheme for Project X showing file import, validation, storage, and reporting](images/projecthub-scheme.png)
 
 ## Views
 
-- **Architecture** shows components and their relationships. Expand
-  **Code structure** to browse the inspected repository tree.
-- **Workflow** shows stages, inputs, outputs and execution order.
-- **Dependencies** shows libraries and tools, declared version constraints and
-  their role in the project. Check the linked declaration for details.
+- **Architecture** shows components and relationships. Expand **Code structure**
+  for the inspected repository tree.
+- **Workflow** shows stages, inputs, outputs, and execution order.
+- **Dependencies** shows tools, libraries, declared versions, and their roles.
 
-Components are labeled **observed**, **proposed**, or **uncertain**. Observed
-components have supporting evidence. Their runtime behavior needs separate
-verification. Green blocks mark entries, purple blocks mark outputs, and blue
-blocks mark other components.
+Component labels indicate **observed**, **proposed**, or **uncertain** status.
+An observation has supporting evidence. Verify runtime behavior separately.
+Green marks entries, purple marks outputs, and blue marks other components.
 
 ## Generate or refresh
 
-1. Link a repository through **Edit overview**, if available, and relevant
-   conversations through **Sources**.
+1. Use **Edit overview** to link a repository, if available. Link conversations
+   through **Sources**.
 2. Open **Generation**, select **Scheme**, then click **Regenerate selected**.
 3. Open **Scheme** and expand **Components and relationships** or **Evidence
    used** to check the supporting excerpts.
 
-Generation sends selected project evidence to Codex using the project's account,
-model, effort and instructions. ProjectHub saves successful results and keeps
-earlier results under **Scheme details → Previous versions**.
+Generation sends selected evidence to Codex with the project's AI settings.
+Find earlier results under **Scheme details → Previous versions**.
 
 ## Saved Knowledge
 
-Scheme can use the current saved Knowledge alongside repository excerpts and
-linked conversations. **Scheme details → Saved Knowledge context** shows the
-Knowledge version and the selection counts for the saved diagram. Generate
-Scheme again to incorporate a newer Knowledge version.
+Scheme can draw on saved Knowledge, repository excerpts, and conversations.
+Check **Scheme details → Saved Knowledge context** for the version and counts
+used. Regenerate Scheme to use newer Knowledge.
 
 ## Dependencies
 
-Scheme inspects common Python, npm and Conda dependency declarations. Declared
-constraints describe what a project requests. Check your environment separately
-for installed versions. Scheme inspects direct declarations without installing
-dependencies or executing project code.
+Scheme reads direct declarations from common Python, npm, and Conda files.
+Check your environment for installed versions. Inspection leaves dependencies
+and project code untouched.
 
 ## Freshness and coverage
 
-**No changes detected in inspected sources** describes the inputs selected for
-the saved result. **Partial coverage** means inspection or selection left some
-material out. If an old index makes freshness unknown, refresh **History**
-before regenerating Scheme.
+**No changes detected in inspected sources** applies to the selected inputs.
+**Partial coverage** means some material was omitted. Refresh **History** if an
+old index makes freshness unknown.
 
-- Open **Coverage → Files used and missed** to see which files contributed excerpts
-  and up to 100 skipped paths with reasons. Older results may only have aggregate
-  counts. A separately labeled current inspection can show today's file selection.
-- Open **Coverage → Detailed coverage → File accounting and scope** for the
-  inspection counts and recorded limits. A local file read may supply only an excerpt.
-- Open **Coverage → Processing diagnostics** for elapsed time, bytes read, cache
-  use, and evidence package size.
+Open **Coverage** for these details.
 
-Adjust the limit that corresponds to the omission reason you see:
+- **Files used and missed** lists files that supplied excerpts and up to 100
+  skipped paths with reasons. Older results may show counts only. When present,
+  **Current inspection** shows today's selection separately.
+- **Detailed coverage → File accounting and scope** lists inspection counts and
+  limits. A local read may supply only an excerpt.
+- **Processing diagnostics** shows time, bytes read, cache use, and evidence size.
+
+Match the omission reason to its setting.
 
 | Omission reason | Setting | Default and alternatives |
 |---|---|---|
@@ -67,12 +62,11 @@ Adjust the limit that corresponds to the omission reason you see:
 | Local read budget reached | **Settings → Advanced Scheme settings → Local file read limit** | 2 MiB (default), 4 MiB, or 8 MiB |
 | Final evidence package limit reached | **Settings → Advanced Scheme settings → Final evidence package limit** | 140,000 characters (default), 180,000, or 220,000 |
 
-The local inspection still uses a five-second deadline and a 64 KiB per-file
-limit. The final evidence package includes excerpts and metadata, so increasing
-the excerpt budget alone may leave some files out. Higher local limits can
-increase inspection time. Larger AI inputs can increase token use and generation
-time. Saved limits apply on the next inspection, and each Scheme revision keeps
-the limits recorded for its generation.
+Local inspection has a five-second deadline and a 64 KiB per-file cap. The
+final package includes excerpts and metadata and can still limit coverage
+after you increase the excerpt budget. Higher read limits may take longer.
+Larger AI inputs can use more tokens and time. Changes apply to the next
+inspection. Each Scheme revision retains the limits it used.
 
 See [AI generation settings](AI_GENERATION.md) and the
 [implementation reference](scheme-implementation.md).
