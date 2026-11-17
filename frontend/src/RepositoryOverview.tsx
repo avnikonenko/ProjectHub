@@ -8,6 +8,8 @@ type RepositoryStatus = {
   dirty: boolean;
   branches?: string[];
   branches_limited?: boolean;
+  remote_branches?: string[];
+  remote_branches_limited?: boolean;
   tracked_changes?: number;
   untracked_files?: number;
   github_issues_url?: string | null;
@@ -81,6 +83,16 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
           </li>)}
         </PagedItems>
         {status.branches_limited && <p className="muted">Showing up to {status.branches.length} local branches, including the current branch when available.</p>}
+      </details>}
+      {status?.remote_branches && <details className="repository-branches">
+        <summary>Remote branches ({status.remote_branches.length}{status.remote_branches_limited ? '+' : ''})</summary>
+        {status.remote_branches.length > 0 ? <>
+          <p className="muted">Remote branch names saved in the local Git repository.</p>
+          <PagedItems label="Remote branch pages" listClass="repository-branch-list" pageSize={10}>
+            {status.remote_branches.map(branch => <li key={branch}><code>{branch}</code></li>)}
+          </PagedItems>
+        </> : <p className="muted">No remote-tracking branches found in the local snapshot.</p>}
+        {status.remote_branches_limited && <p className="muted">The snapshot shows only part of the remote branch list.</p>}
       </details>}
       <button className="secondary" type="button" disabled={loading} onClick={reload}>Refresh Git snapshot</button>
     </div>

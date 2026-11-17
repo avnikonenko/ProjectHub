@@ -113,6 +113,17 @@ def repository_snapshot(value, remote=''):
             branches.pop()
         branches.append(current_branch)
         branches.sort()
+    # Remote-tracking refs are already stored locally. Allow room for symbolic
+    # aliases (such as origin/HEAD) within a bounded scan, but do not list aliases.
+    remote_ref_limit = 600
+    remote_refs = git('for-each-ref', '--format=%(refname)%09%(symref)', '--sort=refname',
+                      f'--count={remote_ref_limit}', 'refs/remotes').stdout.rstrip('\n').split('\n')
+    remote_branches = []
+    for line in remote_refs:
+        refname, _, target = line.partition('\t')
+        if refname.startswith('refs/remotes/') and not target:
+            remote_branches.append(refname.removeprefix('refs/remotes/'))
+    remote_branches_limited = len(remote_branches) > 300 or len(remote_refs) == remote_ref_limit
     head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
     commits = []
     if head.returncode == 0:
@@ -151,6 +162,7 @@ def repository_snapshot(value, remote=''):
                 raise HTTPException(503, 'Unable to parse repository status')
     target = repository_github_target(remote, path, validated=True)
     return {'branch': current_branch, 'branches': branches, 'branches_limited': branches_limited,
+            'remote_branches': remote_branches[:300], 'remote_branches_limited': remote_branches_limited,
             'dirty': bool(status.stdout), 'commits': commits,
             'tracked_changes': tracked_changes, 'untracked_files': untracked_files,
             'github_issues_url': issues_url(target) if target else None}

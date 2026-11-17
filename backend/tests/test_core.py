@@ -373,7 +373,8 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     url = f"/api/projects/{p['id']}/repository"
     assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [],
                                      'tracked_changes': 0, 'untracked_files': 0, 'github_issues_url': None,
-                                     'branches': ['work'], 'branches_limited': False}
+                                     'branches': ['work'], 'branches_limited': False,
+                                     'remote_branches': [], 'remote_branches_limited': False}
     assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
     assert client.get('/api/projects/99999/repository').status_code == 404
 
@@ -528,7 +529,7 @@ def test_not_planned_tasks_are_retained_but_not_recommended(client):
     assert any(f['entity_id'] == task['id'] for f in client.get(f'{base}/review').json()['findings'])
 
 
-def test_repository_snapshot_lists_local_branches_and_worktrees(client, tmp_path):
+def test_repository_snapshot_lists_local_and_remote_branches_in_worktrees(client, tmp_path):
     repo = tmp_path / 'branches'
     repo.mkdir()
 
@@ -543,12 +544,20 @@ def test_repository_snapshot_lists_local_branches_and_worktrees(client, tmp_path
     git('branch', 'zeta')
     git('branch', 'alpha')
     git('update-ref', 'refs/remotes/origin/remote-only', 'HEAD')
+    git('update-ref', 'refs/remotes/upstream/team/topic', 'HEAD')
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/remote-only')
+    git('tag', 'origin/remote-only')
+    git('pack-refs', '--all')
+    packed_refs = (repo / '.git/packed-refs').read_bytes()
     pid = project(client, repository_path=str(repo))['id']
     url = f'/api/projects/{pid}/repository'
     index = (repo / '.git/index').read_bytes() if (repo / '.git/index').exists() else None
     result = client.get(url).json()
     assert result['branches'] == ['alpha', 'main', 'zeta']
     assert result['branch'] == 'main' and result['branches_limited'] is False
+    assert result['remote_branches'] == ['origin/remote-only', 'upstream/team/topic']
+    assert result['remote_branches_limited'] is False
+    assert (repo / '.git/packed-refs').read_bytes() == packed_refs
     if index is not None:
         assert (repo / '.git/index').read_bytes() == index
     worktree = tmp_path / 'linked-worktree'
@@ -556,6 +565,7 @@ def test_repository_snapshot_lists_local_branches_and_worktrees(client, tmp_path
     linked = project(client, 'Worktree', repository_path=str(worktree))['id']
     result = client.get(f'/api/projects/{linked}/repository').json()
     assert result['branch'] == 'zeta' and result['branches'] == ['alpha', 'main', 'zeta']
+    assert result['remote_branches'] == ['origin/remote-only', 'upstream/team/topic']
     git('checkout', '--detach')
     result = client.get(url).json()
     assert result['branch'] is None and result['branches'] == ['alpha', 'main', 'zeta']
@@ -576,11 +586,16 @@ def test_repository_snapshot_limits_branch_list_but_keeps_current(client, tmp_pa
     head = git('rev-parse', 'HEAD')
     git('update-ref', '--stdin', input=''.join(
         f'create refs/heads/branch-{index:03d} {head}\n' for index in range(305)))
+    git('update-ref', '--stdin', input=''.join(
+        f'create refs/remotes/origin/branch-{index:03d} {head}\n' for index in range(305)))
+    git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/branch-000')
     pid = project(client, repository_path=str(repo))['id']
     result = client.get(f'/api/projects/{pid}/repository').json()
     assert len(result['branches']) == 300 and result['branches_limited'] is True
     assert result['branches'] == sorted(result['branches'])
     assert 'zz-current' in result['branches']
+    assert result['remote_branches'] == [f'origin/branch-{index:03d}' for index in range(300)]
+    assert result['remote_branches_limited'] is True
 
     for index in range(6):
         git('update-ref', '-d', f'refs/heads/branch-{index:03d}')
