@@ -96,6 +96,8 @@ def test_create_config_is_private_and_does_not_replace_existing_file(tmp_path):
 
 
 def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, monkeypatch, capsys):
+    from contextlib import nullcontext
+
     path = tmp_path / 'config.toml'
     path.write_text(f'[server]\nport = 8888\ndata_dir = "{tmp_path}/data"\n[ai]\n'
                     'generation_timeout = 120\nscheme_source_chars = 80000\n')
@@ -106,16 +108,19 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
     calls = []
+    listener = SimpleNamespace(set_inheritable=lambda enabled: None)
     class Config:
         def __init__(self, app_factory, **kwargs):
             calls.append((callable(app_factory), kwargs, os.environ['PROJECTHUB_DATA_DIR'],
                           os.environ['PROJECTHUB_GENERATION_TIMEOUT'], os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'],
                           os.environ['PROJECTHUB_SCHEME_READ_BYTES'], os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS']))
+        def bind_socket(self):
+            return nullcontext(listener)
     class Server:
         def __init__(self, config):
             pass
-        def run(self):
-            pass
+        def run(self, *, sockets):
+            assert sockets == [listener]
     monkeypatch.setitem(__import__('sys').modules, 'uvicorn', SimpleNamespace(Config=Config, Server=Server))
     monkeypatch.setattr(cli.os, 'execve', lambda *args: pytest.fail('Normal shutdown must not restart'))
     assert cli.main(['start']) == 0
