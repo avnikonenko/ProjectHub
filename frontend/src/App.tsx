@@ -817,7 +817,7 @@ function ProjectWorkspace({
                     <span>Notes</span>
                   </div>
                 </div>
-                <div className="two-column">
+                <div className="dashboard-details">
                   {(project.goals.trim() || project.repository_path || remoteIssuesUrl || project.tags.length > 0) && (
                     <section className="card">
                       <h2>Project overview</h2>

@@ -394,11 +394,12 @@ main {
   font-size: 0.785714rem;
   color: #839087;
 }
-.two-column {
+.dashboard-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 24rem), 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 0.75rem;
   align-items: start;
+  margin-bottom: 16px;
 }
 .card {
   background: #fff;
@@ -408,11 +409,27 @@ main {
   margin-bottom: 16px;
   overflow-wrap: anywhere;
 }
-.two-column > .card {
+:root .dashboard-details > .card {
   margin-bottom: 0;
+  padding: 0.9rem;
 }
-.two-column {
-  margin-bottom: 16px;
+.dashboard-details h2 {
+  font-size: 1.1rem;
+  margin-bottom: 0.45rem;
+}
+.dashboard-details h4,
+.dashboard-details .repository-branches {
+  margin-block: 0.45rem;
+}
+.dashboard-details .activity {
+  padding-block: 0.4rem;
+}
+.dashboard-details .pagination {
+  margin: 0.45rem 0 0;
+  gap: 0.45rem;
+}
+.dashboard-details .secondary {
+  padding: 0.35rem 0.6rem;
 }
 .section-title {
   display: flex;
@@ -1047,9 +1064,6 @@ a:focus-visible {
   .metric span {
     font-size: 0.714286rem;
   }
-  .two-column {
-    gap: 14px;
-  }
   .card {
     padding: 18px;
   }
@@ -1114,9 +1128,6 @@ a:focus-visible {
   }
   .tabs button {
     padding: 13px 0;
-  }
-  .two-column {
-    grid-template-columns: 1fr;
   }
   .metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
