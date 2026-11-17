@@ -46,12 +46,13 @@ class _Budget:
         self.started = time.monotonic()
         self.deadline = self.started + MAX_INSPECTION_SECONDS
         self.bytes_read = 0
+        self.max_bytes = MAX_READ_BYTES
         self.prefix_read_files = 0
 
     def check(self):
         if time.monotonic() >= self.deadline:
             raise _InspectionStopped('time_budget')
-        if self.bytes_read >= MAX_READ_BYTES:
+        if self.bytes_read >= self.max_bytes:
             raise _InspectionStopped('byte_budget')
 
 
