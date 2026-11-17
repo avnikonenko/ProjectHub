@@ -24,11 +24,12 @@ Refreshing the browser restores progress for an ongoing project analysis or AI Q
 request after reopening its project. It does not start another generation.
 Progress recovery requires the same ProjectHub server process to remain running.
 
-## One analysis, two views
+## Two perspectives, separate saved results
 
-**Refresh project analysis** in Overview or Knowledge uses the same pipeline.
-Overview summarizes purpose, architecture, active work, problems and next steps;
-Knowledge retains detailed choices, requirements, reasons and original evidence.
+**Refresh Project Overview** generates the general picture of purpose, architecture,
+active work, problems and next steps. **Refresh Knowledge Summary** uses the existing
+Knowledge extraction and synthesis pipeline for a more detailed perspective on
+choices, requirements, reasons and original evidence. The two saved results are independent.
 Architecture describes components and data flow. Accepted requirements alone do
 not establish current work; that section may be empty when activity is unknown.
 
@@ -36,14 +37,15 @@ Knowledge preserves material parameter names, documented defaults, units, scope,
 and explicitly reported overrides alongside their reasons and concrete trade-offs.
 It excludes generic textbook caveats. These records come from conversations,
 including quoted code/configuration; they do not independently verify runtime
-values. Repository inspection currently informs Overview, not Knowledge extraction.
+values. Repository inspection informs summary synthesis, not conversation Knowledge extraction.
 Missing defaults or reasons are not guessed. New extraction guidance takes effect
 on the next requested analysis; existing published records remain unchanged.
 
-Generation saves an **Unpublished analysis** with Overview and Knowledge preview
-views. **Use this result** publishes both together under one publication ID.
-Opening either view makes no AI call. Failed or cancelled generation preserves
-the saved pair and previous successful preview. Older unpublished previews remain
+Knowledge generation saves an **Unpublished preview** with a Knowledge Summary and
+Knowledge records. **Save Knowledge Summary** publishes that summary and its records
+together under one publication ID, without changing Project Overview.
+Opening either saved perspective makes no AI call. Failed or cancelled generation preserves
+saved results and the previous successful preview. Older unpublished previews remain
 inspectable but cannot replace a newer published analysis from the interface.
 **Download JSON** exports the complete preview and references. Browser refresh
 recovers active progress; a server restart stops work but keeps saved results.
@@ -223,7 +225,7 @@ model/effort, effective account directory and instruction/configuration identity
 stages after a later failure. Changed inputs or generation settings invalidate the
 corresponding stages. Changes to externally configured Codex model defaults are not
 discoverable from a default-model request alone; choosing an explicit model provides
-a distinct cache identity. Saved Knowledge, Overview and prior previews are replaced
+a distinct cache identity. Saved Knowledge, its Summary and prior previews are replaced
 only after the complete result passes validation and freshness checks.
 
 Progress reports overview-synthesis stages separately from conversation extraction.

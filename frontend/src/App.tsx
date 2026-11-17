@@ -289,9 +289,7 @@ function ProjectWorkspace({
   const view = historyLink ? 'History' : knowledgeLink ? 'Knowledge' : selectedView;
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
-  const [knowledgePublicationVersion, setKnowledgePublicationVersion] = useState(0);
-  const [analysisRefreshRequest, setAnalysisRefreshRequest] = useState(0);
-  const [analysisState, setAnalysisState] = useState({ busy: true, running: false });
+  const [analysisState, setAnalysisState] = useState({ busy: false, running: false });
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
@@ -319,7 +317,7 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
-  const recovery = useGenerationRecovery(base, { includeBrief: false, includeKnowledge: true });
+  const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true });
   useEffect(() => {
     if (historyLink || knowledgeLink) {
       setResults(null);
@@ -590,28 +588,31 @@ function ProjectWorkspace({
         {!results && searchTarget && <p role="status">Showing the selected search result.{' '}
           <button type="button" className="quiet" onClick={() => setSearchTarget(null)}>Show all</button>
         </p>}
-        {(['qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind]) && (
-          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
+        {(['brief', 'qa', 'scheme'] as const).map((kind) => (running[kind] || recovery.running[kind])
+          && (kind !== 'brief' || view !== 'Dashboard' || !!results) && (
+          <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project Overview' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
         {(analysisState.running || recovery.running.knowledge) && (view !== 'Dashboard' && view !== 'Knowledge' || !!results) &&
-          <GenerationStatus base={base} kind="knowledge" label="Project analysis"
+          <GenerationStatus base={base} kind="knowledge" label="Knowledge Summary"
             sharedProgress={recovery.running.knowledge ? recovery.progress.knowledge : undefined} />}
         <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
-              visible={view === 'Dashboard' && !results} recoveryVersion={knowledgePublicationVersion}
-              analysisBusy={analysisState.busy} analysisRunning={analysisState.running}
-              onRefresh={() => setAnalysisRefreshRequest(value => value + 1)} />
+              visible={view === 'Dashboard' && !results} generation={generation}
+              recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
+              externalBusy={analysisState.busy || recovery.running.knowledge}
+              onGenerating={(active) => { if (active) recovery.clearError(); setRunning(previous => ({ ...previous, brief: active })); }} />
           </div>
         )}
-        {(visited.brief || visited.knowledge || view === 'Dashboard' || view === 'Knowledge') && (
-          <div hidden={(view !== 'Dashboard' && view !== 'Knowledge') || !!results}>
+        {(visited.knowledge || view === 'Knowledge') && (
+          <div hidden={view !== 'Knowledge' || !!results}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}
-              visible={(view === 'Dashboard' || view === 'Knowledge') && !results}
-              showRecords={view === 'Knowledge'} refreshRequest={analysisRefreshRequest} onBusyChange={setAnalysisState}
-              onPublished={() => setKnowledgePublicationVersion(value => value + 1)}
-              renderBrief={(candidate) => <BriefPreview brief={candidate as Brief} prefix={`${projectId}-knowledge-preview`} />} />
+              visible={view === 'Knowledge' && !results}
+              showRecords externalBusy={running.brief || recovery.running.brief} onBusyChange={setAnalysisState}
+              renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
+                prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
+                perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Preview sources'} />} />
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (

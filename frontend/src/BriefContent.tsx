@@ -38,7 +38,7 @@ export type Brief = {
 };
 
 
-export function briefSections(brief: Brief | null) {
+export function briefSections(brief: Brief | null, perspective: 'project' | 'knowledge' = 'project') {
   const normalizePoint = (text: string) => text.trim().toLocaleLowerCase().replace(/\s+/g, ' ');
   const overviewTexts = new Set((brief?.sections.overview ?? []).map((entry) => normalizePoint(entry.text)));
   const currentWork = new Map<string, BriefEntry>();
@@ -51,7 +51,7 @@ export function briefSections(brief: Brief | null) {
     } : entry);
   }
   const sections: [keyof Brief['sections'], string, boolean][] = [
-    ['overview', 'Overview', false],
+    ['overview', perspective === 'knowledge' ? 'Summary' : 'Overview', false],
     ['architecture', 'Reported architecture', false],
     ['current_status', 'Current work', false],
     ['unresolved_problems', 'Unresolved problems', false],
@@ -73,8 +73,8 @@ export function briefSections(brief: Brief | null) {
   });
 }
 
-export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }) {
-  const visibleSections = briefSections(brief);
+export function BriefContent({ brief, prefix, perspective = 'project' }: { brief: Brief; prefix: string; perspective?: 'project' | 'knowledge' }) {
+  const visibleSections = briefSections(brief, perspective);
   const sources = citedSources(brief.sources ?? [], visibleSections.flatMap(({ entries }) => entries.flatMap((entry) => entry.source_ids)));
   const sourceNumbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return <>
@@ -102,10 +102,12 @@ export function BriefContent({ brief, prefix }: { brief: Brief; prefix: string }
   </>;
 }
 
-export function BriefPreview({ brief, prefix }: { brief: Brief; prefix: string }) {
+export function BriefPreview({ brief, prefix, perspective = 'project', sourceLabel = 'Preview sources' }: {
+  brief: Brief; prefix: string; perspective?: 'project' | 'knowledge'; sourceLabel?: string;
+}) {
   const sources = citedSources(brief.sources, briefSections(brief).flatMap(({ entries }) => entries.flatMap(entry => entry.source_ids)));
   return <>
-    <BriefContent brief={brief} prefix={prefix} />
-    <details><summary className="source-disclosure">Preview sources ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
+    <BriefContent brief={brief} prefix={prefix} perspective={perspective} />
+    <details><summary className="source-disclosure">{sourceLabel} ({sources.length})</summary><BriefSources sources={sources} prefix={prefix} /></details>
   </>;
 }

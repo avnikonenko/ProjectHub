@@ -49,8 +49,9 @@ recovers the last successful result without generation. Saving is guarded by the
 same cancellation/time-budget check; failed replacements preserve the previous
 preview and published records. No separate knowledge store is introduced.
 
-Explicit publish:true updates current knowledge, its revision, current brief, and its
-revision in one transaction. Snapshot and brief share a publication ID and timestamp.
+Explicit publish:true updates current Knowledge, its `summary`, and one Knowledge
+revision in one transaction. Snapshot and summary share a publication ID and timestamp;
+the independent general Project Overview and its revisions remain unchanged.
 The source manifest is rechecked under a short SQLite writer transaction; a source or
 metadata change aborts publication. Inspected repository excerpts are rechecked too,
 without claiming that filesystem edits can be locked atomically with SQLite.
@@ -63,7 +64,10 @@ A later legacy refresh can create a newer legacy brief; the pairing flag then be
 GET /api/projects/{id}/codex/generation/status?kind=knowledge exposes pilot progress.
 The ordinary /codex/brief endpoint remains the default for the Overview refresh button.
 The Knowledge tab shows saved results directly. Generate/Regenerate creates an opt-in
-candidate; **Use this result** activates its matching Knowledge and Overview.
+candidate; **Save Knowledge Summary** atomically saves its Knowledge records and
+matching detailed summary. The summary is stored in the published Knowledge
+snapshot, with the same publication ID. General Project Overview is saved and
+refreshed independently; neither save path overwrites the other perspective.
 See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for current UI behavior and limitations.
 
 ## Large overview synthesis

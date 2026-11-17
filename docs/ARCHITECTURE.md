@@ -25,12 +25,15 @@ The frontend requests a project overview bundle and uses project-scoped mutation
 
 ## Knowledge lifecycle
 
-### Shared generated analysis
+### Independent Overview and Knowledge Summary
 
-Overview and Knowledge share the existing evidence extraction, reconciliation and
-brief synthesis pipeline. A saved unpublished candidate contains both views;
-publication updates both atomically with the same publication ID and preserves
-generation revisions. The frontend keeps one generation controller across tabs.
+Project Overview retains its general brief generation and revisions. The existing
+Knowledge extraction, reconciliation and synthesis pipeline produces detailed
+Knowledge records and a Knowledge Summary. Publication atomically saves those in
+`ProjectKnowledge.snapshot`, with the summary under `summary`, and appends a
+Knowledge revision. It does not write the general `ProjectBrief` or brief revisions.
+Each action has its own progress/cancellation identity, with the existing generation
+lock preventing concurrent writers. Legacy matching summaries remain recoverable.
 Opening a view only reads saved results and lightweight progress/freshness data.
 Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
 

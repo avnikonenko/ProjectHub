@@ -26,6 +26,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Separate the general Project Overview from the detailed Knowledge Summary. Save each independently, label unpublished previews explicitly, preserve original evidence and revisions, and keep Overview refresh separate from Knowledge generation. Recover older matching detailed summaries without rewriting the general view.
+
 - Preserve source-supported parameter defaults, reported overrides, scope and concrete project-specific trade-offs in generated Knowledge; exclude generic method caveats and distinguish reported settings from verified runtime values.
 
 - Unify Overview and Knowledge as two views of one project analysis. Refresh either view, inspect a paired unpublished preview, and publish both together. Preserve progress across tabs and reloads, retain previous revisions, and describe architecture as components and data flow without treating agreed requirements as current work.

@@ -15,18 +15,22 @@ Contributor reference. For everyday use, see [Overview and Knowledge](PROJECT_KN
 - Existing conversation/transcript hash resolvers open original evidence.
 
 Publication pairing rejects missing, empty or whitespace publication IDs when
-calculating `paired_with_current_brief`. The legacy Overview refresh still uses
-`/codex/brief`; the knowledge pipeline remains opt-in.
+calculating `paired_with_current_brief`. This field remains truthful for legacy
+paired results; a new Knowledge Summary is paired with its Knowledge snapshot,
+not the general Overview. Its optional `snapshot.summary` must match the snapshot's
+publication ID. General Overview refresh uses `/codex/brief`, with independent
+`brief` progress/cancellation; Knowledge uses `knowledge` progress. Both use the
+existing generation lock. Knowledge generation remains opt-in.
 
 | File | Responsibility |
 |---|---|
 | `frontend/src/App.tsx` | Knowledge tab, Overview label, project-scoped hash navigation and mounted preview state. |
-| `frontend/src/ProjectBrief.tsx` | Existing brief controls plus matching Important choices. |
+| `frontend/src/ProjectBrief.tsx` | Independent general Overview refresh, progress/recovery, revisions and legacy matching Important choices. |
 | `frontend/src/BriefContent.tsx` | Shared existing brief section renderer and preview sources. |
 | `frontend/src/ImportantKnowledge.tsx` | Read-only publication-checked Overview highlights. |
 | `frontend/src/knowledge.ts` | API types/validation, filtering, highlight selection, links and publication matching. |
 | `frontend/src/KnowledgeItems.tsx` | Shared read-only record browser, evidence and relationships. |
-| `frontend/src/KnowledgePage.tsx` | Current and generated results, explicit activation and project-scoped recovery. |
+| `frontend/src/KnowledgePage.tsx` | Saved Knowledge Summary, records, explicit summary saving and project-scoped preview recovery. |
 | `frontend/src/knowledge.css` | Responsive filters/details and keyboard focus styling. |
 | `frontend/tests/knowledge.test.ts` | Helper regressions for filtering, identity, status preservation and source links. |
 | `backend/app/integrations/codex/router.py` | Project knowledge API and publication identity pairing. |

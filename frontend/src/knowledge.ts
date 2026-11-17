@@ -26,6 +26,7 @@ export type KnowledgeSnapshot = {
   items: KnowledgeItem[]; sources: KnowledgeSource[]; coverage?: KnowledgeCoverage;
   extraction_version?: string; source_manifest?: unknown; diagnostics?: GenerationDiagnostics;
   topic_groups?: TopicGroup[]; topic_grouping?: Record<string, unknown>;
+  summary?: Brief; summary_error?: string;
 };
 export type KnowledgeResponse = {
   snapshot: KnowledgeSnapshot | null; paired_with_current_brief?: boolean;
@@ -72,10 +73,17 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
     })
         || ['publication_id', 'generated_at', 'extraction_version'].some((key) => value[key] !== undefined && typeof value[key] !== 'string'))
       throw new Error('Invalid knowledge source metadata.');
-    const { diagnostics: rawDiagnostics, ...stored } = value;
+    const { diagnostics: rawDiagnostics, summary: rawSummary, summary_error: ignoredSummaryError, ...stored } = value;
+    let summary: Brief | undefined;
+    let summaryError: string | undefined;
+    if (rawSummary !== undefined && rawSummary !== null) {
+      try { summary = parseKnowledgeSummary(rawSummary, projectId, value.publication_id); }
+      catch { summaryError = 'The saved Knowledge Summary is unavailable or does not match this Knowledge publication. Records remain available.'; }
+    }
     const diagnostics = parseGenerationDiagnostics(rawDiagnostics);
     snapshot = { ...stored, coverage: coverage(value.coverage),
       ...(diagnostics !== undefined ? { diagnostics } : {}),
+      ...(summary ? { summary } : {}), ...(summaryError ? { summary_error: summaryError } : {}),
       ...(value.topic_groups !== undefined ? { topic_groups: parseTopicGroups(value.topic_groups, ids) } : {}),
     } as KnowledgeSnapshot;
   }
@@ -185,16 +193,13 @@ export function knowledgeSourceHref(projectId: number, source: KnowledgeSource |
   return null;
 }
 
-export function parseKnowledgePreview(raw: unknown, projectId: number): { knowledge: KnowledgeSnapshot; brief: Brief; diagnostics?: GenerationDiagnostics } {
-  if (!raw || typeof raw !== 'object') throw new Error('The preview response is invalid.');
-  const result = raw as Record<string, any>;
-  const brief = result.brief;
-  const parsed = parseKnowledgeResponse({ snapshot: result.knowledge }, projectId);
-  if (result.published !== false || !parsed.snapshot || !brief || typeof brief !== 'object'
-      || !matchesPublication(parsed.snapshot, projectId, brief.project_state?.publication_id)
-      || result.publication_id !== parsed.snapshot.publication_id) {
-    throw new Error('The preview brief and knowledge do not share this project publication.');
-  }
+export function parseKnowledgeSummary(raw: unknown, projectId: number, publicationId: unknown): Brief {
+  if (!object(raw) || typeof publicationId !== 'string' || !publicationId.trim()
+      || !object(raw.project_state) || raw.project_state.publication_id !== publicationId
+      || (raw.project_id !== undefined && raw.project_id !== projectId)
+      || (raw.project_state.project_id !== undefined && raw.project_state.project_id !== projectId))
+    throw new Error('The Knowledge Summary does not match this project publication.');
+  const brief = raw as Record<string, any>;
   const sections = brief.sections;
   if (!sections || typeof sections !== 'object' || Array.isArray(sections)
       || !Array.isArray(sections.overview) || !Array.isArray(sections.current_status)
@@ -204,6 +209,7 @@ export function parseKnowledgePreview(raw: unknown, projectId: number): { knowle
         && entry.source_ids.every((id: unknown) => typeof id === 'string')))
       || !Array.isArray(brief.sources) || !brief.sources.every((source: any) => source
         && typeof source.id === 'string' && typeof source.label === 'string' && typeof source.text === 'string'
+        && (source.project_id === undefined || source.project_id === projectId)
         && (source.turn_id === undefined || typeof source.turn_id === 'string')
         && ['note_id', 'session_id'].every(key => source[key] === undefined || (Number.isSafeInteger(source[key]) && source[key] > 0))
         && (source.shared_sessions === undefined || (Array.isArray(source.shared_sessions) && source.shared_sessions.every((session: any) =>
@@ -211,9 +217,25 @@ export function parseKnowledgePreview(raw: unknown, projectId: number): { knowle
           && (session.session_title === undefined || typeof session.session_title === 'string')))))
       || !Array.isArray(brief.coverage) || !brief.coverage.every((value: unknown) => typeof value === 'string')
       || typeof brief.generated_at !== 'string') {
-    throw new Error('The preview brief is incomplete. Published knowledge has not changed.');
+    throw new Error('The Knowledge Summary is incomplete. Saved records have not changed.');
   }
+  const { diagnostics: rawDiagnostics, ...stored } = brief;
+  const diagnostics = parseGenerationDiagnostics(rawDiagnostics);
+  return { ...stored, ...(diagnostics === undefined ? {} : { diagnostics }) } as Brief;
+}
+
+export function parseKnowledgePreview(raw: unknown, projectId: number): { knowledge: KnowledgeSnapshot; brief: Brief; diagnostics?: GenerationDiagnostics } {
+  if (!raw || typeof raw !== 'object') throw new Error('The preview response is invalid.');
+  const result = raw as Record<string, any>;
+  const brief = result.brief;
+  const parsed = parseKnowledgeResponse({ snapshot: result.knowledge }, projectId);
+  if (result.published !== false || !parsed.snapshot || !brief || typeof brief !== 'object'
+      || !matchesPublication(parsed.snapshot, projectId, brief.project_state?.publication_id)
+      || result.publication_id !== parsed.snapshot.publication_id) {
+    throw new Error('The Knowledge Summary and records do not share this project publication.');
+  }
+  const summary = parseKnowledgeSummary(brief, projectId, parsed.snapshot.publication_id);
   const diagnostics = parseGenerationDiagnostics(result.diagnostics);
-  return { knowledge: parsed.snapshot, brief, ...(diagnostics === undefined ? {} : { diagnostics }) };
+  return { knowledge: parsed.snapshot, brief: summary, ...(diagnostics === undefined ? {} : { diagnostics }) };
 }
 
