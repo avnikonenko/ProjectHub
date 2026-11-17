@@ -244,6 +244,9 @@ export default function App() {
             onProjectChanged={fetchProjects}
           />
         )}
+        <footer className="app-footer muted">
+          <small>(c) 2026 Aleksandra Ivanova</small>
+        </footer>
       </div>
       {adding && (
         <Form
