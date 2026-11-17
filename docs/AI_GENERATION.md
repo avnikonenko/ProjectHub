@@ -32,6 +32,14 @@ Knowledge retains detailed choices, requirements, reasons and original evidence.
 Architecture describes components and data flow. Accepted requirements alone do
 not establish current work; that section may be empty when activity is unknown.
 
+Knowledge preserves material parameter names, documented defaults, units, scope,
+and explicitly reported overrides alongside their reasons and concrete trade-offs.
+It excludes generic textbook caveats. These records come from conversations,
+including quoted code/configuration; they do not independently verify runtime
+values. Repository inspection currently informs Overview, not Knowledge extraction.
+Missing defaults or reasons are not guessed. New extraction guidance takes effect
+on the next requested analysis; existing published records remain unchanged.
+
 Generation saves an **Unpublished analysis** with Overview and Knowledge preview
 views. **Use this result** publishes both together under one publication ID.
 Opening either view makes no AI call. Failed or cancelled generation preserves

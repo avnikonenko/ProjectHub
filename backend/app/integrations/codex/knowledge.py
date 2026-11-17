@@ -17,7 +17,7 @@ from .ai_instructions import ai_instructions
 from .protocol import CodexError
 
 SCHEMA_VERSION = 3
-PROMPT_VERSION = 17
+PROMPT_VERSION = 18
 _quote_retry_counter = ContextVar('projecthub_quote_retry_counter', default=None)
 
 
@@ -78,6 +78,22 @@ def _maximum_json_chars(schema):
 
 MAX_RESPONSE_CHARS = _maximum_json_chars(OUTPUT_SCHEMA)
 
+PARAMETER_GUIDANCE = (
+    'Retain material project-specific parameter choices and their concrete trade-offs. '
+    'In the statement preserve the parameter name, documented default value, units and scope, '
+    'plus any explicitly reported effective value or override and its scope. Distinguish a '
+    'default, a proposed value, a historical setting and a reported active override; none '
+    'establishes the others. Never assume a default is the effective runtime value or promote '
+    'a conversation report or quoted code into independently inspected configuration. '
+    'Retain source-supported rationale and concrete consequences in rationale and limitations: '
+    'what this choice omits, bounds, merges, excludes or sacrifices within this project. '
+    'Do not add textbook caveats or general method limitations merely because a tool or '
+    'method is mentioned. Include a general risk only when the sources connect a specific '
+    'project choice to a concrete consequence. Do not invent values, reasons, overrides or '
+    'consequences; absent optional details stay empty. Keep values with the choice they qualify, '
+    'using existing categories and preserving proposal versus agreement status. '
+)
+
 PROMPT = (
     'Return compact JSON only, with no preamble, commentary or narrated reasoning. '
     'Compress wording, not project knowledge: retain independently meaningful claims and their distinct '
@@ -94,6 +110,7 @@ PROMPT = (
     'Every substantive clause in statement, rationale, alternatives and limitations needs support '
     'from its cited original passages, not merely uncited generalities elsewhere in the context. '
     'Choose additional exact excerpts when needed to support those clauses. '
+    + PARAMETER_GUIDANCE +
     'Preserve an action\'s explicit eligibility, state and preconditions in the atomic statement '
     'itself, not only in limitations or supporting quotations. Never broaden a conditional rule '
     'into unconditional behavior. State-transition diagrams also constrain which states permit '

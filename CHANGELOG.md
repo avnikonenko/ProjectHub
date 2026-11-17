@@ -26,6 +26,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Preserve source-supported parameter defaults, reported overrides, scope and concrete project-specific trade-offs in generated Knowledge; exclude generic method caveats and distinguish reported settings from verified runtime values.
+
 - Unify Overview and Knowledge as two views of one project analysis. Refresh either view, inspect a paired unpublished preview, and publish both together. Preserve progress across tabs and reloads, retain previous revisions, and describe architecture as components and data flow without treating agreed requirements as current work.
 
 - Collapse conversation index status and manual refresh into Source details in History. Automatic sync continues, with a compact attention indicator when a sync or refresh fails.

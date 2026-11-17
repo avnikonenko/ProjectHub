@@ -72,7 +72,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           <dt>Scope</dt><dd>{item.scope}</dd>
           {item.rationale && <><dt>Rationale</dt><dd><AIEmphasis text={item.rationale} /></dd></>}
           {item.alternatives && <><dt>Alternatives</dt><dd>{item.alternatives}</dd></>}
-          {item.limitations && <><dt>Limitations</dt><dd>{item.limitations}</dd></>}
+          {item.limitations && <><dt>Limitations & trade-offs</dt><dd>{item.limitations}</dd></>}
           <dt>Current evidence</dt><dd>{display(current)}{current !== 'valid' && ' — historical design status is preserved.'}</dd>
           {item.reconciliation_state && <><dt>Reconciliation</dt><dd>{display(item.reconciliation_state)}</dd></>}
           {item.reconciliation_note && <><dt>Context review</dt><dd>{item.reconciliation_note}</dd></>}
