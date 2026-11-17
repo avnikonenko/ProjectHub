@@ -159,60 +159,6 @@ Users retain All items, Untagged, original evidence, and the ability to inspect 
 as AI interpretations. Generation stays explicit and preserves the previous result
 on failure or cancellation.
 
-### Historical experimental measurements
-
-The following measurements predate the optimized default above.
-
-#### Original compact tagging experiment
-
-Set `PROJECTHUB_COMPACT_TAGS=1` in the server environment and restart to try
-the compact path. The existing path remains the default. The compact path
-builds one shared topic catalog from a bounded sample, then classifies larger
-batches using local numeric IDs, statements, and scope. It does not send original
-evidence or rationale in assignment batches. A record with no strong topic match
-stays available under **Untagged** for review; the assignment calls do not invent
-new topics. The initial sample can miss niche topics.
-
-Catalog and assignment caches are separate from legacy tag caches. Unchanged
-items reuse their assignments when the saved catalog and generation configuration
-match. Existing saved tags remain intact until a complete successful replacement.
-The experiment uses the configured model and reasoning effort.
-
-One cold comparison used the same 240 evenly spaced records from a saved
-3,162-item snapshot, isolated databases, the same model, and four configured
-workers. These are single observations, not full-project timing estimates.
-
-| Path | Effort | Wall time | Calls | Reported tokens | Tagged records |
-| --- | --- | ---: | ---: | ---: | ---: |
-| Existing | Medium | 108.38 s | 2 | 63,001 | 240 |
-| Compact | Medium | 67.81 s | 3 | 58,795 | 226 |
-| Compact | Low | 57.23 s | 3 | 58,371 | 233 |
-
-The compact runs produced 8–9 broader tags versus 35. These counts measure
-coverage, not assignment accuracy. The full saved snapshot packs into 17
-compact assignment batches plus one catalog call versus 27 existing batches.
-A full cold run and detailed assignment review remain unverified.
-
-
-Compact tagging now includes one bounded review of newly untagged records. A
-48-record sample prioritizes decisions and requirements and spreads across scopes;
-AI may propose up to 12 new subjects without renaming existing topics. Only the
-untagged records are reassigned. This adds model calls and latency to the first
-review, but unchanged reviewed records are marked so later clicks do not repeat
-it. Model, instruction or review-policy changes invalidate the applicable review
-markers. A record can still remain Untagged; no match is forced.
-
-On an isolated copy of the full saved 3,162-record snapshot at medium reasoning,
-the review recovered tags for 275 of 309 untagged records and increased the
-catalog from 7 to 15 topics. It took 90.94 seconds, three model requests and
-58,877 reported tokens. Existing nonempty assignments, original records and source
-bytes remained unchanged. An unchanged repeat took 0.277 seconds and zero model
-requests. The known isolation, migration and persistence requirements gained
-relevant tags. Thirty-four records remain untagged, including four requirements;
-coverage is not proof of semantic correctness. At the time of this earlier evaluation the path was opt-in; no
-production result was modified by it.
-
-
 Negative tag assignments also track their topic catalog. When new subjects become
 available, previously untagged records are checked against that catalog without
 reclassifying already-tagged records. Older snapshots without this marker may

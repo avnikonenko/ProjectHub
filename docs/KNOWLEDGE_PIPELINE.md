@@ -127,9 +127,11 @@ export PROJECTHUB_HISTORY_AUTO_SYNC=false
 .venv/bin/python -m backend.app.cli start
 ```
 
-Use http://127.0.0.1:8770 and import the four share URLs in the reference fixture, or use
-an independently backed-up test copy of the application database. Migration 0020 applies
-to that test data at startup. Existing Codex authentication remains outside the repository.
+Open http://127.0.0.1:8770 and create a disposable project. Use **Sources** to link
+a Codex session with fictional project decisions. For example, ask Codex to
+compare SQLite and PostgreSQL for a fictional desktop app, then reply
+`Use SQLite for the first release.` Under **History → Source details**, index
+or refresh the Codex history. Check that the exchange appears in History.
 
 To generate and save Knowledge in the isolated copy, use the test project's actual
 ID and a supported model and effort:
@@ -146,8 +148,13 @@ This explicitly sends selected original conversations and project evidence to th
 Codex account and saves the result to the isolated database. Keep the returned
 JSON private and outside the repository. Review the saved summary and records.
 
-Run automated checks with .venv/bin/python -m pytest. Tests use disposable SQLite databases
-and mocked extraction/synthesis, not real Codex model inference.
+To check the included synthetic references without calling Codex, run:
+
+```bash
+.venv/bin/python -m pytest tests/test_knowledge_reference.py tests/test_knowledge_recall_reference.py
+```
+
+These tests validate fixture evidence and exercise the pipeline with simulated extraction.
 
 ## Known limitations
 
