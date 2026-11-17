@@ -178,6 +178,12 @@ def test_bounds_and_missing_evidence_do_not_call_codex(tmp_path, monkeypatch):
     item['sources'][0]['text'] = 'x' * scheme.MAX_INPUT_CHARS
     with pytest.raises(CodexError, match='input limit'):
         scheme.refresh_scheme(engine, 1, Manager())
+    # Serialized evidence above the selected cap must fail even when the
+    # maximum prompt size still has room for it.
+    item['coverage']['inspection_policy'] = {'max_package_chars': 180_000}
+    item['sources'][0]['text'] = 'x' * 180_001
+    with pytest.raises(CodexError, match='input limit'):
+        scheme.refresh_scheme(engine, 1, Manager())
     engine.dispose()
 
 

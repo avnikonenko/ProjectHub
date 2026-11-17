@@ -195,6 +195,10 @@ def _read(root_fd, relative, *, allow_prefix=False, budget=None):
             if not chunk:
                 break
             data.extend(chunk)
+            # An exact-budget file can already be complete. Confirm EOF using
+            # the open descriptor without spending another byte of the budget.
+            if budget is not None and budget.bytes_read == budget.max_bytes and len(data) == os.fstat(fd).st_size:
+                break
         if b'\0' in data:
             raise ValueError('Binary file')
         prefix = len(data) > _MAX_BYTES
@@ -973,7 +977,7 @@ def collect_evidence(engine, project_id):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v12', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v13', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,

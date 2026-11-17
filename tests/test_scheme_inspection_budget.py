@@ -54,6 +54,23 @@ def test_read_budget_charges_binary_oversize_and_invalid_utf8_raw_bytes(tmp_path
         os.close(root_fd)
 
 
+def test_exact_read_budget_keeps_complete_file_but_rejects_truncated_file(tmp_path):
+    value = b'fastapi>=0.115\n'
+    (tmp_path / 'complete.txt').write_bytes(value)
+    (tmp_path / 'incomplete.txt').write_bytes(value + b'x')
+    root_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        budget = evidence._InspectionBudget(len(value))
+        assert evidence._read(root_fd, 'complete.txt', budget=budget) == value.decode()
+        assert budget.bytes_read == len(value)
+        budget = evidence._InspectionBudget(len(value))
+        with pytest.raises(evidence._InspectionStopped, match='byte_budget'):
+            evidence._read(root_fd, 'incomplete.txt', budget=budget)
+        assert budget.bytes_read == len(value)
+    finally:
+        os.close(root_fd)
+
+
 def test_byte_budget_stops_inside_read_without_partial_manifest(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'requirements.txt').write_text('fastapi>=0.115\n' * 30)
