@@ -196,7 +196,7 @@ export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, c
   const groups = coverageGroups(coverage).filter(([, values]) => values.length > 0);
   const date = savedAt ? new Date(savedAt) : null;
   return <details className="coverage-details generation-details">
-    <summary className="source-disclosure">Coverage &amp; technical details</summary>
+    <summary>Coverage &amp; technical details</summary>
     {date && Number.isFinite(date.getTime()) && <p><small>Recorded with the result saved {date.toLocaleString()}.</small></p>}
     {note && <p><small>{note}</small></p>}
     <InputCoverage measured={measured} hasCustomCoverage={customCoverage} />

@@ -21,7 +21,7 @@ const savedBrief = () => ({ generated_at: '2026-11-17T01:00:00Z',
 test('overview coverage is one closed disclosure and no longer appears above the result', () => {
   for (const component of [BriefContent, BriefPreview]) {
     const html = renderToStaticMarkup(createElement(component, { brief: savedBrief(), prefix: 'test' }));
-    const marker = '<summary class="source-disclosure">Coverage &amp; technical details</summary>';
+    const marker = '<summary>Coverage &amp; technical details</summary>';
     assert.equal(html.split(marker).length - 1, 1);
     assert.match(html, /<details class="coverage-details generation-details">/);
     assert.doesNotMatch(html, /<details[^>]*\bopen(?:=|[ >])/);

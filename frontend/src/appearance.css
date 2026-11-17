@@ -105,7 +105,12 @@
   color: var(--muted);
 }
 
-:root[data-palette] .coverage-details :is(h1, h2, h3, h4, h5, h6, summary, .brief-topic) {
+.coverage-details > summary {
+  color: var(--text);
+}
+
+:root[data-palette] .coverage-details :is(h1, h2, h3, h4, h5, h6, .brief-topic),
+:root[data-palette] .coverage-details details summary {
   color: var(--muted);
 }
 
