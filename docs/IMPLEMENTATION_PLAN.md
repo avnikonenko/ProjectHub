@@ -1,4 +1,7 @@
-# Implementation plan
+# Initial implementation plan
+
+This archived plan records the original development environment and milestones.
+For current setup and development guidance, see the [documentation index](README.md).
 
 ## Assumptions and constraints
 

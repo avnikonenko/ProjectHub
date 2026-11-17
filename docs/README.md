@@ -7,7 +7,7 @@ implementation, tests, and deployment boundaries.
 
 - [Install and run](../README.md#install-and-run)
 - [Configuration example](../config.example.toml)
-- [AI generation, progress, cancellation, and parallel reading](AI_GENERATION.md)
+- [AI generation, settings, and troubleshooting](AI_GENERATION.md)
 - [Project evidence and freshness](PROJECT_EVIDENCE.md)
 - [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md)
 - [Scheme](SCHEME.md)
@@ -26,5 +26,9 @@ TypeScript checks, and the production build.
 - [Validation commands and scope](TEST_REPORT.md)
 - [Security and deployment boundaries](SECURITY_REVIEW.md)
 - [Engineering decisions](DECISIONS.md)
-- [Implementation status](IMPLEMENTATION_REPORT.md)
-- [Implementation plan](IMPLEMENTATION_PLAN.md) and [Scheme implementation contract](scheme-implementation.md)
+- [Scheme implementation reference](scheme-implementation.md)
+
+## Historical material
+
+- [Initial implementation plan](IMPLEMENTATION_PLAN.md)
+- [Implementation handoff](IMPLEMENTATION_REPORT.md)

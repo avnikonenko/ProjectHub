@@ -23,6 +23,25 @@ The backend creates one SQLAlchemy engine and transaction-scoped sessions. Alemb
 
 The frontend requests a project overview bundle and uses project-scoped mutations. Switching projects clears selection and form state before loading another bundle. User-supplied Markdown and Mermaid must not execute raw HTML, scripts, links with unsafe schemes, or Mermaid click handlers.
 
+## Evidence and history
+
+Overview freshness compares a fingerprint of project metadata, scoped records,
+linked-session metadata, indexed history, and local Git observations. Read timestamps
+are excluded. Bounded hashes of visible changed files detect subsequent edits to the
+same path without sending file contents to Codex during a freshness check. The
+baseline is captured before synthesis and saved with the result and its revision.
+Inspection errors or incomplete changed-file detection can make freshness unknown.
+Git inspection uses bounded, read-only commands without filters, hooks, remote
+fetches, or project test commands.
+
+History can collapse identical indexed prefixes within a project. In a confirmed
+shared prefix, finished turns match by normalized user/assistant message text,
+roles, and order. Deduplication stops at divergence, stale indexes, or unreadable
+rows. It leaves original sessions and per-session search results intact.
+Generation can reuse cached summaries of the canonical prefix and attach alternate
+session references afterward. Retrieved excerpts from a shared turn are collapsed
+only when their excerpt text matches.
+
 ## Knowledge lifecycle
 
 ### Independent Overview and Knowledge Summary

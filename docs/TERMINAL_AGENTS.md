@@ -4,6 +4,20 @@ Use the included `projecthub-notes` skill to let a terminal agent understand a
 project before continuing work. ProjectHub must be running. Reading saved
 information makes no AI request and does not change records.
 
+## Install the optional skill
+
+Enable the skill when the installer asks, or use one of these commands:
+
+```bash
+bash scripts/install.sh --install-skill
+bash scripts/install-skill.sh  # Install only the skill into an existing setup.
+```
+
+Unattended installation skips the skill by default. Use `--skip-skill` to skip the
+interactive prompt. The installer links to the checkout from
+`~/.agents/skills/projecthub-notes` and preserves existing skills. Keep the checkout
+and open a new Codex session after installation.
+
 ## Start with a briefing
 
 ```bash
@@ -17,6 +31,9 @@ are excluded. It reports selection limits.
 It does not establish that the information is current or independently verified.
 
 An exact project name can replace the ID: `--project 'Project X'`.
+
+Once the skill is installed, you can also ask Codex to save a Markdown note,
+add or complete a TODO, or link the current session to a named project.
 
 ## Read more when needed
 

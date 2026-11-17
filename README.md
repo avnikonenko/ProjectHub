@@ -43,7 +43,7 @@ Run `projecthub config` to locate your editable configuration. See [config.examp
 
 When started with `projecthub`, use **Settings → Restart ProjectHub** to load backend changes. Restart is blocked during active work. After reconnecting, **Reload page** loads interface changes; save unfinished edits first. Direct Uvicorn launches use their existing external process controls.
 
-AI features use your existing **Codex ChatGPT sign-in**: install Codex separately and run `codex login`. No OpenAI API key is required. Choose an existing profile, model, and reasoning effort in Settings; edit project AI instructions there too.
+AI features use your existing **Codex ChatGPT sign-in**. Install Codex separately and run `codex login`. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
 
 ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
 
@@ -52,51 +52,16 @@ ProjectHub runs locally. AI generation sends selected project context to OpenAI 
 - **Long histories:** Analysis uses bounded context and may miss details. Follow source references to check conclusions.
 - **AI accuracy:** Generated architecture and current-work summaries are interpretations, not proof that features work or scientific results are valid.
 
-Open **Coverage & technical details** to inspect recorded input coverage and omissions.
-File excerpts and complete-file reads are distinguished; older results may lack counts.
+Open **Coverage** below a generated result to see what evidence was included and what was missed.
 
 ## Terminal-agent skill
 
-The included [projecthub-notes skill](skills/projecthub-notes/SKILL.md) lets terminal
-agents read project briefings, saved AI overviews, Knowledge, Q&A, notes and TODOs,
-save Markdown AI notes, add or complete tasks,
-and link, unlink, or move Codex session associations through the `projecthub` command.
-ProjectHub must be running. The installer offers an optional Codex skill step
-(default: skip). For unattended installation, choose explicitly:
+The optional Codex skill lets a terminal agent read project context and manage notes,
+TODOs, and session links on request. Enable it during setup or run
+`bash scripts/install-skill.sh` later. With ProjectHub running, open a new Codex
+session and ask “Read ProjectHub context for Project X before we continue.”
 
-```bash
-bash scripts/install.sh --install-skill
-# Or install only the skill later:
-bash scripts/install-skill.sh
-```
-
-The skill is linked into `~/.agents/skills/projecthub-notes`, so checkout updates
-also update the installed skill. Keep the checkout and open a new Codex session
-after installation. Existing skills are never overwritten. Unattended installs
-skip the skill unless `--install-skill` is supplied; `--skip-skill` suppresses the
-interactive question.
-
-**Bring context into Codex before continuing work.** The skill starts with a compact
-briefing: project purpose, dated AI overview, active Knowledge (decisions, reasons,
-requirements, and unresolved issues), related notes, and open TODOs. It reads more
-detail in bounded pages only when needed. Reading makes no AI request and changes
-no records; credentials, raw logs, full histories, and old reports are excluded
-from the starting briefing.
-
-```bash
-projecthub context --project 'Project X'
-projecthub read --project 'Project X' --kind knowledge
-```
-
-See [terminal-agent reading](docs/TERMINAL_AGENTS.md) for paging and optional search.
-
-Once the skill is available to your agent, ask, for example:
-
-- “Read ProjectHub context for Project X before we continue.”
-- “Save this explanation as a note in Project X.”
-- “Add a TODO to Project X: test the import.”
-- “Mark ‘test the import’ finished in Project X.”
-- “Link this session to Project X.”
+See the [terminal-agent guide](docs/TERMINAL_AGENTS.md) for installation options and commands.
 
 ## Your data
 

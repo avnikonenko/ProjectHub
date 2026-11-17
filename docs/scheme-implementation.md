@@ -40,6 +40,23 @@ No entire-history AI summary pipeline. One explicit Codex request; no automatic 
 Use existing selected account/model/effort/instructions and read-only restrictions.
 Successful snapshots/revisions preserve evidence and remain readable without Codex.
 
+### Repository excerpt selection
+
+Inspection prioritizes executable modules declared by literal Python entrypoints
+in `setup.py` and `pyproject.toml`, and retains README feature sections instead of
+only introductory badges. Repository excerpts receive a bounded share of the
+input budget alongside discussions. Setup files are parsed statically and never
+executed; dynamic declarations and targets outside inspected paths may be omitted.
+Project guides under `docs` and `documentation` contribute their original purpose
+and section outline, including short command-help descriptions. Guides mentioning
+declared commands take priority over peripheral documentation. Backup and archive
+paths do not displace current application evidence, but remain in the inventory.
+
+The Code structure display caps the tree at 300 paths independently of file
+inspection. Coverage distinguishes local read stops from exclusions made while
+packing AI excerpts. An omission count can include multiple excerpts from the
+same file. The named omission list shows up to 100 eligible paths and their reasons.
+
 ## Phases
 
 Phase 1 only: three views, graphs, dependencies, code tree, evidence, persistence, basic freshness.

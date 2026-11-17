@@ -1,8 +1,8 @@
-# Evidence-based knowledge pilot
+# Evidence-based Knowledge pipeline
 
-The evidence-based pipeline remains opt-in, rather than the default brief path.
-Do not promote it to the default until the reference cases and live model output
-have been reviewed. Q&A and Scheme are unchanged.
+Contributor reference for the Knowledge extraction and synthesis path.
+Knowledge Summary and records save independently of the general Project Overview.
+See [AI generation](AI_GENERATION.md) for the user workflow.
 
 ## What is implemented
 
@@ -35,60 +35,90 @@ have been reviewed. Q&A and Scheme are unchanged.
   plus independent repository evidence. Stale/unavailable/conflicting interpretations stay
   in the snapshot with coverage warnings instead of being relabeled as proposals.
 
-## Preview and publication
+## Generation and publication
 
-POST /api/projects/{id}/codex/knowledge/brief accepts confirmed, optional model/effort,
-and publish (default false). It uses the existing account and project instructions.
+`POST /api/projects/{id}/codex/knowledge/brief` requires `confirmed:true` and
+accepts model and effort overrides. The server uses the existing project account
+and instructions. All public Knowledge generation routes save automatically,
+including the legacy `POST /api/projects/{id}/codex/analysis/preview` alias.
+The legacy `publish` field is still accepted on the Knowledge route. Its value
+does not disable saving.
 
-Preview returns knowledge, candidate brief, baseline_brief, publication_id, and diagnostics.
-It preserves both published records while retaining successful extraction caches. This
-allows side-by-side evaluation without replacing the current overview.
-Successful previews are also stored under the project-scoped `knowledge_preview`
-kind in existing generation revisions. `GET /api/projects/{id}/codex/knowledge/preview`
-recovers the last successful result without generation. Saving is guarded by the
-same cancellation/time-budget check; failed replacements preserve the previous
-preview and published records. No separate knowledge store is introduced.
+A save updates current Knowledge, its `summary`, and a Knowledge revision in
+one transaction. The snapshot and summary share a publication ID and timestamp.
+General Project Overview and its revisions remain independent. The source
+manifest is rechecked under a short SQLite writer transaction. Inspected
+repository excerpts are also rechecked for changes.
 
-Explicit publish:true updates current Knowledge, its `summary`, and one Knowledge
-revision in one transaction. Snapshot and summary share a publication ID and timestamp;
-the independent general Project Overview and its revisions remain unchanged.
-The source manifest is rechecked under a short SQLite writer transaction; a source or
-metadata change aborts publication. Inspected repository excerpts are rechecked too,
-without claiming that filesystem edits can be locked atomically with SQLite.
+`GET /api/projects/{id}/codex/knowledge` returns the saved snapshot, current
+source manifest and coverage, `current_evidence_availability`, and whether
+the result is paired with the current brief. The availability overlay leaves
+historical design status intact. Legacy stored previews are readable through
+`GET /api/projects/{id}/codex/knowledge/preview`. The activation endpoints
+remain for compatible stored results. See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md)
+for the current interface.
 
-GET /api/projects/{id}/codex/knowledge returns the last published snapshot, current source
-manifest/coverage, current_evidence_availability, and whether it is paired with the current
-brief. Historical design_status is not rewritten by this read-only availability overlay.
-A later legacy refresh can create a newer legacy brief; the pairing flag then becomes false.
+## Extraction and synthesis
 
-GET /api/projects/{id}/codex/generation/status?kind=knowledge exposes pilot progress.
-The ordinary /codex/brief endpoint remains the default for the Overview refresh button.
-The Knowledge tab shows saved results directly. Generate/Regenerate creates an opt-in
-candidate; **Save Knowledge Summary** atomically saves its Knowledge records and
-matching detailed summary. The summary is stored in the published Knowledge
-snapshot, with the same publication ID. General Project Overview is saved and
-refreshed independently; neither save path overwrites the other perspective.
-See [Project Knowledge](PROJECT_KNOWLEDGE_UI.md) for current UI behavior and limitations.
+Quality, Balanced, and Economy cap serialized extraction windows at 14,000,
+18,000, and 24,000 characters respectively. Economy caps distinct source text
+at 60,000 characters and reports partial coverage. All profiles distinguish
+primary fragments from repeated context and use the same evidence validation.
+Versioned changes to extraction instructions or schema require fresh processing
+while preserving older caches.
+
+Extraction supplies the output contract in the prompt and constrains the JSON
+schema and source IDs. Application validation checks lengths, statuses, source
+ownership and evidence quotations before caching. A quotation with only
+whitespace differences must resolve to one unambiguous original passage.
+The saved quotation retains the original text.
+
+Final synthesis uses lossless dictionaries for repeated evidence and
+request-local citation aliases. Original IDs are restored before citation
+resolution. Lossless repeated-item compaction starts at 180,000 prepared-input
+characters. Each synthesis request is bounded to 240,000.
 
 ## Large overview synthesis
 
-Eligible overview inputs that exceed one synthesis request are processed in bounded
-stages, then merged with original-evidence citations. The normal single-request
-path is unchanged for inputs that already fit. Staging does not change the stored
-Knowledge snapshot, revive the decision workflow, or silently select fewer active
-items. Existing extraction coverage and source-availability limits remain explicit.
+ProjectHub sends eligible inputs that exceed one synthesis request in bounded
+stages. Each stage cites original evidence. All eligible active Knowledge items,
+supplied repository excerpts and required later-message context participate.
+Existing source availability, conflict filtering and profile limits still apply.
 
-Validated stage responses reuse the project-scoped history-batch cache with a
-separate versioned namespace and input/configuration identity. Cache hits are
-revalidated. Failed or cancelled runs retain successful stage caches and previous
-saved results; publication remains a single guarded transaction after complete
-success. See [AI generation](AI_GENERATION.md#large-overviews-and-staged-synthesis)
-for progress, costs and remaining limits.
+Independent summaries within a stage can run in parallel. The next stage waits
+for its inputs. A merge depth limit and a nonshrinking-input check bound the
+process. Invalid output, unresolved references or input that cannot fit produce
+an explicit error. The previous saved result and completed stage caches remain
+available.
+
+Stage cache keys include the versioned namespace, project, source inputs,
+requested model and effort, effective account directory and instructions.
+Cache hits are revalidated. Publication uses a guarded transaction after the
+complete result passes validation and freshness checks.
+
+## Processing diagnostics
+
+`GET /api/projects/{id}/codex/generation/status?kind=knowledge` exposes progress.
+It includes `elapsed_seconds`, `stage_seconds`, batch counts and cache reuse.
+The server logs stage duration without source excerpts or prompts. Per-run
+counters describe completed processing in the current server process.
+
+Knowledge records `extraction_workers` and ordered `batch_timings`. History
+batch users also retain `archive_workers`, `archive_generated_batches`,
+`archive_cache_hits` and `archive_batch_timings`. Synthesis records
+`synthesis_workers` and ordered `synthesis_batch_timings`, with model time,
+cache lookup time and local processing time. The same overall budget and
+cancellation state apply to all workers and stages.
+
+Token counts come from App Server `thread/tokenUsage/updated` notifications.
+Each update replaces the previous sample for that request. Cached input and
+reasoning output are breakdowns of the reported total. Partial reports indicate
+missing requests or fields. Request counts count `turn/start` attempts.
+A cache hit does not repeat the model cost of the run that created the cache.
 
 ## Isolated testing
 
-Do not use the production data directory just to try the pilot.
-Start with disposable data and a different port:
+Use disposable data and a separate port for live testing:
 
 ```bash
 export PROJECTHUB_DATA_DIR="$(mktemp -d /tmp/projecthub-knowledge-test.XXXXXX)"
@@ -101,19 +131,20 @@ Use http://127.0.0.1:8770 and import the four share URLs in the reference fixtur
 an independently backed-up test copy of the application database. Migration 0020 applies
 to that test data at startup. Existing Codex authentication remains outside the repository.
 
-To request a preview, use the test project's actual ID and a supported model/effort:
+To generate and save Knowledge in the isolated copy, use the test project's actual
+ID and a supported model and effort:
 
 ```bash
 umask 077
 curl --fail-with-body http://127.0.0.1:8770/api/projects/1/codex/knowledge/brief \
   -H 'Content-Type: application/json' \
-  -d '{"confirmed":true,"publish":false,"model":"YOUR_SUPPORTED_MODEL","effort":"low"}' \
-  > /tmp/projecthub-knowledge-preview.json
+  -d '{"confirmed":true,"model":"YOUR_SUPPORTED_MODEL","effort":"low"}' \
+  > /tmp/projecthub-knowledge-result.json
 ```
 
 This explicitly sends selected original conversations and project evidence to the configured
-Codex account. Keep preview files private and outside the repository. Review the returned
-baseline_brief, candidate brief, and knowledge items before considering publish:true.
+Codex account and saves the result to the isolated database. Keep the returned
+JSON private and outside the repository. Review the saved summary and records.
 
 Run automated checks with .venv/bin/python -m pytest. Tests use disposable SQLite databases
 and mocked extraction/synthesis, not real Codex model inference.
@@ -133,8 +164,8 @@ incremental syncing beyond the existing indexer.
 
 Decision precision/recall, actual token cost and scientific validity are not established
 by source attribution or a readable overview. Human review and supported reference
-cases remain necessary before promoting the pilot. Q&A/Scheme integration, manual
-corrections and advanced semantic merging remain deferred.
+cases remain necessary to measure extraction quality. Manual corrections and
+advanced semantic merging remain separate work.
 
 
 ## Activating a saved result

@@ -1,135 +1,76 @@
 # Scheme
 
-Use Scheme to see how a project is organized and how it works. Saved diagrams and
-dependency information load without an AI request.
+Scheme shows how a project is organized and how it works. Opening saved diagrams
+and dependencies makes no AI request.
 
 ## Views
 
-- **Architecture:** components and their relationships. Expand Code structure to
-  browse the inspected repository tree. Diagram labels emphasize project
-  capabilities; module and command names belong in component details.
-- **Workflow:** processing stages, inputs, outputs, and execution order.
-- **Dependencies:** declared libraries and tools, version constraints, categories,
-  and short project-specific explanations.
+- **Architecture** shows components and their relationships. Expand
+  **Code structure** to browse the inspected repository tree.
+- **Workflow** shows stages, inputs, outputs and execution order.
+- **Dependencies** shows libraries and tools, declared version constraints and
+  their role in the project. Check the linked declaration for details.
 
-Components are labeled observed, proposed, or uncertain according to their sources.
-A view can be empty when the available information does not support a diagram.
-Green blocks mark entries, purple blocks mark outputs, and blue blocks mark
-intermediate components. Colors follow connections, not list order; isolated
-components and cycles use blue. Evidence-status labels and border styles remain.
+Components are labeled **observed**, **proposed**, or **uncertain**. Observed
+components have supporting evidence. Their runtime behavior needs separate
+verification. Green blocks mark entries, purple blocks mark outputs, and blue
+blocks mark other components.
 
 ## Generate or refresh
 
 1. Link a repository through **Edit overview**, if available, and relevant
    conversations through **Sources**.
-2. Open the **Generation** tab, select **Scheme**, and click **Regenerate selected**.
-3. Open the **Scheme** tab to inspect the diagrams and expand **Evidence used** for original excerpts, or
-   **Components and relationships** for individual references.
+2. Open **Generation**, select **Scheme**, then click **Regenerate selected**.
+3. Open **Scheme** and expand **Components and relationships** or **Evidence
+   used** to check the supporting excerpts.
 
-Generation uses the project's selected Codex account, model, reasoning effort,
-and AI instructions. Selected project evidence is sent through Codex only when you
-request generation. Discussion-based designs can appear as proposed components;
-a linked repository is needed for code structure and manifest inspection.
-
-Saved results remain readable when Codex is unavailable. Earlier generated results
-are available through **Previous versions**.
+Generation sends selected project evidence to Codex using the project's account,
+model, effort and instructions. ProjectHub saves successful results and keeps
+earlier results under **Scheme details → Previous versions**.
 
 ## Saved Knowledge
 
-Scheme can use the project's current saved Knowledge alongside repository inspection
-and linked conversations. Knowledge is optional.
-
-A bounded selection preserves design status, scope, rationale, conflicts and
-supersession, with supporting original passages kept separately. Accepted design
-does not establish implemented or tested functionality. Some evidence may be
-historical or unavailable; the saved interpretation retains that limitation.
-Knowledge helps choose relevant capabilities, while original passages and
-repository evidence support the diagram's claims.
-
-Expand **Scheme details → Saved Knowledge context** to inspect the version
-and included/omitted item counts recorded with that Scheme. Selection uses at most
-12,000 text characters and never modifies Knowledge. Large snapshots are queried
-through bounded database projections, rather than loaded wholesale into the AI
-input. Items with many references may use a disclosed selection of original
-passages; omitted references do not independently support generated claims.
-
-Saving a new Knowledge version updates the existing Scheme's freshness indicator,
-even if selected statements are unchanged. Select **Scheme** in the
-**Generation** tab and click **Regenerate selected** to use the new context.
-Older Scheme revisions retain the Knowledge version they used. Reading and selecting
-Knowledge adds no model calls; Scheme still makes one explicit generation request.
+Scheme can use the current saved Knowledge alongside repository excerpts and
+linked conversations. **Scheme details → Saved Knowledge context** shows the
+Knowledge version and the selection counts for the saved diagram. Generate
+Scheme again to incorporate a newer Knowledge version.
 
 ## Dependencies
 
-Inspection supports `pyproject.toml` project dependencies and dependency groups,
-common Python requirements files, `package.json`, and Conda `env`/`environment`
-YAML manifests, including CPU/GPU variants and nested pip declarations.
-Environment declarations, optional, development, build and documentation
-dependencies retain separate categories and source references. Unsupported YAML
-constructs are omitted with a coverage limitation; this is not a general YAML
-interpreter.
-
-Versions are declared constraints, not confirmation of what is installed. Scheme
-does not install packages, analyze transitive dependencies or lockfiles, or execute
-project code. AI explanations describe dependencies found by inspection.
+Scheme inspects common Python, npm and Conda dependency declarations. Declared
+constraints describe what a project requests. Check your environment separately
+for installed versions. Scheme inspects direct declarations without installing
+dependencies or executing project code.
 
 ## Freshness and coverage
 
-**No changes detected in inspected sources** means those inputs still match the
-saved result. **Partial coverage** means some material was excluded, unsupported,
-or beyond inspection limits. An unavailable repository or stale conversation index
-can make freshness unknown. Refresh **History** separately to update indexed messages.
+**No changes detected in inspected sources** describes the inputs selected for
+the saved result. **Partial coverage** means inspection or selection left some
+material out. If an old index makes freshness unknown, refresh **History**
+before regenerating Scheme.
 
-Scheme uses selected repository excerpts, recent indexed conversations, and notes;
-it does not read every file or the entire project history. Check **Evidence used**
-to see what supported the result. Diagrams explain available evidence and can miss
-connections or describe plans rather than working functionality.
+- Open **Coverage → Files used and missed** to see which files contributed excerpts
+  and up to 100 skipped paths with reasons. Older results may only have aggregate
+  counts. A separately labeled current inspection can show today's file selection.
+- Open **Coverage → Detailed coverage → File accounting and scope** for the
+  inspection counts and recorded limits. A local file read may supply only an excerpt.
+- Open **Coverage → Processing diagnostics** for elapsed time, bytes read, cache
+  use, and evidence package size.
 
-Inspection prioritizes executable modules declared by literal Python entrypoints
-in `setup.py` and `pyproject.toml`, and retains README feature sections instead of
-only introductory badges. Repository excerpts receive a bounded share of the
-input budget alongside discussions. Setup files are parsed statically and never
-executed; dynamic declarations and targets outside inspected paths may be omitted.
-Project guides under `docs` and `documentation` contribute their original purpose
-and section outline, including short command-help descriptions. Guides mentioning
-declared commands take priority over peripheral documentation. Backup and archive
-paths do not displace current application evidence, but remain in the inventory.
+Adjust the limit that corresponds to the omission reason you see:
 
-Source inspection defaults to a 2 MiB total read budget and a cooperative
-5-second deadline. Individual source reads are limited to 64 KiB. In
-**Settings**, the **Scheme excerpt budget** controls how much source
-text enters the AI input. It defaults to 40,000 characters. For larger projects,
-try 60,000, then 80,000 if useful files are still being skipped. This can increase
-token use and generation time.
+| Omission reason | Setting | Default and alternatives |
+|---|---|---|
+| Source excerpt budget reached | **Settings → Scheme excerpt budget** | 40,000 characters (default), 60,000, or 80,000 |
+| Local read budget reached | **Settings → Advanced Scheme settings → Local file read limit** | 2 MiB (default), 4 MiB, or 8 MiB |
+| Final evidence package limit reached | **Settings → Advanced Scheme settings → Final evidence package limit** | 140,000 characters (default), 180,000, or 220,000 |
 
-Under **Advanced Scheme settings**, choose a local file read limit of 2, 4, or
-8 MiB and an evidence package limit of 140,000, 180,000, or 220,000 characters.
-The package includes source text, identifiers, dependencies, and the file tree.
-Use the corresponding omission reason in Coverage to identify which limit to
-adjust. The saved Scheme records the limits used for that generation.
-Code structure displays at most 300 paths; that display limit does not restrict
-which files can be inspected. Coverage reports distinguish budget-stopped reading
-from inspected material omitted from the final AI input.
+The local inspection still uses a five-second deadline and a 64 KiB per-file
+limit. The final evidence package includes excerpts and metadata, so increasing
+the excerpt budget alone may leave some files out. Higher local limits can
+increase inspection time. Larger AI inputs can increase token use and generation
+time. Saved limits apply on the next inspection, and each Scheme revision keeps
+the limits recorded for its generation.
 
-Expand **Coverage → Detailed coverage → File accounting and scope** for saved
-counts: Git-listed paths, exclusions, eligible candidates, attempted and successful
-reads, prefix-only reads, and files represented in the final AI evidence package.
-The same disclosure records the limits and selection trade-offs. Counts describe
-processing coverage, not the percentage of project functionality understood.
-Ignored untracked files are outside the Git listing and are not counted.
-
-Counts belong to the saved generation and remain attached to its revisions.
-At the bottom of Scheme, **Coverage → Files used and missed**
-lists up to 100 eligible paths left out of the AI input and the reason for each.
-Earlier generations may only record aggregate reasons. A file can contribute
-multiple excerpts, so aggregate omission counts can differ from file counts.
-Older Schemes explicitly report that these counts were not recorded; a separately
-labeled current inspection can be viewed without generating a new Scheme.
-**Scheme details → Repository inspection diagnostics** shows recorded timing,
-bytes read, cache use and package size. Tool details stay collapsed, keeping the
-diagram focused on the project.
-
-Manual diagram editing and export are not currently available.
-
-See [installation](../README.md#install-and-run), [AI generation settings](AI_GENERATION.md),
-and the [implementation reference](scheme-implementation.md) for further details.
+See [AI generation settings](AI_GENERATION.md) and the
+[implementation reference](scheme-implementation.md).
