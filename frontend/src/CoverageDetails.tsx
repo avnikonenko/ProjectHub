@@ -33,26 +33,32 @@ function uniqueNotes(notes: string[]) {
   });
 }
 
+const fmt = (value: number) => value.toLocaleString('en-US');
+
+function fragmentCounts(measured?: GenerationDiagnostics) {
+  const conversations = measured?.evidence_coverage?.conversations;
+  const selected = conversations?.selected_fragments ?? measured?.source_selection?.selected_primary_fragments;
+  const available = conversations?.available_fragments ?? measured?.source_selection?.available_primary_fragments;
+  const omitted = conversations?.omitted_fragments ?? measured?.source_selection?.omitted_primary_fragments;
+  return selected !== undefined && available !== undefined && selected <= available
+    && (omitted === undefined || selected + omitted === available) ? { selected, available, omitted } : undefined;
+}
+
 function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationDiagnostics; hasCustomCoverage: boolean }) {
   const repo = measured?.evidence_coverage?.repository;
   const code = repo?.by_category?.code;
   const conversations = measured?.evidence_coverage?.conversations;
   const inventory = conversations?.source_inventory;
   const archive = measured?.archive_conversations;
-  const selected = conversations?.selected_fragments ?? measured?.source_selection?.selected_primary_fragments;
-  const available = conversations?.available_fragments ?? measured?.source_selection?.available_primary_fragments;
-  const omitted = conversations?.omitted_fragments ?? measured?.source_selection?.omitted_primary_fragments;
-  const validFragments = selected !== undefined && available !== undefined && selected <= available
-    && (omitted === undefined || selected + omitted === available);
+  const fragments = fragmentCounts(measured);
   const overview = measured?.overview_selection;
   const validItems = overview?.selected_items !== undefined && overview.available_items !== undefined
     && overview.selected_items <= overview.available_items;
-  const fmt = (value: number) => value.toLocaleString('en-US');
   const detailedPaths = new Set(repo?.file_details?.map(detail => detail.path) ?? []);
   const fallbackPaths = (key: 'read' | 'partial' | 'not_selected' | 'failed' | 'empty') =>
     repo?.paths?.[key]?.filter(path => !(key === 'read' || key === 'partial') || !detailedPaths.has(path)) ?? [];
   return <>
-    {(conversations || archive || validFragments) ? <section>
+    {(conversations || archive || fragments) ? <section>
       <h4>Conversation evidence</h4>
       {inventory ? <>
         {!(inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined)
@@ -99,9 +105,9 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
           <ul>{uniqueNotes(archive.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
         </details>}
       </>}
-      {validFragments && <p>{fmt(selected)} of {fmt(available)} available conversation fragments selected for extraction
-        {omitted !== undefined ? `; ${fmt(omitted)} omitted.` : '.'}</p>}
-      {validFragments && <p><small>Fragments are pieces of saved messages, not separate conversations. This does not count remote or unlinked history.</small></p>}
+      {fragments && <p>{fmt(fragments.selected)} of {fmt(fragments.available)} available conversation fragments selected for extraction
+        {fragments.omitted !== undefined ? `; ${fmt(fragments.omitted)} omitted.` : '.'}</p>}
+      {fragments && <p><small>Fragments are pieces of saved messages, not separate conversations. This does not count remote or unlinked history.</small></p>}
       {!!conversations?.notes.length && <details><summary>Conversation source details</summary>
         <ul>{uniqueNotes(conversations.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
       </details>}
@@ -176,6 +182,7 @@ type Props = {
   coverage?: unknown;
   diagnostics?: unknown;
   children?: ReactNode;
+  summaryContent?: ReactNode;
   note?: string;
   customCoverage?: boolean;
 };
@@ -187,8 +194,35 @@ function coverageGroups(raw: unknown): [string, string[]][] {
     ? [[name.replaceAll('_', ' '), values.filter((value): value is string => typeof value === 'string')] as [string, string[]]] : []);
 }
 
+function CoverageSummary({ measured, sourceCount }: { measured?: GenerationDiagnostics; sourceCount?: number }) {
+  const fragments = fragmentCounts(measured);
+  const archive = measured?.archive_conversations;
+  const sources = measured?.evidence_coverage?.conversations;
+  const repo = measured?.evidence_coverage?.repository;
+  const conversation = fragments
+    ? `${fmt(fragments.selected)} of ${fmt(fragments.available)} conversation fragments selected`
+    : archive?.read_sessions !== undefined && archive.linked_sessions !== undefined && archive.read_sessions <= archive.linked_sessions
+      ? `${fmt(archive.read_sessions)} of ${fmt(archive.linked_sessions)} linked Codex sessions read`
+      : sources?.processed_sources !== undefined && sources.known_sources !== undefined && sources.processed_sources <= sources.known_sources
+        ? `${fmt(sources.processed_sources)} of ${fmt(sources.known_sources)} source groups processed at least in part` : undefined;
+  let code: string | undefined;
+  if (repo?.status === 'available' && repo.ai_input_files !== undefined) {
+    const eligible = repo.inventory_complete && repo.eligible_files != null && repo.ai_input_files <= repo.eligible_files
+      ? ` of ${fmt(repo.eligible_files)} eligible` : '';
+    code = `Excerpts from ${fmt(repo.ai_input_files)}${eligible} repository files supplied to AI`;
+  } else if (repo?.status === 'unavailable') {
+    code = 'Repository inspection unavailable';
+  }
+  if (!conversation && !code && sourceCount === undefined) return <p>Coverage counts were not recorded.</p>;
+  return <ul>
+    {conversation && <li>{conversation}</li>}
+    {code && <li>{code}</li>}
+    {sourceCount !== undefined && <li>{fmt(sourceCount)} cited {sourceCount === 1 ? 'source' : 'sources'}</li>}
+  </ul>;
+}
+
 /** Only metadata belonging to this saved result is supplied by callers. */
-export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, children, note, customCoverage = false }: Props) {
+export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, children, summaryContent, note, customCoverage = false }: Props) {
   const measured = parseGenerationDiagnostics(diagnostics);
   const hasMeasurements = measured && Object.keys(measured).length > 0;
   const recordedSourceCount = Number.isSafeInteger(sourceCount) && sourceCount! >= 0
@@ -196,19 +230,23 @@ export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, c
   const groups = coverageGroups(coverage).filter(([, values]) => values.length > 0);
   const date = savedAt ? new Date(savedAt) : null;
   return <details className="coverage-details generation-details">
-    <summary>Coverage &amp; technical details</summary>
-    {date && Number.isFinite(date.getTime()) && <p><small>Recorded with the result saved {date.toLocaleString()}.</small></p>}
-    {note && <p><small>{note}</small></p>}
-    <InputCoverage measured={measured} hasCustomCoverage={customCoverage} />
-    {children}
-    {!!groups.length && <details>
-      <summary>Source notes and omissions</summary>
-      {groups.map(([name, values], index) => <section key={`${name}:${index}`}>
-        <h4>{name.charAt(0).toUpperCase() + name.slice(1)}</h4>
-        <ul>{values.map((value, item) => <li key={item}>{value}</li>)}</ul>
-      </section>)}
-    </details>}
-    {recordedSourceCount !== undefined && <p><small>Cited sources in this result: {recordedSourceCount}. Citation counts do not measure input coverage.</small></p>}
+    <summary>Coverage</summary>
+    {summaryContent ?? <CoverageSummary measured={measured} sourceCount={recordedSourceCount} />}
+    <details>
+      <summary>Detailed coverage</summary>
+      {date && Number.isFinite(date.getTime()) && <p><small>Recorded with the result saved {date.toLocaleString()}.</small></p>}
+      {note && <p><small>{note}</small></p>}
+      <InputCoverage measured={measured} hasCustomCoverage={customCoverage} />
+      {children}
+      {!!groups.length && <details>
+        <summary>Source notes and omissions</summary>
+        {groups.map(([name, values], index) => <section key={`${name}:${index}`}>
+          <h4>{name.charAt(0).toUpperCase() + name.slice(1)}</h4>
+          <ul>{values.map((value, item) => <li key={item}>{value}</li>)}</ul>
+        </section>)}
+      </details>}
+      {recordedSourceCount !== undefined && <p><small>Cited sources in this result: {recordedSourceCount}. Citation counts do not measure input coverage.</small></p>}
+    </details>
     {hasMeasurements && <details><summary>Processing diagnostics</summary>
       <p><small>Timing, workers and request counts describe processing cost, not evidence coverage.</small></p>
       <GenerationDetails diagnostics={measured} embedded />

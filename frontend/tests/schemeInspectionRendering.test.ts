@@ -127,10 +127,15 @@ test('Scheme uses one closed standard coverage disclosure with saved accounting'
   const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot,
     current: { coverage: { ...coverage, file_counts: { ...coverage.file_counts, read_files: 913 } },
       diagnostics: { inspection_seconds: 700, bytes_read: 8000 } } }));
-  assert.match(html, /^<details[^>]*><summary[^>]*>Coverage &amp; technical details<\/summary>/);
-  assert.equal((html.match(/Coverage &amp; technical details/g) ?? []).length, 1);
+  assert.match(html, /^<details[^>]*><summary[^>]*>Coverage<\/summary>/);
+  assert.equal((html.match(/<summary[^>]*>Coverage<\/summary>/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
   assert.doesNotMatch(html, /<summary>How ProjectHub inspected/);
+  const [summary, breakdown] = html.split(/<summary[^>]*>Detailed coverage<\/summary>/);
+  assert.match(summary, /Repository files<\/strong> 5 of 20 eligible in AI input · 15 omitted/);
+  assert.match(summary, /Conversation excerpts<\/strong> 0/);
+  assert.doesNotMatch(summary, /Files successfully read|Inspection duration/);
+  assert.match(breakdown, /Files successfully read<\/dt><dd>7/);
   assert.match(html, /<summary>Repository inspection diagnostics/);
   assert.match(html, /Inspection recorded with this saved Scheme/);
   assert.match(html, /Files successfully read<\/dt><dd>7/);
@@ -143,6 +148,7 @@ test('historical Scheme without counts shows unknowns instead of newer inspectio
     partial: false, limitations: [], files_inspected: 3, conversation_excerpts: 0 } };
   const current = { coverage: { ...coverage, file_counts: { ...coverage.file_counts, read_files: 913 } } };
   const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current }));
+  assert.match(html, /Repository files<\/strong> Coverage not recorded/);
   assert.match(html, /File counts were not recorded for this saved Scheme/);
   assert.doesNotMatch(html, /Files successfully read|913/);
   const disclosed = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current, showCurrent: true }));
@@ -158,6 +164,6 @@ test('inspection before first Scheme is clearly identified as current', () => {
     current: { coverage, diagnostics: { inspection_seconds: 0.5 } } }));
   assert.match(html, /Current inspection; no saved Scheme is selected/);
   assert.match(html, /Current repository inspection/);
-  assert.match(html, /15 eligible files were not selected/);
+  assert.match(html, /5 of 20 eligible selected for AI · 15 omitted/);
   assert.doesNotMatch(html, /Recorded with the result saved|Recorded with this saved Scheme/);
 });

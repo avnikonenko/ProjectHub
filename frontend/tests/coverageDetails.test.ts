@@ -15,9 +15,9 @@ test('coverage leads with input availability and nests processing diagnostics', 
     savedAt: '2026-11-17T10:00:00Z', sourceCount: 4, coverage: ['One linked session was unavailable.'],
     diagnostics: { duration_seconds: 12.5, input_records: 30, input_chars: 25000, archive_cache_hits: 3 },
   }));
-  assert.equal((html.match(/<details\b/g) ?? []).length, 3);
+  assert.equal((html.match(/<details\b/g) ?? []).length, 4);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
-  assert.match(html, /Coverage &amp; technical details/);
+  assert.match(html, /<summary>Coverage<\/summary><ul><li>4 cited sources<\/li><\/ul><details><summary>Detailed coverage<\/summary>/);
   assert.match(html, /12\.5 seconds/);
   assert.match(html, /Input records/); assert.match(html, /25,000/);
   assert.match(html, /One linked session was unavailable/);
@@ -81,6 +81,7 @@ test('repository coverage separates input files, partial reads and omissions wit
   const html = renderToStaticMarkup(createElement(CoverageDetails, {
     diagnostics: { evidence_coverage: { repository }, extraction_workers: 10, model_requests: 247 },
   }));
+  assert.match(html, /Excerpts from 5 of 16 eligible repository files supplied to AI<\/li><\/ul><details><summary>Detailed coverage/);
   assert.match(html, /5 file excerpts supplied from 20 tracked paths/);
   assert.match(html, /Code files: 3 of 12 eligible tracked code files read; 2 supplied only in part/);
   assert.match(html, /Files supplied only in part<\/dt><dd>3/);
@@ -150,7 +151,7 @@ test('malformed metadata is ignored and coverage strings remain escaped data', (
 test('view-specific saved measurements use an explicit custom coverage contract', () => {
   const html = renderToStaticMarkup(createElement(CoverageDetails, { customCoverage: true, note: 'Current inspection, separate from the saved result.' },
     createElement('p', null, 'Files read: 12 of 15 eligible files.')));
-  assert.equal((html.match(/<details\b/g) ?? []).length, 1);
+  assert.equal((html.match(/<details\b/g) ?? []).length, 2);
   assert.match(html, /Files read: 12 of 15/);
   assert.doesNotMatch(html, /not recorded for this saved result/);
 });

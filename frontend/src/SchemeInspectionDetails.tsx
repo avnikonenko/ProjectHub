@@ -32,8 +32,17 @@ export function schemeInspectionForDisplay(snapshot: Inspection | null | undefin
 function nonnegative(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
+function validCount(value: unknown): value is number {
+  return nonnegative(value) && Number.isSafeInteger(value);
+}
 function count(value: unknown) {
-  return nonnegative(value) && Number.isSafeInteger(value) ? String(value) : 'Not recorded';
+  return validCount(value) ? String(value) : 'Not recorded';
+}
+function knownFileTotal(counts?: SchemeFileCounts | null) {
+  return counts?.listing_complete === true && validCount(counts.eligible_files)
+    && validCount(counts.evidence_files) && validCount(counts.read_files)
+    && counts.evidence_files <= counts.read_files && counts.read_files <= counts.eligible_files
+    ? counts.eligible_files : undefined;
 }
 const omissionLabels: Record<string, string> = {
   not_attempted: 'Inspection did not reach this file',
@@ -81,21 +90,19 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
   const counts = coverage?.file_counts;
   const policy = coverage?.inspection_policy;
   const limitations = Array.isArray(coverage?.limitations) ? coverage.limitations.filter((item): item is string => typeof item === 'string') : [];
-  const eligible = counts?.eligible_files;
+  const eligible = knownFileTotal(counts);
   const evidence = counts?.evidence_files;
-  const knownTotal = counts?.listing_complete === true && nonnegative(eligible) && Number.isSafeInteger(eligible)
-    && nonnegative(evidence) && Number.isSafeInteger(evidence) && nonnegative(counts.read_files)
-    && Number.isSafeInteger(counts.read_files) && evidence <= counts.read_files && counts.read_files <= eligible;
-  const omissions = recordedOmissions(coverage?.file_omissions, knownTotal ? eligible - evidence : undefined);
+  const missing = eligible !== undefined && validCount(evidence) ? eligible - evidence : undefined;
+  const omissions = recordedOmissions(coverage?.file_omissions, missing);
   const inputStatus = saved ? 'supplied' : 'selected';
   const content = <>
     <p>{saved ? 'Inspection recorded with this saved Scheme.' : current ? 'Fresh inspection of the repository; these counts do not describe the evidence used by the saved Scheme.' : 'Current repository inspection.'}</p>
-    {counts && <>
-      <p><strong>{saved ? 'AI input:' : 'Prepared for AI:'}</strong> {knownTotal ? `${evidence} of ${eligible} eligible repository files ${inputStatus}`
+    {!embedded && counts && <>
+      <p><strong>{saved ? 'AI input:' : 'Prepared for AI:'}</strong> {eligible !== undefined ? `${evidence} of ${eligible} eligible repository files ${inputStatus}`
         : `${count(evidence)} files ${inputStatus}; the eligible total is not established`}.</p>
       <p><strong>Local reads:</strong> {count(counts.read_files)} files, including {count(counts.prefix_read_files)} prefix-only {counts.prefix_read_files === 1 ? 'read' : 'reads'}.
         {' '}{count(counts.read_not_in_evidence)} read files were left out of {saved ? 'the final AI input' : 'this evidence package'}.</p>
-      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not {inputStatus}.</p>}
+      {missing !== undefined && missing > 0 && <p>{missing} eligible files were not {inputStatus}.</p>}
       <p><small>Reading a file locally and supplying it to AI are different stages. Prefixes and selected excerpts do not cover the complete file; these counts do not establish correctness.</small></p>
     </>}
     <dl>
@@ -123,7 +130,7 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
       <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
         <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
     </details>}
-    {saved && knownTotal && evidence < eligible && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
+    {saved && missing !== undefined && missing > 0 && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
     {coverage?.omitted_reason_counts && typeof coverage.omitted_reason_counts === 'object'
       && !!Object.keys(coverage.omitted_reason_counts).length && <details><summary>Omission reasons</summary>
       <p><small>These totals count omitted evidence entries and inspection events. A file can contribute more than one excerpt.</small></p>
@@ -138,6 +145,24 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
     <summary>{current ? 'Current repository inspection' : 'How ProjectHub inspected this repository'}</summary>
     {content}
   </details>;
+}
+
+function SchemeCoverageSummary({ coverage, saved }: { coverage?: SchemeCoverage; saved: boolean }) {
+  const eligible = knownFileTotal(coverage?.file_counts);
+  const evidence = coverage?.file_counts?.evidence_files;
+  const excerpts = coverage?.conversation_excerpts;
+  const format = (value: number) => value.toLocaleString();
+  const destination = saved ? 'in AI input' : 'selected for AI';
+  return <ul>
+    <li><strong>Repository files</strong> {validCount(evidence)
+      ? eligible === undefined
+        ? `${format(evidence)} ${destination} (eligible total unknown)`
+        : `${format(evidence)} of ${format(eligible)} eligible ${destination}`
+      : 'Coverage not recorded'}
+      {eligible !== undefined && validCount(evidence) && evidence < eligible
+        && ` · ${format(eligible - evidence)} omitted`}</li>
+    {validCount(excerpts) && <li><strong>Conversation excerpts</strong> {format(excerpts)}</li>}
+  </ul>;
 }
 export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }: { diagnostics?: SchemeDiagnostics | null; saved: boolean; embedded?: boolean }) {
   if (!diagnostics || !['bytes_read', 'inspection_seconds', 'cache_hits', 'package_chars'].some(key => nonnegative(diagnostics[key as keyof SchemeDiagnostics]))) return null;
@@ -159,6 +184,7 @@ export function SchemeResultCoverage({ snapshot, current, showCurrent = false }:
 }) {
   const inspection = schemeInspectionForDisplay(snapshot, current);
   return <CoverageDetails savedAt={snapshot?.generated_at} customCoverage
+    summaryContent={<SchemeCoverageSummary coverage={inspection.coverage} saved={inspection.saved} />}
     note={inspection.saved ? undefined : 'Current inspection; no saved Scheme is selected.'}>
     <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} embedded />
     <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} />
