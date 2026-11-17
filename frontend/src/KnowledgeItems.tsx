@@ -165,7 +165,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           onClick={() => setLimits((previous) => ({ ...previous, [value]: limit + 10 }))}>Show more {display(value).toLowerCase()} items</button>}
       </section>;
     })}
-    <DeferredDetails className="knowledge-coverage" summary={<summary className="source-disclosure">Knowledge coverage</summary>}>{() => <>
+    <DeferredDetails className="knowledge-coverage" summary={<summary>Knowledge coverage</summary>}>{() => <>
       <p>Knowledge is a derived interpretation. Missing extracted information does not establish that it was never discussed.</p>
       {Object.entries(snapshot.coverage || {}).map(([key, entries]) => <details key={key}><summary>{display(key)} ({entries.length})</summary>
         <ul>{entries.map((entry, index) => <li key={index}>{entry}</li>)}</ul>

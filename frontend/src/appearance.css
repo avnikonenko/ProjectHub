@@ -91,13 +91,13 @@
   color: var(--emphasis);
 }
 
-:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
+:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic, :where(.brief-section + .coverage-details) > summary) {
   font-weight: 750;
   color: var(--accent);
   color: color-mix(in srgb, var(--accent) 82%, #000);
 }
 
-:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
+:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic, :where(.brief-section + .coverage-details) > summary) {
   color: color-mix(in srgb, var(--accent) 90%, #000);
 }
 
@@ -105,7 +105,7 @@
   color: var(--muted);
 }
 
-.coverage-details > summary {
+:is(.coverage-details, .knowledge-coverage) > summary {
   color: var(--text);
 }
 
