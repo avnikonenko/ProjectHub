@@ -24,7 +24,7 @@ Choose the Codex account, model, reasoning effort, and response instructions for
 
 **AI runs when you request it.** Opening projects and searching saved information do not trigger model requests.
 
-![ProjectHub dashboard with example data](docs/images/projecthub-dashboard.png)
+![Overview of the ProjectHub project with example data](docs/images/projecthub-dashboard.png)
 
 ## Install and run
 
