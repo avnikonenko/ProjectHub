@@ -1,15 +1,57 @@
 """Local ProjectHub entry point; configuration is applied before app startup."""
 import argparse
 import os
+from pathlib import Path
 import sys
 
 from .config import ConfigError, create_config, load_settings
+from .resource_paths import bundled_resources_available, runtime_resource
+
+
+_AGENT_COMMANDS = ('projects', 'context', 'read', 'search', 'note', 'notes', 'todo', 'session')
+
+
+def _install_skill():
+    try:
+        source = (runtime_resource('skills', 'skills') / 'projecthub-notes').resolve()
+        if not (source / 'SKILL.md').is_file():
+            print('projecthub: The ProjectHub notes skill is missing from this installation.', file=sys.stderr)
+            return 1
+        target = Path.home() / '.agents' / 'skills' / 'projecthub-notes'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.symlink_to(source, target_is_directory=True)
+        except FileExistsError:
+            if not target.is_symlink() or target.resolve() != source:
+                print(f'projecthub: Refusing to replace existing skill: {target}', file=sys.stderr)
+                return 1
+    except (OSError, RuntimeError):
+        print('projecthub: Could not install the ProjectHub notes skill.', file=sys.stderr)
+        return 1
+    print(f'Installed Codex skill: {target}')
+    print('Open a new Codex session with ProjectHub running to use the skill.')
+    return 0
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='projecthub')
-    parser.add_argument('command', nargs='?', choices=('start', 'config'), default='start')
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in _AGENT_COMMANDS:
+        from scripts.notes_cli import main as agent_main
+
+        return agent_main(argv)
+    parser = argparse.ArgumentParser(
+        prog='projecthub', description='Start or configure your local ProjectHub workspace.',
+        epilog='Project commands: projects, context, read, search, note, todo, session. '
+               'Use projecthub COMMAND --help for details.',
+    )
+    parser.add_argument('command', nargs='?', choices=('start', 'config', 'install-skill', 'help'), default='start',
+                        help='start the app (default), show the configuration path, install the optional Codex skill, or show help')
     args = parser.parse_args(argv)
+    if args.command == 'help':
+        parser.print_help()
+        return 0
+    if args.command == 'install-skill':
+        return _install_skill()
     try:
         if args.command == 'config':
             print(create_config())
@@ -51,7 +93,8 @@ def main(argv=None):
         return 3
     if controller.requested:
         try:
-            os.execve(sys.executable, [sys.executable, '-m', 'backend.app.cli', 'start'],
+            safe_path = ['-P'] if bundled_resources_available() else []
+            os.execve(sys.executable, [sys.executable, *safe_path, '-m', 'backend.app.cli', 'start'],
                       startup_environment)
         except OSError:
             print('projecthub: Could not restart ProjectHub. Start it again with the projecthub command.',

@@ -120,7 +120,8 @@ def test_failed_shutdown_callback_releases_reservation(managed):
 
 
 @pytest.mark.parametrize('exec_fails', [False, True])
-def test_cli_restart_preserves_original_environment(tmp_path, monkeypatch, capsys, exec_fails):
+@pytest.mark.parametrize('packaged', [False, True])
+def test_cli_restart_preserves_original_environment(tmp_path, monkeypatch, capsys, exec_fails, packaged):
     config_path = tmp_path / 'config.toml'
     config_path.write_text('[server]\nport = 8888\n[ai]\ngeneration_timeout = 120')
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(config_path))
@@ -152,8 +153,10 @@ def test_cli_restart_preserves_original_environment(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(main, 'create_app', lambda **kwargs: kwargs['restart_controller'])
     monkeypatch.setitem(sys.modules, 'uvicorn', SimpleNamespace(Config=Config, Server=Server))
     monkeypatch.setattr(cli.os, 'execve', execve)
+    monkeypatch.setattr(cli, 'bundled_resources_available', lambda: packaged)
     assert cli.main(['start']) == (1 if exec_fails else 0)
-    assert calls == [(sys.executable, [sys.executable, '-m', 'backend.app.cli', 'start'], original)]
+    options = ['-P'] if packaged else []
+    assert calls == [(sys.executable, [sys.executable, *options, '-m', 'backend.app.cli', 'start'], original)]
     output = capsys.readouterr()
     assert 'never-print-me' not in output.out + output.err
 

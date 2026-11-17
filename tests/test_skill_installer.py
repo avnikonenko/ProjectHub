@@ -1,4 +1,4 @@
-"""Exercise the Bash skill installer using isolated homes, never user skills."""
+"""Exercise both skill installers using isolated homes."""
 import os
 from pathlib import Path
 import shutil
@@ -6,9 +6,36 @@ import subprocess
 
 import pytest
 
+from backend.app import cli
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / 'scripts' / 'install-skill.sh'
+
+
+def test_wheel_install_skill_is_idempotent_and_preserves_existing_links(tmp_path, monkeypatch, capsys):
+    home = tmp_path / 'home'
+    source = tmp_path / 'bundled data' / 'skills' / 'projecthub-notes'
+    source.mkdir(parents=True)
+    (source / 'SKILL.md').write_text('bundled skill', encoding='utf-8')
+    monkeypatch.setenv('HOME', str(home))
+    monkeypatch.setattr(cli, 'runtime_resource', lambda *_: source.parent)
+    monkeypatch.chdir(tmp_path)
+
+    target = home / '.agents/skills/projecthub-notes'
+    assert cli.main(['install-skill']) == 0
+    inode = target.lstat().st_ino
+    assert target.resolve() == source
+    assert cli.main(['install-skill']) == 0
+    assert target.lstat().st_ino == inode
+
+    target.unlink()
+    other = tmp_path / 'existing skill'
+    other.mkdir()
+    target.symlink_to(other)
+    assert cli.main(['install-skill']) == 1
+    assert target.resolve() == other
+    assert 'Refusing to replace existing skill' in capsys.readouterr().err
 
 
 def run_installer(home, *args, script=SCRIPT, cwd=None):

@@ -20,8 +20,14 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=8,<10", "httpx>=0.28,<1"]
 
+[project.scripts]
+projecthub = "backend.app.cli:main"
+
+[tool.setuptools]
+include-package-data = false
+
 [tool.setuptools.packages.find]
-include = ["backend*"]
+include = ["backend", "backend.app*", "scripts"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests", "tests"]

@@ -6,6 +6,8 @@ from fastapi import Request
 from alembic import command
 from alembic.config import Config
 
+from .resource_paths import runtime_resource
+
 
 def default_data_dir():
     return Path(os.environ.get('PROJECTHUB_DATA_DIR', Path(os.environ.get('XDG_DATA_HOME', Path.home() / '.local/share')) / 'projecthub'))
@@ -26,7 +28,7 @@ def initialize(data_dir):
         connection.execute('PRAGMA foreign_keys=ON')
         connection.execute('PRAGMA busy_timeout=15000')
     cfg = Config()
-    cfg.set_main_option('script_location', str(Path(__file__).resolve().parents[2] / 'migrations'))
+    cfg.set_main_option('script_location', str(runtime_resource('migrations', 'migrations')).replace('%', '%%'))
     with engine.begin() as connection:
         cfg.attributes['connection'] = connection
         command.upgrade(cfg, 'head')

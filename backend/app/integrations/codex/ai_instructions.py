@@ -1,13 +1,13 @@
 """Shared authoring instructions; loaded afresh for each generation request."""
 from contextlib import contextmanager
 from contextvars import ContextVar
-from pathlib import Path
 
 from ...models import ProjectAIInstructions
+from ...resource_paths import runtime_resource
 
 from .protocol import CodexError
 
-INSTRUCTIONS_PATH = Path(__file__).resolve().parents[4] / 'AI_RECOMMENDATIONS.md'
+INSTRUCTIONS_PATH = runtime_resource('AI_RECOMMENDATIONS.md', 'AI_RECOMMENDATIONS.md')
 
 
 MAX_SHARED_RECOMMENDATIONS = 8000

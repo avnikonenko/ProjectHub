@@ -22,6 +22,7 @@ from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
 from .services import repository_snapshot, repository_github_target
+from .resource_paths import runtime_resource
 from .version import VERSION
 
 
@@ -428,7 +429,7 @@ def create_app(data_dir=None, restart_controller=None):
     except ModuleNotFoundError as exc:
         if exc.name not in ('backend.app.integrations','backend.app.integrations.codex','backend.app.integrations.codex.router'):raise
 
-    frontend=Path(__file__).resolve().parents[2]/'frontend'/'dist'
+    frontend = runtime_resource('frontend', 'frontend', 'dist')
     if frontend.is_dir():
         if (frontend/'assets').is_dir():app.mount('/assets',StaticFiles(directory=frontend/'assets'),name='assets')
         @app.get('/{path:path}')

@@ -3,7 +3,25 @@ from types import SimpleNamespace
 
 import pytest
 
+from backend.app import cli
 from scripts import notes_cli
+
+
+def test_projecthub_entrypoint_routes_relative_notes_file_from_current_directory(tmp_path, monkeypatch, capsys):
+    content = 'Notes from another directory.\n'
+    (tmp_path / 'entry.md').write_text(content, encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+
+    def request(method, path, payload=None):
+        if method == 'GET':
+            assert path == '/projects?compact=true'
+            return [{'id': 3, 'name': 'Website'}]
+        assert (method, path, payload['content']) == ('POST', '/projects/3/notes', content)
+        return {'id': 9, 'project_id': 3, 'kind': 'ai_note'}
+
+    monkeypatch.setattr(notes_cli, 'request', request)
+    assert cli.main(['notes', 'add', '--project', 'Website', '--title', 'Finding', '--file', 'entry.md']) == 0
+    assert json.loads(capsys.readouterr().out)['note_id'] == 9
 
 
 def test_note_preserves_literal_content_and_session(monkeypatch, capsys):

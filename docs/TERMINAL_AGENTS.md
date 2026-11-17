@@ -6,17 +6,9 @@ information makes no AI request and does not change records.
 
 ## Install the optional skill
 
-Enable the skill when the installer asks, or use one of these commands:
-
-```bash
-bash scripts/install.sh --install-skill
-bash scripts/install-skill.sh  # Install only the skill into an existing setup.
-```
-
-Unattended installation skips the skill by default. Use `--skip-skill` to skip the
-interactive prompt. The installer links to the checkout from
-`~/.agents/skills/projecthub-notes` and preserves existing skills. Keep the checkout
-and open a new Codex session after installation.
+Run `projecthub install-skill`. It links the installed skill from
+`~/.agents/skills/projecthub-notes` and preserves existing skills. Open a new Codex
+session after installing the skill.
 
 ## Start with a briefing
 

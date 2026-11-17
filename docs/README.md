@@ -28,6 +28,21 @@ TypeScript checks, and the production build.
 - [Engineering decisions](DECISIONS.md)
 - [Scheme implementation reference](scheme-implementation.md)
 
+### Build a wheel
+
+From a source checkout, use Node.js 22.18+ and npm to build the frontend, then
+build the wheel with Python:
+
+```bash
+npm --prefix frontend ci
+npm --prefix frontend run build
+python3 -m pip wheel --no-deps --wheel-dir dist .
+```
+
+Install the resulting wheel with pipx or pip in a virtual environment. Its frontend, migrations, shared AI
+instructions, and optional Codex skill are included. Use an isolated data directory
+when testing a release build.
+
 ## Historical material
 
 - [Initial implementation plan](IMPLEMENTATION_PLAN.md)

@@ -28,14 +28,48 @@ Choose the Codex account, model, reasoning effort, and response instructions for
 
 ## Install and run
 
-Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**. From a cloned or downloaded checkout:
+### Install from a source checkout
+
+Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**.
+From a cloned or downloaded checkout:
 
 ```bash
 bash scripts/install.sh
 projecthub
 ```
 
-Open **http://127.0.0.1:8766**. Stop with Ctrl+C. If the command is outside your PATH, run `bash scripts/projecthub`. Keep the checkout: the launcher links to it.
+Keep the checkout for this installation. If its launcher is outside your PATH,
+run `bash scripts/projecthub` from the checkout.
+
+### Optional: install a wheel
+
+If you have a ProjectHub wheel, you can install it on Linux with **Python 3.11+**.
+The wheel bundles the built interface and database migrations.
+
+**With pipx**
+
+```bash
+pipx install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
+```
+
+If the launcher is outside your PATH, run `pipx ensurepath` and reopen the terminal.
+If you already have a source launcher named `projecthub`, the virtual environment
+option below lets you try the wheel alongside it.
+
+**With pip in a virtual environment**
+
+```bash
+python3 -m venv projecthub-venv
+./projecthub-venv/bin/python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
+./projecthub-venv/bin/projecthub
+```
+
+Use the wheel filename you downloaded. Install Git for repository inspection and
+Codex for AI features. Both installation paths use the same [saved data directory](#your-data).
+See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub itself.
+
+Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 
 ## Settings and AI
 
@@ -57,9 +91,8 @@ Open **Coverage** below a generated result to see what evidence was included and
 ## Terminal-agent skill
 
 The optional Codex skill lets a terminal agent read project context and manage notes,
-TODOs, and session links on request. Enable it during setup or run
-`bash scripts/install-skill.sh` later. With ProjectHub running, open a Codex
-session and try these prompts:
+TODOs, and session links on request. Run `projecthub install-skill` to enable it.
+With ProjectHub running, open a new Codex session and try these prompts:
 
 - “Read ProjectHub context for Project X.”
 - “Save this explanation as a note in Project X.”

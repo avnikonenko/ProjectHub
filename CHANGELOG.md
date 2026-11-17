@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Optional wheel installation with pipx or pip in a virtual environment. The wheel includes the built interface, database migrations, CLI commands and optional Codex skill installer. The source installer remains available.
+
 - Advanced Scheme settings for the local file read limit and final evidence package limit. Saved Coverage records the values used for each result.
 
 - Scheme excerpt budget in Settings with 40,000, 60,000, and 80,000 character presets. Coverage points to this setting when the excerpt cap leaves out files.
