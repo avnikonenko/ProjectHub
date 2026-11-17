@@ -34,6 +34,32 @@ a linked repository is needed for code structure and manifest inspection.
 Saved results remain readable when Codex is unavailable. Earlier generated results
 are available through **Previous versions**.
 
+## Published Knowledge
+
+Scheme can use the project's published Knowledge alongside repository inspection
+and linked conversations. Knowledge is optional; you can generate Scheme without
+it. Unpublished previews are never used or published by Scheme.
+
+A bounded selection preserves design status, scope, rationale, conflicts and
+supersession, with supporting original passages kept separately. Accepted design
+does not establish implemented or tested functionality. Some evidence may be
+historical or unavailable; the saved interpretation retains that limitation.
+Knowledge helps choose relevant capabilities, while original passages and
+repository evidence support the diagram's claims.
+
+Expand **Scheme details → Published Knowledge context** to inspect the publication
+and included/omitted item counts recorded with that Scheme. Selection uses at most
+12,000 text characters and never modifies Knowledge. Large snapshots are queried
+through bounded database projections, rather than loaded wholesale into the AI
+input. Items with many references may use a disclosed selection of original
+passages; omitted references do not independently support generated claims.
+
+Publishing a new Knowledge version makes the existing Scheme's source fingerprint
+change, even if selected statements are unchanged. Refresh Scheme explicitly when
+you want the new context; publication does not trigger generation. Older Scheme
+revisions retain their original publication metadata. Reading and selecting
+Knowledge adds no model calls; Scheme still makes one explicit generation request.
+
 ## Dependencies
 
 Inspection supports `pyproject.toml` project dependencies and dependency groups,

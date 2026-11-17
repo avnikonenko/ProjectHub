@@ -10,6 +10,7 @@ import { decodeSchemeText } from './SchemeText';
 import { schemeNodeRoles } from './schemeRoles';
 import { AIResultHeader } from './AIResultHeader';
 import { SchemeResultCoverage, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
+import { SchemeKnowledgeContext } from './SchemeKnowledgeContext';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -30,6 +31,7 @@ type SchemeSnapshot = {
   generated_at: string; generation?: GenerationProvenance | null;
   architecture: SchemeGraph; workflow: SchemeGraph; dependencies: Dependency[];
   sources: SchemeSource[]; tree: TreeEntry[]; coverage: Coverage; fingerprint: string; diagnostics?: SchemeDiagnostics | null;
+  knowledge_context?: unknown;
 };
 type SchemeResult = {
   snapshot: SchemeSnapshot | null;
@@ -359,6 +361,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     <details className="brief-details">
       <summary>Scheme details</summary>
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
+      {snapshot && <SchemeKnowledgeContext context={snapshot.knowledge_context} />}
       <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
         disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {

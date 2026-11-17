@@ -80,3 +80,48 @@ generation and static declaration validation, not proof of exhaustive architectu
 recall, installed dependencies or successful execution of Example Runner workflows. Existing
 inspection/text budgets and the 100-declaration ceiling still apply with coverage
 limitations recorded. Saved Schemes require explicit regeneration to use the fix.
+
+## Published Knowledge integration — 2026-11-17
+
+`scheme_knowledge.collect_published_knowledge(db, project_id)` reads only the
+project's published `ProjectKnowledge` row. Bounded SQLite JSON projections select
+up to 96 candidates and at most 12,000 source-text characters; the complete
+snapshot is not deserialized into Python or sent to Codex. Selection balances
+design statuses, favors records marked valid and nonsuperseded in the publication, and retains
+scope, rationale and recorded relationships without rewriting saved Knowledge.
+
+Interpretations and exact original passages have distinct namespaced source IDs.
+Source navigation is copied only after project ownership checks on notes, sessions
+and turns. Historical extraction status remains separate from current quotation
+availability. Items with six references can use a disclosed selection of four;
+omitted references do not establish additional claims. A graph citation to an
+interpretation must also cite its included originals. Both text and serialized
+package budgets preserve this evidence closure. Repository inspection keeps its
+existing share of the source budget.
+
+`knowledge_context` records publication identity and final selection counts in the
+saved Scheme and revision, and is visible under collapsed Scheme details. The
+publication identity participates in inspection caching and final freshness even
+when no Knowledge item fits. A new publication never triggers generation or
+rewrites a saved Scheme. Missing Knowledge and old Scheme snapshots remain
+supported. Invalid data and a publication change during inspection discard the
+Knowledge context with a limitation rather than mixing versions. No migrations,
+dependencies, new extraction pipeline or additional model calls were introduced.
+
+A real `gpt-6.1-sol`/medium run used an isolated SQLite backup with Example Runner's saved
+preview staged as published in that copy only. It selected 16 of 1,772 records and
+18 original quotations, retained 89 dependency declarations, and produced 15
+architecture nodes and 20 workflow nodes in 188.289 seconds. One model request
+reported 55,986 input and 9,076 output tokens. Proposed binding-mode operations cite
+original passages supplied through Knowledge and remain proposed; observed
+simulation/analysis branches retain repository evidence. All references validated.
+The evidence collection took 0.612 seconds; a later cached inspection took 0.283
+seconds. Production data and its unpublished previews were not changed.
+
+Regression cases cover project isolation, preview exclusion, publication-aware
+freshness without model calls, original-source ownership, evidence closure at both
+budgets, partial reference disclosure, malformed metadata and publication races.
+A 3,000-item fixture with an additional 20 MiB body verifies bounded Python
+allocations; that measurement excludes SQLite/native memory. The real run is one
+sample, not evidence of complete architectural recall. Knowledge remains a derived
+interpretation and original-source access remains independent.
