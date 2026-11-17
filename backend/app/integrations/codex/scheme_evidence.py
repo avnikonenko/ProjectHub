@@ -23,6 +23,7 @@ from ...project_evidence import (
 from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
+from .scheme_knowledge import collect_published_knowledge
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
@@ -42,6 +43,39 @@ def _source(identifier, label, value, provenance, **metadata):
             'provenance': provenance, 'content_hash': hashlib.sha256(value.encode()).hexdigest(), **metadata}
 
 
+def _knowledge_closure(result):
+    """Budgeting must not leave an interpretation without its original evidence."""
+    sources = result['sources']
+    primary_ids = {source['id'] for source in sources
+                   if source.get('provenance') != 'published Knowledge interpretation'}
+    kept = [source for source in sources if source.get('provenance') != 'published Knowledge interpretation'
+            or source.get('supporting_source_ids') and set(source['supporting_source_ids']) <= primary_ids]
+    removed = len(sources) - len(kept)
+    sources[:] = kept
+    context = result.get('knowledge_context')
+    if isinstance(context, dict):
+        interpretations = [source for source in sources if source.get('provenance') == 'published Knowledge interpretation']
+        context['included_items'] = len(interpretations)
+        context['omitted_items'] = max(0, context.get('available_items', 0) - context['included_items'])
+        if 'input_chars' in context:
+            context['input_chars'] = sum(len(source['text']) for source in sources
+                if source.get('provenance') in {'published Knowledge interpretation', 'published Knowledge original evidence'})
+        if 'current_evidence_availability' in context:
+            availability = {}
+            for source in interpretations:
+                state = source.get('evidence_availability', 'unknown')
+                availability[state] = availability.get(state, 0) + 1
+            context['current_evidence_availability'] = availability
+        if 'partial_evidence_items' in context:
+            context['partial_evidence_items'] = sum(source.get('evidence_partial') is True for source in interpretations)
+    if removed:
+        coverage = result['coverage']
+        coverage['partial'] = True
+        coverage['limitations'] = sorted({*coverage['limitations'],
+            'Some Knowledge interpretations were omitted because their original evidence did not fit the input budget.'})
+        coverage['omitted_reason_counts']['knowledge_support_budget'] = removed
+
+
 def _bound_package(result):
     """Bound serialized metadata too, keeping whole sources and valid references."""
     def update_file_counts():
@@ -53,8 +87,9 @@ def _bound_package(result):
     def serialized_size(value):
         return len(json.dumps(value, ensure_ascii=False))
 
+    _knowledge_closure(result)
     update_file_counts()
-    payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+    payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context') if key in result}
     used = serialized_size(payload)
     if used > _MAX_PACKAGE_CHARS:
         coverage = result['coverage']
@@ -84,6 +119,7 @@ def _bound_package(result):
                         remove(result['dependencies'], index)
             else:
                 break
+        _knowledge_closure(result)
         coverage['conversation_excerpts'] = sum(
             source['provenance'] == 'Codex conversation' for source in result['sources'])
     update_file_counts()
@@ -887,6 +923,17 @@ def collect_evidence(engine, project_id):
             session_markers, excerpt_count = [], 0
             record_limits = ['Stored conversation or project knowledge evidence could not be read.']
             freshness_unknown = True
+        try:
+            knowledge = collect_published_knowledge(db, project_id)
+        except SQLAlchemyError:
+            db.rollback()
+            knowledge = {'sources': [], 'metadata': {'status': 'unavailable', 'available_items': 0,
+                'included_items': 0, 'omitted_items': 0}, 'marker': {'status': 'unavailable'},
+                'limitations': ['Published Knowledge could not be read; repository and conversation evidence remain available.']}
+            freshness_unknown = True
+        records = records[:1] + knowledge['sources'] + records[1:]
+        limitations.update(knowledge['limitations'])
+        freshness_unknown |= knowledge['metadata'].get('status') == 'unavailable'
     freshness_unknown |= any('no current saved index' in value for value in record_limits)
     limitations.update(record_limits)
     root = None
@@ -922,7 +969,8 @@ def collect_evidence(engine, project_id):
             marked_paths = {relative for relative, _ in markers}
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v10', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v11', 'project_id': project_id,
+            'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
@@ -1071,6 +1119,23 @@ def collect_evidence(engine, project_id):
             limitations.add(f'The source inspection {inspection_stop.replace("_", " ")} was reached; coverage may be incomplete.')
         # Prevent an unusually large manifest/dependency set from exhausting the AI input budget.
         bounded, size = [], 0
+        included_ids = set()
+        source_by_id = {source['id']: source for source in sources}
+
+        def add_source(source, limit):
+            nonlocal size
+            support = source.get('supporting_source_ids', [])
+            if any(identifier not in source_by_id for identifier in support):
+                return False
+            bundle = [source, *(source_by_id[identifier] for identifier in support)]
+            additions = {entry['id']: entry for entry in bundle if entry['id'] not in included_ids}
+            required = sum(len(entry['text']) for entry in additions.values())
+            if size + required > limit:
+                return False
+            bounded.extend(additions.values())
+            included_ids.update(additions)
+            size += required
+            return True
         command_guides = {path for path, words in guide_words.items() if words & declared_commands}
         repository_sources = sorted(sources[len(records):], key=lambda source: (
             _historical_path(source.get('path', '')),
@@ -1083,18 +1148,13 @@ def collect_evidence(engine, project_id):
         repository_reserve = min(_MAX_SOURCES_CHARS // 2, sum(len(s['text']) for s in repository_sources))
         deferred = []
         for source in records:
-            if size + len(source['text']) <= _MAX_SOURCES_CHARS - repository_reserve:
-                bounded.append(source)
-                size += len(source['text'])
-            else:
+            if not add_source(source, _MAX_SOURCES_CHARS - repository_reserve):
                 deferred.append(source)
         for source in [*repository_sources, *deferred]:
-            if size + len(source['text']) > _MAX_SOURCES_CHARS:
+            if not add_source(source, _MAX_SOURCES_CHARS):
                 omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1
                 limitations.add('The source excerpt budget was reached; some evidence was omitted.')
                 continue
-            bounded.append(source)
-            size += len(source['text'])
         allowed_ids = {source['id'] for source in bounded}
         dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
         source_order = {source['id']: index for index, source in enumerate(bounded)}
@@ -1117,6 +1177,7 @@ def collect_evidence(engine, project_id):
                     continue
             tree[relative] = 'file'
         result = {'sources': bounded, 'dependencies': dependencies,
+            'knowledge_context': deepcopy(knowledge['metadata']),
             'tree': [{'path': path, 'type': kind} for path, kind in sorted(tree.items())],
             'coverage': {'partial': bool(limitations), 'freshness_unknown': freshness_unknown,
                          'limitations': sorted(limitations),
@@ -1146,7 +1207,8 @@ def collect_evidence(engine, project_id):
         fingerprint_coverage = {key: value for key, value in result['coverage'].items()
                                 if key not in {'file_counts', 'inspection_policy'}}
         result['fingerprint'] = _digest({key: result[key] for key in
-            ('sources', 'dependencies', 'tree')} | {'coverage': fingerprint_coverage, 'sessions': session_markers})
+            ('sources', 'dependencies', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
+                'published_knowledge': knowledge['marker']})
         if inspection_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 if db.get(ProjectHistoryBatch, (project_id, key)) is None:

@@ -296,7 +296,7 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
         result = evidence.collect_evidence(engine, 1)
         assert result['coverage']['files_inspected'] == 452
         assert result['coverage']['inspection_stopped'] is None
-        payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+        payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context')}
         assert len(json.dumps(payload, ensure_ascii=False)) <= evidence._MAX_PACKAGE_CHARS
         assert result['diagnostics']['package_chars'] == len(json.dumps(payload, ensure_ascii=False))
         assert result['coverage']['omitted_reason_counts']['package_output_budget'] > 0

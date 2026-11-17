@@ -179,3 +179,107 @@ def test_bounds_and_missing_evidence_do_not_call_codex(tmp_path, monkeypatch):
     with pytest.raises(CodexError, match='input limit'):
         scheme.refresh_scheme(engine, 1, Manager())
     engine.dispose()
+
+
+def knowledge_evidence():
+    result = evidence()
+    originals = ['knowledge:original:proposal', 'knowledge:original:acceptance']
+    result['sources'].extend([
+        {'id': originals[0], 'label': 'Original proposal', 'text': 'Use the replacement backend.',
+         'provenance': 'published Knowledge original evidence', 'content_hash': 'proposal', 'role': 'assistant'},
+        {'id': originals[1], 'label': 'Original acceptance', 'text': 'Yes, adopt that backend.',
+         'provenance': 'published Knowledge original evidence', 'content_hash': 'acceptance', 'role': 'user'},
+        {'id': 'knowledge:item:choice', 'label': 'Accepted design choice',
+         'text': 'AGREED: Use the replacement backend. Implementation is not established.',
+         'provenance': 'published Knowledge interpretation', 'content_hash': 'choice',
+         'supporting_source_ids': originals},
+    ])
+    result['knowledge_context'] = {'publication_id': 'published-one', 'included_items': 1,
+                                   'available_items': 1, 'omitted_items': 0}
+    return result
+
+
+@pytest.mark.parametrize('collection', ['nodes', 'edges', 'dependencies'])
+def test_knowledge_citations_require_original_evidence_in_each_claim(collection):
+    result = output()
+    target = (result['dependencies'] if collection == 'dependencies'
+              else result['architecture'][collection])[0]
+    target['source_ids'] = ['knowledge:item:choice']
+    if collection == 'nodes':
+        target['paths'] = []
+    with pytest.raises(CodexError, match='original evidence alongside Knowledge'):
+        scheme.validate_output(json.dumps(result), knowledge_evidence())
+    target['source_ids'].extend(['knowledge:original:proposal', 'knowledge:original:acceptance'])
+    architecture, _, dependencies = scheme.validate_output(json.dumps(result), knowledge_evidence())
+    refs = (dependencies[0]['purpose_source_ids'] if collection == 'dependencies'
+            else architecture[collection][0]['source_ids'])
+    assert refs == target['source_ids']
+
+
+@pytest.mark.parametrize('supporting', [None, [], ['missing'], ['knowledge:item:choice'],
+                                      ['knowledge:original:proposal'] * 2])
+def test_knowledge_interpretations_without_valid_original_support_are_rejected(supporting):
+    context = knowledge_evidence()
+    context['sources'][-1]['supporting_source_ids'] = supporting
+    result = output()
+    result['architecture']['nodes'][1]['source_ids'] = ['knowledge:item:choice', 'knowledge:original:proposal']
+    with pytest.raises(CodexError, match='Knowledge without valid original evidence'):
+        scheme.validate_output(json.dumps(result), context)
+
+
+def test_knowledge_support_respects_six_reference_limit():
+    context = knowledge_evidence()
+    derived = context['sources'][-1]
+    supporting = [f'original:{index}' for index in range(5)]
+    context['sources'].extend({'id': identifier, 'provenance': 'published Knowledge original evidence'}
+                              for identifier in supporting)
+    derived['supporting_source_ids'] = supporting
+    result = output()
+    target = result['architecture']['nodes'][1]
+    target['source_ids'] = ['knowledge:item:choice', *supporting]
+    assert len(scheme.validate_output(json.dumps(result), context)[0]['nodes'][1]['source_ids']) == 6
+    target['source_ids'].append('file:api.py')
+    with pytest.raises(CodexError, match='1–6'):
+        scheme.validate_output(json.dumps(result), context)
+
+
+def test_knowledge_publication_is_in_prompt_and_saved_with_scheme_atomically(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='One'))
+        db.commit()
+    context = knowledge_evidence()
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *args: context)
+
+    class Manager:
+        calls = 0
+        raw = json.dumps(output())
+        generation_metadata = {'model': 'mock'}
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            assert json.dumps(context['knowledge_context']['publication_id']) in prompt
+            assert 'also include ALL its supporting_source_ids' in prompt
+            assert 'AGREED does not establish implementation' in prompt
+            assert 'When evidence_selection_partial is true' in prompt
+            assert 'do not assume omitted references establish a claim' in prompt
+            assert 'historical evidence, not currently verified source material' in prompt
+            assert 'Respect source_state and evidence-availability limitations' in prompt
+            assert 'Rejected or superseded knowledge is historical context' in prompt
+            assert 'unpublished previews are not included' in prompt
+            return self.raw
+
+    manager = Manager()
+    saved = scheme.refresh_scheme(engine, 1, manager)
+    assert saved['knowledge_context'] == context['knowledge_context']
+    assert manager.calls == 1
+    context['knowledge_context']['publication_id'] = 'published-two'
+    manager.raw = '{broken'
+    with pytest.raises(CodexError, match='invalid JSON'):
+        scheme.refresh_scheme(engine, 1, manager)
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1)['knowledge_context']['publication_id'] == 'published-one'
+        revisions = list(db.scalars(select(GenerationRevision)))
+        assert len(revisions) == 1
+        assert revisions[0].snapshot['knowledge_context']['publication_id'] == 'published-one'
+    engine.dispose()

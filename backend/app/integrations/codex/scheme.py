@@ -19,6 +19,7 @@ MAX_EDGES = 40
 MAX_INPUT_CHARS = 160_000
 MAX_OUTPUT_CHARS = 100_000
 STATUSES = ('observed', 'proposed', 'uncertain')
+_KNOWLEDGE_INTERPRETATION = 'published Knowledge interpretation'
 _NODE_TYPES = {
     'architecture': ('module', 'service', 'component', 'database', 'tool', 'interface', 'backend'),
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
@@ -91,7 +92,21 @@ def _references(value, available, location='source_ids'):
     if any(ref not in available for ref in value):
         raise CodexError(f'Scheme generation cited missing or foreign evidence at {location}.')
     # Repeated valid citations add no evidence; retain their first-seen order.
-    return list(dict.fromkeys(value))
+    refs = list(dict.fromkeys(value))
+    for identifier in refs:
+        source = available.get(identifier) if isinstance(available, dict) else None
+        if not isinstance(source, dict) or source.get('provenance') != _KNOWLEDGE_INTERPRETATION:
+            continue
+        supporting = source.get('supporting_source_ids')
+        if (not isinstance(supporting, list) or not 1 <= len(supporting) <= 5
+                or any(not isinstance(ref, str) or ref not in available for ref in supporting)
+                or len(set(supporting)) != len(supporting)
+                or any(not isinstance(available[ref], dict)
+                       or available[ref].get('provenance') == _KNOWLEDGE_INTERPRETATION for ref in supporting)):
+            raise CodexError(f'Scheme generation cited Knowledge without valid original evidence at {location}.')
+        if not set(supporting) <= set(refs):
+            raise CodexError(f'Scheme generation must cite original evidence alongside Knowledge at {location}.')
+    return refs
 
 
 def _validate_graph(graph, kind, sources):
@@ -202,6 +217,8 @@ def refresh_scheme(engine, project_id, manager):
         if not evidence['sources']:
             raise CodexError('No project evidence is available for a scheme.')
         payload = {key: evidence[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+        if isinstance(evidence.get('knowledge_context'), dict):
+            payload['knowledge_context'] = evidence['knowledge_context']
         serialized = json.dumps(payload, ensure_ascii=False)
         if len(serialized) > MAX_INPUT_CHARS:
             raise CodexError('Scheme evidence exceeds the generation input limit.')
@@ -255,6 +272,25 @@ def refresh_scheme(engine, project_id, manager):
             'Preserve conflicts: an inspected backend and a proposed replacement can '
             'coexist; mark unresolved relationships uncertain, retain both supporting references, and explain '
             'the distinction. Provenance stays in sources, separate from graph status. '
+            'Published Knowledge, when supplied, is additional derived context for project capabilities, '
+            'design scope and rationale. Its publication is identified in knowledge_context; unpublished '
+            'previews are not included. A published Knowledge interpretation is not original evidence. '
+            'Whenever you cite one, also include ALL its supporting_source_ids in the same source_ids list. '
+            'Choose fewer interpretations if necessary to stay within six references. Ground every '
+            'substantive claim in those original passages or inspected repository evidence. '
+            'When evidence_selection_partial is true, some original references were omitted from this '
+            'context. Support each statement and rationale clause with the selected original passages; '
+            'do not assume omitted references establish a claim. Unavailable or stale saved excerpts '
+            'are historical evidence, not currently verified source material. '
+            'Keep design_status separate from graph status: AGREED does not establish implementation, '
+            'executed tests or scientific validation. An agreed plan without implementation evidence '
+            'remains proposed in the graph; unresolved or conflicting relationships remain uncertain. '
+            'Retain the item scope and rationale; do not confuse project-wide objectives with first-release '
+            'boundaries. Respect source_state and evidence-availability limitations without rewriting '
+            'historical design status. Rejected or superseded knowledge is historical context, not the '
+            'current approach. Preserve recorded conflicts and distinguish a proposed replacement from '
+            'an observed implementation. Original evidence and current code remain independently usable '
+            'when Knowledge is missing or does not cover a capability. '
             'Paths must match paths of cited sources, or return an empty paths list. '
             'Graphs may independently be empty when evidence is insufficient; provide a short explanation '
             'instead of inventing stages. Identify discussion-only diagrams as conceptual. '
@@ -287,6 +323,8 @@ def refresh_scheme(engine, project_id, manager):
             'diagnostics': {**evidence.get('diagnostics', {}), 'input_chars': len(prompt),
                             'duration_seconds': round(time.monotonic() - started, 3), 'ai_requests': 1},
         }
+        if isinstance(evidence.get('knowledge_context'), dict):
+            snapshot['knowledge_context'] = deepcopy(evidence['knowledge_context'])
         with Session(engine) as db:
             if db.get(Project, project_id) is None:
                 raise CodexError('Project not found.')

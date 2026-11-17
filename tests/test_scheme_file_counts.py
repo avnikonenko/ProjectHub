@@ -110,7 +110,7 @@ def test_final_package_drops_are_counted_and_cached_without_rereads(tmp_path, mo
         value = counts(result)
         assert value['read_files'] == 10
         assert value['evidence_files'] < 10
-        payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+        payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context')}
         assert len(json.dumps(payload, ensure_ascii=False)) <= 4000
         assert result['diagnostics']['package_chars'] == len(json.dumps(payload, ensure_ascii=False))
         monkeypatch.setattr(evidence, '_read', lambda *a, **kw: pytest.fail('Cached evidence reread'))
