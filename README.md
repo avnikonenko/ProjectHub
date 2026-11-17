@@ -1,6 +1,6 @@
 # ProjectHub
 
-[![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub_Actions-2088ff)](.github/workflows/ci.yml)
+[![CI status](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml)
 [![Docs: Guides](https://img.shields.io/badge/docs-guides-2f7d5a)](docs/README.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)
 
@@ -47,8 +47,9 @@ run `bash scripts/projecthub` from the checkout.
 
 ### Optional: install a wheel
 
-If you have a ProjectHub wheel, you can install it on Linux with **Python 3.11+**.
-The wheel bundles the built interface and database migrations.
+Check [GitHub Releases](https://github.com/avnikonenko/ProjectHub/releases) for
+a wheel, or [build one from source](docs/README.md#build-a-wheel). The wheel
+runs on Linux with **Python 3.11+** and bundles the built interface and database migrations.
 
 **With pipx**
 
@@ -58,20 +59,20 @@ projecthub
 ```
 
 If the launcher is outside your PATH, run `pipx ensurepath` and reopen the terminal.
-If you already have a source launcher named `projecthub`, the virtual environment
-option below lets you try the wheel alongside it.
+If you already have a source launcher named `projecthub`, you can try the wheel
+in a separate Conda environment.
 
-**With pip in a virtual environment**
+**With Conda**
 
 ```bash
-python3 -m venv projecthub-venv
-./projecthub-venv/bin/python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
-./projecthub-venv/bin/projecthub
+conda create -n projecthub -c conda-forge python=3.12 pip
+conda activate projecthub
+python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
 ```
 
 Use the wheel filename you downloaded. Install Git for repository inspection and
-Codex for AI features. Both installation paths use the same [saved data directory](#your-data).
-See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub itself.
+Codex for AI features. Source and wheel installations use the same [saved data directory](#your-data).
 
 Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 

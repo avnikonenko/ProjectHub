@@ -1,0 +1,38 @@
+site_name: ProjectHub
+site_description: User guides and developer reference for ProjectHub.
+site_url: !ENV READTHEDOCS_CANONICAL_URL
+repo_url: https://github.com/avnikonenko/ProjectHub
+
+site_dir: build/docs
+theme: readthedocs
+strict: true
+exclude_docs: |
+  /experiments/
+  /requirements.txt
+
+validation:
+  links:
+    anchors: warn
+
+nav:
+  - Home: README.md
+  - User guides:
+      - Install and run: GETTING_STARTED.md
+      - AI generation: AI_GENERATION.md
+      - Project evidence and freshness: PROJECT_EVIDENCE.md
+      - Project Overview and Knowledge: PROJECT_KNOWLEDGE_UI.md
+      - Scheme: SCHEME.md
+      - Terminal-agent context: TERMINAL_AGENTS.md
+  - Developer reference:
+      - Architecture: ARCHITECTURE.md
+      - HTTP API: API_CONTRACT.md
+      - Data model: DATA_MODEL.md
+      - Knowledge pipeline: KNOWLEDGE_PIPELINE.md
+      - Knowledge interface: KNOWLEDGE_UI_INTERNALS.md
+      - Scheme implementation: scheme-implementation.md
+      - Validation: TEST_REPORT.md
+      - Security: SECURITY_REVIEW.md
+      - Engineering decisions: DECISIONS.md
+  - History:
+      - Initial implementation plan: IMPLEMENTATION_PLAN.md
+      - Implementation handoff: IMPLEMENTATION_REPORT.md

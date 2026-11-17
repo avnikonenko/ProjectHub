@@ -9,4 +9,4 @@ AI writing instructions live in `AI_RECOMMENDATIONS.md`. Generated responses and
 Setup installs Python dependencies into `.venv` and builds the frontend. The user-local launcher links to the checkout. Configuration and mutable project data belong in XDG directories, outside source control. Codex credentials remain managed by Codex.
 
 At the original handoff, installation required a source checkout. See the current
-[installation guide](../README.md#install-and-run) and [security boundaries](SECURITY_REVIEW.md).
+[installation guide](GETTING_STARTED.md) and [security boundaries](SECURITY_REVIEW.md).
