@@ -1,7 +1,8 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
 from typing import Annotated, Literal
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+import logging
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
@@ -33,6 +34,7 @@ from ...services import begin_session_write
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
+log = logging.getLogger(__name__)
 
 
 class Input(BaseModel):
@@ -99,6 +101,13 @@ class GenerationInput(ModelInput):
 
 class KnowledgeGenerationInput(GenerationInput):
     publish: bool = Field(default=False, strict=True)
+    generate_scheme: bool = Field(default=False, strict=True)
+
+    @model_validator(mode='after')
+    def followup_requires_saved_knowledge(self):
+        if self.generate_scheme and not self.publish:
+            raise ValueError('Scheme follow-up requires publishing the generated Knowledge.')
+        return self
 
 
 class KnowledgePublicationInput(Input):
@@ -472,23 +481,77 @@ def get_knowledge_preview(project_id: int, db: DB):
 
 
 @router.post('/analysis/preview')
-def generate_analysis_preview(project_id: int, body: GenerationInput, request: Request, db: DB):
+def generate_analysis_preview(project_id: int, body: GenerationInput, request: Request, db: DB,
+                              background_tasks: BackgroundTasks):
     return knowledge_brief(project_id,
-        KnowledgeGenerationInput(**body.model_dump(), publish=False), request, db)
+        KnowledgeGenerationInput(**body.model_dump(), publish=False), request, db, background_tasks)
+
+
+def _record_scheme_followup_failure(project_id, previous_started_at, error):
+    """Expose a pre-start error without overwriting a competing Scheme run."""
+    lease = generation_lock.for_job(project_id, 'scheme')
+    if not lease.acquire(blocking=False):
+        return
+    try:
+        current = progress.read(project_id, 'scheme')
+        if current.get('started_at') != previous_started_at or current['state'] == 'running':
+            return
+        try:
+            progress.begin(project_id, 'scheme')
+            progress.finish(project_id, error=error)
+        except CodexError:
+            # Invalid global configuration may also prevent beginning progress.
+            # The original exception is still reported in the follow-up log.
+            pass
+    finally:
+        lease.release()
+
+
+def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id):
+    """Server-owned follow-up, independent of the selected browser project."""
+    previous_started_at = progress.read(project_id, 'scheme').get('started_at')
+    try:
+        log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
+                 project_id, publication_id)
+        with use_project_instructions(instructions):
+            refresh_scheme(engine, project_id, manager)
+    except BriefBusy as exc:
+        # Never alter progress or cancellation for an existing Scheme job.
+        log.warning('Scheme follow-up not started for project=%s: %s', project_id, exc)
+    except CodexError as exc:
+        _record_scheme_followup_failure(project_id, previous_started_at, str(exc))
+        log.warning('Scheme follow-up failed for project=%s: %s', project_id, exc)
+    except Exception:
+        _record_scheme_followup_failure(project_id, previous_started_at,
+                                        'Scheme follow-up failed. The previous saved result is unchanged.')
+        log.exception('Scheme follow-up failed for project=%s', project_id)
 
 
 @router.post('/knowledge/brief')
-def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Request, db: DB):
+def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Request, db: DB,
+                    background_tasks: BackgroundTasks):
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Confirm sending project evidence to Codex to refresh the project analysis.')
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        scheme_manager = None
+        if body.generate_scheme:
+            choose = getattr(manager, 'for_generation', None)
+            scheme_manager = choose(body.model, body.effort) if callable(choose) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
-            return generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
+            result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
+        if body.generate_scheme:
+            if result.get('published') is not True:
+                raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
+            background_tasks.add_task(_generate_scheme_after_knowledge,
+                                      request.app.state.engine, project_id, scheme_manager, instructions,
+                                      result.get('publication_id'))
+            result = {**result, 'scheme_requested': True}
+        return result
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
