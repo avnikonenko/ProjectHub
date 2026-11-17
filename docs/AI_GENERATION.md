@@ -154,11 +154,33 @@ single requests.
 Independent AI Q&A drafts and consolidation groups share this worker limit;
 their dependent final ranking remains sequential.
 
-You can also enter N in **Settings → Parallel AI reading threads**, then click
-**Save thread count**. It saves the value in your local ProjectHub settings and
+You can also enter N in **Settings → AI workers per job**, then click
+**Save workers per job**. It saves the value in your local ProjectHub settings and
 applies it to the next generation, without interrupting an active run or invoking
 Codex. A launch-time environment override still takes precedence after restarting;
 the control shows when the effective and saved values differ.
+
+Overview, Knowledge, Scheme, Q&A and Implementation Choices can run concurrently.
+The worker setting is a maximum **per job**, not a shared total: three jobs with
+four workers can issue up to twelve concurrent batch calls. Single-request stages
+still use one call. Duplicate generation for the same project/view is blocked.
+Each job has independent progress, cancellation, time budget and saved results.
+Restart and source/account maintenance still wait for all active jobs.
+
+**Regenerate all** starts the project's idle generation views through their usual
+actions; tags remain separate. Failed jobs preserve their prior results and do not
+cancel successful siblings. Knowledge retains its existing preview/publication
+workflow. Scheme uses the saved Knowledge available when its job starts; it does
+not silently consume an unfinished Knowledge generation.
+
+Concurrency validation used real SQLite with simultaneous Overview/Scheme saves
+and cancellation, plus isolated Firefox checks of all five actions and a failed
+Limits job while siblings continued. The browser generation requests were
+intercepted. A separate real-Codex check (`gpt-6.1-sol`, medium) ran Scheme and
+Implementation Choices on a tiny isolated repository: their calls began within
+one second, both results saved, and total elapsed time was 28.7 seconds (individual
+job times 27.7 and 15.3 seconds). This confirms overlap in that fixture, not a
+general speed guarantee for large projects.
 
 > **Parallel-reading warning:** Each active uncached batch can start a separate
 > Codex process and request. High thread counts can exhaust memory or operating-system

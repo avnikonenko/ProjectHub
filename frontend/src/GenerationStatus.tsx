@@ -1,6 +1,6 @@
 import { Feedback } from './Feedback';
 import { ErrorBox } from './ui';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
@@ -88,9 +88,13 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
       Object.values(timers).forEach(clearTimeout);
     };
   }, [base, includeBrief, includeKnowledge, includeParameters, recheckRequest]);
+  const clearError = useCallback((kind?: RecoveryKind) => {
+    setErrors(previous => kind ? { ...previous, [kind]: '' }
+      : { brief: '', qa: '', scheme: '', knowledge: '', parameters: '' });
+  }, []);
   return {
     checking, running, version, progress, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
-    clearError: () => setErrors({ brief: '', qa: '', scheme: '', knowledge: '', parameters: '' }),
+    clearError,
     recheck: (kind: RecoveryKind) => {
       setChecking(true);
       setRecheckRequest(previous => ({ sequence: previous.sequence + 1, kind,

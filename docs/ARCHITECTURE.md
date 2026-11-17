@@ -32,8 +32,11 @@ Knowledge extraction, reconciliation and synthesis pipeline produces detailed
 Knowledge records and a Knowledge Summary. Publication atomically saves those in
 `ProjectKnowledge.snapshot`, with the summary under `summary`, and appends a
 Knowledge revision. It does not write the general `ProjectBrief` or brief revisions.
-Each action has its own progress/cancellation identity, with the existing generation
-lock preventing concurrent writers. Legacy matching summaries remain recoverable.
+Each action has its own progress/cancellation identity and project/view lease.
+Unrelated jobs can run together; a duplicate action is blocked. The lock-compatible
+maintenance gate remains exclusive for restart and source/account changes.
+Request-local managers isolate transports and model provenance. Saves retain their
+own SQLite transactions and atomic cancellation checks. Legacy matching summaries remain recoverable.
 Opening a view only reads saved results and lightweight progress/freshness data.
 Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
 

@@ -1,3 +1,4 @@
+import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
 import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -250,7 +251,7 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy }: {
+export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, generationRequest = 0, onGenerationRequestHandled }: GenerationRequestProps & {
   base: string; generation: { model: string; effort: string }; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
 }) {
@@ -271,7 +272,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const path = base + '/codex/scheme';
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
-    if (!visible || inFlight.current || selectingRevision.current) return;
+    if ((!visible && !generationRequest) || inFlight.current || selectingRevision.current) return;
     const abort = new AbortController();
     const identity = ++resultRead.current;
     setLoading(true);
@@ -286,7 +287,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       .catch((e: Error) => { if (!abort.signal.aborted && resultRead.current === identity) setError(e.message); })
       .finally(() => { if (!abort.signal.aborted && resultRead.current === identity) setLoading(false); });
     return () => abort.abort();
-  }, [path, recoveryVersion, visible]);
+  }, [path, recoveryVersion, visible, generationRequest]);
 
   async function generate() {
     if (inFlight.current || loading || recoveryBusy || revisionLoading) return;
@@ -324,6 +325,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       if (alive.current) { setGenerating(false); onGenerating(false); }
     }
   }
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';

@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Regenerate all starts idle Overview, Knowledge, Scheme, Q&A and Implementation Choices jobs concurrently. Each project/view keeps its own progress, cancellation, cache and saving; duplicate jobs are blocked. Settings now describes the worker count per job, while restart and source/account maintenance remain exclusive.
+
 - Terminal-agent commands to unlink exact sessions or move external session associations between projects, preserving Codex identity and indexed history with project ownership checks and audited transfers.
 
 - Parameters & Trade-offs under Knowledge: independently generate searchable code/configuration defaults, conditional values and project-specific explanations with original file/line evidence. Keep inferred explanations distinct, exclude run tracking and generic caveats, and preserve saved results and revision history.

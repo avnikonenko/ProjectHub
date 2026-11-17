@@ -19,8 +19,9 @@ calculating `paired_with_current_brief`. This field remains truthful for legacy
 paired results; a new Knowledge Summary is paired with its Knowledge snapshot,
 not the general Overview. Its optional `snapshot.summary` must match the snapshot's
 publication ID. General Overview refresh uses `/codex/brief`, with independent
-`brief` progress/cancellation; Knowledge uses `knowledge` progress. Both use the
-existing generation lock. Knowledge generation remains opt-in.
+`brief` progress/cancellation; Knowledge uses `knowledge` progress. Each uses its
+own project/view generation lease. Other project views may generate concurrently.
+Knowledge generation remains opt-in.
 
 | File | Responsibility |
 |---|---|

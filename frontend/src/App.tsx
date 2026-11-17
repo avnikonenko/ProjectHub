@@ -1,3 +1,4 @@
+import { idleGenerationKinds, useGenerationRequest, type GenerationRequestProps, type ProjectGenerationKind } from './generationBatch';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
@@ -294,6 +295,12 @@ function ProjectWorkspace({
   const [knowledgeSubview, setKnowledgeSubview] = useState<'knowledge' | 'parameters'>('knowledge');
   const [parametersVisited, setParametersVisited] = useState(false);
   const [parameterState, setParameterState] = useState({ busy: false, running: false });
+  const [bulkRequests, setBulkRequests] = useState<Record<ProjectGenerationKind, number>>({ brief: 0, knowledge: 0, scheme: 0, qa: 0, parameters: 0 });
+  const [bulkPending, setBulkPending] = useState<ProjectGenerationKind[]>([]);
+  const [bulkSkipped, setBulkSkipped] = useState<ProjectGenerationKind[]>([]);
+  const [bulkRequested, setBulkRequested] = useState(false);
+  const [bulkAttemptCount, setBulkAttemptCount] = useState(0);
+  const bulkDispatching = useRef(false);
   useEffect(() => {
     if (knowledgeLink) setKnowledgeSubview('knowledge');
   }, [knowledgeLink?.publicationId, knowledgeLink?.itemId]);
@@ -325,6 +332,43 @@ function ProjectWorkspace({
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
   const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true, includeParameters: true });
+  const recheckGeneration = useRef(recovery.recheck); recheckGeneration.current = recovery.recheck;
+  const observedGeneration = useRef<Record<ProjectGenerationKind, boolean>>({ brief: false, knowledge: false, scheme: false, qa: false, parameters: false });
+  const observeGeneration = useCallback((kind: ProjectGenerationKind, active: boolean) => {
+    if (active) recovery.clearError(kind);
+    else if (observedGeneration.current[kind]) recheckGeneration.current(kind);
+    observedGeneration.current[kind] = active;
+  }, [recovery.clearError]);
+  const onAnalysisState = useCallback((state: { busy: boolean; running: boolean }) => {
+    setAnalysisState(state); observeGeneration('knowledge', state.running);
+  }, [observeGeneration]);
+  const onParameterState = useCallback((state: { busy: boolean; running: boolean }) => {
+    setParameterState(state); observeGeneration('parameters', state.running);
+  }, [observeGeneration]);
+  function regenerateAll() {
+    if (recovery.checking || bulkDispatching.current) return;
+    const idle = idleGenerationKinds({
+      brief: running.brief || recovery.running.brief, qa: running.qa || recovery.running.qa,
+      scheme: running.scheme || recovery.running.scheme,
+      knowledge: analysisState.running || recovery.running.knowledge,
+      parameters: parameterState.running || recovery.running.parameters,
+    });
+    setBulkRequested(true); setBulkSkipped([]); setBulkAttemptCount(idle.length);
+    if (!idle.length) return;
+    bulkDispatching.current = true; setBulkPending(idle);
+    setVisited({ brief: true, qa: true, scheme: true, knowledge: true }); setParametersVisited(true);
+    setBulkRequests(previous => {
+      const next = { ...previous }; for (const kind of idle) next[kind]++; return next;
+    });
+  }
+  function bulkHandled(kind: ProjectGenerationKind, started: boolean) {
+    if (!started) setBulkSkipped(previous => previous.includes(kind) ? previous : [...previous, kind]);
+    setBulkPending(previous => {
+      const next = previous.filter(value => value !== kind);
+      if (!next.length) bulkDispatching.current = false;
+      return next;
+    });
+  }
   useEffect(() => {
     if (historyLink || knowledgeLink) {
       setResults(null);
@@ -537,6 +581,9 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
+          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0} onClick={regenerateAll}>
+            {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
+          </button>
           <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
         </div>
       </div>
@@ -606,14 +653,23 @@ function ProjectWorkspace({
           <GenerationStatus base={base} kind="parameters" label="Implementation Choices & Limits"
             sharedProgress={recovery.running.parameters ? recovery.progress.parameters : undefined} />}
         <ErrorBox error={recovery.error} />
+        {bulkRequested && <Feedback>{bulkPending.length
+          ? `Starting ${bulkPending.length} remaining generation${bulkPending.length === 1 ? '' : 's'}…`
+          : bulkAttemptCount ? 'Idle views were requested independently. Each keeps its saved result if generation fails. Knowledge is generated as an unpublished preview.'
+            : 'All views are already busy; their existing runs continue.'}
+          {!!bulkSkipped.length && <> Some views were skipped because their own generation or controls were busy or not ready.</>}
+        </Feedback>}
+        <details className="brief-details"><summary>Regenerate all details</summary>
+          <p>Starts idle Overview, Knowledge, Scheme, Q&amp;A and Implementation Choices &amp; Limits jobs concurrently. Each uses its own saved options and worker limit. Generation sends selected project evidence to OpenAI. AI tags stay separate; Knowledge publication still requires Use this result.</p>
+        </details>
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results} generation={generation}
               recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
               onRecoveryNeeded={() => recovery.recheck('brief')}
-              externalBusy={analysisState.busy || recovery.running.knowledge || parameterState.busy || recovery.running.parameters}
-              onGenerating={(active) => { if (active) recovery.clearError(); setRunning(previous => ({ ...previous, brief: active })); }} />
+              generationRequest={bulkRequests.brief} onGenerationRequestHandled={started => bulkHandled('brief', started)}
+              onGenerating={(active) => { observeGeneration('brief', active); setRunning(previous => ({ ...previous, brief: active })); }} />
           </div>
         )}
         {(visited.knowledge || view === 'Knowledge') && (
@@ -629,7 +685,8 @@ function ProjectWorkspace({
             <div hidden={knowledgeSubview !== 'knowledge'}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}
               visible={view === 'Knowledge' && knowledgeSubview === 'knowledge' && !results}
-              showRecords externalBusy={running.brief || recovery.running.brief || parameterState.busy || recovery.running.parameters} onBusyChange={setAnalysisState}
+              showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
+              onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
                 prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
                 perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Preview sources'} />} />
@@ -637,24 +694,26 @@ function ProjectWorkspace({
             {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
               <ProjectParameters base={base} generation={generation}
                 visible={view === 'Knowledge' && knowledgeSubview === 'parameters' && !results}
-                externalBusy={running.brief || recovery.running.brief || analysisState.busy || recovery.running.knowledge}
-                onBusyChange={setParameterState} />
+                generationRequest={bulkRequests.parameters} onGenerationRequestHandled={started => bulkHandled('parameters', started)}
+                onBusyChange={onParameterState} />
             </div>}
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (
           <div hidden={view !== 'AI Q&A' || !!results}>
             <ProjectQA base={base} generation={generation} visible={view === 'AI Q&A' && !results}
+              generationRequest={bulkRequests.qa} onGenerationRequestHandled={started => bulkHandled('qa', started)}
               targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
               recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
-              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, qa: active })); }} />
+              onGenerating={(active) => { observeGeneration('qa', active); setRunning((previous) => ({ ...previous, qa: active })); }} />
           </div>
         )}
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
               recoveryVersion={recovery.version.scheme} recoveryBusy={recovery.checking || recovery.running.scheme}
-              onGenerating={(active) => { if (active) recovery.clearError(); setRunning((previous) => ({ ...previous, scheme: active })); }} />
+              onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />
           </div>
         )}
         {results ? (
@@ -1316,7 +1375,7 @@ function isValidQALimit(value: number) {
   return Number.isSafeInteger(value) && value >= 1;
 }
 
-function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true }: GenerationProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true, generationRequest = 0, onGenerationRequestHandled }: GenerationProps & GenerationRequestProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [tagsBusy, setTagsBusy] = useState(false);
   const [tagRecovery, setTagRecovery] = useState(0);
@@ -1429,6 +1488,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       if (mounted.current) { setGenerating(false); onGenerating(false); }
     }
   }
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || deleting || revisionLoading || tagsBusy || !validLimit ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
   async function removeQuestion(question: string) {
     if (!saved || tagsBusy || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
     if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;

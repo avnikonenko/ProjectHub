@@ -53,7 +53,7 @@ before(async () => {
         if (id === './Feedback' || id === './ui') return '\0generation-ui-stub';
       },
       load(id) {
-        if (id === '\0generation-hook-host') return `export const useState=(...args)=>globalThis.__generationRecoveryHooks.useState(...args);export const useEffect=(...args)=>globalThis.__generationRecoveryHooks.useEffect(...args);export const useRef=value=>({current:value});`;
+        if (id === '\0generation-hook-host') return `export const useState=(...args)=>globalThis.__generationRecoveryHooks.useState(...args);export const useEffect=(...args)=>globalThis.__generationRecoveryHooks.useEffect(...args);export const useRef=value=>({current:value});export const useCallback=fn=>fn;`;
         if (id === '\0generation-ui-stub') return 'export const Feedback=()=>null;export const ErrorBox=()=>null;';
         if (id === '\0generation-jsx-stub') return 'export const jsx=()=>null;export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment=Symbol();';
       },
@@ -166,5 +166,20 @@ test('the previous completed run cannot end recovery before a delayed replacemen
     assert.equal(run.host.value.checking, false);
     assert.equal(run.host.value.version.brief, 1);
     assert.ok(run.calls.every(call => call.method === 'GET'));
+  } finally { run.dispose(); }
+});
+
+
+test('starting one view does not clear a sibling view recovery error', async () => {
+  const run = fixture({ state: 'failed', started_at: 'brief-failed', error: 'Overview failed' });
+  try {
+    await settle();
+    run.responses.qa = { state: 'failed', started_at: 'qa-failed', error: 'Questions failed' };
+    run.host.value.recheck('qa'); await settle();
+    assert.match(run.host.value.error, /Overview failed/);
+    assert.match(run.host.value.error, /Questions failed/);
+    run.host.value.clearError('brief'); await settle();
+    assert.doesNotMatch(run.host.value.error, /Overview failed/);
+    assert.match(run.host.value.error, /Questions failed/);
   } finally { run.dispose(); }
 });

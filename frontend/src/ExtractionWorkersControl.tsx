@@ -220,25 +220,25 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile
       && <p><small>Startup environment overrides the saved profile ({profileSettings.configured_generation_profile}).</small></p>}
     <label>
-      Parallel AI reading threads
+      AI workers per job
       <input type="number" min={settings?.min_extraction_workers ?? 1}
         max={settings?.max_extraction_workers} step={1}
-        aria-label="Parallel AI reading threads" aria-describedby={helpId}
+        aria-label="AI workers per job" aria-describedby={helpId}
         aria-invalid={settings !== null && !valid}
         value={draft}
         disabled={loading || saving || settings === null}
-        placeholder={loading ? 'Loading…' : 'Number of threads'}
+        placeholder={loading ? 'Loading…' : 'Workers per job'}
         onChange={(event) => { setDraft(event.target.value); setSaved(false); }} />
     </label>
     <div className="actions left">
       <button type="button" className="secondary" disabled={loading || saving || !valid || unchanged}
-        onClick={() => void save(count)}>Save thread count</button>
+        onClick={() => void save(count)}>Save workers per job</button>
     </div>
     {(savedField === 'workers' || loading) && saveFeedback}
     {settings && !valid && <Feedback>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</Feedback>}
-    <SettingsHelp title="Thread-count explanation" id={helpId}>
-      <p>For independent AI reading and Q&A batches; 1 is serial, 10 is the default. Applies to the next generation.
-        {' '}More threads use more memory and may hit account limits.</p>
+    <SettingsHelp title="Worker-count explanation" id={helpId}>
+      <p>Maximum parallel AI batches for each generation job; 1 is serial, 10 is the default. Applies to the next job.
+        {' '}Concurrent jobs each get this limit, so total memory use and account requests can increase.</p>
     </SettingsHelp>
     {settings && settings.extraction_workers !== settings.configured_extraction_workers
       && <p><small>Startup environment overrides the saved value ({settings.configured_extraction_workers}).</small></p>}

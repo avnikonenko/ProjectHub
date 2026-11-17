@@ -1,3 +1,4 @@
+import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
 import { Feedback } from './Feedback';
 import { BriefContent, briefSections, validationCopy, type Brief } from './BriefContent';
 import { ImportantKnowledge } from './ImportantKnowledge';
@@ -46,7 +47,7 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false }: GenerationProps & {
+export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, onGenerationRequestHandled }: GenerationProps & GenerationRequestProps & {
   visible: boolean; generation: Generation; onGenerating: (active: boolean) => void;
   onRecoveryNeeded?: () => void;
   recoveryVersion: number; recoveryBusy: boolean; externalBusy?: boolean;
@@ -98,7 +99,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
     return () => abort.abort();
   }, [base, latestVersion, loading, evidenceVersion, visible]);
   useEffect(() => {
-    if (!visible || selectingRevision.current || activeGeneration.current) return;
+    if ((!visible && !generationRequest) || selectingRevision.current || activeGeneration.current) return;
     const abort = new AbortController();
     const id = ++request.current;
     api<Brief | null>(`${base}/codex/brief`, { signal: abort.signal })
@@ -116,7 +117,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
         if (!abort.signal.aborted && request.current === id) setLoading(false);
       });
     return () => { abort.abort(); request.current += 1; };
-  }, [base, recoveryVersion, visible]);
+  }, [base, recoveryVersion, visible, generationRequest]);
 
   async function generate() {
     if (activeGeneration.current || loading || revisionLoading || recoveryBusy || externalBusy) return;
@@ -146,6 +147,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
       }
     }
   }
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
     entries.flatMap((entry) => entry.source_ids),

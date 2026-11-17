@@ -1,3 +1,4 @@
+import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from './api';
 import { AIResultHeader } from './AIResultHeader';
@@ -199,7 +200,7 @@ export function ParameterList({ snapshot, prefix, query = '', component = '' }: 
   </>;
 }
 
-export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange }: {
+export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, onGenerationRequestHandled }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean; externalBusy?: boolean;
   onBusyChange?: (state: Busy) => void;
 }) {
@@ -243,7 +244,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
     };
   }, [base]);
   useEffect(() => {
-    if ((!visible && !recovering && result !== null) || active.current || selectingRevision.current) return;
+    if ((!visible && !generationRequest && !recovering && result !== null) || active.current || selectingRevision.current) return;
     const controller = new AbortController(); reader.current?.abort(); reader.current = controller;
     const identity = ++requestVersion.current;
     const valid = () => !controller.signal.aborted && requestVersion.current === identity;
@@ -266,7 +267,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       if (valid()) { setError((caught as Error).message); setRecovering(false); }
     }).finally(() => { if (valid()) setLoading(false); });
     return () => { controller.abort(); if (reader.current === controller) reader.current = null; };
-  }, [base, projectId, retry, visible]);
+  }, [base, projectId, retry, visible, generationRequest]);
 
   async function generate() {
     if (busy || externalBusy || active.current) return;
@@ -293,6 +294,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       if (active.current === run) { active.current = null; setGenerating(false); }
     }
   }
+  useGenerationRequest(base, generationRequest, generating || recovering || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
   const choices = [...new Set(snapshot?.items.map(item => item.component).filter(Boolean) ?? [])].sort();
   const freshness = parameterFreshnessLabel(result?.freshness, revisionId !== null);
   return <section className="card project-parameters" aria-busy={busy}>

@@ -1,3 +1,4 @@
+import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
 import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
 import { CoverageDetails } from './CoverageDetails';
@@ -28,6 +29,7 @@ type Props = {
   showRecords?: boolean;
   externalBusy?: boolean;
   refreshRequest?: number;
+  onGenerationRequestHandled?: GenerationRequestProps['onGenerationRequestHandled'];
   onBusyChange?: (state: { busy: boolean; running: boolean }) => void;
 };
 
@@ -49,7 +51,7 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   </section>;
 }
 
-export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange }: Props) {
+export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -58,7 +60,6 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const [previewTagsBusy, setPreviewTagsBusy] = useState(false);
   const tagsBusy = publishedTagsBusy || previewTagsBusy;
   const [previewView, setPreviewView] = useState<'summary' | 'knowledge'>('summary');
-  const lastRequested = useRef(refreshRequest);
   const [retry, setRetry] = useState(0);
   const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const [load, setLoad] = useState<LoadState>({ base, key: loadKey, loading: true, data: null, error: '' });
@@ -93,12 +94,12 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }), [base, loadKey]);
   const lastRefresh = useRef('');
   useEffect(() => {
-    if (!visible) return;
+    if (!visible && !refreshRequest) return;
     const refreshKey = `${base}:${retry}:${showRecords}`;
     const refresh = !!lastRefresh.current && lastRefresh.current !== refreshKey;
     lastRefresh.current = refreshKey;
     void readPublishedKnowledge(base, { refresh, publicationId: publicationKey || undefined });
-  }, [base, retry, visible, publicationKey, showRecords]);
+  }, [base, retry, visible, publicationKey, showRecords, refreshRequest]);
 
   useEffect(() => () => {
     active.current?.controller.abort();
@@ -110,7 +111,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }, [base]);
 
   useEffect(() => {
-    if ((!visible && !busy) || active.current?.base === base || activating.current?.base === base) return;
+    if ((!visible && !refreshRequest && !busy) || active.current?.base === base || activating.current?.base === base) return;
     const controller = new AbortController();
     recovery.current = controller;
     const version = ++previewRequestVersion.current;
@@ -142,7 +143,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       controller.abort();
       if (recovery.current === controller) recovery.current = null;
     };
-  }, [base, projectId, retry, visible, loadKey, recoveryAttempt]);
+  }, [base, projectId, retry, visible, loadKey, recoveryAttempt, refreshRequest]);
 
   async function generatePreview() {
     if (externalBusy || active.current || activating.current || busy || tagsBusy) return;
@@ -230,11 +231,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   useEffect(() => {
     setPreviewView('summary');
   }, [showRecords, candidate?.knowledge.publication_id]);
-  useEffect(() => {
-    if (lastRequested.current === refreshRequest) return;
-    lastRequested.current = refreshRequest;
-    void generatePreview();
-  }, [refreshRequest]);
+  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || publishing ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generatePreview, onGenerationRequestHandled);
   const feedback = <>
     <ErrorBox error={error} />
     <ErrorBox error={currentActivation?.error || ''} />
