@@ -134,18 +134,18 @@ def test_read_publish_aliases_are_project_scoped_and_do_not_generate(api):
 ])
 def test_overview_progress_never_substitutes_knowledge_run(api, monkeypatch, legacy, shared, expected):
     snapshots = {'brief': legacy, 'knowledge': shared}
-    monkeypatch.setattr(progress, 'read', lambda pid, kind: deepcopy(snapshots[kind]))
+    monkeypatch.setattr(progress, 'read', lambda pid, kind, **kwargs: deepcopy(snapshots[kind]))
     response = api.client.get('/api/projects/1/codex/generation/status?kind=brief')
     assert response.status_code == 200
-    assert response.json() == legacy
-    assert api.client.get('/api/projects/1/codex/generation/status?kind=knowledge').json() == shared
+    assert response.json() == {**legacy, 'latest_attempt': None}
+    assert api.client.get('/api/projects/1/codex/generation/status?kind=knowledge').json() == {**shared, 'latest_attempt': None}
 
 
 def test_overview_cancel_never_targets_knowledge_run(api, monkeypatch):
     calls = []
     shared = {'state': 'running', 'started_at': 'shared-start'}
     legacy = {'state': 'failed', 'started_at': 'legacy-start'}
-    monkeypatch.setattr(progress, 'read', lambda pid, kind: deepcopy(shared if kind == 'knowledge' else legacy))
+    monkeypatch.setattr(progress, 'read', lambda pid, kind, **kwargs: deepcopy(shared if kind == 'knowledge' else legacy))
     def cancel(pid, kind, started_at):
         calls.append((pid, kind, started_at))
         if kind != 'knowledge' or started_at != 'shared-start':

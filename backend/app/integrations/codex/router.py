@@ -25,6 +25,7 @@ from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
 from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
+from . import generation_attempts as attempts
 from .revisions import list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
@@ -386,8 +387,16 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
     if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters'):
         raise HTTPException(422, 'Unknown generation kind.')
-    status = progress.read(project_id, kind)
+    status = progress.read(project_id, kind, engine=db.bind)
+    status['latest_attempt'] = attempts.read_latest(db, project_id, kind)
     return status
+
+
+@router.get('/generation/summary')
+def generation_summary(project_id: int, db: DB):
+    project(db, project_id)
+    live = {kind: progress.read(project_id, kind, engine=db.bind) for kind in attempts.KINDS}
+    return attempts.generation_summary(db, project_id, live=live)
 
 
 @router.post('/generation/cancel')
@@ -487,7 +496,7 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
         KnowledgeGenerationInput(**body.model_dump(), publish=False), request, db, background_tasks)
 
 
-def _record_scheme_followup_failure(project_id, previous_started_at, error):
+def _record_scheme_followup_failure(engine, project_id, previous_started_at, error):
     """Expose a pre-start error without overwriting a competing Scheme run."""
     lease = generation_lock.for_job(project_id, 'scheme')
     if not lease.acquire(blocking=False):
@@ -497,7 +506,7 @@ def _record_scheme_followup_failure(project_id, previous_started_at, error):
         if current.get('started_at') != previous_started_at or current['state'] == 'running':
             return
         try:
-            progress.begin(project_id, 'scheme')
+            progress.begin(project_id, 'scheme', engine=engine)
             progress.finish(project_id, error=error)
         except CodexError:
             # Invalid global configuration may also prevent beginning progress.
@@ -507,7 +516,8 @@ def _record_scheme_followup_failure(project_id, previous_started_at, error):
         lease.release()
 
 
-def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id):
+def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
+                                     dependency_token=None):
     """Server-owned follow-up, independent of the selected browser project."""
     previous_started_at = progress.read(project_id, 'scheme').get('started_at')
     try:
@@ -515,15 +525,25 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
                  project_id, publication_id)
         with use_project_instructions(instructions):
             refresh_scheme(engine, project_id, manager)
+        if dependency_token:
+            attempts.finish(engine, project_id, 'scheme', dependency_token, state='completed')
     except BriefBusy as exc:
         # Never alter progress or cancellation for an existing Scheme job.
         log.warning('Scheme follow-up not started for project=%s: %s', project_id, exc)
+        if dependency_token:
+            attempts.finish(engine, project_id, 'scheme', dependency_token, state='skipped',
+                            error='Scheme was skipped because another Scheme job or maintenance was active.')
     except CodexError as exc:
-        _record_scheme_followup_failure(project_id, previous_started_at, str(exc))
+        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc))
+        if dependency_token:
+            attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed', error=str(exc))
         log.warning('Scheme follow-up failed for project=%s: %s', project_id, exc)
     except Exception:
-        _record_scheme_followup_failure(project_id, previous_started_at,
+        _record_scheme_followup_failure(engine, project_id, previous_started_at,
                                         'Scheme follow-up failed. The previous saved result is unchanged.')
+        if dependency_token:
+            attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed',
+                            error='Scheme follow-up failed. The previous saved result is unchanged.')
         log.exception('Scheme follow-up failed for project=%s', project_id)
 
 
@@ -533,6 +553,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Confirm sending project evidence to Codex to refresh the project analysis.')
+    dependency_token = None
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
@@ -542,6 +563,8 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             scheme_manager = choose(body.model, body.effort) if callable(choose) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
+        if body.generate_scheme:
+            dependency_token = attempts.queue_dependency(request.app.state.engine, project_id)
         with use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
         if body.generate_scheme:
@@ -549,13 +572,24 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
-                                      result.get('publication_id'))
+                                      result.get('publication_id'), dependency_token)
             result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:
+        if dependency_token:
+            attempts.finish(request.app.state.engine, project_id, 'scheme', dependency_token,
+                            state='skipped', error='Scheme was skipped because Knowledge did not start.')
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
+        if dependency_token:
+            attempts.finish(request.app.state.engine, project_id, 'scheme', dependency_token,
+                            state='skipped', error='Scheme was skipped because Knowledge failed or was cancelled.')
         raise HTTPException(503, str(exc)) from exc
+    except Exception:
+        if dependency_token:
+            attempts.finish(request.app.state.engine, project_id, 'scheme', dependency_token,
+                            state='skipped', error='Scheme was skipped because Knowledge did not finish successfully.')
+        raise
 
 
 @router.post('/analysis/publish')
@@ -742,7 +776,7 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     if not job_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
     try:
-        progress.begin(project_id, 'ask')
+        progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False)
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)

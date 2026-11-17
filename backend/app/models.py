@@ -209,3 +209,15 @@ class GenerationRevision(Base):
     kind: Mapped[str] = mapped_column(String(10))
     generated_at: Mapped[str] = mapped_column(String)
     snapshot: Mapped[dict] = mapped_column(JSON)
+
+
+class ProjectGenerationAttempt(Base):
+    """Latest execution outcome, separate from a previously saved artifact."""
+    __tablename__ = 'project_generation_attempts'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    started_at: Mapped[str] = mapped_column(String(80))
+    finished_at: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    state: Mapped[str] = mapped_column(String(20))
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    saves_result: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
