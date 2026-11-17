@@ -54,6 +54,110 @@ def test_model_can_explain_but_not_replace_default_facts_or_remove_unexplained_p
     assert original == before
 
 
+def used_evidence():
+    value = evidence()
+    value['sources'].append({
+        'id': 'code:context-use', 'kind': 'implementation_usage',
+        'label': 'app/reader.py:27', 'path': 'app/reader.py', 'symbol': 'read',
+        'line_start': 27, 'line_end': 28, 'revision': 'r2',
+        'text': 'if len(selected_text) > MAX_CONTEXT:\n    return selected_text[:MAX_CONTEXT]',
+    })
+    value['parameters'][0]['usage_source_ids'] = ['code:context-use']
+    return value
+
+
+def finding():
+    return {**explanation(refs=['code:context', 'code:context-use']),
+        'title': 'Selected context is truncated at 40,000 characters',
+        'behavior': 'The reader returns only the first MAX_CONTEXT characters when selected text exceeds the bound.',
+        'behavior_basis': 'documented', 'finding_kind': 'limit'}
+
+
+def test_implementation_finding_requires_its_definition_and_usage_and_keeps_locations():
+    original = used_evidence()
+    parameters._evidence(original, 1)
+    items, count = parameters.validate_output(json.dumps({'items': [finding()]}), original)
+    assert count == 1
+    assert items[0]['finding_kind'] == 'limit'
+    assert items[0]['behavior_basis'] == 'documented'
+    assert items[0]['default_value'] == '40000'
+    assert items[0]['path'] == 'app/config.py'
+    assert items[0]['source_ids'] == ['code:context']
+    assert items[0]['usage_source_ids'] == ['code:context-use']
+    assert items[0]['explanation_source_ids'] == ['code:context', 'code:context-use']
+    assert items[1]['finding_kind'] == 'parameter' and items[1]['behavior_basis'] == 'unknown'
+
+
+@pytest.mark.parametrize('change,match', [
+    (lambda item: item.update(source_ids=['code:context']), 'usage site'),
+    (lambda item: item.update(source_ids=['code:context-use']), 'code declaration'),
+    (lambda item: item.update(behavior='', behavior_basis='unknown'), 'inconsistent implementation'),
+    (lambda item: item.update(behavior_basis='unknown'), 'inconsistent implementation'),
+    (lambda item: item.update(title=''), 'inconsistent implementation'),
+    (lambda item: item.update(finding_kind='AGREED'), 'inconsistent implementation'),
+    (lambda item: item.update(default_value='24'), 'invalid structure'),
+])
+def test_unsupported_behavior_cannot_be_promoted_to_code_backed_finding(change, match):
+    output = finding()
+    change(output)
+    with pytest.raises(CodexError, match=match):
+        parameters.validate_output(json.dumps({'items': [output]}), used_evidence())
+
+
+def test_declaration_alone_is_not_evidence_of_enforcement_or_a_consequence():
+    output = {**explanation(), 'title': 'Context default', 'behavior': '',
+              'behavior_basis': 'unknown', 'finding_kind': 'parameter'}
+    items, _ = parameters.validate_output(json.dumps({'items': [output]}), evidence())
+    assert items[0]['finding_kind'] == 'parameter' and not items[0]['behavior']
+    output.update(behavior='The reader truncates all input.', behavior_basis='inferred')
+    with pytest.raises(CodexError, match='usage site'):
+        parameters.validate_output(json.dumps({'items': [output]}), evidence())
+
+
+@pytest.mark.parametrize('change', [
+    lambda value: value['parameters'][0].update(usage_source_ids=['foreign']),
+    lambda value: value['parameters'][0].update(usage_source_ids=['code:context']),
+    lambda value: value['sources'][-1].update(project_id=2),
+])
+def test_usage_evidence_cannot_reference_missing_declaration_only_or_foreign_sources(change):
+    value = used_evidence()
+    change(value)
+    with pytest.raises(CodexError):
+        parameters._evidence(value, 1)
+
+
+def test_inline_behavior_can_use_its_code_as_both_definition_and_usage():
+    value = used_evidence()
+    item = value['parameters'][0]
+    item.update(declaration_kind='implementation_behavior', default_kind='unspecified', default_value=None,
+                source_ids=['code:context-use'], path='app/reader.py')
+    parameters._evidence(value, 1)
+    output = finding(); output['source_ids'] = ['code:context-use']
+    rows, _ = parameters.validate_output(json.dumps({'items': [output]}), value)
+    assert rows[0]['default_value'] is None
+    assert rows[0]['finding_kind'] == 'limit'
+
+
+def test_machine_citation_only_groups_are_removed_without_changing_code_brackets_or_refs():
+    output = finding()
+    output['behavior'] = 'The reader applies records[:12] [code:context; code:context-use].'
+    output['title'] = 'Selected context [code:context]'
+    output['purpose'] = 'Bound input [code:context, code:context-use].'
+    output['trade_off'] = 'Keep [unknown:ref] and [code:context; ordinary words] as supplied.'
+    rows, _ = parameters.validate_output(json.dumps({'items': [output]}), used_evidence())
+    assert rows[0]['behavior'] == 'The reader applies records[:12].'
+    assert rows[0]['title'] == 'Selected context'
+    assert rows[0]['purpose'] == 'Bound input.'
+    assert rows[0]['trade_off'] == output['trade_off']
+    assert rows[0]['explanation_source_ids'] == output['source_ids']
+
+
+def test_citation_markup_alone_does_not_establish_behavior():
+    output = finding(); output['behavior'] = '[code:context-use]'
+    with pytest.raises(CodexError, match='inconsistent implementation'):
+        parameters.validate_output(json.dumps({'items': [output]}), used_evidence())
+
+
 @pytest.mark.parametrize('change,match', [
     (lambda value: value.update(default_value='999'), 'invalid structure'),
     (lambda value: value.update(id='invented'), 'invented'),
@@ -128,6 +232,7 @@ def test_one_generation_saves_all_declared_values_independently_and_failure_pres
     before = saved_state(engine)
     saved = parameters.refresh_parameters(engine, 1, manager)
     assert saved['project_id'] == 1
+    assert saved['view_version'] == 2
     assert progress.read(1, 'parameters')['state'] == 'completed'
     assert progress.current_cancel_event() is None
     assert manager.calls == 1 and calls == [1, 1]

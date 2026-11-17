@@ -433,3 +433,189 @@ def test_other_language_coverage_is_not_claimed_complete(tmp_path):
         assert result['coverage']['supported_formats']
     finally:
         engine.dispose()
+
+
+def test_implementation_file_cap_preserves_definition_and_actual_cross_file_application(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'settings.py').write_text('MAX_FILES=24\nUNUSED_LIMIT=999\n')
+    (repo / 'reader.py').write_text('''from settings import MAX_FILES as FILE_CAP
+
+def inspect_files(paths):
+    selected=[]
+    for path in paths:
+        if len(selected) >= FILE_CAP:
+            break
+        selected.append(path)
+    return selected
+''')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        item = next(item for item in result['parameters'] if item['name'] == 'MAX_FILES')
+        by_id = {source['id']: source for source in result['sources']}
+        definition = by_id[item['source_ids'][0]]
+        usage = by_id[item['usage_source_ids'][0]]
+        assert definition['path'] == 'settings.py' and definition['line_start'] == 1
+        assert 'MAX_FILES=24' in definition['text']
+        assert usage['path'] == 'reader.py' and usage['symbol'] == 'inspect_files'
+        assert usage['line_start'] == 6 and usage['line_end'] == 7
+        assert usage['text'] == 'if len(selected) >= FILE_CAP:\n            break'
+        assert usage['kind'] == 'implementation_usage' and len(usage['revision']) == 64
+        assert next(item for item in result['parameters'] if item['name'] == 'UNUSED_LIMIT')['usage_source_ids'] == []
+        assert any('general call/data flow' in note for note in result['coverage']['limitations'])
+    finally:
+        engine.dispose()
+
+
+def test_inline_limits_exclusions_fallbacks_and_unsupported_paths_have_exact_code_evidence(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'reader.py').write_text('''def inspect_files(paths):
+    selected=[]
+    for path in paths:
+        if len(selected) >= 24:
+            break
+        if path.endswith('.bak'):
+            continue
+        selected.append(path)
+    return selected
+
+def sample_records(records):
+    return records[:12]
+
+def choose_backend():
+    try:
+        return optimized_backend()
+    except ImportError:
+        return compatible_backend()
+
+def export_format(format):
+    raise NotImplementedError('Only PDB export is supported')
+''')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        observed = [row for row in result['parameters'] if row['declaration_kind'] == 'implementation_behavior']
+        assert len(observed) == 5
+        sources = {source['id']: source for source in result['sources']}
+        texts = [sources[row['usage_source_ids'][0]]['text'] for row in observed]
+        assert any('len(selected) >= 24' in value and 'break' in value for value in texts)
+        assert any("path.endswith('.bak')" in value and 'continue' in value for value in texts)
+        assert any('records[:12]' in value for value in texts)
+        assert any('except ImportError:' in value and 'compatible_backend()' in value for value in texts)
+        assert any('NotImplementedError' in value for value in texts)
+        assert all(row['default_kind'] == 'unspecified' and row['default_value'] is None for row in observed)
+        assert all(row['source_ids'] == row['usage_source_ids'] for row in observed)
+    finally:
+        engine.dispose()
+
+
+def test_usage_never_links_unrelated_shadowed_or_reassigned_names_and_safety_is_atomic(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'settings.py').write_text('MAX_FILES=24\n')
+    (repo / 'reader.py').write_text('''from settings import MAX_FILES as CAP
+CAP=10
+
+def inspect_files(paths, MAX_FILES=100):
+    return paths[:MAX_FILES]
+
+def other_files(paths):
+    return paths[:CAP]
+
+def secret_files(paths):
+    if len(paths) > 24:
+        password='SECRET_BODY'
+        return []
+''')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        constant = next(item for item in result['parameters'] if item['name'] == 'MAX_FILES' and item['path'] == 'settings.py')
+        assert not constant['usage_source_ids']
+        assert 'SECRET_BODY' not in json.dumps(result)
+        assert any('general call/data flow' in value for value in result['coverage']['limitations'])
+    finally:
+        engine.dispose()
+
+
+def test_usage_evidence_budget_never_leaves_orphan_usage_references(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'reader.py').write_text('MAX_FILES=24\ndef inspect_files(paths):\n    return paths[:MAX_FILES]\n')
+    engine = setup(tmp_path, repo)
+    try:
+        monkeypatch.setattr(evidence, 'MAX_SOURCE_CHARS', 10)
+        result = evidence.collect_parameter_evidence(engine, 1)
+        assert result['parameters'] == result['sources'] == []
+        monkeypatch.setattr(evidence, 'MAX_SOURCE_CHARS', 40_000)
+        monkeypatch.setattr(evidence, 'MAX_PACKAGE_CHARS', 100)
+        result = evidence.collect_parameter_evidence(engine, 1)
+        assert result['parameters'] == result['sources'] == []
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('binding', ['def cap():\n    return 7', 'class cap:\n    pass', 'import replacement as cap', 'if enabled:\n    def cap():\n        return 7', 'try:\n    pass\nexcept RuntimeError as cap:\n    pass'])
+def test_imported_usage_is_not_linked_after_other_module_binding(binding):
+    external = []
+    evidence._python('from config import MAX_FILES as cap\n' + binding + '\nselected=files[:cap]\n', external=external)
+    assert external == []
+
+
+def test_relative_import_beyond_package_root_is_not_linked(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'config.py').write_text('MAX_FILES=24\n')
+    (repo / 'pkg').mkdir()
+    (repo / 'pkg' / 'reader.py').write_text('from ...config import MAX_FILES\nselected=files[:MAX_FILES]\n')
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        constant = next(item for item in result['parameters'] if item['name'] == 'MAX_FILES')
+        assert constant['usage_source_ids'] == []
+        assert any('could not be resolved' in value for value in result['coverage']['limitations'])
+    finally:
+        engine.dispose()
+
+
+def test_cached_source_segments_preserve_utf8_byte_columns_and_multiline_locations():
+    import ast
+    value = 'caption = "café"; MAX_FILES = 24\nif len(files) >= MAX_FILES:\n    raise ValueError(\n        "dépassé"\n    )\n'
+    reader = evidence._segment_reader(value)
+    for node in ast.walk(ast.parse(value)):
+        if hasattr(node, 'lineno'):
+            assert reader(node) == ast.get_source_segment(value, node)
+    rows = evidence._python(value)
+    constant = next(row for row in rows if row['name'] == 'MAX_FILES')
+    assert constant['declaration_snippet']['text'] == 'MAX_FILES = 24'
+    assert constant['usages'][0]['text'].startswith('if len(files) >= MAX_FILES:')
+    assert 'dépassé' in constant['usages'][0]['text']
+
+
+def test_used_named_global_limit_is_not_crowded_out_by_earlier_inline_helpers(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'a_helpers.py').write_text('def sample_files(files):\n    return files[:2]\n')
+    (repo / 'z_reader.py').write_text('MAX_FILES=24\ndef inspect_files(files):\n    return files[:MAX_FILES]\n')
+    monkeypatch.setattr(evidence, 'MAX_PARAMETERS', 1)
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        assert [item['name'] for item in result['parameters']] == ['MAX_FILES']
+        assert result['parameters'][0]['usage_source_ids']
+        assert result['coverage']['parameters_omitted'] == 1
+    finally:
+        engine.dispose()
+
+
+def test_imported_global_limit_is_ranked_after_usage_resolution_before_output_cap(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'a_helpers.py').write_text('def sample_files(files):\n    return files[:2]\n')
+    (repo / 'settings.py').write_text('MAX_FILES=24\n')
+    (repo / 'z_reader.py').write_text('from settings import MAX_FILES as cap\ndef inspect_files(files):\n    return files[:cap]\n')
+    monkeypatch.setattr(evidence, 'MAX_PARAMETERS', 1)
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        assert [item['name'] for item in result['parameters']] == ['MAX_FILES']
+        by_id = {source['id']: source for source in result['sources']}
+        assert by_id[result['parameters'][0]['usage_source_ids'][0]]['path'] == 'z_reader.py'
+        assert result['coverage']['parameters_omitted'] == 1
+    finally:
+        engine.dispose()

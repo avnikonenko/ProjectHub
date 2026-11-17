@@ -6,6 +6,7 @@ config/settings filenames does not allow their original file bodies into AI inpu
 import ast
 from collections import defaultdict
 import hashlib
+import io
 import json
 import math
 import os
@@ -13,6 +14,7 @@ from pathlib import PurePosixPath
 import re
 import time
 import tomllib
+import tokenize
 
 from sqlalchemy.orm import Session
 
@@ -31,10 +33,11 @@ MAX_READ_BYTES = 2 * 1024 * 1024
 MAX_FILE_BYTES = 65_536
 MAX_INSPECTION_SECONDS = 5.0
 MAX_PACKAGE_CHARS = 140_000
-_VERSION = 2
+_VERSION = 3
 _SETTING_WORDS = re.compile(r'(?:default|limit|budget|timeout|worker|thread|batch|chunk|context|threshold|cutoff|interval|rate|buffer|cache|size|count|retr(?:y|ies)|profile|precision|tolerance|seed|replica|sample|frame|occupancy|temperature|step|window|minimum|maximum|(?:^|_)min(?:_|$)|(?:^|_)max(?:_|$))', re.I)
 _PRIVATE_NAME = re.compile(r'(?:password|passwd|credential|secret|api[_-]?key|private[_-]?key|bearer|authorization|authentication|(?:^|[._-])auth(?:[._-]|$)|access[_-]?token|refresh[_-]?token)', re.I)
 _PRIVATE_TEXT = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|-----BEGIN|\b(?:Bearer|Basic)\s+\S+|\bsk-[A-Za-z0-9_-]{10,}|\b(?:password|passwd|credential|secret|api[_-]?key|authorization|token)["']?\s*[:=])''', re.I)
+_BEHAVIOR_WORDS = re.compile(r'(?:file|source|context|sample|record|input|evidence|batch|chunk|budget|limit|size|count|cache|thread|worker|unsupported|exclude|filter|fallback|format|backend)', re.I)
 _AUXILIARY = {'tests', 'test', 'examples', 'example', 'benchmarks', 'benchmark', 'migrations', 'migration', 'vendor', 'generated'}
 
 
@@ -97,10 +100,25 @@ def _safe_expression(node):
     return True
 
 
-def _value(node, source):
+def _segment_reader(value):
+    """AST columns are UTF-8 byte offsets; split the bounded file only once."""
+    lines = [line.encode('utf-8') for line in value.splitlines(keepends=True)]
+
+    def read(node):
+        start, end = getattr(node, 'lineno', None), getattr(node, 'end_lineno', None)
+        if start is None or end is None or not (1 <= start <= end <= len(lines)):
+            return None
+        left, right = node.col_offset, node.end_col_offset
+        if start == end:
+            return lines[start - 1][left:right].decode('utf-8')
+        return b''.join([lines[start - 1][left:], *lines[start:end - 1], lines[end - 1][:right]]).decode('utf-8')
+    return read
+
+
+def _value(node, source, segment=None):
     if node is None:
         return None, 'unspecified'
-    value = ast.get_source_segment(source, node) or ast.unparse(node)
+    value = (segment(node) if segment else ast.get_source_segment(source, node)) or ast.unparse(node)
     if not _safe_text(value, 400) or not _safe_expression(node):
         return None
     try:
@@ -133,7 +151,33 @@ def _comments(lines, line):
     return '\n'.join(reversed(selected))
 
 
-def _python(value, *, partial=False):
+def _snippet(node, value, *, maximum=1200, segment=None):
+    """Exact bounded source lines with comments removed; never copy unsafe bodies."""
+    if not _safe_expression(node):
+        return None
+    start, end = node.lineno, getattr(node, 'end_lineno', node.lineno)
+    if end - start > 9:
+        return None
+    text = segment(node) if segment else ast.get_source_segment(value, node)
+    if not text or len(text) > maximum:
+        return None
+    # Strip comments as tokens, including continuation comments which are not
+    # independently attributable documentation. Code tokens stay verbatim.
+    lines = text.splitlines()
+    try:
+        for token in tokenize.generate_tokens(io.StringIO(text).readline):
+            if token.type == tokenize.COMMENT:
+                line, column = token.start
+                lines[line - 1] = lines[line - 1][:column].rstrip()
+    except (tokenize.TokenError, IndentationError):
+        return None
+    text = '\n'.join(lines)
+    if not _safe_text(text, maximum):
+        return None
+    return dict(text=text, line_start=start, line_end=end)
+
+
+def _python(value, *, partial=False, external=None):
     try:
         tree = ast.parse(value)
     except SyntaxError:
@@ -154,6 +198,7 @@ def _python(value, *, partial=False):
         else:
             raise
     lines = value.splitlines()
+    segment = _segment_reader(value)
     candidates = []
     scopes, conditions, bindings, class_scopes = {}, {}, {}, set()
 
@@ -162,7 +207,7 @@ def _python(value, *, partial=False):
         qualifiers = []
 
         def text(self, node):
-            text = ast.get_source_segment(value, node) or ast.unparse(node)
+            text = segment(node) or ast.unparse(node)
             return text if _safe_text(text, 250) and _safe_expression(node) else '[condition omitted for safety]'
 
         def branch(self, qualifier, children):
@@ -278,7 +323,7 @@ def _python(value, *, partial=False):
     def add(name, symbol, node, default, kind=None, help_text='', declaration_kind='code_default'):
         if not isinstance(name, str) or not name or len(name) > 160 or len(symbol) > 300 or _secret_name(name):
             return
-        parsed = _value(default, value)
+        parsed = _value(default, value, segment)
         if parsed is None:
             return
         default_value, default_kind = parsed
@@ -294,7 +339,7 @@ def _python(value, *, partial=False):
         leaf = name.lstrip('-').replace('-', '_').rsplit('.', 1)[-1]
         guard_key = '--' + leaf if name.startswith('-') else leaf
         for guard in guard_index[(scopes.get(id(node), ()), guard_key)]:
-            text = ast.get_source_segment(value, guard.test) or ast.unparse(guard.test)
+            text = segment(guard.test) or ast.unparse(guard.test)
             if _safe_text(text, 250) and _safe_expression(guard.test):
                 actions = ', '.join(type(part).__name__ for part in guard.body[:2])
                 guards.append(f'L{guard.lineno}: if {text}; body syntax: {actions}')
@@ -306,7 +351,8 @@ def _python(value, *, partial=False):
             condition = 'Conditional declaration; full condition exceeds the inspection bound.'
         candidates.append(dict(name=name, symbol=symbol, line_start=line,
             line_end=max(getattr(node, 'end_lineno', line), getattr(default, 'end_lineno', line)), default_value=default_value,
-            default_kind=default_kind, declaration_kind=declaration_kind, condition=condition, context=context))
+            default_kind=default_kind, declaration_kind=declaration_kind, condition=condition, context=context,
+            _scope=scopes.get(id(node), ()), declaration_snippet=_snippet(node, value, segment=segment), usages=[]))
 
     class Visitor(ast.NodeVisitor):
         scope = []
@@ -380,6 +426,140 @@ def _python(value, *, partial=False):
             self.generic_visit(node)
 
     Visitor().visit(tree)
+    parents = {id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    usage_nodes, seen_usage = [], set()
+    for node in ast.walk(tree):
+        selected = None
+        if isinstance(node, ast.If):
+            selected = node
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice):
+            selected = node
+        elif isinstance(node, ast.Call) and (
+                isinstance(node.func, ast.Name) and node.func.id == 'islice'
+                or isinstance(node.func, ast.Attribute) and node.func.attr == 'islice'
+                or any(keyword.arg and _SETTING_WORDS.search(keyword.arg) for keyword in node.keywords)):
+            selected = node
+        if selected is None:
+            continue
+        if not isinstance(selected, ast.If):
+            while id(selected) in parents and not isinstance(selected, ast.stmt):
+                parent = parents[id(selected)]
+                if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    break
+                selected = parent
+        if id(selected) in seen_usage or not isinstance(selected, ast.stmt):
+            continue
+        seen_usage.add(id(selected))
+        snippet = _snippet(selected, value, segment=segment)
+        if snippet is None:
+            continue
+        # Only loaded references establish a use, never another assignment with
+        # the same spelling. Preserve a symbol and exact independently cited range.
+        references = {part.id for part in ast.walk(node.test if isinstance(node, ast.If) else node)
+                      if isinstance(part, ast.Name) and isinstance(part.ctx, ast.Load)}
+        scope = scopes.get(id(node), ())
+        snippet['symbol'] = '.'.join(scope) or '<module>'
+        usage_nodes.append((node, scope, references, snippet))
+
+    def visible(declaration, scope, name):
+        declared = declaration['_scope']
+        if declared == scope:
+            return True
+        if declared or not scope:
+            return False
+        return not any(name in bindings.get(scope[:depth], set()) or scope[:depth] in class_scopes
+                       for depth in range(1, len(scope) + 1))
+
+    linked_usage = set()
+    for declaration in candidates:
+        name = declaration['name']
+        for node, scope, references, snippet in usage_nodes:
+            if (name in references and visible(declaration, scope, name)
+                    and not (declaration['line_start'] <= snippet['line_start'] <= declaration['line_end'])):
+                declaration['usages'].append(dict(snippet))
+                linked_usage.add(id(node))
+                if len(declaration['usages']) == 3:
+                    break
+
+    # Direct module-level imports are resolvable by the caller's safe repository
+    # inventory. Ambiguous or shadowed aliases are deliberately not linked.
+    if external is not None:
+        imports = defaultdict(list)
+        for node in tree.body:
+            if isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    if alias.name != '*':
+                        imports[alias.asname or alias.name].append((node.level, node.module or '', alias.name))
+        rebound = set()
+        for node in ast.walk(tree):
+            if scopes.get(id(node), ()) != ():
+                continue
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+                rebound.add(node.id)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                rebound.add(node.name)
+            elif isinstance(node, ast.Import):
+                rebound.update(alias.asname or alias.name.split('.')[0] for alias in node.names)
+            elif isinstance(node, ast.ExceptHandler) and node.name:
+                rebound.add(node.name)
+        for _, scope, references, snippet in usage_nodes:
+            for name in references:
+                if name not in rebound and len(imports.get(name, [])) == 1 and not any(
+                        scope[:depth] in class_scopes or name in bindings.get(scope[:depth], set()) for depth in range(1, len(scope) + 1)):
+                    level, module, imported = imports[name][0]
+                    external.append(dict(level=level, module=module, name=imported, usage=dict(snippet)))
+
+    # Inline hardcoded boundaries have no separate constant declaration. They
+    # still belong in a code-backed choices view. Do not duplicate a named use.
+    for node, scope, references, snippet in usage_nodes:
+        text = snippet['text']
+        literal_bound = any(isinstance(part, ast.Constant) and type(part.value) is int and part.value > 0
+                            for part in ast.walk(node.test if isinstance(node, ast.If) else node))
+        terminating = isinstance(node, ast.If) and any(isinstance(part, (ast.Break, ast.Continue, ast.Return, ast.Raise))
+                                                      for part in node.body)
+        sliced = isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Slice)
+        bounded_call = isinstance(node, ast.Call)
+        filtering = terminating and any(isinstance(part, ast.Call) and (
+            isinstance(part.func, ast.Attribute) and part.func.attr in {'endswith', 'startswith', 'match', 'fullmatch', 'search'}
+            or isinstance(part.func, ast.Name) and re.search(r'exclude|ignore|filter|supported', part.func.id, re.I))
+            for part in ast.walk(node.test))
+        if (id(node) in linked_usage or not (filtering or literal_bound and (terminating or sliced or bounded_call))
+                or not (filtering or _BEHAVIOR_WORDS.search(text + snippet['symbol']))):
+            continue
+        name = ('Filtering policy' if filtering else 'Bounded selection' if sliced else 'Processing bound' if bounded_call else 'Conditional limit') + f' at line {snippet["line_start"]}'
+        candidates.append(dict(name=name, symbol=snippet['symbol'], line_start=snippet['line_start'],
+            line_end=snippet['line_end'], default_value=None, default_kind='unspecified',
+            declaration_kind='implementation_behavior', condition='; '.join(conditions.get(id(node), ())),
+            context='', declaration_snippet=dict(snippet), usages=[dict(snippet)], _scope=scope))
+    for node in ast.walk(tree):
+        snippet = None
+        name = ''
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+            exception = ast.unparse(node.exc.func)
+            if exception.endswith('NotImplementedError') or any(
+                    isinstance(part, ast.Constant) and isinstance(part.value, str)
+                    and re.search(r'(?:unsupported|not supported|not implemented)', part.value, re.I)
+                    for part in ast.walk(node.exc)):
+                snippet, name = _snippet(node, value, segment=segment), 'Unsupported path'
+        elif isinstance(node, (ast.Try, ast.TryStar)) and node.handlers:
+            # A fallback is a recorded exception branch, not proof that the
+            # alternative always succeeds. Copy only a safe bounded branch.
+            for handler in node.handlers:
+                if any(isinstance(part, (ast.Return, ast.Assign)) and any(isinstance(child, ast.Call) for child in ast.walk(part))
+                       for part in handler.body):
+                    snippet = _snippet(handler, value, segment=segment)
+                    if snippet:
+                        name = 'Exception fallback'
+                        break
+        if snippet and _BEHAVIOR_WORDS.search(snippet['text'] + '.'.join(scopes.get(id(node), ()))):
+            scope = scopes.get(id(node), ())
+            candidates.append(dict(name=name + f' at line {snippet["line_start"]}',
+                symbol='.'.join(scope) or '<module>', line_start=snippet['line_start'], line_end=snippet['line_end'],
+                default_value=None, default_kind='unspecified', declaration_kind='implementation_behavior',
+                condition='; '.join(conditions.get(id(node), ())), context='', declaration_snippet=dict(snippet),
+                usages=[dict(snippet)], _scope=scope))
+    for declaration in candidates:
+        declaration.pop('_scope', None)
     return candidates
 
 
@@ -560,6 +740,7 @@ def collect_parameter_evidence(engine, project_id):
     root_fd = None
     budget = _Budget()
     markers, selected = [], []
+    file_facts, imported_usages = {}, []
     try:
         if not repository_path:
             raise EvidenceReadError('No repository is registered; code-declared parameters are unavailable.')
@@ -610,7 +791,10 @@ def collect_parameter_evidence(engine, project_id):
                 entrypoint_paths.update(_entrypoint_targets(packaging, relative, available_paths))
                 if PurePosixPath(relative).name == 'pyproject.toml':
                     continue  # Packaging metadata selects entrypoints, not runtime defaults.
-                declarations = _python(value, partial=partial) if relative.endswith('.py') else _config(value, relative, limitations)
+                external = []
+                declarations = _python(value, partial=partial, external=external) if relative.endswith('.py') else _config(value, relative, limitations)
+                file_facts[relative] = dict(revision=file_hash, partial=partial)
+                imported_usages.extend((relative, entry) for entry in external[:100])
                 for declaration in declarations:
                     coverage['parameters_found'] += 1
                     location = (relative, declaration['symbol'], declaration['name'], declaration['line_start'])
@@ -623,6 +807,9 @@ def collect_parameter_evidence(engine, project_id):
                         f"Parameter: {declaration['name']}\nDeclaration kind: {declaration['declaration_kind']}\n"
                         f"Declared {'configuration value' if declaration['declaration_kind'] == 'configuration_value' else 'default'} ({declaration['default_kind']}): "
                         f"{declaration['default_value'] if declaration['default_value'] is not None else 'No declared default'}")
+                    if declaration.get('declaration_snippet'):
+                        fragment = declaration['declaration_snippet']
+                        source_text += '\nInspected code:\n' + fragment['text']
                     if declaration['context']:
                         source_text += '\n' + declaration['context']
                     if declaration['condition']:
@@ -632,20 +819,36 @@ def collect_parameter_evidence(engine, project_id):
                     source = dict(id=source_id, label=f"{relative}:{declaration['line_start']}", text=source_text,
                         provenance='parsed code/configuration declaration', content_hash=hashlib.sha256(source_text.encode()).hexdigest(),
                         path=relative, revision=file_hash, symbol=declaration['symbol'],
+                        kind='implementation_usage' if declaration['declaration_kind'] == 'implementation_behavior' else 'implementation_declaration',
                         line_start=declaration['line_start'], line_end=declaration['line_end'],
                         partial=partial, revision_kind='inspected_prefix_hash' if partial else 'file_content_hash')
                     # Prefer actual setting declarations over incidental helper
                     # argument defaults without hardcoding project features.
-                    priority = (-1 if relative in entrypoint_paths else 0 if declaration['name'].isupper()
+                    priority = (-5 if declaration.get('usages') and declaration['name'].isupper()
+                        and declaration['declaration_kind'] != 'implementation_behavior' else
+                        -4 if declaration['declaration_kind'] == 'implementation_behavior' else
+                        -3 if declaration.get('usages') else -1 if relative in entrypoint_paths else 0 if declaration['name'].isupper()
                         and declaration['declaration_kind'] != 'environment_fallback'
                         and re.search(r'(?:context|budget|source|input|worker|thread|timeout|threshold|cutoff)', declaration['name'], re.I) else
                         1 if declaration['declaration_kind'] == 'configuration_value'
                         or declaration['name'].isupper() or declaration['name'].startswith('-') or '.' in declaration['symbol'] else 2,
                         relative, declaration['line_start'], declaration['name'], ordinal)
-                    selected.append((priority, parameter, source))
-                    selected.sort(key=lambda entry: entry[0])
-                    if len(selected) > MAX_PARAMETERS:
-                        selected.pop()
+                    usage_sources = []
+                    for usage in declaration.get('usages', [])[:3]:
+                        usage_id = 'implementation-use:' + _digest([relative, usage['line_start'], usage['line_end'], usage['text']])[:32]
+                        if declaration['declaration_kind'] == 'implementation_behavior':
+                            usage_id = source_id
+                            usage_source = source
+                        else:
+                            usage_source = dict(id=usage_id, label=f"{relative}:{usage['line_start']}", text=usage['text'],
+                                kind='implementation_usage', provenance='inspected static usage; not executed',
+                                content_hash=hashlib.sha256(usage['text'].encode()).hexdigest(), path=relative,
+                                revision=file_hash, symbol=usage['symbol'], line_start=usage['line_start'], line_end=usage['line_end'],
+                                partial=partial, revision_kind='inspected_prefix_hash' if partial else 'file_content_hash')
+                        if usage_id not in [entry['id'] for entry in usage_sources]:
+                            usage_sources.append(usage_source)
+                    parameter['usage_source_ids'] = [entry['id'] for entry in usage_sources]
+                    selected.append((priority, parameter, source, usage_sources))
             except OSError:
                 coverage['freshness_unknown'] = True
                 limitations.add('Some files were unsafe, unavailable, malformed, binary or beyond the per-file read bound; their parameters were not established.')
@@ -665,12 +868,64 @@ def collect_parameter_evidence(engine, project_id):
     finally:
         if root_fd is not None:
             os.close(root_fd)
-    used = 0
-    for _, parameter, source in selected:
-        if used + len(source['text']) > MAX_SOURCE_CHARS:
+    # Resolve only direct imports to one safely inspected module and one
+    # module-level declaration. Never link by spelling alone across files.
+    unresolved = 0
+    for importing_path, entry in imported_usages:
+        path = PurePosixPath(importing_path)
+        module = PurePosixPath(*entry['module'].split('.')) if entry['module'] else PurePosixPath()
+        if entry['level']:
+            if entry['level'] > len(path.parent.parts):
+                unresolved += 1
+                continue
+            base = path.parent
+            for _ in range(entry['level'] - 1):
+                base = base.parent
+            module = base / module
+        possibilities = {str(module) + '.py', (module / '__init__.py').as_posix()} & file_facts.keys()
+        if len(possibilities) != 1:
+            unresolved += 1
             continue
-        result['parameters'].append(parameter); result['sources'].append(source)
-        used += len(source['text'])
+        target_path = next(iter(possibilities))
+        matches = [record for record in selected if record[1]['path'] == target_path
+                   and record[1]['name'] == entry['name'] and record[1]['symbol'] == entry['name']]
+        if len(matches) != 1:
+            unresolved += 1
+            continue
+        record = matches[0]
+        usage = entry['usage']
+        if len(record[3]) >= 6:
+            continue
+        fact = file_facts[importing_path]
+        identifier = 'implementation-use:' + _digest([importing_path, usage['line_start'], usage['line_end'], usage['text']])[:32]
+        if identifier in record[1]['usage_source_ids']:
+            continue
+        record[3].append(dict(id=identifier, label=f"{importing_path}:{usage['line_start']}", text=usage['text'],
+            kind='implementation_usage', provenance='direct static import usage; not executed',
+            content_hash=hashlib.sha256(usage['text'].encode()).hexdigest(), path=importing_path,
+            revision=fact['revision'], symbol=usage['symbol'], line_start=usage['line_start'], line_end=usage['line_end'],
+            partial=fact['partial'], revision_kind='inspected_prefix_hash' if fact['partial'] else 'file_content_hash'))
+        record[1]['usage_source_ids'].append(identifier)
+    limitations.add('Usage inspection is bounded to supported Python syntax and direct unambiguous from-imports; dynamic imports, configuration precedence and general call/data flow are not established.')
+    if unresolved:
+        limitations.add(f'{unresolved} imported usage candidates could not be resolved unambiguously within the inspected files.')
+    # Select only after imports are linked: a declaration used in a later file
+    # must compete as applied evidence rather than being discarded as unused.
+    selected.sort(key=lambda record: (
+        not bool(record[1]['usage_source_ids']),
+        -5 if record[1]['usage_source_ids'] and record[1]['name'].isupper()
+            and record[1]['declaration_kind'] != 'implementation_behavior' else record[0][0],
+        record[0][1:]))
+    selected = selected[:MAX_PARAMETERS]
+    used, retained = 0, set()
+    for _, parameter, source, usage_sources in selected:
+        bundle = {entry['id']: entry for entry in [source, *usage_sources] if entry['id'] not in retained}
+        cost = sum(len(entry['text']) for entry in bundle.values())
+        if used + cost > MAX_SOURCE_CHARS:
+            continue
+        result['parameters'].append(parameter); result['sources'].extend(bundle.values())
+        retained.update(bundle)
+        used += cost
     coverage['parameters_omitted'] = coverage['parameters_found'] - len(result['parameters'])
     if coverage['parameters_omitted']:
         limitations.add('Parameter/text limits omitted some declarations; defaults and conditions were not merged or rewritten.')
@@ -679,7 +934,9 @@ def collect_parameter_evidence(engine, project_id):
     coverage.update(partial=bool(limitations), limitations=sorted(limitations))
     # Keep facts and their evidence together under serialized metadata limits too.
     while len(json.dumps(result, ensure_ascii=False)) > MAX_PACKAGE_CHARS and result['parameters']:
-        result['parameters'].pop(); result['sources'].pop(); coverage['parameters_omitted'] += 1
+        result['parameters'].pop(); coverage['parameters_omitted'] += 1
+        kept = {identifier for item in result['parameters'] for identifier in [*item['source_ids'], *item.get('usage_source_ids', [])]}
+        result['sources'] = [source for source in result['sources'] if source['id'] in kept]
         coverage['partial'] = True
         coverage['limitations'] = sorted({*coverage['limitations'], 'The serialized parameter evidence budget omitted complete declarations.'})
     result['fingerprint'] = _digest({'version': _VERSION, 'project_id': project_id, 'repository': repository_path,
