@@ -81,13 +81,28 @@ def parser():
     done = todo_actions.add_parser('complete', aliases=['done'], help='Mark an existing TODO completed')
     project_arguments(done)
     done.add_argument('--todo-id', type=int, required=True)
-    sessions = commands.add_parser('session', help='List or link Codex sessions for reading')
+    sessions = commands.add_parser('session', help='List, link or unlink Codex sessions')
     session_actions = sessions.add_subparsers(dest='action', required=True)
-    project_arguments(session_actions.add_parser('list'))
+    session_listing = session_actions.add_parser('list')
+    project_arguments(session_listing)
+    session_listing.add_argument('--include-unlinked', action='store_true', help='Include saved unlinked associations')
     linking = session_actions.add_parser('link')
     project_arguments(linking)
     linking.add_argument('--session', help='Codex thread ID (defaults to CODEX_THREAD_ID)')
     linking.add_argument('--title', help='Optional display name (otherwise use the Codex name)')
+    unlinking = session_actions.add_parser('unlink', help='Unlink one exact session without deleting history')
+    project_arguments(unlinking)
+    unlink_selector = unlinking.add_mutually_exclusive_group(required=True)
+    unlink_selector.add_argument('--session', help='Exact Codex thread ID')
+    unlink_selector.add_argument('--session-id', type=int, help='Exact ProjectHub session ID')
+    moving = session_actions.add_parser('move', help='Move one session association to another project')
+    project_arguments(moving)
+    move_selector = moving.add_mutually_exclusive_group(required=True)
+    move_selector.add_argument('--session', help='Exact Codex thread ID')
+    move_selector.add_argument('--session-id', type=int, help='Exact ProjectHub session ID')
+    target_selector = moving.add_mutually_exclusive_group(required=True)
+    target_selector.add_argument('--target-project-id', type=int, help='Destination ProjectHub project ID')
+    target_selector.add_argument('--target-project', help='Exact destination project name')
     context = commands.add_parser('context', help='Read a compact saved project briefing')
     project_arguments(context)
     context.add_argument('--query', default='', help='Optional focus for relevant saved information')
@@ -166,19 +181,68 @@ def main(argv=None):
             return 0
         if args.command == 'session':
             session = None
+            if args.action in ('unlink', 'move'):
+                session = args.session
+                if args.session_id is not None and args.session_id <= 0:
+                    raise ValueError('Session ID must be a positive integer.')
+                if session is not None and not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', session):
+                    raise ValueError('Provide a valid exact Codex thread ID with --session.')
+                if args.action == 'move' and args.target_project_id is not None and args.target_project_id <= 0:
+                    raise ValueError('Target project ID must be a positive integer.')
             if args.action == 'link':
                 session = args.session if args.session is not None else os.environ.get('CODEX_THREAD_ID', '')
                 if not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', session):
                     raise ValueError('Provide a valid --session or run from a Codex session with CODEX_THREAD_ID.')
                 if args.title is not None and not 1 <= len(args.title.strip()) <= 200:
                     raise ValueError('Session title must contain 1–200 characters.')
-            project = resolve_project(request('GET', '/projects?compact=true'), args)
+            projects = request('GET', '/projects?compact=true')
+            project = resolve_project(projects, args)
+            target_project = None
+            if args.action == 'move':
+                target_project = resolve_project(projects, argparse.Namespace(
+                    project_id=args.target_project_id, project=args.target_project))
+                if target_project['id'] == project['id']:
+                    raise ValueError('Choose a different target project.')
             path = f"/projects/{project['id']}/codex/sessions"
-            rows = request('GET', path)
+            include_unlinked = args.action in ('unlink', 'move') or (args.action == 'list' and args.include_unlinked)
+            rows = request('GET', path + ('?include_unlinked=true' if include_unlinked else ''))
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise ValueError('Unexpected session list response.')
             if args.action == 'list':
                 print(json.dumps({'project_id': project['id'], 'sessions': rows}, ensure_ascii=False))
+                return 0
+            if args.action in ('unlink', 'move'):
+                matches = [row for row in rows if (row.get('thread_id') == session if session is not None
+                           else type(row.get('id')) is int and row['id'] == args.session_id)]
+                if len(matches) != 1:
+                    raise ValueError('Session not found uniquely in this project. Check projecthub session list --include-unlinked.')
+                existing = matches[0]
+                if (type(existing.get('id')) is not int or existing['id'] <= 0
+                        or existing.get('project_id') != project['id']
+                        or not isinstance(existing.get('thread_id'), str)
+                        or not re.fullmatch(r'[A-Za-z0-9_-]{1,200}', existing['thread_id'])
+                        or type(existing.get('is_linked')) is not bool):
+                    raise ValueError('Unexpected session identity or link state. Check Sources before retrying.')
+                if args.action == 'move':
+                    result = request('POST', f"{path}/{existing['id']}/move", {'target_project_id': target_project['id']})
+                    if (not isinstance(result, dict) or type(result.get('id')) is not int
+                            or result['id'] != existing['id'] or result.get('project_id') != target_project['id']
+                            or result.get('thread_id') != existing['thread_id'] or result.get('is_linked') is not True):
+                        raise ValueError('Could not confirm the move. Check Sources in both projects before retrying.')
+                    print(json.dumps({'session_id': result['id'], 'thread_id': result['thread_id'],
+                                      'project_id': target_project['id'], 'project': target_project['name'],
+                                      'from_project_id': project['id'], 'from_project': project['name'],
+                                      'title': result.get('title', '')}, ensure_ascii=False))
+                    return 0
+                already_unlinked = existing['is_linked'] is False
+                result = existing if already_unlinked else request('PATCH', f"{path}/{existing['id']}/link", {'linked': False})
+                if (not isinstance(result, dict) or type(result.get('id')) is not int
+                        or result['id'] != existing['id'] or result.get('project_id') != project['id']
+                        or result.get('thread_id') != existing['thread_id'] or result.get('is_linked') is not False):
+                    raise ValueError('Could not confirm unlinking. Check Sources or projecthub session list --include-unlinked before retrying.')
+                print(json.dumps({'session_id': result['id'], 'thread_id': result['thread_id'],
+                                  'project_id': project['id'], 'project': project['name'],
+                                  'title': result.get('title', ''), 'already_unlinked': already_unlinked}, ensure_ascii=False))
                 return 0
             existing = next((row for row in rows if row.get('thread_id') == session
                              and row.get('is_linked') is True), None)

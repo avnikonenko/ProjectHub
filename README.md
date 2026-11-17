@@ -60,7 +60,7 @@ File excerpts and complete-file reads are distinguished; older results may lack 
 The included [projecthub-notes skill](skills/projecthub-notes/SKILL.md) lets terminal
 agents read project briefings, saved AI overviews, Knowledge, Q&A, notes and TODOs,
 save Markdown AI notes, add or complete tasks,
-and link the current Codex session to a project through the `projecthub` command.
+and link, unlink, or move Codex session associations through the `projecthub` command.
 ProjectHub must be running. The installer offers an optional Codex skill step
 (default: skip). For unattended installation, choose explicitly:
 

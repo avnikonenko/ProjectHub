@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Terminal-agent commands to unlink exact sessions or move external session associations between projects, preserving Codex identity and indexed history with project ownership checks and audited transfers.
+
 - Parameters & Trade-offs under Knowledge: independently generate searchable code/configuration defaults, conditional values and project-specific explanations with original file/line evidence. Keep inferred explanations distinct, exclude run tracking and generic caveats, and preserve saved results and revision history.
 
 - Scheme can use bounded published Knowledge with original evidence, preserving design status separately from implementation. Record the Knowledge publication and selection counts in saved Scheme details, include publication changes in freshness, and keep unpublished previews separate. No extra model calls or automatic generation.

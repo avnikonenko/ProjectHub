@@ -15,7 +15,7 @@ from contextvars import ContextVar
 from functools import partial
 from pathlib import Path
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 from ...models import (Project, Question, Decision, Task, CodexSession,
@@ -271,7 +271,7 @@ class CodexManager:
                 status='unverified', error='ProjectHub restarted before delivery acknowledgement.'))
             db.commit()
 
-    def _event(self, session_id, method, params):
+    def _event(self, session_id, method, params, *, expected_identity=None):
         if method not in ('turn/started', 'turn/completed', 'item/completed', 'error',
                           'projecthub/approvalDenied'):
             return
@@ -287,8 +287,15 @@ class CodexManager:
         event_thread = params.get('threadId')
         try:
             with Session(self.engine) as db:
+                # Keep transport ownership validation atomic with the event
+                # write. A released reader can dispatch a delayed callback
+                # after a session has moved to another project.
+                db.execute(text('BEGIN IMMEDIATE'))
                 session = db.get(CodexSession, session_id)
                 if session is None:
+                    return
+                if expected_identity is not None and (
+                        session.project_id, session.thread_id, session.codex_account) != expected_identity:
                     return
                 if has_thread and event_thread != session.thread_id:
                     return
@@ -358,10 +365,14 @@ class CodexManager:
         except Exception:
             log.exception('Could not persist Codex event for session %s', session_id)
 
-    def _disconnected(self, session_id):
+    def _disconnected(self, session_id, *, expected_identity=None):
         try:
             with Session(self.engine) as db:
+                db.execute(text('BEGIN IMMEDIATE'))
                 session = db.get(CodexSession, session_id)
+                if session is not None and expected_identity is not None and (
+                        session.project_id, session.thread_id, session.codex_account) != expected_identity:
+                    return
                 if session:
                     if session.status == 'running':
                         session.status = 'interrupted'
@@ -856,8 +867,7 @@ class CodexManager:
                     db.commit()
                     db.refresh(session)
                     self.clients[session.id] = client
-                    client.on_event = lambda method, params: self._event(session.id, method, params)
-                    client.on_disconnect = lambda: self._disconnected(session.id)
+                    self._bind_session_callbacks(client, session)
                     return record_dict(session)
             except Exception:
                 client.close()
@@ -869,16 +879,27 @@ class CodexManager:
         if result['thread'].get('status', {}).get('type') == 'active':
             raise CodexError('Thread is active elsewhere; no resume or input was sent.')
 
+    def _bind_session_callbacks(self, client, session):
+        session_id = session.id
+        identity = (session.project_id, session.thread_id, session.codex_account)
+        client.on_event = lambda method, params: self._event(
+            session_id, method, params, expected_identity=identity)
+        client.on_disconnect = lambda: self._disconnected(session_id, expected_identity=identity)
+
     def resume(self, session, project):
         if getattr(session, 'codex_account', None) != getattr(self, 'account_key', None):
             raise CodexError('This session belongs to another Codex profile. Select its original project account or start a new session.')
         with self.lock:
             with Session(self.engine) as db:
-                linked = db.scalar(select(CodexSession.is_linked).where(CodexSession.id == session.id))
-                if not linked:
+                current = db.get(CodexSession, session.id)
+                if current is not None and (current.project_id != project.id or
+                        (current.project_id, current.thread_id, current.codex_account) !=
+                        (session.project_id, session.thread_id, session.codex_account)):
+                    raise CodexError('This session association changed. Reload its project before resuming.')
+                if current is None or not current.is_linked:
                     raise CodexError('Link this session again before using it.')
-            if session.status == 'running':
-                raise CodexError('Session is busy; wait or interrupt it before resuming.')
+                if current.status == 'running':
+                    raise CodexError('Session is busy; wait or interrupt it before resuming.')
             old = self.clients.pop(session.id, None)
             if old:
                 old.close()
@@ -893,8 +914,7 @@ class CodexManager:
                     raise CodexError('Thread is busy elsewhere; no input was sent.')
                 session_id = session.id
                 self.clients[session_id] = client
-                client.on_event = lambda method, params: self._event(session_id, method, params)
-                client.on_disconnect = lambda: self._disconnected(session_id)
+                self._bind_session_callbacks(client, session)
                 with Session(self.engine) as db:
                     row = db.get(CodexSession, session.id)
                     row.status, row.last_error = 'idle', ''
@@ -1010,10 +1030,15 @@ class CodexManager:
 
     def interrupt(self, session):
         with self.lock:
-            client = self.clients.get(session.id)
-            if client is None:
-                raise CodexError('Session is disconnected; no interrupt was sent.')
             with Session(self.engine) as db:
+                current = db.get(CodexSession, session.id)
+                if current is None or not current.is_linked or (
+                        current.project_id, current.thread_id, current.codex_account) != (
+                        session.project_id, session.thread_id, session.codex_account):
+                    raise CodexError('This session association changed. Reload its project before interrupting.')
+                client = self.clients.get(session.id)
+                if client is None:
+                    raise CodexError('Session is disconnected; no interrupt was sent.')
                 deliveries = db.scalars(select(Delivery).where(Delivery.session_id == session.id,
                                       Delivery.project_id == session.project_id,
                                       Delivery.turn_id.is_not(None)).order_by(Delivery.id.desc())).first()

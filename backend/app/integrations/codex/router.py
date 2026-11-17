@@ -27,7 +27,9 @@ from . import progress
 from .revisions import list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
+from .session_reassignment import reassign_session
 from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_settings
+from ...services import begin_session_write
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
 settings_router = APIRouter(prefix='/api/settings', tags=['Settings'])
@@ -71,6 +73,10 @@ class SessionSyncInput(Input):
 
 class SessionLinkInput(Input):
     linked: bool = Field(strict=True)
+
+
+class SessionMoveInput(Input):
+    target_project_id: int = Field(strict=True, gt=0)
 
 
 class ModelInput(Input):
@@ -693,7 +699,7 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
 
 
 @router.get('/sessions')
-def sessions(project_id: int, db: DB):
+def sessions(project_id: int, db: DB, include_unlinked: bool = False):
     project(db, project_id)
     events = select(CodexEvent.session_id, func.max(CodexEvent.created_at).label('latest')).where(
         CodexEvent.project_id == project_id).group_by(CodexEvent.session_id).subquery()
@@ -702,15 +708,19 @@ def sessions(project_id: int, db: DB):
     activity = func.max(CodexSession.created_at,
                         func.coalesce(events.c.latest, CodexSession.created_at),
                         func.coalesce(requests.c.latest, CodexSession.created_at))
-    rows = db.execute(select(CodexSession, activity.label('last_activity_at')).outerjoin(
+    query = select(CodexSession, activity.label('last_activity_at')).outerjoin(
         events, events.c.session_id == CodexSession.id).outerjoin(
         requests, requests.c.session_id == CodexSession.id).where(
-        CodexSession.project_id == project_id, CodexSession.is_linked.is_(True)).order_by(CodexSession.id))
+        CodexSession.project_id == project_id)
+    if not include_unlinked:
+        query = query.where(CodexSession.is_linked.is_(True))
+    rows = db.execute(query.order_by(CodexSession.id))
     return [{**record_dict(row), 'last_activity_at': last_activity_at} for row, last_activity_at in rows]
 
 
 @router.patch('/sessions/{session_id}')
 def update_session_details(project_id: int, session_id: int, body: SessionDetailsInput, db: DB):
+    begin_session_write(db)
     row = scoped(db, CodexSession, project_id, session_id)
     changes = {key: value for key, value in body.model_dump(exclude_unset=True).items()
                if getattr(row, key) != value}
@@ -729,6 +739,7 @@ def update_session_details(project_id: int, session_id: int, body: SessionDetail
 @router.patch('/sessions/{session_id}/sync')
 def configure_session_sync(project_id: int, session_id: int, body: SessionSyncInput,
                            db: DB):
+    begin_session_write(db)
     row = scoped(db, CodexSession, project_id, session_id)
     if row.auto_sync != body.enabled:
         before = record_dict(row)
@@ -774,7 +785,10 @@ def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
         with manager_for(request.app).lock:
             existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
             if existing:
-                if existing.project_id != project_id or existing.is_linked:
+                if existing.project_id != project_id:
+                    return reassign_session(db, existing.project_id, existing.id, project_id,
+                                            manager_for(request.app), require_unlinked=True)
+                if existing.is_linked:
                     raise HTTPException(409, 'Thread already associated; select its existing session.')
                 return _set_session_linked(db, existing, True)
     try:
@@ -784,6 +798,11 @@ def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
         return manager.open(row, body.title)
     except (CodexError, KeyError) as exc:
         raise HTTPException(503, str(exc) if isinstance(exc, CodexError) else 'Unsupported Codex thread response') from exc
+
+
+@router.post('/sessions/{session_id}/move')
+def move_session(project_id: int, session_id: int, body: SessionMoveInput, request: Request, db: DB):
+    return reassign_session(db, project_id, session_id, body.target_project_id, manager_for(request.app))
 
 
 @router.get('/sessions/{session_id}/history')

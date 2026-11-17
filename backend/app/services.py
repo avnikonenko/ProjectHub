@@ -3,7 +3,7 @@ import subprocess
 from types import SimpleNamespace
 from pathlib import Path
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, text
 from .integrations.github_issues import github_repository, issues_url
 from .models import Project, Question, Answer, Decision, Task, Note, AuditEvent, CodexSession, utcnow
 
@@ -156,7 +156,16 @@ def repository_snapshot(value, remote=''):
             'github_issues_url': issues_url(target) if target else None}
 
 
+def begin_session_write(db):
+    """Keep session ownership checks and subsequent writes atomic with moves."""
+    connection = db.connection().connection.driver_connection
+    if not connection.in_transaction:
+        db.execute(text('BEGIN IMMEDIATE'))
+
+
 def validate_links(db, project_id, values):
+    if values.get('session_id') is not None:
+        begin_session_write(db)
     for key, cls in [('question_id', Question), ('decision_id', Decision), ('session_id', CodexSession), ('answer_id', Answer)]:
         if values.get(key) is not None: scoped(db, cls, project_id, values[key])
     if values.get('answer_id') is not None and values.get('question_id') is not None:
