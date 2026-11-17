@@ -66,7 +66,22 @@ OUTPUT_SCHEMA = _object({
 
 def read_scheme(db, project_id):
     row = db.get(ProjectScheme, project_id)
-    return None if row is None else row.snapshot
+    return None if row is None else scheme_snapshot_for_display(row.snapshot)
+
+
+def scheme_snapshot_for_display(snapshot):
+    # Older inspections could save raw Git filename bytes as surrogate escapes.
+    # Keep the original snapshot and counts while making its paths displayable.
+    coverage = snapshot.get('coverage')
+    omissions = coverage.get('file_omissions') if isinstance(coverage, dict) else None
+    files = omissions.get('files') if isinstance(omissions, dict) else None
+    if not isinstance(files, list):
+        return snapshot
+    displayable = [file for file in files if not (isinstance(file, dict)
+                   and isinstance(file.get('path'), str) and re.search('[\ud800-\udfff]', file['path']))]
+    if len(displayable) == len(files):
+        return snapshot
+    return {**snapshot, 'coverage': {**coverage, 'file_omissions': {**omissions, 'files': displayable}}}
 
 
 def _text(value, limit, *, empty=False):

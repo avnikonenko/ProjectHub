@@ -15,7 +15,7 @@ from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, launch_label, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
-from .scheme import read_scheme, refresh_scheme
+from .scheme import read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
@@ -353,7 +353,8 @@ def revisions(project_id: int, db: DB, kind: str = 'brief',
 def revision_snapshot(project_id: int, revision_id: int, db: DB):
     project(db, project_id)
     row = scoped(db, GenerationRevision, project_id, revision_id)
-    return {'kind': row.kind, 'snapshot': row.snapshot}
+    snapshot = scheme_snapshot_for_display(row.snapshot) if row.kind == 'scheme' else row.snapshot
+    return {'kind': row.kind, 'snapshot': snapshot}
 
 
 @router.delete('/revisions/{revision_id}', status_code=204)

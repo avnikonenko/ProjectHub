@@ -69,6 +69,29 @@ def test_audit_defaults_stay_complete_and_optional_pages_are_scoped(state):
     assert client.get('/api/projects/999/audit').status_code == 404
 
 
+def test_legacy_scheme_with_non_utf8_omission_still_loads_and_exports(state):
+    app, client = state
+    unsupported = {'path': 'src/\udcff.py', 'reason': 'no_usable_excerpt'}
+    readable = {'path': 'src/café.py', 'reason': 'source_output_budget'}
+    omissions = {'total': 2, 'files': [unsupported, readable]}
+    snapshot = {'generated_at': 'then', 'coverage': {'file_omissions': omissions}}
+    with Session(app.state.engine) as db:
+        db.add(ProjectScheme(project_id=1, snapshot=snapshot))
+        revision = GenerationRevision(project_id=1, kind='scheme', generated_at='then', snapshot=snapshot)
+        db.add(revision)
+        db.flush()
+        revision_id = revision.id
+        db.commit()
+    for suffix in ('scheme', f'revisions/{revision_id}'):
+        response = client.get(f'/api/projects/1/codex/{suffix}')
+        assert response.status_code == 200
+        assert response.json()['snapshot']['coverage']['file_omissions'] == {'total': 2, 'files': [readable]}
+    response = client.get('/api/projects/1/export')
+    assert response.status_code == 200
+    assert response.json()['scheme']['snapshot'] == snapshot
+    assert response.json()['generation_revisions'][0]['snapshot'] == snapshot
+
+
 def test_export_spools_large_records_without_retaining_the_whole_history(state):
     app, _ = state
     with Session(app.state.engine) as db:

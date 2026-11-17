@@ -51,6 +51,18 @@ const omissionLabels: Record<string, string> = {
 function omissionLabel(reason: string) {
   return Object.hasOwn(omissionLabels, reason) ? omissionLabels[reason] : reason.replaceAll('_', ' ');
 }
+function recordedOmissions(omissions: SchemeCoverage['file_omissions'], expected: number | undefined) {
+  if (!omissions || !Number.isSafeInteger(omissions.total) || omissions.total <= 0
+    || (expected !== undefined && omissions.total !== expected) || !Array.isArray(omissions.files)
+    || omissions.files.length === 0 || omissions.files.length > Math.min(omissions.total, 100)) return undefined;
+  const paths = new Set<string>();
+  for (const file of omissions.files) {
+    if (typeof file?.path !== 'string' || !file.path.trim() || typeof file.reason !== 'string'
+      || !file.reason.trim() || paths.has(file.path)) return undefined;
+    paths.add(file.path);
+  }
+  return omissions;
+}
 const countRows: [keyof Omit<SchemeFileCounts, 'listing_complete'>, string][] = [
   ['repository_paths_total', 'Repository paths listed'], ['excluded_paths', 'Explicitly excluded paths'],
   ['safe_paths', 'Safe paths after exclusions'], ['eligible_files', 'Eligible candidate files'],
@@ -71,20 +83,19 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
   const limitations = Array.isArray(coverage?.limitations) ? coverage.limitations.filter((item): item is string => typeof item === 'string') : [];
   const eligible = counts?.eligible_files;
   const evidence = counts?.evidence_files;
-  const omissions = coverage?.file_omissions;
-  const omittedFiles = Array.isArray(omissions?.files) ? omissions.files.slice(0, 100).filter(file =>
-    typeof file?.path === 'string' && typeof file?.reason === 'string') : [];
   const knownTotal = counts?.listing_complete === true && nonnegative(eligible) && Number.isSafeInteger(eligible)
     && nonnegative(evidence) && Number.isSafeInteger(evidence) && nonnegative(counts.read_files)
     && Number.isSafeInteger(counts.read_files) && evidence <= counts.read_files && counts.read_files <= eligible;
+  const omissions = recordedOmissions(coverage?.file_omissions, knownTotal ? eligible - evidence : undefined);
+  const inputStatus = saved ? 'supplied' : 'selected';
   const content = <>
     <p>{saved ? 'Inspection recorded with this saved Scheme.' : current ? 'Fresh inspection of the repository; these counts do not describe the evidence used by the saved Scheme.' : 'Current repository inspection.'}</p>
     {counts && <>
-      <p><strong>AI input:</strong> {knownTotal ? `${evidence} of ${eligible} eligible repository files supplied`
-        : `${count(evidence)} files supplied; the eligible total is not established`}.</p>
+      <p><strong>{saved ? 'AI input:' : 'Prepared for AI:'}</strong> {knownTotal ? `${evidence} of ${eligible} eligible repository files ${inputStatus}`
+        : `${count(evidence)} files ${inputStatus}; the eligible total is not established`}.</p>
       <p><strong>Local reads:</strong> {count(counts.read_files)} files, including {count(counts.prefix_read_files)} prefix-only {counts.prefix_read_files === 1 ? 'read' : 'reads'}.
-        {' '}{count(counts.read_not_in_evidence)} read files were left out of the final AI input.</p>
-      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not supplied.</p>}
+        {' '}{count(counts.read_not_in_evidence)} read files were left out of {saved ? 'the final AI input' : 'this evidence package'}.</p>
+      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not {inputStatus}.</p>}
       <p><small>Reading a file locally and supplying it to AI are different stages. Prefixes and selected excerpts do not cover the complete file; these counts do not establish correctness.</small></p>
     </>}
     <dl>
@@ -105,12 +116,12 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
       <dl>{policyRows.map(([key, title, unit]) => <div key={key}><dt>{title}</dt><dd>{nonnegative(policy[key]) ? `${policy[key]} ${unit}` : 'Not recorded'}</dd></div>)}</dl>
     </details> : <p>Inspection limits were not recorded for {saved ? 'this saved Scheme' : 'this inspection'}.</p>}
     {coverage?.inspection_stopped && <p>Inspection stopped: {String(coverage.inspection_stopped).replaceAll('_', ' ')}</p>}
-    {!!omittedFiles.length && <details>
-      <summary>Skipped files ({count(omissions?.total)})</summary>
-      {typeof omissions?.total === 'number' && omissions.total > omittedFiles.length
-        && <p>Showing {omittedFiles.length} of {count(omissions.total)} recorded files.</p>}
-      <ul className="scheme-omitted-files">{omittedFiles.map(({ path, reason }, index) =>
-        <li key={index}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+    {omissions && <details>
+      <summary>Skipped files ({omissions.total})</summary>
+      {omissions.total > omissions.files.length
+        && <p>Showing {omissions.files.length} of {omissions.total} skipped files.</p>}
+      <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
+        <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
     </details>}
     {saved && knownTotal && evidence < eligible && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
     {coverage?.omitted_reason_counts && typeof coverage.omitted_reason_counts === 'object'

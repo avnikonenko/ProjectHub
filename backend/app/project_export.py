@@ -15,7 +15,8 @@ from .services import question_dict, require_project, serialize
 
 def _write(handle, value):
     for chunk in json.JSONEncoder(ensure_ascii=False).iterencode(value):
-        handle.write(chunk.encode('utf-8'))
+        # Preserve escapes from older filesystem snapshots without aborting the backup.
+        handle.write(chunk.encode('utf-8', errors='backslashreplace'))
 
 
 def _array(handle, values):

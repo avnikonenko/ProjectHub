@@ -1,5 +1,6 @@
 """Saved Scheme inventory counts from real local Git/files; no model calls."""
 import json
+import os
 import subprocess
 
 import pytest
@@ -234,3 +235,20 @@ def test_symlink_and_invalid_utf8_are_failed_reads(tmp_path):
     assert value['eligible_files'] == value['attempted_files'] == value['failed_reads'] == 2
     assert value['read_files'] == 0
     assert omissions(result) == {'binary.py': 'unreadable_or_malformed', 'link.py': 'unsafe_or_unavailable'}
+
+
+def test_non_utf8_git_filename_is_excluded_from_serializable_coverage(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'main.py').write_text('class Main: pass\n')
+    (repo / 'feature-é.py').touch()
+    (repo / 'ab').mkdir()
+    (repo / os.fsdecode(b'ab/\xff.py')).touch()
+    monkeypatch.setattr(evidence, '_MAX_PATHS', 1)
+
+    result = inspect(tmp_path, repo)
+    # Starlette encodes JSON with ensure_ascii disabled and strict UTF-8.
+    json.dumps(result, ensure_ascii=False).encode('utf-8')
+    value = counts(result)
+    assert value['repository_paths_total'] == 3
+    assert value['excluded_paths'] == 1
+    assert omissions(result) == {'feature-é.py': 'no_usable_excerpt'}

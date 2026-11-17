@@ -66,12 +66,22 @@ test('skipped file details use saved paths and distinguish file counts from exce
     } } },
   }));
   assert.match(html, /<summary>Skipped files \(15\)<\/summary>/);
-  assert.match(html, /Showing 2 of 15 recorded files/);
+  assert.match(html, /Showing 2 of 15 skipped files/);
   assert.match(html, /src\/worker.py<\/code> · Source excerpt budget reached/);
   assert.match(html, /src\/extra.py<\/code> · No usable excerpt produced/);
   assert.doesNotMatch(html, /current-only.py/);
   const earlier = renderToStaticMarkup(createElement(details, { coverage, saved: true }));
   assert.match(earlier, /File names and individual reasons were not recorded/);
+});
+test('inconsistent skipped-file details fall back to the saved aggregate', () => {
+  const row = { path: 'worker.py', reason: 'source_output_budget' };
+  for (const file_omissions of [{ total: 15, files: [null] }, { total: 15, files: [] },
+    { total: 0, files: [row] }, { total: 1, files: [row] }, { total: 15, files: [row, row] }]) {
+    const html = renderToStaticMarkup(createElement(details, { coverage: { ...coverage, file_omissions }, saved: true }));
+    assert.match(html, /15 eligible files were not supplied/);
+    assert.match(html, /File names and individual reasons were not recorded/);
+    assert.doesNotMatch(html, /<summary>Skipped files|worker\.py/);
+  }
 });
 test('saved and historical accounting never falls through to latest inspection', () => {
   const current = { coverage, diagnostics: { inspection_seconds: 0.25, bytes_read: 2000 } };
@@ -95,6 +105,8 @@ test('separately disclosed current counts clearly differ from saved evidence', (
   const html = renderToStaticMarkup(createElement(details, { coverage, saved: false, current: true }));
   assert.match(html, /<summary>Current repository inspection<\/summary>/);
   assert.match(html, /these counts do not describe the evidence used by the saved Scheme/);
+  assert.match(html, /Prepared for AI:<\/strong> 5 of 20 eligible repository files selected/);
+  assert.doesNotMatch(html, /files supplied|final AI input/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
 });
 
@@ -146,5 +158,6 @@ test('inspection before first Scheme is clearly identified as current', () => {
     current: { coverage, diagnostics: { inspection_seconds: 0.5 } } }));
   assert.match(html, /Current inspection; no saved Scheme is selected/);
   assert.match(html, /Current repository inspection/);
+  assert.match(html, /15 eligible files were not selected/);
   assert.doesNotMatch(html, /Recorded with the result saved|Recorded with this saved Scheme/);
 });

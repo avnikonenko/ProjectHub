@@ -130,7 +130,8 @@ def _bound_package(result):
 def _safe_relative(value, patterns):
     path = PurePosixPath(value)
     return (bool(value) and not path.is_absolute() and '..' not in path.parts
-            and not any(ord(c) < 32 for c in value) and not _excluded(value, patterns))
+            and not any(c < '\x20' or '\ud800' <= c <= '\udfff' for c in value)
+            and not _excluded(value, patterns))
 
 
 def _manifest(path):
