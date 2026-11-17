@@ -1,5 +1,9 @@
 # ProjectHub
 
+[![CI: GitHub Actions](https://img.shields.io/badge/CI-GitHub_Actions-2088ff)](.github/workflows/ci.yml)
+[![Docs: Guides](https://img.shields.io/badge/docs-guides-2f7d5a)](docs/README.md)
+[![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)
+
 <img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
 
 **Keep the context of a project across long AI conversations.**
