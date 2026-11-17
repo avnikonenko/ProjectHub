@@ -1,4 +1,4 @@
-import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
+import { useGenerationRequest, type GenerationRequestProps, type KnowledgeGenerationOutcome } from './generationBatch';
 import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
 import { CoverageDetails } from './CoverageDetails';
@@ -12,7 +12,7 @@ import {
 import { Empty, ErrorBox } from './ui';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import type { Brief } from './BriefContent';
-import { knowledgePreviewExport, recoverKnowledgePreview, type KnowledgePreview } from './knowledgePreviewRecovery';
+import { generateAndSaveKnowledge, knowledgePreviewExport, recoverPublishedKnowledge, type KnowledgePreview } from './knowledgePreviewRecovery';
 import { activateKnowledgeResult } from './knowledgePublication';
 import { readPublishedKnowledge, subscribePublishedKnowledge, updatePublishedKnowledge } from './publishedKnowledge';
 
@@ -30,6 +30,8 @@ type Props = {
   externalBusy?: boolean;
   refreshRequest?: number;
   onGenerationRequestHandled?: GenerationRequestProps['onGenerationRequestHandled'];
+  onGenerationOutcome?: (outcome: KnowledgeGenerationOutcome) => void;
+  generateSchemeAfter?: boolean;
   onBusyChange?: (state: { busy: boolean; running: boolean }) => void;
 };
 
@@ -51,7 +53,7 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   </section>;
 }
 
-export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled }: Props) {
+export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -71,7 +73,17 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const recovery = useRef<AbortController | null>(null);
   const previewRequestVersion = useRef(0);
   const lastProgressStartedAt = useRef<string | undefined>(undefined);
-  const recoveryHandoff = useRef<{ previousStartedAt?: string } | undefined>(undefined);
+  const recoveryHandoff = useRef<{ previousStartedAt?: string; baselinePublicationId?: string | null } | undefined>(undefined);
+  const pendingOutcome = useRef<{ base: string; request: number; baselinePublicationId: string | null; schemeRequested: boolean } | null>(null);
+  const outcomeCallback = useRef(onGenerationOutcome); outcomeCallback.current = onGenerationOutcome;
+  const [legacyOpen, setLegacyOpen] = useState(false);
+  function reportOutcome(state: KnowledgeGenerationOutcome['state'], publicationId?: string, schemeRequested?: boolean) {
+    const pending = pendingOutcome.current;
+    if (!pending || pending.base !== base) return;
+    pendingOutcome.current = null;
+    outcomeCallback.current?.({ request: pending.request, state, publicationId,
+      schemeRequested: state === 'saved' ? schemeRequested ?? pending.schemeRequested : false });
+  }
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
   const currentPreview = preview.base === base ? preview : null;
   const currentActivation = activation.base === base ? activation : null;
@@ -82,7 +94,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const publishedAt = Date.parse(snapshot?.generated_at ?? '');
   const candidateAt = Date.parse(candidate?.brief.generated_at ?? '');
   const staleCandidate = !!candidate && Number.isFinite(publishedAt) && Number.isFinite(candidateAt) && publishedAt > candidateAt;
-  const PreviewContainer = staleCandidate ? 'details' : 'section';
+  const PreviewContainer = 'details';
   const requestKey = `${base}:${projectLink?.publicationId ?? ''}:${projectLink?.itemId ?? ''}`;
   const expectedPublication = dismissedLink === requestKey ? undefined : projectLink?.publicationId;
   const mismatch = !!snapshot && !!expectedPublication
@@ -108,6 +120,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     activating.current = null;
     recoveryHandoff.current = undefined;
     lastProgressStartedAt.current = undefined;
+    pendingOutcome.current = null;
   }, [base]);
 
   useEffect(() => {
@@ -119,25 +132,45 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       && version === previewRequestVersion.current;
     setPreview((previous) => previous.base === base ? { ...previous, loading: true }
       : { base, busy: false, result: null, error: '', started: 0, loading: true });
-    void recoverKnowledgePreview(base, projectId, controller.signal, (event) => {
+    let recoveredPublication: string | null = null;
+    void recoverPublishedKnowledge(base, projectId, controller.signal, (event) => {
       if (!canApply()) return;
+      if (event.type === 'saved') {
+        recoveredPublication = event.result.snapshot?.publication_id ?? null;
+        updatePublishedKnowledge(base, () => event.result);
+        return;
+      }
+      const status = event.progress;
+      lastProgressStartedAt.current = status.started_at;
+      recoveryHandoff.current = undefined;
+      if (status.state === 'running' && !pendingOutcome.current) {
+        pendingOutcome.current = { base, request: refreshRequest,
+          baselinePublicationId: recoveredPublication, schemeRequested: false };
+      }
+      const unconfirmedSave = status.state === 'completed' && !!pendingOutcome.current && !event.savedForRun;
+      if (status.state !== 'running' && pendingOutcome.current) {
+        if (event.savedForRun && event.publicationId) {
+          reportOutcome('saved', event.publicationId);
+          onPublished?.();
+        } else reportOutcome(status.state === 'cancelled' ? 'cancelled' : 'failed');
+      }
       setPreview((previous) => {
         const current = previous.base === base ? previous
           : { base, busy: false, result: null, error: '', started: 0 };
-        if (event.type === 'saved') return { ...current, result: event.result };
-        const status = event.progress;
-        lastProgressStartedAt.current = status.started_at;
-        recoveryHandoff.current = undefined;
         return { ...current, busy: status.state === 'running', loading: false,
           started: status.state === 'running' ? Date.parse(status.started_at || '') || Date.now() : 0,
           cancelled: status.state === 'cancelled',
           error: status.state === 'failed' ? status.error || 'Knowledge generation failed. The saved result is preserved.'
+            : unconfirmedSave ? 'Generation finished without a confirmed new saved result. The previous Knowledge is preserved.'
             : status.state === 'idle' && current.busy
               ? 'Generation is no longer running. The saved result is preserved.' : '' };
       });
     }, undefined, undefined, recoveryHandoff.current).catch((error: Error) => {
-      if (canApply()) setPreview((previous) => ({ ...previous, busy: false, started: 0, loading: false,
-        error: `Could not load the saved result: ${error.message}` }));
+      if (canApply()) {
+        reportOutcome('failed');
+        setPreview((previous) => ({ ...previous, busy: false, started: 0, loading: false,
+          error: `Could not load the saved result: ${error.message}` }));
+      }
     });
     return () => {
       controller.abort();
@@ -145,26 +178,28 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     };
   }, [base, projectId, retry, visible, loadKey, recoveryAttempt, refreshRequest]);
 
-  async function generatePreview() {
+  async function generateKnowledge() {
     if (externalBusy || active.current || activating.current || busy || tagsBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
     const controller = new AbortController();
     const previousStartedAt = lastProgressStartedAt.current;
     const run = { base, controller };
+    pendingOutcome.current = { base, request: refreshRequest,
+      baselinePublicationId: snapshot?.publication_id ?? null, schemeRequested: generateSchemeAfter };
     active.current = run;
     setActivation({ base, busy: false, error: '', notice: '' });
     setPreview((previous) => ({ base, busy: true, result: previous.base === base ? previous.result : null,
       error: '', started: Date.now(), loading: false }));
     try {
-      const raw = await api<unknown>(`${base}/codex/analysis/preview`, {
-        method: 'POST', signal: controller.signal,
-        body: JSON.stringify({ confirmed: true,
-          model: generation.model || null, effort: generation.effort || null }),
-      });
+      const result = await generateAndSaveKnowledge(base, projectId, generation, controller.signal, generateSchemeAfter);
       if (!controller.signal.aborted && active.current === run) {
-        const result = parseKnowledgePreview(raw, projectId);
-        setPreview({ base, busy: false, result, error: '', started: 0 });
+        updatePublishedKnowledge(base, () => ({ snapshot: result.knowledge, paired_with_current_brief: false,
+          current_evidence_availability: {}, coverage: result.knowledge.coverage || {} }));
+        setPreview({ base, busy: false, result: null, error: '', started: 0 });
+        setActivation({ base, busy: false, error: '', notice: 'Knowledge Summary and records saved. Project Overview is unchanged.' });
+        reportOutcome('saved', result.knowledge.publication_id, result.schemeRequested === true);
+        onPublished?.();
       }
     } catch (error) {
       if (!controller.signal.aborted && active.current === run) {
@@ -173,8 +208,9 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           result: previous.base === base ? previous.result : null,
           error: cancelled ? '' : (error as Error).message,
           started: cancelled ? 0 : previous.started, cancelled }));
+        if (cancelled) reportOutcome('cancelled');
         if (!cancelled) {
-          recoveryHandoff.current = { previousStartedAt };
+          recoveryHandoff.current = { previousStartedAt, baselinePublicationId: pendingOutcome.current?.baselinePublicationId };
           setRecoveryAttempt(previous => previous + 1);
         }
       }
@@ -224,6 +260,20 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     }
   }
 
+  useEffect(() => {
+    if (!legacyOpen) return;
+    const controller = new AbortController();
+    void api<unknown>(`${base}/codex/analysis/preview`, { signal: controller.signal }).then(raw => {
+      if (!controller.signal.aborted) {
+        const result = raw === null ? null : parseKnowledgePreview(raw, projectId);
+        setPreview(previous => ({ ...(previous.base === base ? previous : { base, busy: false, error: '', started: 0 }), result }));
+      }
+    }).catch((error: Error) => {
+      if (!controller.signal.aborted) setActivation(previous => ({ ...previous, base, error: error.message }));
+    });
+    return () => controller.abort();
+  }, [base, projectId, legacyOpen]);
+
   const isLoading = load.key !== loadKey || load.loading;
   const error = load.key === loadKey ? load.error : '';
   const blocked = !!(externalBusy || tagsBusy || busy || publishing || currentPreview?.loading || isLoading);
@@ -231,7 +281,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   useEffect(() => {
     setPreviewView('summary');
   }, [showRecords, candidate?.knowledge.publication_id]);
-  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || publishing ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generatePreview, onGenerationRequestHandled);
+  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || publishing ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled);
   const feedback = <>
     <ErrorBox error={error} />
     <ErrorBox error={currentActivation?.error || ''} />
@@ -251,7 +301,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     <section className="card" hidden={!showRecords} aria-busy={isLoading || publishing}>
       <div className="section-title">
         <div><h2>Project Knowledge</h2><small>Project #{projectId}</small></div>
-        <button disabled={blocked} onClick={generatePreview}>
+        <button disabled={blocked} onClick={generateKnowledge}>
           {busy ? 'Generating…' : 'Refresh Knowledge Summary'}
         </button>
       </div>
@@ -299,8 +349,12 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         </>}
       </>}
     </section>
+    <details className="knowledge-legacy-previews" onToggle={event => setLegacyOpen(event.currentTarget.open)}>
+      <summary>Earlier unsaved results</summary>
+      <p>New generations save automatically. Older previews remain available here.</p>
+      {legacyOpen && !candidate && <p>No separate unsaved result is available.</p>}
     {candidate && <PreviewContainer className="card knowledge-preview" aria-label={staleCandidate ? "Older unpublished Knowledge Summary" : "Unpublished Knowledge Summary"}>
-      {staleCandidate && <summary className="source-disclosure">Older unpublished Knowledge Summary</summary>}
+      <summary className="source-disclosure">Earlier unpublished Knowledge Summary</summary>
       <div className="section-title">
         <div><h3>Knowledge Summary</h3><small>Unpublished preview</small>
           <small>{new Date(candidate.brief.generated_at).toLocaleString()}</small></div>
@@ -334,5 +388,6 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         coverage={candidate.knowledge.coverage} diagnostics={candidate.knowledge.diagnostics ?? candidate.diagnostics} />
       </div>
     </PreviewContainer>}
+    </details>
   </section>;
 }

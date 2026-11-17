@@ -1,4 +1,6 @@
-import { idleGenerationKinds, useGenerationRequest, type GenerationRequestProps, type ProjectGenerationKind } from './generationBatch';
+import { planProjectGeneration, resolveKnowledgeSchemeDependency, useGenerationRequest,
+  type GenerationRequestProps, type ProjectGenerationKind, type KnowledgeGenerationOutcome,
+  type KnowledgeSchemeDependency } from './generationBatch';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
@@ -301,6 +303,8 @@ function ProjectWorkspace({
   const [bulkRequested, setBulkRequested] = useState(false);
   const [bulkAttemptCount, setBulkAttemptCount] = useState(0);
   const bulkDispatching = useRef(false);
+  const pendingScheme = useRef<KnowledgeSchemeDependency | null>(null);
+  const [bulkScheme, setBulkScheme] = useState<'none' | 'waiting' | 'requested' | 'skipped'>('none');
   useEffect(() => {
     if (knowledgeLink) setKnowledgeSubview('knowledge');
   }, [knowledgeLink?.publicationId, knowledgeLink?.itemId]);
@@ -347,27 +351,49 @@ function ProjectWorkspace({
   }, [observeGeneration]);
   function regenerateAll() {
     if (recovery.checking || bulkDispatching.current) return;
-    const idle = idleGenerationKinds({
+    const plan = planProjectGeneration({
       brief: running.brief || recovery.running.brief, qa: running.qa || recovery.running.qa,
       scheme: running.scheme || recovery.running.scheme,
       knowledge: analysisState.running || recovery.running.knowledge,
       parameters: parameterState.running || recovery.running.parameters,
     });
-    setBulkRequested(true); setBulkSkipped([]); setBulkAttemptCount(idle.length);
-    if (!idle.length) return;
-    bulkDispatching.current = true; setBulkPending(idle);
+    setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
+    setBulkAttemptCount(plan.start.length + Number(plan.waitForKnowledge));
+    pendingScheme.current = plan.waitForKnowledge ? { project: base, request: bulkRequests.knowledge + 1 } : null;
+    setBulkScheme(plan.waitForKnowledge ? 'waiting' : plan.schemeSkippedForKnowledge ? 'skipped' : 'none');
+    if (!plan.start.length) return;
+    bulkDispatching.current = true; setBulkPending(plan.start);
     setVisited({ brief: true, qa: true, scheme: true, knowledge: true }); setParametersVisited(true);
     setBulkRequests(previous => {
-      const next = { ...previous }; for (const kind of idle) next[kind]++; return next;
+      const next = { ...previous }; for (const kind of plan.start) next[kind]++; return next;
     });
   }
   function bulkHandled(kind: ProjectGenerationKind, started: boolean) {
     if (!started) setBulkSkipped(previous => previous.includes(kind) ? previous : [...previous, kind]);
+    if (kind === 'knowledge' && !started && pendingScheme.current) {
+      pendingScheme.current = null;
+      setBulkScheme('skipped');
+    }
     setBulkPending(previous => {
       const next = previous.filter(value => value !== kind);
-      if (!next.length) bulkDispatching.current = false;
+      if (!next.length && !pendingScheme.current) bulkDispatching.current = false;
       return next;
     });
+  }
+  function onKnowledgeOutcome(outcome: KnowledgeGenerationOutcome) {
+    if (!alive.current) return;
+    const action = resolveKnowledgeSchemeDependency(pendingScheme.current, base, outcome);
+    if (action === 'ignore') return;
+    pendingScheme.current = null;
+    if (action === 'skip') {
+      setBulkScheme('skipped');
+      if (!bulkPending.length) bulkDispatching.current = false;
+      return;
+    }
+    setBulkScheme('requested');
+    if (!bulkPending.length) bulkDispatching.current = false;
+    // The server owns the dependent job, so navigating away cannot discard it.
+    recheckGeneration.current('scheme');
   }
   useEffect(() => {
     if (historyLink || knowledgeLink) {
@@ -581,7 +607,7 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
-          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0} onClick={regenerateAll}>
+          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
             {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
           </button>
           <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
@@ -655,12 +681,14 @@ function ProjectWorkspace({
         <ErrorBox error={recovery.error} />
         {bulkRequested && <Feedback>{bulkPending.length
           ? `Starting ${bulkPending.length} remaining generation${bulkPending.length === 1 ? '' : 's'}…`
-          : bulkAttemptCount ? 'Idle views were requested independently. Each keeps its saved result if generation fails. Knowledge is generated as an unpublished preview.'
+          : bulkAttemptCount ? 'Generation requested. Each view keeps its saved result if generation fails.'
             : 'All views are already busy; their existing runs continue.'}
+          {bulkScheme === 'waiting' && <> Scheme is waiting for Knowledge to be saved.</>}
+          {bulkScheme === 'skipped' && <> Scheme was skipped because fresh Knowledge was not saved or a required view was busy.</>}
           {!!bulkSkipped.length && <> Some views were skipped because their own generation or controls were busy or not ready.</>}
         </Feedback>}
         <details className="brief-details"><summary>Regenerate all details</summary>
-          <p>Starts idle Overview, Knowledge, Scheme, Q&amp;A and Implementation Choices &amp; Limits jobs concurrently. Each uses its own saved options and worker limit. Generation sends selected project evidence to OpenAI. AI tags stay separate; Knowledge publication still requires Use this result.</p>
+          <p>Runs Overview, Q&amp;A and Implementation Choices &amp; Limits in parallel. Knowledge saves after validation, then Scheme starts using that saved result. A failed or cancelled Knowledge run skips Scheme. Generation sends selected project evidence to OpenAI; tags stay separate.</p>
         </details>
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
@@ -687,6 +715,8 @@ function ProjectWorkspace({
               visible={view === 'Knowledge' && knowledgeSubview === 'knowledge' && !results}
               showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
+              onGenerationOutcome={onKnowledgeOutcome}
+              generateSchemeAfter={bulkScheme === 'waiting'}
               renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
                 prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
                 perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Preview sources'} />} />
@@ -711,6 +741,7 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checking)}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
               recoveryVersion={recovery.version.scheme} recoveryBusy={recovery.checking || recovery.running.scheme}
               onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />

@@ -251,9 +251,10 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, generationRequest = 0, onGenerationRequestHandled }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
   base: string; generation: { model: string; effort: string }; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
+  waitingForKnowledge?: boolean;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
   const [view, setView] = useState<'Architecture' | 'Workflow' | 'Dependencies'>('Architecture');
@@ -290,7 +291,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   }, [path, recoveryVersion, visible, generationRequest]);
 
   async function generate() {
-    if (inFlight.current || loading || recoveryBusy || revisionLoading) return;
+    if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge) return;
     inFlight.current = true;
     resultRead.current++;
     setGenerating(true);
@@ -325,7 +326,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       if (alive.current) { setGenerating(false); onGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';
@@ -352,8 +353,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   }
   return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
-      freshness={freshness} action={<button disabled={loading || generating || recoveryBusy || revisionLoading} onClick={() => void generate()}>
-        {generating || recoveryBusy ? 'Generating…' : snapshot ? 'Refresh Scheme' : 'Generate Scheme'}
+      freshness={freshness} action={<button disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge} onClick={() => void generate()}>
+        {waitingForKnowledge ? 'Waiting for Knowledge…' : generating || recoveryBusy ? 'Generating…' : snapshot ? 'Refresh Scheme' : 'Generate Scheme'}
       </button>} />
     <small className="brief-refresh-note">Refreshing sends project evidence to Codex.</small>
     <ErrorBox error={error} />

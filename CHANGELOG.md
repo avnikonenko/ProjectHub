@@ -6,7 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
-- Regenerate all starts idle Overview, Knowledge, Scheme, Q&A and Implementation Choices jobs concurrently. Each project/view keeps its own progress, cancellation, cache and saving; duplicate jobs are blocked. Settings now describes the worker count per job, while restart and source/account maintenance remain exclusive.
+- Regenerate all runs idle Overview, Knowledge, Q&A and Implementation Choices jobs concurrently, then starts Scheme after Knowledge is successfully saved. Each project/view keeps its own progress, cancellation, cache and saving; duplicate jobs are blocked. Settings describes the worker count per job, while restart and source/account maintenance remain exclusive.
 
 - Terminal-agent commands to unlink exact sessions or move external session associations between projects, preserving Codex identity and indexed history with project ownership checks and audited transfers.
 
@@ -31,6 +31,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - AI-generated, project-specific tags for Knowledge and AI Q&A. Browse all tags or type to filter alongside existing controls; retain overlapping memberships, original records and citations, with incremental assignment reuse and project-scoped caches.
 
 ### Changed
+
+- Knowledge generation now validates and saves its summary and records automatically, with no separate Use/Save step. Previous results survive failures and cancellations; revisions remain available. Scheme follow-up is server-owned and is skipped if Knowledge fails. Historical unsaved previews remain collapsed and legacy preview APIs stay compatible.
 
 - Refocus Parameters & Trade-offs as Implementation Choices & Limits: surface code-backed caps, filters, fallbacks and unsupported paths with separate definition and usage locations. Keep ordinary defaults and older saved results available; code links open saved evidence without losing project navigation.
 

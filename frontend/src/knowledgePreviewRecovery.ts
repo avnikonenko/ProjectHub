@@ -1,5 +1,5 @@
 import { api } from './api.ts';
-import { parseKnowledgePreview } from './knowledge.ts';
+import { parseKnowledgePreview, parseKnowledgeResponse, parsePublishedKnowledgeResult, type KnowledgeResponse } from './knowledge.ts';
 
 export type KnowledgePreview = ReturnType<typeof parseKnowledgePreview>;
 export type PreviewProgress = {
@@ -7,6 +7,19 @@ export type PreviewProgress = {
   started_at?: string;
   error?: string | null;
 };
+
+export async function generateAndSaveKnowledge(base: string, projectId: number,
+  generation: { model: string; effort: string }, signal: AbortSignal, generateScheme = false,
+  request: (path: string, options: RequestInit) => Promise<unknown> = api) {
+  if (base !== `/projects/${projectId}` || !Number.isSafeInteger(projectId) || projectId < 1)
+    throw new Error('Knowledge generation does not identify this project.');
+  signal.throwIfAborted();
+  const raw = await request(`${base}/codex/knowledge/brief`, { method: 'POST', signal,
+    body: JSON.stringify({ confirmed: true, publish: true, model: generation.model || null,
+      effort: generation.effort || null, ...(generateScheme ? { generate_scheme: true } : {}) }) });
+  signal.throwIfAborted();
+  return parsePublishedKnowledgeResult(raw, projectId);
+}
 type Request = (path: string, options: { signal: AbortSignal }) => Promise<unknown>;
 type RecoveryEvent = { type: 'saved'; result: KnowledgePreview | null }
   | { type: 'progress'; progress: PreviewProgress };
@@ -93,4 +106,59 @@ export function knowledgePreviewExport(result: KnowledgePreview, projectId: numb
   // Export has the same identity checks as generation and recovery.
   parseKnowledgePreview(data, projectId);
   return { filename: `project-${projectId}-knowledge-preview.json`, text: JSON.stringify(data, null, 2) + '\n' };
+}
+
+export type PublishedKnowledgeRecoveryEvent = { type: 'saved'; result: KnowledgeResponse }
+  | { type: 'progress'; progress: PreviewProgress; savedForRun: boolean; publicationId?: string };
+
+/** Display the saved pair, but never mistake an older pair for a completed new run. */
+export function savedKnowledgeMatchesRun(result: KnowledgeResponse, status: PreviewProgress,
+  baselinePublicationId?: string | null) {
+  const snapshot = result.snapshot;
+  const generated = Date.parse(snapshot?.generated_at || '');
+  const started = Date.parse(status.started_at || '');
+  return status.state === 'completed' && !!snapshot?.publication_id && !!snapshot.summary && !snapshot.summary_error
+    && Number.isFinite(generated) && Number.isFinite(started) && generated >= started
+    && (baselinePublicationId === undefined || snapshot.publication_id !== baselinePublicationId);
+}
+
+/** Read-only recovery for the normal generate-and-save workflow. */
+export async function recoverPublishedKnowledge(base: string, projectId: number, signal: AbortSignal,
+  notify: (event: PublishedKnowledgeRecoveryEvent) => void, request: Request = api,
+  wait: (signal: AbortSignal) => Promise<void> = pause,
+  handoff?: { previousStartedAt?: string; baselinePublicationId?: string | null }) {
+  if (base !== `/projects/${projectId}` || !Number.isSafeInteger(projectId) || projectId < 1)
+    throw new Error('Knowledge recovery does not identify this project.');
+  signal.throwIfAborted();
+  let result: KnowledgeResponse;
+  const saved = async () => {
+    result = parseKnowledgeResponse(await request(`${base}/codex/knowledge`, { signal }), projectId);
+    if (!signal.aborted) notify({ type: 'saved', result });
+  };
+  const readStatus = async () => progressResponse(await request(`${base}/codex/generation/status?kind=knowledge`, { signal }));
+  let status: PreviewProgress;
+  [, status] = await Promise.all([saved(), readStatus()]);
+  if (signal.aborted) return;
+  for (let attempt = 0; handoff && attempt < 2 && status.state !== 'running'
+       && status.started_at === handoff.previousStartedAt; attempt++) {
+    await wait(signal); if (signal.aborted) return;
+    status = await readStatus(); if (signal.aborted) return;
+  }
+  const progressEvent = (confirmed = true) => {
+    if (!signal.aborted) notify({ type: 'progress', progress: status,
+      savedForRun: confirmed && savedKnowledgeMatchesRun(result!, status, handoff?.baselinePublicationId),
+      publicationId: result!.snapshot?.publication_id });
+  };
+  if (status.state === 'completed') {
+    let confirmed = false;
+    try { await saved(); confirmed = true; } finally { progressEvent(confirmed); }
+  } else progressEvent();
+  while (status.state === 'running' && !signal.aborted) {
+    await wait(signal); if (signal.aborted) return;
+    status = await readStatus(); if (signal.aborted) return;
+    if (status.state === 'completed') {
+      let confirmed = false;
+      try { await saved(); confirmed = true; } finally { progressEvent(confirmed); }
+    } else progressEvent();
+  }
 }

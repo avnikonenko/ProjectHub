@@ -6,12 +6,15 @@ Contributor reference. For everyday use, see [Overview and Knowledge](PROJECT_KN
 
 - `GET /api/projects/{id}/codex/knowledge`: published snapshot plus current evidence
   availability and current coverage. No model call.
-- `POST /api/projects/{id}/codex/knowledge/brief`: explicitly generate a saved candidate.
+- `POST /api/projects/{id}/codex/knowledge/brief`: normal UI passes `publish:true`
+  to atomically save validated Knowledge and its summary. Optional
+  `generate_scheme:true` requests a server-side Scheme follow-up after success;
+  it is rejected for unpublished results. Legacy explicit preview calls remain supported.
 - `POST /api/projects/{id}/codex/knowledge/preview/publish`: activate the selected saved
   publication ID without generation; return 409 for stale/conflicting results.
 - `GET /api/projects/{id}/codex/knowledge/preview`: last successful unpublished
   result, or null. Read-only and project-scoped; no model call.
-- `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: preview progress.
+- `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: generation progress.
 - Existing conversation/transcript hash resolvers open original evidence.
 
 Publication pairing rejects missing, empty or whitespace publication IDs when
@@ -48,7 +51,7 @@ project/publication appearing under the current project.
   is separate and provides no semantic retrieval or scope equivalence inference.
 - The current published snapshot is browsable; historical mismatches are reported
   rather than automatically resolving historical knowledge revisions.
-- Failed or cancelled generation preserves the last successful saved preview and published data; only a complete validated result replaces the saved preview.
+- Failed or cancelled generation preserves saved Knowledge and successful extraction caches; only a complete validated result replaces normal saved Knowledge. Explicit legacy preview generation retains its separate storage.
 - Source navigation depends on stored descriptors and current availability. Saved
   excerpts remain accessible when original navigation cannot be offered.
 

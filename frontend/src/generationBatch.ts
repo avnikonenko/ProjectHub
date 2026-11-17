@@ -8,6 +8,30 @@ export type GenerationRequestProps = {
   generationRequest?: number;
   onGenerationRequestHandled?: (started: boolean) => void;
 };
+export type KnowledgeGenerationOutcome = {
+  request: number;
+  state: 'saved' | 'failed' | 'cancelled';
+  publicationId?: string;
+  schemeRequested?: boolean;
+};
+export type KnowledgeSchemeDependency = { project: string; request: number };
+
+/** Scheme must never use older Knowledge just because its generation is idle. */
+export function planProjectGeneration(busy: Partial<Record<ProjectGenerationKind, boolean>>) {
+  const idle = idleGenerationKinds(busy);
+  return {
+    start: idle.filter(kind => kind !== 'scheme'),
+    waitForKnowledge: !busy.scheme && !busy.knowledge,
+    schemeSkippedForKnowledge: !busy.scheme && !!busy.knowledge,
+  };
+}
+
+export function resolveKnowledgeSchemeDependency(pending: KnowledgeSchemeDependency | null,
+  project: string, outcome: KnowledgeGenerationOutcome): 'start' | 'skip' | 'ignore' {
+  if (!pending || pending.project !== project || pending.request !== outcome.request) return 'ignore';
+  return outcome.state === 'saved' && typeof outcome.publicationId === 'string'
+    && !!outcome.publicationId.trim() && outcome.schemeRequested === true ? 'start' : 'skip';
+}
 
 /** Claim a UI request before invoking the existing view-specific generation action. */
 export function claimGenerationRequest(tracker: GenerationRequestTracker, identity: string,

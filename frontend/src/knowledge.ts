@@ -239,3 +239,34 @@ export function parseKnowledgePreview(raw: unknown, projectId: number): { knowle
   return { knowledge: parsed.snapshot, brief: summary, ...(diagnostics === undefined ? {} : { diagnostics }) };
 }
 
+function sameJSON(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right))
+    return left.length === right.length && left.every((value, index) => sameJSON(value, right[index]));
+  if (object(left) && object(right)) {
+    const keys = Object.keys(left);
+    return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameJSON(left[key], right[key]));
+  }
+  return false;
+}
+
+/** A generation response is only successful after the server saved its pair. */
+export function parsePublishedKnowledgeResult(raw: unknown, projectId: number): ReturnType<typeof parseKnowledgePreview> & { schemeRequested?: boolean } {
+  if (!object(raw) || raw.published !== true)
+    throw new Error('Knowledge generation did not confirm saving its result.');
+  const parsed = parseKnowledgeResponse({ snapshot: raw.knowledge }, projectId);
+  const snapshot = parsed.snapshot;
+  if (!snapshot || !snapshot.summary || snapshot.summary_error
+      || raw.publication_id !== snapshot.publication_id)
+    throw new Error('The saved Knowledge Summary and records do not share this project publication.');
+  const brief = parseKnowledgeSummary(raw.brief, projectId, snapshot.publication_id);
+  if (brief.generated_at !== snapshot.generated_at || snapshot.summary.generated_at !== snapshot.generated_at
+      || !sameJSON(brief, snapshot.summary))
+    throw new Error('The generated Knowledge Summary does not match its saved result.');
+  const diagnostics = parseGenerationDiagnostics(raw.diagnostics);
+  if (raw.scheme_requested !== undefined && typeof raw.scheme_requested !== 'boolean')
+    throw new Error('The saved Knowledge follow-up status is invalid.');
+  return { knowledge: snapshot, brief, ...(diagnostics === undefined ? {} : { diagnostics }),
+    ...(raw.scheme_requested === undefined ? {} : { schemeRequested: raw.scheme_requested }) };
+}
+

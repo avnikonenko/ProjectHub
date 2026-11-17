@@ -111,26 +111,19 @@ Saved knowledge loads automatically when Knowledge opens. If no active snapshot
 exists, the saved generated result appears directly, with its brief and all records.
 There is no separate reload button or collapsed preview workflow.
 
-Click **Generate** or **Regenerate** to create a new candidate using the configured
-project account, model, effort and instructions. The existing Codex integration
-receives `confirmed:true,publish:false`. Generation remains opt-in; browsing does
-not invoke AI. Progress, elapsed time, cancellation, diagnostics and JSON download
-remain available. Failed generation preserves the last successful result.
+Click **Refresh Knowledge Summary** to generate, validate and save using the
+configured project account, model, effort and instructions. The normal action
+sends `confirmed:true,publish:true`; browsing never invokes AI. No separate
+Save/Use step is needed. The server checks source and repository freshness before
+atomically saving the records, matching summary and revision. Failure or
+cancellation keeps the previous saved result and completed extraction caches.
 
-Click **Save Knowledge Summary** to activate the reviewed result. This makes its Knowledge
-records and matching detailed summary current together, without another model request.
-The general Project Overview remains unchanged. The browser
-sends only the saved publication ID; it cannot upload substitute interpretations.
-The server checks that the saved result, primary sources, inspected repository and
-published Knowledge baseline have not changed. Editing the general Overview does not block saving a summary. A conflict preserves current data and
-asks for a new result. Old results without repository freshness metadata need
-regeneration if a repository is linked; older discussion-only results remain usable.
-
-The Knowledge records and Knowledge Summary update atomically in one saved snapshot
-and Knowledge revision. Retrying the exact active publication creates no duplicate
-revisions and preserves tags added after saving. When the saved result is active, the page displays it
-once rather than repeating it as a candidate. New candidates remain separate from
-the current snapshot until explicitly used.
+**Regenerate all** runs Knowledge alongside Overview, Q&A and Implementation
+Choices, then starts Scheme only after Knowledge saves successfully. The server
+owns this follow-up, so changing the selected project does not discard it.
+Knowledge failure/cancellation skips Scheme. Single-view Scheme generation still
+uses the currently saved Knowledge. Earlier unsaved previews remain available in
+a collapsed historical section, with the legacy source and publication guards.
 
 The Overview tab has its own **Refresh Project Overview** action. Its general
 summary and revision history are separate from Knowledge Summary. Older detailed

@@ -41,20 +41,18 @@ values. Repository inspection informs summary synthesis, not conversation Knowle
 Missing defaults or reasons are not guessed. New extraction guidance takes effect
 on the next requested analysis; existing published records remain unchanged.
 
-Knowledge generation saves an **Unpublished preview** with a Knowledge Summary and
-Knowledge records. **Save Knowledge Summary** publishes that summary and its records
-together under one publication ID, without changing Project Overview.
-Opening either saved perspective makes no AI call. Failed or cancelled generation preserves
-saved results and the previous successful preview. Older unpublished previews remain
-inspectable but cannot replace a newer published analysis from the interface.
-**Download JSON** exports the complete preview and references. Browser refresh
-recovers active progress; a server restart stops work but keeps saved results.
+Normal Knowledge generation validates and saves its summary and records together
+under one publication ID, without changing Project Overview. No separate approval
+or publication button is required. Failed or cancelled generation preserves the
+previous saved result, revisions and completed extraction caches. Browsing saved
+results makes no AI calls. Earlier unsaved previews remain available in a collapsed
+legacy section; they are not part of the normal generation workflow.
 
-The canonical endpoints are `POST /projects/{id}/codex/analysis/preview` and
-`POST /projects/{id}/codex/analysis/publish`; `GET` on the preview endpoint reads
-the saved candidate. Existing Knowledge endpoints remain compatible. Legacy
-`POST /projects/{id}/codex/brief` publishes the shared pair and retains its Brief
-response shape. Existing saved overviews and revisions remain readable.
+The UI uses `POST /projects/{id}/codex/knowledge/brief` with
+`confirmed:true,publish:true`. Explicit preview/activation endpoints remain
+compatible for older clients. `GET /projects/{id}/codex/knowledge` reads the saved
+publication; progress recovery never resends generation. General Overview retains
+its independent `/codex/brief` action and saved revisions.
 
 Generation status includes elapsed time and completed-stage durations
 (`elapsed_seconds`, `stage_seconds`). Server logs record stage duration without
@@ -167,11 +165,14 @@ still use one call. Duplicate generation for the same project/view is blocked.
 Each job has independent progress, cancellation, time budget and saved results.
 Restart and source/account maintenance still wait for all active jobs.
 
-**Regenerate all** starts the project's idle generation views through their usual
-actions; tags remain separate. Failed jobs preserve their prior results and do not
-cancel successful siblings. Knowledge retains its existing preview/publication
-workflow. Scheme uses the saved Knowledge available when its job starts; it does
-not silently consume an unfinished Knowledge generation.
+**Regenerate all** starts idle Overview, Knowledge, Q&A and Implementation Choices
+in parallel. Scheme waits until the new Knowledge is successfully saved. A
+server-owned follow-up then starts Scheme using saved Knowledge, even if the user
+navigates away. Knowledge failure/cancellation skips Scheme; siblings continue
+and previous results remain intact. If Knowledge is already running, the bulk
+action skips its dependent Scheme rather than attaching to an unidentified run.
+Tags remain a separate action. A server crash can still interrupt in-memory work;
+saved results and successful extraction caches remain durable.
 
 Concurrency validation used real SQLite with simultaneous Overview/Scheme saves
 and cancellation, plus isolated Firefox checks of all five actions and a failed
