@@ -3,57 +3,75 @@ import { test } from 'node:test';
 import { createTagProgressMonitor, type TagProgressState } from '../src/tagProgress.ts';
 import type { Progress } from '../src/GenerationStatus';
 
-const pause = (ms = 15) => new Promise(resolve => setTimeout(resolve, ms));
+const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 const status = (state: Progress['state']): Progress => ({ state, stage: '', sessions: 0 });
 
-test('multiple tag widgets share one recovery read and idle does not continue polling', async () => {
+test('multiple tag widgets share one recovery read and idle does not continue polling', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
   const monitor = createTagProgressMonitor(async () => { calls++; return status('idle'); }, 5);
   let first!: TagProgressState, second!: TagProgressState;
   const a = monitor.subscribe('/projects/1', value => { first = value; });
   const b = monitor.subscribe('/projects/1', value => { second = value; });
-  await pause(25);
+  await settle();
+  t.mock.timers.tick(25);
   assert.equal(calls, 1);
   assert.equal(first.progress, second.progress);
   a(); b();
 });
 
-test('active recovery polls serially and stops at completion', async () => {
-  let calls = 0, active = 0, peak = 0;
-  const monitor = createTagProgressMonitor(async () => {
-    calls++; active++; peak = Math.max(peak, active);
-    await pause(8);
-    active--;
-    return status(calls < 3 ? 'running' : 'completed');
-  }, 2);
+test('active recovery polls serially and stops at completion', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const requests: ((progress: Progress) => void)[] = [];
+  const monitor = createTagProgressMonitor(() => new Promise(resolve => { requests.push(resolve); }), 2);
   let last!: TagProgressState;
   const release = monitor.subscribe('/projects/1', value => { last = value; });
-  await pause(55);
-  assert.equal(calls, 3);
-  assert.equal(peak, 1);
-  assert.equal(last.progress?.state, 'completed');
-  release();
+  try {
+    for (const index of [0, 1]) {
+      assert.equal(requests.length, index + 1);
+      t.mock.timers.tick(20);
+      assert.equal(requests.length, index + 1, 'a pending read must not overlap another poll');
+      requests[index](status('running'));
+      await settle();
+      assert.equal(last.progress?.state, 'running');
+      t.mock.timers.tick(1);
+      assert.equal(requests.length, index + 1, 'the delay starts when the read settles');
+      t.mock.timers.tick(1);
+    }
+    assert.equal(requests.length, 3);
+    requests[2](status('completed'));
+    await settle();
+    assert.equal(last.progress?.state, 'completed');
+    t.mock.timers.tick(20);
+    assert.equal(requests.length, 3, 'completion must stop polling');
+  } finally {
+    release();
+  }
 });
 
-test('local generation intent keeps recovery alive across an initial old terminal response', async () => {
+test('local generation intent keeps recovery alive across an initial old terminal response', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
   const monitor = createTagProgressMonitor(async () => { calls++; return status('completed'); }, 3);
   let last!: TagProgressState;
   const release = monitor.subscribe('/projects/1', value => { last = value; });
   monitor.begin('/projects/1');
-  await pause(15);
-  assert.ok(calls > 1);
+  await settle();
+  t.mock.timers.tick(3);
+  await settle();
+  assert.equal(calls, 2);
   assert.equal(last.starting, true);
   monitor.end('/projects/1');
-  await pause(10);
+  await settle();
   const completedCalls = calls;
-  await pause(12);
+  t.mock.timers.tick(12);
   assert.equal(calls, completedCalls);
   assert.equal(last.starting, false);
   release();
 });
 
-test('idle recovery errors stop until explicit retry and successful recovery clears the error', async () => {
+test('idle recovery errors stop until explicit retry and successful recovery clears the error', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   let calls = 0;
   const monitor = createTagProgressMonitor(async () => {
     calls++;
@@ -62,7 +80,8 @@ test('idle recovery errors stop until explicit retry and successful recovery cle
   }, 3);
   let last!: TagProgressState;
   const release = monitor.subscribe('/projects/1', value => { last = value; });
-  await pause();
+  await settle();
+  t.mock.timers.tick(15);
   assert.equal(calls, 1);
   assert.match(last.error, /unavailable/);
   await monitor.refresh('/projects/1');
@@ -71,7 +90,8 @@ test('idle recovery errors stop until explicit retry and successful recovery cle
   release();
 });
 
-test('a terminal progress update clears the old timer so later readers can recover fresh status', async () => {
+test('a terminal progress update clears the old timer so later readers can recover fresh status', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   let calls = 0;
   const monitor = createTagProgressMonitor(async () => {
     calls++;
@@ -81,7 +101,7 @@ test('a terminal progress update clears the old timer so later readers can recov
   await monitor.refresh('/projects/1');
   assert.equal(calls, 1);
   monitor.update('/projects/1', status('completed'));
-  await pause(12);
+  t.mock.timers.tick(12);
   assert.equal(calls, 1, 'the cancelled timer must not poll');
   const second = monitor.subscribe('/projects/1', () => {});
   assert.equal(calls, 2, 'a stale timer handle must not suppress this recovery read');
@@ -102,7 +122,7 @@ test('unmount aborts pending reads, suppresses late responses and does not retai
   await Promise.resolve();
   assert.equal(signal.aborted, true);
   finish(status('running'));
-  await pause();
+  await settle();
   assert.equal(updates, 1);
   let fresh!: TagProgressState;
   const other = monitor.subscribe('/projects/2', value => { fresh = value; });
