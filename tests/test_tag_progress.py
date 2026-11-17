@@ -100,8 +100,8 @@ def test_fully_reused_run_still_enforces_budget(engine, monkeypatch):
     previous = topics.group_records(engine, 1, manager, records())
     progress.begin(1, 'tags')
     try:
-        clock, budget = progress._clocks[1]
-        monkeypatch.setitem(progress._clocks, 1, (clock - budget - 1, budget))
+        clock, budget = progress._clocks[1, 'tags']
+        monkeypatch.setitem(progress._clocks, (1, 'tags'), (clock - budget - 1, budget))
         with pytest.raises(topics.CodexError, match='time budget'):
             topics.group_records(engine, 1, manager, records(), previous=previous)
         assert previous['topic_grouping']['reused_items'] == 0

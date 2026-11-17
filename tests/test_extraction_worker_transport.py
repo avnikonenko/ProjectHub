@@ -194,3 +194,43 @@ def test_real_cancellation_and_budget_take_precedence_over_sibling_abort(monkeyp
             progress.check_cancelled()
     finally:
         progress.finish(project_id, error='Budget exhausted')
+
+
+def test_default_model_jobs_have_private_managers_transports_and_provenance(manager, monkeypatch):
+    clients = []
+    barrier = threading.Barrier(2)
+
+    class DefaultJobClient(ProtocolClient):
+        def request(self, method, params):
+            result = super().request(method, params)
+            if method == 'thread/start':
+                result['model'] = f'resolved-{id(self)}'
+            return result
+
+    def factory(**callbacks):
+        client = DefaultJobClient(**callbacks, barrier=barrier)
+        clients.append(client)
+        return client
+
+    manager.client_factory = factory
+    manager.generation_metadata = {'account': 'old', 'model': 'old', 'effort': 'old'}
+    first = manager.for_generation(None)
+    second = manager.for_generation(None)
+    assert first is not second and first is not manager and second is not manager
+    assert not hasattr(first, 'generation_metadata')
+    assert first.generate_brief.args[0] is first
+    assert second.generate_brief.args[0] is second
+
+    def run(selected):
+        with selected.generation_session():
+            result = selected.generate_brief('Independent saved view', {'type': 'object'})
+            return result, deepcopy(selected.generation_metadata)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        one = pool.submit(run, first)
+        two = pool.submit(run, second)
+        left, right = one.result(timeout=5), two.result(timeout=5)
+    assert left[0] == right[0] == '{"ok":true}'
+    assert left[1]['model'] != right[1]['model']
+    assert manager.generation_metadata == {'account': 'old', 'model': 'old', 'effort': 'old'}
+    assert len(clients) == 2 and all(client.closed for client in clients)

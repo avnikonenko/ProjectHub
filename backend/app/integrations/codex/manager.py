@@ -573,9 +573,11 @@ class CodexManager:
 
     def for_generation(self, model, effort=None):
         self.validate_generation(model, effort)
-        if model is None:
-            return self
+        # Each top-level job owns its provenance and transport scope, including
+        # requests using the account's default model. Never share mutable reply
+        # metadata between concurrently generating views.
         selected = copy.copy(self)
+        selected.__dict__.pop('generation_metadata', None)
         selected.generation_model, selected.generation_effort = model, effort
         selected.generation_account = getattr(self, 'account_home', None)
         selected.generate_brief = partial(CodexManager.generate_brief, selected, model=model, effort=effort)

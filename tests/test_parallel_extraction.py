@@ -238,7 +238,7 @@ def test_workers_inherit_cancellation_and_budget(setup, monkeypatch, mode, worke
             if mode == 'cancel':
                 progress.cancel(1, 'knowledge', progress.read(1, 'knowledge')['started_at'])
             else:
-                monkeypatch.setitem(progress._clocks, 1, (time.monotonic() - 100, 30))
+                monkeypatch.setitem(progress._clocks, (1, 'knowledge'), (time.monotonic() - 100, 30))
             triggered.set()
         assert triggered.wait(3), 'Worker did not receive generation stop condition'
         try:

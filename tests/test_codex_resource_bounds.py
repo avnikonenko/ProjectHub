@@ -132,7 +132,7 @@ def test_cancellation_reaches_a_stalled_write(stalled_server):
 def test_overall_budget_is_checked_during_transport_io(stalled_server):
     client = stalled_server
     progress.begin(99882, 'knowledge')
-    progress._clocks[99882] = (time.monotonic() - 1, .1)
+    progress._clocks[99882, 'knowledge'] = (time.monotonic() - 1, .1)
     try:
         with pytest.raises(CodexError, match='overall time budget'):
             client.request('turn/start', {'input': 'x' * 240_000})

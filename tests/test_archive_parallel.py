@@ -230,7 +230,7 @@ def test_parallel_workers_share_the_overall_budget(env, monkeypatch):
     def expire(engine, project_id, selected, payload, sources, stage, limit):
         invoked.append(sources[0]['id'])
         with progress._lock:
-            progress._clocks[project_id] = (time.monotonic() - 60, 30)
+            progress._clocks[project_id, 'brief'] = (time.monotonic() - 60, 30)
         progress.check_cancelled()
 
     monkeypatch.setattr(archive, '_summarize', expire)

@@ -256,8 +256,8 @@ def test_cancellation_and_deadline_propagate_into_workers(engine, deadline):
 
     def hook(prompt, payload):
         if deadline:
-            started, budget = progress._clocks[1]
-            progress._clocks[1] = (started - budget - 1, budget)
+            started, budget = progress._clocks[1, 'qa']
+            progress._clocks[1, 'qa'] = (started - budget - 1, budget)
         else:
             progress.cancel(1, 'qa', status['started_at'])
         progress.check_cancelled()
