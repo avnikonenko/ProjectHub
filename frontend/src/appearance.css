@@ -105,6 +105,10 @@
   color: var(--muted);
 }
 
+:root[data-palette] .coverage-details :is(h1, h2, h3, h4, h5, h6, summary, .brief-topic) {
+  color: var(--muted);
+}
+
 :root[data-palette] :is(.brief-reference, .citation-source):is(:hover, :focus-visible) {
   color: var(--accent);
 }
