@@ -31,7 +31,7 @@ MAX_READ_BYTES = 2 * 1024 * 1024
 MAX_FILE_BYTES = 65_536
 MAX_INSPECTION_SECONDS = 5.0
 MAX_PACKAGE_CHARS = 140_000
-_VERSION = 1
+_VERSION = 2
 _SETTING_WORDS = re.compile(r'(?:default|limit|budget|timeout|worker|thread|batch|chunk|context|threshold|cutoff|interval|rate|buffer|cache|size|count|retr(?:y|ies)|profile|precision|tolerance|seed|replica|sample|frame|occupancy|temperature|step|window|minimum|maximum|(?:^|_)min(?:_|$)|(?:^|_)max(?:_|$))', re.I)
 _PRIVATE_NAME = re.compile(r'(?:password|passwd|credential|secret|api[_-]?key|private[_-]?key|bearer|authorization|authentication|(?:^|[._-])auth(?:[._-]|$)|access[_-]?token|refresh[_-]?token)', re.I)
 _PRIVATE_TEXT = re.compile(r'''(?:[a-z][a-z0-9+.-]*://|-----BEGIN|\b(?:Bearer|Basic)\s+\S+|\bsk-[A-Za-z0-9_-]{10,}|\b(?:password|passwd|credential|secret|api[_-]?key|authorization|token)["']?\s*[:=])''', re.I)
@@ -84,6 +84,16 @@ def _safe_expression(node):
         if isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute) and part.func.attr in {'getenv', 'get'}:
             if part.args and isinstance(part.args[0], ast.Constant) and isinstance(part.args[0].value, str) and _secret_name(part.args[0].value):
                 return False
+        if (isinstance(part, ast.Call) and isinstance(part.func, ast.Name)
+                and part.func.id in {'getattr', 'hasattr'} and len(part.args) > 1
+                and isinstance(part.args[1], ast.Constant) and isinstance(part.args[1].value, str)
+                and _secret_name(part.args[1].value)):
+            return False
+        if (isinstance(part, ast.MatchMapping) and any(isinstance(key, ast.Constant)
+                and isinstance(key.value, str) and _secret_name(key.value) for key in part.keys)):
+            return False
+        if isinstance(part, ast.MatchClass) and any(_secret_name(name) for name in part.kwd_attrs):
+            return False
     return True
 
 
@@ -108,15 +118,17 @@ def _value(node, source):
 
 def _comments(lines, line):
     selected = []
-    for index in range(line - 2, max(-1, line - 4), -1):
+    for index in range(line - 2, -1, -1):
         text = lines[index].strip()
         # An earlier comment belongs to the intervening declaration, not this
         # parameter. Blank lines also end the immediately preceding block.
         if not text.startswith('#'):
             break
-        if _safe_text(text, 300):
-            if sum(map(len, selected)) + len(text) + len(selected) > 500:
-                break
+        # Never retain a credential continuation just because its identifying
+        # line is outside the two-line display bound or was individually omitted.
+        if not _safe_text(text, 300):
+            return ''
+        if len(selected) < 2 and sum(map(len, selected)) + len(text) + len(selected) <= 500:
             selected.append(text)
     return '\n'.join(reversed(selected))
 
@@ -148,6 +160,16 @@ def _python(value, *, partial=False):
     class Context(ast.NodeVisitor):
         scope = []
         qualifiers = []
+
+        def text(self, node):
+            text = ast.get_source_segment(value, node) or ast.unparse(node)
+            return text if _safe_text(text, 250) and _safe_expression(node) else '[condition omitted for safety]'
+
+        def branch(self, qualifier, children):
+            self.qualifiers.append(qualifier)
+            for child in children:
+                self.visit(child)
+            self.qualifiers.pop()
 
         def visit(self, node):
             scopes[id(node)] = tuple(self.scope)
@@ -190,14 +212,47 @@ def _python(value, *, partial=False):
             self.scope.pop()
 
         def visit_If(self, node):
-            test = ast.get_source_segment(value, node.test) or ast.unparse(node.test)
-            test = test if _safe_text(test, 250) and _safe_expression(node.test) else '[condition omitted for safety]'
+            test = self.text(node.test)
             self.visit(node.test)
             for prefix, children in (('if ', node.body), ('else branch of if ', node.orelse)):
-                self.qualifiers.append(prefix + test)
-                for child in children:
-                    self.visit(child)
-                self.qualifiers.pop()
+                self.branch(prefix + test, children)
+
+        def visit_Try(self, node):
+            self.branch('try branch', node.body)
+            for handler in node.handlers:
+                exception = self.text(handler.type) if handler.type is not None else 'any exception'
+                self.branch('except branch: ' + exception, handler.body)
+            self.branch('else branch of try', node.orelse)
+            self.branch('finally branch of try', node.finalbody)
+
+        visit_TryStar = visit_Try
+
+        def visit_For(self, node):
+            self.visit(node.target); self.visit(node.iter)
+            self.branch('for ' + self.text(node.target) + ' in ' + self.text(node.iter), node.body)
+            self.branch('else branch of for', node.orelse)
+
+        visit_AsyncFor = visit_For
+
+        def visit_While(self, node):
+            self.visit(node.test)
+            self.branch('while ' + self.text(node.test), node.body)
+            self.branch('else branch of while ' + self.text(node.test), node.orelse)
+
+        def visit_With(self, node):
+            for item in node.items:
+                self.visit(item.context_expr)
+            self.branch('with ' + ', '.join(self.text(item.context_expr) for item in node.items), node.body)
+
+        visit_AsyncWith = visit_With
+
+        def visit_Match(self, node):
+            self.visit(node.subject)
+            for case in node.cases:
+                qualifier = 'match ' + self.text(node.subject) + ': case ' + self.text(case.pattern)
+                if case.guard is not None:
+                    qualifier += ' if ' + self.text(case.guard)
+                self.branch(qualifier, [case.pattern, *([case.guard] if case.guard is not None else []), *case.body])
 
     Context().visit(tree)
     guard_index = defaultdict(list)

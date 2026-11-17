@@ -254,6 +254,79 @@ def test_sensitive_subscript_lookups_do_not_leak_defaults_or_guard_values(tmp_pa
         engine.dispose()
 
 
+def test_sensitive_attribute_accessors_do_not_leak_defaults_or_conditions(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'config.py').write_text("DEFAULT_LIMIT=getattr(config, 'api_key', 'SECRET_FALLBACK')\nif getattr(config, 'access_token', 'SECRET_CONDITION'):\n    MAX_WORKERS=10\nif hasattr(config, 'api_key') and marker == 'SECRET_GUARD':\n    MAX_WORKERS=2\n")
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_parameter_evidence(engine, 1)
+        assert [row['name'] for row in result['parameters']] == ['MAX_WORKERS', 'MAX_WORKERS']
+        assert all(row['condition'] == 'if [condition omitted for safety]' for row in result['parameters'])
+        assert 'SECRET_' not in json.dumps(result)
+    finally:
+        engine.dispose()
+
+
+def test_exception_and_match_defaults_preserve_branch_conditions_without_evaluation():
+    rows = evidence._python('''try:
+    MAX_WORKERS = discover_workers()
+except RuntimeError:
+    MAX_WORKERS = 2
+else:
+    MAX_WORKERS = 4
+finally:
+    MAX_BUDGET = 500
+match platform:
+    case 'windows':
+        DEFAULT_THREADS = 2
+    case _ if getattr(config, 'api_key', 'SECRET_MATCH'):
+        DEFAULT_THREADS = 10
+''')
+    assert [row['condition'] for row in rows] == [
+        'try branch', 'except branch: RuntimeError', 'else branch of try', 'finally branch of try',
+        "match platform: case 'windows'", 'match platform: case _ if [condition omitted for safety]',
+    ]
+    assert 'SECRET_MATCH' not in json.dumps(rows)
+    assert [row['default_value'] for row in rows] == ['discover_workers()', '2', '4', '500', '2', '10']
+
+
+def test_loop_and_context_managed_defaults_are_not_presented_as_unconditional():
+    rows = evidence._python('''for size in configured_sizes:
+    MAX_BATCH = size
+else:
+    MAX_BATCH = 10
+while supported():
+    DEFAULT_THREADS = 4
+else:
+    DEFAULT_THREADS = 2
+with optional_backend():
+    MAX_BUDGET = 200
+''')
+    assert [row['condition'] for row in rows] == [
+        'for size in configured_sizes', 'else branch of for', 'while supported()',
+        'else branch of while supported()', 'with optional_backend()',
+    ]
+
+
+def test_sensitive_match_patterns_and_comment_continuations_are_not_transmitted():
+    rows = evidence._python('''# password=
+# Continued secret material:
+# SECRET_CONTINUATION
+MAX_WORKERS=4
+match config:
+    case {'api_key': 'SECRET_MAPPING'}:
+        MAX_WORKERS=2
+    case Credentials(access_token='SECRET_CLASS'):
+        MAX_WORKERS=1
+''')
+    assert rows[0]['context'] == ''
+    assert [row['condition'] for row in rows[1:]] == [
+        'match config: case [condition omitted for safety]',
+        'match config: case [condition omitted for safety]',
+    ]
+    assert 'SECRET_' not in json.dumps(rows)
+
+
 @pytest.mark.parametrize(('filename', 'body', 'first', 'second'), [
     ('settings.py', '# Bound selected context.\nMAX_CONTEXT_CHARS=40_000\nDEFAULT_WORKERS=10\n', 'MAX_CONTEXT_CHARS', 'DEFAULT_WORKERS'),
     ('config.toml', '# Bound selected context.\ncontext_budget=40000\nworkers=10\n', 'context_budget', 'workers'),
