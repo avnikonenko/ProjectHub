@@ -1,4 +1,5 @@
 """Assemble the built UI and repository resources into a release wheel."""
+import json
 from html.parser import HTMLParser
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -45,6 +46,39 @@ class FrontendEntries(HTMLParser):
             self.scripts.add(path)
 
 
+def manifest_assets(frontend, entry_scripts):
+    """Return every asset emitted by Vite, including lazy chunks and their dependencies."""
+    path = frontend / '.vite' / 'manifest.json'
+    rebuild = 'Rebuild the frontend before packaging.'
+    if not path.is_file() or path.is_symlink() or path.parent.is_symlink():
+        raise RuntimeError(f'The frontend build manifest is missing or symlinked. {rebuild}')
+    try:
+        manifest = json.loads(path.read_text(encoding='utf-8'))
+    except (UnicodeError, ValueError) as exc:
+        raise RuntimeError(f'The frontend build manifest is invalid. {rebuild}') from exc
+    if not isinstance(manifest, dict) or not all(isinstance(record, dict) for record in manifest.values()):
+        raise RuntimeError(f'The frontend build manifest is invalid. {rebuild}')
+
+    files = set()
+    for record in manifest.values():
+        file = record.get('file')
+        if not isinstance(file, str) or not file:
+            raise RuntimeError(f'The frontend build manifest is missing a file path. {rebuild}')
+        files.add(PurePosixPath(file))
+        for field in ('css', 'assets', 'imports', 'dynamicImports'):
+            references = record.get(field, [])
+            if not isinstance(references, list) or not all(isinstance(ref, str) and ref for ref in references):
+                raise RuntimeError(f'The frontend build manifest has malformed {field}. {rebuild}')
+            if field in ('css', 'assets'):
+                files.update(PurePosixPath(ref) for ref in references)
+            elif any(ref not in manifest for ref in references):
+                raise RuntimeError(f'The frontend build manifest has missing chunk entries. {rebuild}')
+    entry = manifest.get('index.html', {})
+    if not entry.get('isEntry') or PurePosixPath(entry['file']) not in entry_scripts:
+        raise RuntimeError(f'The frontend build manifest does not match index.html. {rebuild}')
+    return files
+
+
 def release_files():
     frontend = ROOT / "frontend" / "dist"
     assets = frontend / "assets"
@@ -61,10 +95,15 @@ def release_files():
     entries.close()
     if not entries.scripts:
         raise RuntimeError('The frontend index has no local JavaScript entry. Rebuild the frontend before packaging.')
-    missing = entries.assets - {path.relative_to(frontend) for path in compiled}
+    compiled_paths = {path.relative_to(frontend) for path in compiled}
+    missing = entries.assets - compiled_paths
     if missing:
         paths = ', '.join(str(path) for path in sorted(missing))
         raise RuntimeError(f'Frontend assets referenced by index.html are missing from the wheel inputs: {paths}')
+    missing = manifest_assets(frontend, entries.scripts) - compiled_paths
+    if missing:
+        paths = ', '.join(str(path) for path in sorted(missing))
+        raise RuntimeError(f'Frontend assets referenced by the Vite manifest are missing from the wheel inputs: {paths}')
     files = [(index, BUNDLE / "frontend" / "index.html")]
     files.extend((path, BUNDLE / "frontend" / path.relative_to(frontend)) for path in compiled)
     migrations = ROOT / "migrations"

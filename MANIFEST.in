@@ -3,6 +3,7 @@ include skills/projecthub-notes/SKILL.md
 include migrations/env.py
 include migrations/versions/*.py
 include frontend/dist/index.html
+include frontend/dist/.vite/manifest.json
 recursive-include frontend/dist/assets *.js *.mjs *.css *.svg *.png *.jpg *.jpeg *.gif *.webp *.ico *.woff *.woff2 *.ttf *.wasm
 prune backend/tests
 prune tests
