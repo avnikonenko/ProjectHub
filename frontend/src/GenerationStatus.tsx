@@ -24,7 +24,13 @@ export type Progress = {
   cache_hits?: number;
   budget_seconds?: number;
   elapsed_seconds?: number;
+  latest_attempt?: { state: string } | null;
 };
+
+// The status API preserves its legacy idle state for queued dependencies.
+// Their durable waiting state still needs polling and duplicate protection.
+const pendingGeneration = (status: Progress) => status.state === 'running'
+  || status.latest_attempt?.state === 'waiting';
 
 export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false, includeParameters = false }: {
   includeBrief?: boolean; includeKnowledge?: boolean; includeParameters?: boolean;
@@ -51,7 +57,7 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
           if (abort.signal.aborted) return;
           // A lost POST response can precede the server starting its run. Do
           // not mistake the preceding request's idle/terminal status for it.
-          if (!recovering && recheckRequest.kind === kind && status.state !== 'running'
+          if (!recovering && recheckRequest.kind === kind && !pendingGeneration(status)
               && status.started_at === recheckRequest.previousStartedAt && handoffChecks < 2) {
             handoffChecks++;
             timers[kind] = setTimeout(() => poll(kind), 1500);
@@ -61,7 +67,7 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
           setProgress(previous => ({ ...previous, [kind]: status }));
           if (checked.size === kinds.length) setChecking(false);
           setErrors((previous) => ({ ...previous, [kind]: '' }));
-          if (status.state === 'running') {
+          if (pendingGeneration(status)) {
             setRunning((previous) => ({ ...previous, [kind]: true }));
             timers[kind] = setTimeout(() => poll(kind, true), 1500);
           } else {
@@ -213,7 +219,7 @@ export function GenerationStatus({
             setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)));
           }
         }
-        if (sawRunning || kind === 'ask') setProgress(status);
+        if (sawRunning || kind === 'ask' || status.latest_attempt?.state === 'waiting') setProgress(status);
         if (status.cancel_requested || status.state === 'cancelled') setCancelError('');
         setError('');
       } catch (e) {

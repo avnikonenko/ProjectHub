@@ -786,7 +786,8 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
-              waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checking)}
+              waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checking)
+                || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
               recoveryVersion={recovery.version.scheme} recoveryBusy={recovery.checking || recovery.running.scheme}
               onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />

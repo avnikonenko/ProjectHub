@@ -62,9 +62,9 @@ before(async () => {
   useGenerationRecovery = (await server.ssrLoadModule('/src/GenerationStatus.tsx')).useGenerationRecovery;
 });
 after(async () => { await server?.close(); delete (globalThis as any).__generationRecoveryHooks; });
-function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any) {
+function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any, initialScheme?: any) {
   const original = globalThis.fetch;
-  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: { state: 'idle' }, parameters: initialParameters ?? { state: 'idle' } };
+  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: initialScheme ?? { state: 'idle' }, parameters: initialParameters ?? { state: 'idle' } };
   const calls: { kind: string; method: string }[] = [];
   globalThis.fetch = async (input, options) => {
     const kind = new URL(String(input), 'http://test.local').searchParams.get('kind')!;
@@ -182,4 +182,48 @@ test('starting one view does not clear a sibling view recovery error', async () 
     assert.doesNotMatch(run.host.value.error, /Overview failed/);
     assert.match(run.host.value.error, /Questions failed/);
   } finally { run.dispose(); }
+});
+
+// Waiting uses legacy idle plus durable metadata; keep recovering until the
+// server-owned dependent request starts or terminates.
+test('reloaded queued Scheme follows wait to running and completion, then refreshes only Scheme', async t => {
+  const run = fixture({ state: 'idle' }, undefined,
+    { state: 'idle', stage: 'Waiting for Knowledge', started_at: 'queue-one', latest_attempt: { state: 'waiting' } });
+  try {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await settle();
+    assert.equal(run.host.value.checking, false);
+    assert.equal(run.host.value.running.scheme, true);
+    assert.equal(run.host.value.version.scheme, 0);
+    run.responses.scheme = { state: 'running', started_at: 'scheme-one', latest_attempt: { state: 'running' } };
+    t.mock.timers.tick(1500); await settle();
+    assert.equal(run.host.value.running.scheme, true);
+    run.responses.scheme = { state: 'completed', started_at: 'scheme-one', latest_attempt: { state: 'completed' } };
+    t.mock.timers.tick(1500); await settle();
+    assert.equal(run.host.value.running.scheme, false);
+    assert.equal(run.host.value.version.scheme, 1);
+    assert.equal(run.host.value.version.knowledge, 0);
+    assert.equal(run.host.value.error, '');
+    assert.ok(run.calls.every(call => call.method === 'GET'));
+  } finally { run.dispose(); }
+});
+
+test('queued Scheme stops recovery and retains skipped or interrupted failure details', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (const state of ['skipped', 'interrupted']) {
+    const run = fixture({ state: 'idle' }, undefined,
+      { state: 'idle', started_at: 'queue-one', latest_attempt: { state: 'waiting' } });
+    try {
+      await settle();
+      assert.equal(run.host.value.running.scheme, true);
+      run.responses.scheme = { state: 'failed', started_at: 'queue-one', error: `Scheme ${state}`, latest_attempt: { state } };
+      t.mock.timers.tick(1500); await settle();
+      assert.equal(run.host.value.running.scheme, false);
+      assert.equal(run.host.value.version.scheme, 1);
+      assert.match(run.host.value.error, new RegExp(`Scheme ${state}`));
+      const before = run.calls.length;
+      t.mock.timers.tick(1500); await settle();
+      assert.equal(run.calls.length, before);
+    } finally { run.dispose(); }
+  }
 });
