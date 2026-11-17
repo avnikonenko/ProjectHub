@@ -30,8 +30,6 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Preserve source-supported parameter defaults, reported overrides, scope and concrete project-specific trade-offs in generated Knowledge; exclude generic method caveats and distinguish reported settings from verified runtime values.
 
-- Unify Overview and Knowledge as two views of one project analysis. Refresh either view, inspect a paired unpublished preview, and publish both together. Preserve progress across tabs and reloads, retain previous revisions, and describe architecture as components and data flow without treating agreed requirements as current work.
-
 - Collapse conversation index status and manual refresh into Source details in History. Automatic sync continues, with a compact attention indicator when a sync or refresh fails.
 
 - Keep Scheme diagrams focused on project capabilities rather than CLI wrappers and storage details. Read feature guides and preserve their original purpose, prioritize current application evidence over backups, and include source-linked Conda/pip environment dependencies with CPU/GPU constraints. Separate CI, build and documentation requirements from runtime declarations.
@@ -41,6 +39,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.
 
 ### Fixed
+
+- Preserve legacy Knowledge Summaries before refreshing their general Overview or deleting a backing Overview revision. Recover read-only generation status after an interrupted Overview response, and keep Knowledge progress visible when switching to Overview.
 
 - Preserve complete source evidence for long Scheme dependency manifests using bounded declaration chunks. Follow explicit imports into safe archive paths without promoting unreferenced backups, redact pip references with extras, retain compatible-release constraints, and keep distinct dependency versions independently identified while removing exact duplicates.
 

@@ -139,3 +139,46 @@ test('JSON export preserves exact evidence and paired unpublished identities', (
   assert.deepEqual(parsed, before);
   assert.throws(() => knowledgePreviewExport(parsed, 3), /another project/);
 });
+
+test('lost local POST waits through old idle status and follows the new run without generation requests', async () => {
+  const states = [{ state: 'idle' }, { state: 'running', started_at: 'new-run' },
+    { state: 'completed', started_at: 'new-run' }];
+  const events: any[] = [], calls: string[] = [];
+  let waits = 0, reads = 0;
+  await recoverKnowledgePreview('/projects/2', 2, new AbortController().signal, event => events.push(event),
+    async path => { calls.push(path); return path.endsWith('/preview') ? preview(++reads === 1 ? 'old' : 'new') : states.shift(); },
+    async () => { waits++; }, {});
+  assert.equal(waits, 2);
+  assert.equal(events.filter(event => event.type === 'saved').at(-1).result.knowledge.publication_id, 'new');
+  assert.deepEqual(events.filter(event => event.type === 'progress').map(event => event.progress.state), ['running', 'completed']);
+  assert.ok(calls.every(path => path.endsWith('/analysis/preview') || path.endsWith('/generation/status?kind=knowledge')));
+});
+
+test('lost already-completed POST ignores the prior run and rereads the replacement', async () => {
+  const events: any[] = [], states = [{ state: 'completed', started_at: 'prior' }, { state: 'completed', started_at: 'new' }];
+  let reads = 0, waits = 0;
+  await recoverKnowledgePreview('/projects/2', 2, new AbortController().signal, event => events.push(event),
+    async path => path.endsWith('/preview') ? preview(++reads === 1 ? 'old' : 'new') : states.shift(),
+    async () => { waits++; }, { previousStartedAt: 'prior' });
+  assert.equal(waits, 1);
+  assert.equal(reads, 2);
+  assert.equal(events.at(-1).progress.started_at, 'new');
+  assert.equal(events.filter(event => event.type === 'saved').at(-1).result.knowledge.publication_id, 'new');
+});
+
+test('local POST handoff is bounded and aborting it prevents further reads', async () => {
+  let statuses = 0, waits = 0;
+  const events: any[] = [];
+  await recoverKnowledgePreview('/projects/2', 2, new AbortController().signal, event => events.push(event),
+    async path => path.endsWith('/preview') ? preview() : (++statuses, { state: 'idle' }),
+    async () => { waits++; }, {});
+  assert.equal(waits, 2); assert.equal(statuses, 3);
+  assert.equal(events.at(-1).progress.state, 'idle');
+  const controller = new AbortController(); statuses = 0;
+  const aborted: any[] = [];
+  await recoverKnowledgePreview('/projects/2', 2, controller.signal, event => aborted.push(event),
+    async path => path.endsWith('/preview') ? preview() : (++statuses, { state: 'idle' }),
+    async () => { controller.abort(); }, {});
+  assert.equal(statuses, 1);
+  assert.deepEqual(aborted.map(event => event.type), ['saved']);
+});

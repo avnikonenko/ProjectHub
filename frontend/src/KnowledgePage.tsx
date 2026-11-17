@@ -60,6 +60,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const [previewView, setPreviewView] = useState<'summary' | 'knowledge'>('summary');
   const lastRequested = useRef(refreshRequest);
   const [retry, setRetry] = useState(0);
+  const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const [load, setLoad] = useState<LoadState>({ base, key: loadKey, loading: true, data: null, error: '' });
   const [preview, setPreview] = useState<PreviewState>({ base, busy: false, result: null, error: '', started: 0 });
   const [activation, setActivation] = useState<ActivationState>({ base, busy: false, error: '', notice: '' });
@@ -68,6 +69,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   const activating = useRef<{ base: string; controller: AbortController } | null>(null);
   const recovery = useRef<AbortController | null>(null);
   const previewRequestVersion = useRef(0);
+  const lastProgressStartedAt = useRef<string | undefined>(undefined);
+  const recoveryHandoff = useRef<{ previousStartedAt?: string } | undefined>(undefined);
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
   const currentPreview = preview.base === base ? preview : null;
   const currentActivation = activation.base === base ? activation : null;
@@ -102,6 +105,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     active.current = null;
     activating.current?.controller.abort();
     activating.current = null;
+    recoveryHandoff.current = undefined;
+    lastProgressStartedAt.current = undefined;
   }, [base]);
 
   useEffect(() => {
@@ -120,6 +125,8 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           : { base, busy: false, result: null, error: '', started: 0 };
         if (event.type === 'saved') return { ...current, result: event.result };
         const status = event.progress;
+        lastProgressStartedAt.current = status.started_at;
+        recoveryHandoff.current = undefined;
         return { ...current, busy: status.state === 'running', loading: false,
           started: status.state === 'running' ? Date.parse(status.started_at || '') || Date.now() : 0,
           cancelled: status.state === 'cancelled',
@@ -127,7 +134,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
             : status.state === 'idle' && current.busy
               ? 'Generation is no longer running. The saved result is preserved.' : '' };
       });
-    }).catch((error: Error) => {
+    }, undefined, undefined, recoveryHandoff.current).catch((error: Error) => {
       if (canApply()) setPreview((previous) => ({ ...previous, busy: false, started: 0, loading: false,
         error: `Could not load the saved result: ${error.message}` }));
     });
@@ -135,13 +142,14 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       controller.abort();
       if (recovery.current === controller) recovery.current = null;
     };
-  }, [base, projectId, retry, visible, loadKey]);
+  }, [base, projectId, retry, visible, loadKey, recoveryAttempt]);
 
   async function generatePreview() {
     if (externalBusy || active.current || activating.current || busy || tagsBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
     const controller = new AbortController();
+    const previousStartedAt = lastProgressStartedAt.current;
     const run = { base, controller };
     active.current = run;
     setActivation({ base, busy: false, error: '', notice: '' });
@@ -158,10 +166,17 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         setPreview({ base, busy: false, result, error: '', started: 0 });
       }
     } catch (error) {
-      if (!controller.signal.aborted && active.current === run) setPreview((previous) => ({ base, busy: false,
-        result: previous.base === base ? previous.result : null,
-        error: isGenerationCancelled(error) ? '' : (error as Error).message,
-        started: 0, cancelled: isGenerationCancelled(error) }));
+      if (!controller.signal.aborted && active.current === run) {
+        const cancelled = isGenerationCancelled(error);
+        setPreview((previous) => ({ base, busy: !cancelled,
+          result: previous.base === base ? previous.result : null,
+          error: cancelled ? '' : (error as Error).message,
+          started: cancelled ? 0 : previous.started, cancelled }));
+        if (!cancelled) {
+          recoveryHandoff.current = { previousStartedAt };
+          setRecoveryAttempt(previous => previous + 1);
+        }
+      }
     } finally {
       if (active.current === run) active.current = null;
     }

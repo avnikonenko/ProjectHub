@@ -592,7 +592,7 @@ function ProjectWorkspace({
           && (kind !== 'brief' || view !== 'Dashboard' || !!results) && (
           <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project Overview' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
-        {(analysisState.running || recovery.running.knowledge) && (view !== 'Dashboard' && view !== 'Knowledge' || !!results) &&
+        {(analysisState.running || recovery.running.knowledge) && (view !== 'Knowledge' || !!results) &&
           <GenerationStatus base={base} kind="knowledge" label="Knowledge Summary"
             sharedProgress={recovery.running.knowledge ? recovery.progress.knowledge : undefined} />}
         <ErrorBox error={recovery.error} />
@@ -601,6 +601,7 @@ function ProjectWorkspace({
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results} generation={generation}
               recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
+              onRecoveryNeeded={() => recovery.recheck('brief')}
               externalBusy={analysisState.busy || recovery.running.knowledge}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning(previous => ({ ...previous, brief: active })); }} />
           </div>

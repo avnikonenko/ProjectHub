@@ -27,6 +27,9 @@ export type Progress = {
 };
 
 export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false }: { includeBrief?: boolean; includeKnowledge?: boolean } = {}) {
+  const [recheckRequest, setRecheckRequest] = useState<{
+    sequence: number; kind: RecoveryKind | null; previousStartedAt?: string;
+  }>({ sequence: 0, kind: null });
   const [checking, setChecking] = useState(true);
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0, knowledge: 0 });
@@ -36,12 +39,21 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
     const abort = new AbortController();
     const timers: Partial<Record<RecoveryKind, ReturnType<typeof setTimeout>>> = {};
     const checked = new Set<string>();
+    let handoffChecks = 0;
     const kinds: RecoveryKind[] = includeBrief ? [...generationKinds] : generationKinds.filter(kind => kind !== 'brief');
     if (includeKnowledge) kinds.push('knowledge');
     function poll(kind: RecoveryKind, recovering = false) {
       void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
         .then((status) => {
           if (abort.signal.aborted) return;
+          // A lost POST response can precede the server starting its run. Do
+          // not mistake the preceding request's idle/terminal status for it.
+          if (!recovering && recheckRequest.kind === kind && status.state !== 'running'
+              && status.started_at === recheckRequest.previousStartedAt && handoffChecks < 2) {
+            handoffChecks++;
+            timers[kind] = setTimeout(() => poll(kind), 1500);
+            return;
+          }
           checked.add(kind);
           setProgress(previous => ({ ...previous, [kind]: status }));
           if (checked.size === kinds.length) setChecking(false);
@@ -49,12 +61,13 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
           if (status.state === 'running') {
             setRunning((previous) => ({ ...previous, [kind]: true }));
             timers[kind] = setTimeout(() => poll(kind, true), 1500);
-          } else if (recovering || (status.state === 'failed' && status.started_at)) {
+          } else {
             setRunning((previous) => ({ ...previous, [kind]: false }));
-            if (recovering) setVersion((previous) => ({ ...previous, [kind]: previous[kind] + 1 }));
+            if (recovering || recheckRequest.kind === kind)
+              setVersion((previous) => ({ ...previous, [kind]: previous[kind] + 1 }));
             const error = status.state === 'failed'
               ? status.error || 'AI generation failed. The previous result is preserved.'
-              : status.state === 'idle'
+              : status.state === 'idle' && recovering
                 ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
                 : '';
             setErrors((previous) => ({ ...previous, [kind]: error }));
@@ -71,10 +84,15 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
       abort.abort();
       Object.values(timers).forEach(clearTimeout);
     };
-  }, [base, includeBrief, includeKnowledge]);
+  }, [base, includeBrief, includeKnowledge, recheckRequest]);
   return {
     checking, running, version, progress, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
     clearError: () => setErrors({ brief: '', qa: '', scheme: '', knowledge: '' }),
+    recheck: (kind: RecoveryKind) => {
+      setChecking(true);
+      setRecheckRequest(previous => ({ sequence: previous.sequence + 1, kind,
+        previousStartedAt: progress[kind]?.started_at }));
+    },
   };
 }
 

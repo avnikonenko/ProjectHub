@@ -36,6 +36,7 @@ export async function recoverKnowledgePreview(
   base: string, projectId: number, signal: AbortSignal,
   notify: (event: RecoveryEvent) => void, request: Request = api,
   wait: (signal: AbortSignal) => Promise<void> = pause,
+  handoff?: { previousStartedAt?: string },
 ) {
   const saved = async () => {
     const raw = await request(`${base}/codex/analysis/preview`, { signal });
@@ -46,6 +47,15 @@ export async function recoverKnowledgePreview(
   // Loading saved output never starts generation or publishes knowledge.
   [, progress] = await Promise.all([saved(), status()]);
   if (signal.aborted) return;
+  // Only a lost local POST needs this grace. Ordinary browsing remains a
+  // single read when idle, while a delayed server start cannot be missed.
+  for (let attempt = 0; handoff && attempt < 2 && progress.state !== 'running'
+       && progress.started_at === handoff.previousStartedAt; attempt++) {
+    await wait(signal);
+    if (signal.aborted) return;
+    progress = await status();
+    if (signal.aborted) return;
+  }
   // The first saved read may race the transaction that finishes generation.
   // A read after observing completion must see its committed preview.
   try {

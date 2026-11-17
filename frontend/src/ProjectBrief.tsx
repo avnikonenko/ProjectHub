@@ -46,8 +46,9 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, recoveryVersion, recoveryBusy, externalBusy = false }: GenerationProps & {
+export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false }: GenerationProps & {
   visible: boolean; generation: Generation; onGenerating: (active: boolean) => void;
+  onRecoveryNeeded?: () => void;
   recoveryVersion: number; recoveryBusy: boolean; externalBusy?: boolean;
 }) {
   const [saved, setSaved] = useState<{ base: string; brief: Brief | null }>({ base, brief: null });
@@ -133,7 +134,10 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
     } catch (error) {
       if (activeGeneration.current === run && !run.controller.signal.aborted) {
         if (isGenerationCancelled(error)) setNotice(cancelledGenerationMessage);
-        else setError((error as Error).message);
+        else {
+          setError((error as Error).message);
+          onRecoveryNeeded?.();
+        }
       }
     } finally {
       if (activeGeneration.current === run) {
