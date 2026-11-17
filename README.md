@@ -58,14 +58,16 @@ Open **Coverage** below a generated result to see what evidence was included and
 
 The optional Codex skill lets a terminal agent read project context and manage notes,
 TODOs, and session links on request. Enable it during setup or run
-`bash scripts/install-skill.sh` later. With ProjectHub running, open a new Codex
+`bash scripts/install-skill.sh` later. With ProjectHub running, open a Codex
 session and try these prompts:
 
-- “Read ProjectHub context for Project X before we continue.”
+- “Read ProjectHub context for Project X.”
 - “Save this explanation as a note in Project X.”
 - “Add a TODO to Project X: test the import.”
 - “Mark ‘test the import’ finished in Project X.”
 - “Link this session to Project X.”
+- “Unlink this session from Project X.”
+- “Link Codex sessions THREAD_ID_1 and THREAD_ID_2 to Project X.”
 
 <details>
 <summary>Optional terminal commands</summary>
