@@ -57,16 +57,16 @@ function BranchSync({ status }: { status: RepositoryStatus }) {
     <dl className="repository-facts">
       {upstream && <div><dt>Upstream</dt><dd><code>{upstream.branch}</code></dd></div>}
       {sameCommit ? <div>
-        <dt>{upstream?.is_remote ? 'Local and saved remote commit' : 'Local and upstream commit'}</dt>
+        <dt>Shared commit</dt>
         <dd>{commitTip(localCommit, 'No commit yet')}</dd>
       </div> : <>
-        <div><dt>Latest local commit</dt><dd>{commitTip(localCommit, 'No commit yet')}</dd></div>
-        {upstream && <div><dt>{upstream.is_remote ? 'Latest saved remote commit' : 'Latest upstream commit'}</dt>
+        <div><dt>Local commit</dt><dd>{commitTip(localCommit, 'No commit yet')}</dd></div>
+        {upstream && <div><dt>{upstream.is_remote ? 'Remote commit' : 'Upstream commit'}</dt>
           <dd>{commitTip(upstreamCommit, 'Unavailable')}</dd></div>}
       </>}
     </dl>
     {countsUnavailable && <p className="muted"><small>Ahead and behind counts are unavailable.</small></p>}
-    {upstream?.is_remote && <p className="muted"><small>Comparison uses the remote branch state saved in local Git.</small></p>}
+    {upstream?.is_remote && <p className="muted"><small>Uses saved remote data.</small></p>}
   </details>;
 }
 
@@ -117,23 +117,23 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
     <div className="repository-overview">
       <h4>Git repository</h4>
       <dl className="repository-facts">
-        <div><dt>Local repository</dt><dd><code className="repository">{path}</code></dd></div>
+        <div><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
         {remote && <div>
-          <dt>Remote repository{remote.name && <> · <code>{remote.name}</code></>}</dt>
+          <dt title={remote.name || undefined}>Remote</dt>
           <dd><code className="repository">{remote.web_url
             ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
             : remote.address}</code></dd>
         </div>}
         {status && <>
           <div><dt>Branch</dt><dd>{status.branch === null ? 'Detached HEAD' : <code>{status.branch}</code>}</dd></div>
-          <div><dt>Working tree</dt><dd>
-            {typeof status.tracked_files === 'number' && `${status.tracked_files.toLocaleString()} tracked file${status.tracked_files === 1 ? '' : 's'} · `}
-            {status.tracked_files === null && 'Tracked file count unavailable · '}
-            {!status.dirty ? 'Clean working tree' : status.tracked_changes === undefined || status.untracked_files === undefined
+          <div><dt>Files</dt><dd>
+            {typeof status.tracked_files === 'number' && `${status.tracked_files.toLocaleString()} tracked · `}
+            {status.tracked_files === null && 'Tracked total unavailable · '}
+            {!status.dirty ? 'Clean' : status.tracked_changes === undefined || status.untracked_files === undefined
               ? 'Uncommitted changes' : <>
-                {status.tracked_changes > 0 && `${status.tracked_changes} tracked file${status.tracked_changes === 1 ? '' : 's'} changed`}
+                {status.tracked_changes > 0 && `${status.tracked_changes} changed`}
                 {status.tracked_changes > 0 && status.untracked_files > 0 && ' · '}
-                {status.untracked_files > 0 && `${status.untracked_files} untracked file${status.untracked_files === 1 ? '' : 's'}`}
+                {status.untracked_files > 0 && `${status.untracked_files} untracked`}
               </>}
           </dd></div>
         </>}
