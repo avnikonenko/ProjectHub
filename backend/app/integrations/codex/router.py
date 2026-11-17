@@ -349,9 +349,17 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
     row = scoped(db, GenerationRevision, project_id, revision_id)
     if row.kind != 'brief':
         raise HTTPException(404, 'Saved overview not found.')
+    # Pin current publication/Overview while copying any legacy summary and
+    # deleting its backing revision, so another publisher cannot be overwritten.
+    from sqlalchemy import text
+    from .knowledge import preserve_legacy_knowledge_summary
+    db.execute(text('BEGIN IMMEDIATE'))
+    db.expire_all()
+    row = scoped(db, GenerationRevision, project_id, revision_id)
     latest = read_brief(db, project_id)
     if latest and latest['generated_at'] == row.generated_at:
         raise HTTPException(409, 'The current overview cannot be deleted.')
+    preserve_legacy_knowledge_summary(db, project_id)
     db.delete(row)
     db.commit()
 

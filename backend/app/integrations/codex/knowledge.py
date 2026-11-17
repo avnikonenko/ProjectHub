@@ -310,6 +310,43 @@ def read_knowledge(db, project_id):
     return snapshot
 
 
+def preserve_legacy_knowledge_summary(db, project_id):
+    """Stage a matching legacy summary before its backing Overview is removed.
+
+    The caller owns the writer transaction and commit. This is a storage copy of
+    an existing publication, not a new interpretation or semantic revision.
+    """
+    row = db.get(ProjectKnowledge, project_id)
+    snapshot = row.snapshot if row is not None else None
+    if (not isinstance(snapshot, dict) or 'summary' in snapshot
+            or snapshot.get('project_id', project_id) != project_id):
+        return False
+    recovered = read_knowledge(db, project_id)
+    summary = recovered.get('summary') if isinstance(recovered, dict) else None
+    state = summary.get('project_state') if isinstance(summary, dict) else None
+    publication_id, generated_at = snapshot.get('publication_id'), snapshot.get('generated_at')
+    if (not isinstance(publication_id, str) or not publication_id.strip()
+            or not isinstance(generated_at, str) or not generated_at.strip()
+            or not isinstance(summary, dict) or summary.get('project_id', project_id) != project_id
+            or not isinstance(state, dict) or state.get('project_id', project_id) != project_id
+            or state.get('pipeline') != 'knowledge-v1' or state.get('publication_id') != publication_id
+            or summary.get('generated_at') != generated_at
+            or not isinstance(summary.get('sections'), dict)
+            or not isinstance(summary['sections'].get('overview'), list)
+            or any(not isinstance(entries, list) or any(
+                not isinstance(entry, dict) or not isinstance(entry.get('text'), str)
+                or not isinstance(entry.get('source_ids'), list)
+                or any(not isinstance(identifier, str) for identifier in entry['source_ids'])
+                for entry in entries) for entries in summary['sections'].values())
+            or not isinstance(summary.get('sources'), list)
+            or not isinstance(summary.get('coverage'), list)
+            or any(not isinstance(source, dict) or source.get('project_id', project_id) != project_id
+                   for source in summary['sources'])):
+        return False
+    row.snapshot = {**deepcopy(snapshot), 'summary': deepcopy(summary)}
+    return True
+
+
 def _source_excerpt(quote, text):
     """Resolve a whitespace-only selector to a unique original contiguous span.
 

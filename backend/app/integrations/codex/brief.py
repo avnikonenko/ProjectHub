@@ -6,7 +6,7 @@ import re
 import threading
 import time
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
@@ -453,6 +453,12 @@ def refresh_brief(engine, project_id, manager):
                            'cited_source_count': len(cited)}
         progress.record_diagnostics(project_id, run_diagnostics)
         with Session(engine) as db:
+            # A legacy Knowledge Summary may exist only in the current general
+            # brief. Preserve it in the same writer transaction before replacing
+            # that row, without racing publication/tag writers or committing early.
+            db.execute(text('BEGIN IMMEDIATE'))
+            from .knowledge import preserve_legacy_knowledge_summary
+            preserve_legacy_knowledge_summary(db, project_id)
             row = db.get(ProjectBrief, project_id)
             if row is None:
                 row = ProjectBrief(project_id=project_id)

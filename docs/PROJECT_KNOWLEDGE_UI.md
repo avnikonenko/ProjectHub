@@ -72,7 +72,10 @@ the current snapshot until explicitly used.
 The Overview tab has its own **Refresh Project Overview** action. Its general
 summary and revision history are separate from Knowledge Summary. Older detailed
 summaries can be recovered from a matching saved publication/revision without
-rewriting the general Overview. Knowledge Summary appears on the Knowledge tab;
+rewriting the general Overview. Before replacing that Overview or deleting a
+backing revision, the legacy summary is copied into the existing Knowledge snapshot
+in the same transaction, preserving its publication identity and tags.
+Knowledge Summary appears on the Knowledge tab;
 an unpublished preview is labeled separately from the saved summary.
 
 Successful generated results remain in existing project-scoped revisions and
