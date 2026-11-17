@@ -337,13 +337,13 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           <KnowledgeItems key={`${base}:${snapshot.publication_id ?? snapshot.generated_at ?? 'published'}`}
             snapshot={snapshot} availability={load.data?.current_evidence_availability}
             selectedItemId={absentItem ? undefined : selectedItemId} />
-          <KnowledgeRecordCoverage snapshot={snapshot} currentCoverage={load.data?.coverage} />
           {!candidate && currentLegacy?.result && <>
             <button className="secondary" onClick={downloadPreview}>Download JSON</button>
           </>}
         </>}
       </>}
     </section>
+    {showRecords && snapshot && !mismatch && <KnowledgeRecordCoverage snapshot={snapshot} currentCoverage={load.data?.coverage} />}
     <details className="knowledge-legacy-previews" onToggle={event => setLegacyOpen(event.currentTarget.open)}>
       <summary>Earlier saved versions</summary>
       <p>New generations save automatically. Earlier versions remain available for reference.</p>
