@@ -7,6 +7,7 @@ let useGenerationRecovery: any;
 // A small hook host executes the real recovery hook without adding a DOM or
 // test-renderer dependency. Tests assert requests and observable state changes.
 class HookHost {
+  includeParameters = false;
   slots: any[] = []; effects: any[] = []; pending: (() => void)[] = [];
   cursor = 0; queued = false; mounted = true; value: any;
   useState = (initial: any) => {
@@ -34,7 +35,7 @@ class HookHost {
   };
   render() {
     this.cursor = 0; (globalThis as any).__generationRecoveryHooks = this;
-    this.value = useGenerationRecovery('/projects/1', { includeBrief: true, includeKnowledge: true });
+    this.value = useGenerationRecovery('/projects/1', { includeBrief: true, includeKnowledge: true, includeParameters: this.includeParameters });
     for (const commit of this.pending.splice(0)) commit();
   }
   dispose() { this.mounted = false; for (const effect of this.effects) effect?.cleanup?.(); }
@@ -61,18 +62,34 @@ before(async () => {
   useGenerationRecovery = (await server.ssrLoadModule('/src/GenerationStatus.tsx')).useGenerationRecovery;
 });
 after(async () => { await server?.close(); delete (globalThis as any).__generationRecoveryHooks; });
-function fixture(initialBrief: any = { state: 'idle' }) {
+function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any) {
   const original = globalThis.fetch;
-  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: { state: 'idle' } };
+  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: { state: 'idle' }, parameters: initialParameters ?? { state: 'idle' } };
   const calls: { kind: string; method: string }[] = [];
   globalThis.fetch = async (input, options) => {
     const kind = new URL(String(input), 'http://test.local').searchParams.get('kind')!;
     calls.push({ kind, method: options?.method ?? 'GET' });
     return Response.json(responses[kind]);
   };
-  const host = new HookHost(); host.render();
+  const host = new HookHost(); host.includeParameters = initialParameters !== undefined; host.render();
   return { host, responses, calls, dispose() { host.dispose(); globalThis.fetch = original; } };
 }
+test('opt-in workspace recovery follows Parameters completion without generating another result', async t => {
+  const run = fixture({ state: 'idle' }, { state: 'running', started_at: 'parameters-run' });
+  try {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    await settle();
+    assert.equal(run.host.value.checking, false);
+    assert.equal(run.host.value.running.parameters, true);
+    run.responses.parameters = { state: 'completed', started_at: 'parameters-run' };
+    t.mock.timers.tick(1500); await settle();
+    assert.equal(run.host.value.running.parameters, false);
+    assert.equal(run.host.value.version.parameters, 1);
+    assert.equal(run.host.value.version.brief, 0);
+    assert.equal(run.host.value.version.knowledge, 0);
+    assert.ok(run.calls.every(call => call.method === 'GET'));
+  } finally { run.dispose(); }
+});
 test('lost POST recovery follows running status to saved completion without another POST', async t => {
   const run = fixture();
   try {

@@ -44,6 +44,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Parameter inspection now filters credential accessors, sensitive match patterns and credential comment continuations, and preserves exception/loop/match/context-manager conditions. Returning from parameter history rechecks source freshness instead of reusing an old verdict.
+
 - Mark turn-limited conversations as partial even after empty turns, reject files changed during inspection, bound category coverage by repository totals, and keep read paths visible when per-file details are missing.
 
 - Preserve legacy Knowledge Summaries before refreshing their general Overview or deleting a backing Overview revision. Recover read-only generation status after an interrupted Overview response, and keep Knowledge progress visible when switching to Overview.

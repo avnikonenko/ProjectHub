@@ -9,6 +9,7 @@ import { GenerationStatus, SavedGeneration, isGenerationCancelled, cancelledGene
 import { RevisionHistory } from './RevisionHistory';
 import { Empty, ErrorBox } from './ui';
 import { filterParameters, parameterDefault, parameterGroups, parseParameterResult, parseParameterSnapshot,
+  parameterRevisionResult,
   type ParameterResult, type ParameterSnapshot, type ProjectParameter } from './parameters';
 import './knowledge.css';
 
@@ -285,9 +286,9 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
           }} onSelect={(current, id) => {
             const parsed = current === null ? null : parseParameterSnapshot(current, projectId);
             requestVersion.current++; selectedRevision.current = id; setRevisionId(id); setQuery(''); setComponent('');
-            if (id === null) setLatestVersion(parsed?.generated_at ?? null);
-            setSaved(previous => ({ base, result: { ...(previous.base === base && previous.result ? previous.result : {
-              freshness: { state: 'unknown', partial: false, limitations: [] } }), snapshot: parsed } }));
+            if (id === null) { setLatestVersion(parsed?.generated_at ?? null); setRetry(value => value + 1); }
+            setSaved(previous => ({ base, result: parameterRevisionResult(
+              previous.base === base ? previous.result : null, parsed, id !== null) }));
           }} />
       </details>
       <details><summary>Code & configuration sources ({snapshot.sources.length})</summary>

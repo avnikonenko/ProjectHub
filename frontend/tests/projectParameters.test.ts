@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer, type ViteDevServer } from 'vite';
 import { filterParameters, parameterDefault, parameterGroups, parseParameterResult, parseParameterSnapshot,
+  parameterRevisionResult,
   type ParameterSnapshot, type ProjectParameter } from '../src/parameters.ts';
 
 let server: ViteDevServer;
@@ -132,6 +133,18 @@ test('unknown current source checks stay distinct from saved coverage and histor
   const old = renderToStaticMarkup(createElement(ParameterCoverage, { snapshot: snapshot(), freshness, historical: true }));
   assert.match(old, /Bounded repository inspection/);
   assert.doesNotMatch(old, /Current source check|Current repository unavailable/);
+});
+
+test('returning from a historical revision never reuses an earlier unchanged-source verdict', () => {
+  const previous = result();
+  const historical = snapshot({ generated_at: '2026-11-16T00:00:00Z', fingerprint: 'older' });
+  const selected = parameterRevisionResult(previous, historical, true);
+  assert.equal(selected.snapshot?.fingerprint, 'older');
+  const latest = parameterRevisionResult(selected, snapshot(), false);
+  assert.equal(latest.snapshot?.fingerprint, 'one');
+  assert.equal(parameterFreshnessLabel(latest.freshness), 'Source freshness is unknown.');
+  assert.notEqual(latest.freshness.state, previous.freshness.state);
+  assert.equal(previous.freshness.state, 'unchanged');
 });
 
 test('generation makes one parameters POST with selected settings and no alternative pipeline', async () => {

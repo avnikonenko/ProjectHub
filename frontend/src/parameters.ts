@@ -103,6 +103,15 @@ export function parseParameterResult(raw: unknown, projectId: number): Parameter
   return { ...raw, snapshot: raw.snapshot === null ? null : parseParameterSnapshot(raw.snapshot, projectId) } as ParameterResult;
 }
 
+/** Revision responses contain the snapshot, not the current source inspection.
+ * Do not reuse an earlier freshness verdict when returning to the latest result.
+ */
+export function parameterRevisionResult(previous: ParameterResult | null, snapshot: ParameterSnapshot | null,
+  historical: boolean): ParameterResult {
+  if (historical && previous) return { ...previous, snapshot };
+  return { snapshot, freshness: { state: 'unknown', partial: false, limitations: [] } };
+}
+
 export function parameterDefault(item: ProjectParameter): string {
   if (item.default_kind === 'required') return 'Required — no declared default';
   if (item.default_kind === 'unspecified') return 'No declared default';
