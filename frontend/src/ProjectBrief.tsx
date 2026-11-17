@@ -159,6 +159,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
           action={<button disabled={loading || generating || recoveryBusy || externalBusy || revisionLoading} onClick={generate}>
             {generating ? 'Generating…' : 'Refresh Project Overview'}
           </button>} />
+        <p>What the project does, how it is built, and where work stands.</p>
         <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         {(generating || recoveryBusy) && <GenerationStatus base={base} kind="brief" label="Project Overview" />}
         <ErrorBox error={error} />

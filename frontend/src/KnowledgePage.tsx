@@ -43,7 +43,7 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   return <section className="card knowledge-summary" aria-label="Saved Knowledge Summary">
     <div className="section-title"><div><h2>Knowledge Summary</h2>
       <small>Saved separately from Project Overview</small></div></div>
-    <p>A detailed perspective on extracted decisions, reasoning and uncertainties.</p>
+    <p>Project choices, their reasons, trade-offs, and open questions.</p>
     <ErrorBox error={summaryError} />
     {summary && renderBrief(summary, 'published')}
   </section>;
@@ -311,6 +311,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           {publishing ? 'Saving…' : 'Save Knowledge Summary'}
         </button>
       </div>
+      <p>Project choices, their reasons, trade-offs, and open questions.</p>
       {staleCandidate ? <p>A newer Knowledge Summary is already saved. Refresh Knowledge Summary to prepare a current replacement.</p>
         : <p>Saving updates the Knowledge Summary and records. Project Overview stays unchanged.</p>}
       <button className="secondary" onClick={downloadPreview}>Download JSON</button>
