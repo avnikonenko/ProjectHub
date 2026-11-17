@@ -44,6 +44,39 @@ const repository = {
   paths_truncated: true, notes: ['Representative-file limit applied.'],
 };
 
+test('conversation evidence leads targeted code support without claiming a full audit', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, {
+    diagnostics: {
+      evidence_coverage: { repository },
+      archive_conversations: { scope: 'linked_codex_sessions', linked_sessions: 2,
+        read_sessions: 2, notes: ['History was summarized.'] },
+    },
+  }));
+  assert(html.indexOf('Conversation evidence') < html.indexOf('Targeted code inspection'));
+  assert.match(html, /2 of 2 linked Codex sessions read/);
+  assert.match(html, /Selected code provides supporting context. This is not a full code audit/);
+  assert.match(html, /<details><summary>History reading details<\/summary>/);
+  assert.match(html, /<details><summary>Inspection scope and limits<\/summary>/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
+});
+
+test('scope notes deduplicate exact wording without merging distinct limitations', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, {
+    diagnostics: { evidence_coverage: { repository: { ...repository, notes: [
+      'Representative-file limit applied.', ' Representative-file   limit applied. ',
+      'Only selected declarations were supplied.',
+    ] } } },
+  }));
+  assert.equal((html.match(/Representative-file limit applied\./g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Representative-file   limit/);
+  assert.match(html, /Only selected declarations were supplied/);
+  const unavailable = renderToStaticMarkup(createElement(CoverageDetails, {
+    diagnostics: { evidence_coverage: { repository: { status: 'not_used', notes: [] } } },
+  }));
+  assert.match(unavailable, /Code was not an input/);
+  assert.doesNotMatch(unavailable, /Selected code provides supporting context/);
+});
+
 test('repository coverage separates input files, partial reads and omissions with exact scope', () => {
   const html = renderToStaticMarkup(createElement(CoverageDetails, {
     diagnostics: { evidence_coverage: { repository }, extraction_workers: 10, model_requests: 247 },

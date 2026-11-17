@@ -92,8 +92,10 @@ Changing profile, model or effort can require fresh extraction; returning to
 Quality reuses matching pre-profile caches when source/configuration inputs match.
 Changing settings does not invoke Codex or rewrite saved results.
 
-Expand **Coverage & technical details** to see what evidence the saved result used:
-repository files supplied versus eligible files, complete versus partial excerpts,
+Expand **Coverage & technical details** to see what evidence the saved result used.
+Conversation evidence comes first; targeted code inspection provides supporting
+context rather than a full repository audit. Detailed scope notes stay expandable.
+Recorded measurements include repository files supplied versus eligible files, complete versus partial excerpts,
 omissions and read failures, plus available conversation and input-selection counts.
 Expand the file lists and reasons to identify blind spots. File totals describe the
 recorded inventory scope, not every file on disk: Overview inventories tracked paths;

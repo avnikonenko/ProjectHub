@@ -23,6 +23,16 @@ function omissionLabel(value: string) {
   return Object.prototype.hasOwnProperty.call(omissionLabels, value) ? omissionLabels[value] : value.replaceAll('_', ' ');
 }
 
+function uniqueNotes(notes: string[]) {
+  const seen = new Set<string>();
+  return notes.filter(note => {
+    const key = note.trim().replace(/\s+/g, ' ');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationDiagnostics; hasCustomCoverage: boolean }) {
   const repo = measured?.evidence_coverage?.repository;
   const code = repo?.by_category?.code;
@@ -42,8 +52,63 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
   const fallbackPaths = (key: 'read' | 'partial' | 'not_selected' | 'failed' | 'empty') =>
     repo?.paths?.[key]?.filter(path => !(key === 'read' || key === 'partial') || !detailedPaths.has(path)) ?? [];
   return <>
+    {(conversations || archive || validFragments) ? <section>
+      <h4>Conversation evidence</h4>
+      {inventory ? <>
+        {!(inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined)
+          && !(inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined)
+          && !(inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined)
+          && <p>Complete registered-source totals were not recorded for this result.</p>}
+        {inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined
+          && <p>{fmt(inventory.linked_codex_sessions_considered)} of {fmt(inventory.linked_codex_sessions_total)} linked Codex sessions considered
+            {inventory.linked_codex_sessions_omitted_parent_limit !== undefined
+              ? `; ${fmt(inventory.linked_codex_sessions_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
+        {inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined
+          && <p>{fmt(inventory.imported_chats_considered)} of {fmt(inventory.imported_chats_total)} imported chats considered
+            {inventory.imported_chats_omitted_parent_limit !== undefined
+              ? `; ${fmt(inventory.imported_chats_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
+        {inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined
+          && <p>{fmt(inventory.document_notes_considered)} of {fmt(inventory.document_notes_total)} stored documents considered, including imported chats.</p>}
+        <p><small>Considered sources may still have omitted messages. These totals cover sources registered in this project, not remote or unlinked conversations.</small></p>
+        {!!inventory.omission_reasons && Object.values(inventory.omission_reasons).some(value => value > 0) && <details>
+          <summary>Conversation omission reasons</summary>
+          <p><small>Counts have different units—sessions, chats, turns, messages or documents—and must not be added together.</small></p>
+          <dl>{Object.entries(inventory.omission_reasons).filter(([, value]) => value > 0).map(([reason, value]) =>
+            <div key={reason}><dt>{omissionLabel(reason)}</dt><dd>{fmt(value)}</dd></div>)}</dl>
+        </details>}
+        {!!inventory.notes.length && <details><summary>Source selection details</summary>
+          <ul>{uniqueNotes(inventory.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
+        </details>}
+      </> : conversations && <p>Complete registered-source totals were not recorded for this result.</p>}
+      {conversations?.known_sources !== undefined && conversations.processed_sources !== undefined
+        && <p>Within the saved source manifest, {fmt(conversations.processed_sources)} of {fmt(conversations.known_sources)} source groups were at least partly processed.</p>}
+      {conversations && <dl>
+        {conversations.partial_sources !== undefined && <><dt>Partially available sources</dt><dd>{fmt(conversations.partial_sources)}</dd></>}
+        {conversations.excluded_sources !== undefined && <><dt>Excluded sources</dt><dd>{fmt(conversations.excluded_sources)}</dd></>}
+        {conversations.unavailable_sources !== undefined && <><dt>Unavailable sources</dt><dd>{fmt(conversations.unavailable_sources)}</dd></>}
+      </dl>}
+      {archive && <>
+        {archive.read_sessions !== undefined && archive.linked_sessions !== undefined
+          && <p>{fmt(archive.read_sessions)} of {fmt(archive.linked_sessions)} linked Codex sessions read.</p>}
+        <dl>
+          {archive.unique_turns !== undefined && <><dt>Distinct finished turns included</dt><dd>{fmt(archive.unique_turns)}</dd></>}
+          {archive.duplicate_turns_omitted !== undefined && <><dt>Repeated inherited turns collapsed</dt><dd>{fmt(archive.duplicate_turns_omitted)}</dd></>}
+          {archive.active_turns_skipped !== undefined && <><dt>Unfinished turns omitted</dt><dd>{fmt(archive.active_turns_skipped)}</dd></>}
+        </dl>
+        {!!archive.notes.length && <details><summary>History reading details</summary>
+          <ul>{uniqueNotes(archive.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
+        </details>}
+      </>}
+      {validFragments && <p>{fmt(selected)} of {fmt(available)} available conversation fragments selected for extraction
+        {omitted !== undefined ? `; ${fmt(omitted)} omitted.` : '.'}</p>}
+      {validFragments && <p><small>Fragments are pieces of saved messages, not separate conversations. This does not count remote or unlinked history.</small></p>}
+      {!!conversations?.notes.length && <details><summary>Conversation source details</summary>
+        <ul>{uniqueNotes(conversations.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
+      </details>}
+    </section> : !hasCustomCoverage && <p>Exact conversation coverage was not recorded for this result.</p>}
     {repo ? <section>
-      <h4>Repository files</h4>
+      <h4>Targeted code inspection</h4>
+      {repo.status === 'available' && <p><small>Selected code provides supporting context. This is not a full code audit.</small></p>}
       {repo.status === 'not_used' ? <p>Code was not an input to these Knowledge records; they were extracted from conversations.</p>
         : repo.status === 'not_linked' ? <p>No repository was linked for this result.</p>
           : repo.status === 'unavailable' ? <p>Repository inspection was unavailable. File coverage is unknown.</p>
@@ -69,7 +134,9 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
               </dl>
               <p><small>The inventory covers Git-tracked paths only. Untracked paths, including ignored untracked files, are outside this inventory. A supplied excerpt may contain only a prefix or selected declarations.</small></p>
             </>}
-      {!!repo.notes.length && <ul>{repo.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
+      {!!repo.notes.length && <details><summary>Inspection scope and limits</summary>
+        <ul>{uniqueNotes(repo.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
+      </details>}
       {(!!repo.file_details?.length || (!!repo.paths && Object.entries(repo.paths).some(([, paths]) => paths?.length))) && <details>
         <summary>Files used and missed</summary>
         {repo.file_details?.length ? <>
@@ -95,54 +162,6 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
         {repo.paths_truncated && <p>File lists are shortened; the recorded counts above include the full inspected inventory.</p>}
       </details>}
     </section> : !hasCustomCoverage && <p>Exact repository file coverage was not recorded for this result.</p>}
-    {(conversations || archive || validFragments) ? <section>
-      <h4>Conversations</h4>
-      {inventory ? <>
-        {!(inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined)
-          && !(inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined)
-          && !(inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined)
-          && <p>Complete registered-source totals were not recorded for this result.</p>}
-        {inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined
-          && <p>{fmt(inventory.linked_codex_sessions_considered)} of {fmt(inventory.linked_codex_sessions_total)} linked Codex sessions considered
-            {inventory.linked_codex_sessions_omitted_parent_limit !== undefined
-              ? `; ${fmt(inventory.linked_codex_sessions_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
-        {inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined
-          && <p>{fmt(inventory.imported_chats_considered)} of {fmt(inventory.imported_chats_total)} imported chats considered
-            {inventory.imported_chats_omitted_parent_limit !== undefined
-              ? `; ${fmt(inventory.imported_chats_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
-        {inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined
-          && <p>{fmt(inventory.document_notes_considered)} of {fmt(inventory.document_notes_total)} stored documents considered, including imported chats.</p>}
-        <p><small>Considered sources may still have omitted messages. These totals cover sources registered in this project, not remote or unlinked conversations.</small></p>
-        {!!inventory.omission_reasons && Object.values(inventory.omission_reasons).some(value => value > 0) && <details>
-          <summary>Conversation omission reasons</summary>
-          <p><small>Counts have different units—sessions, chats, turns, messages or documents—and must not be added together.</small></p>
-          <dl>{Object.entries(inventory.omission_reasons).filter(([, value]) => value > 0).map(([reason, value]) =>
-            <div key={reason}><dt>{omissionLabel(reason)}</dt><dd>{fmt(value)}</dd></div>)}</dl>
-        </details>}
-        {!!inventory.notes.length && <ul>{inventory.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
-      </> : conversations && <p>Complete registered-source totals were not recorded for this result.</p>}
-      {conversations?.known_sources !== undefined && conversations.processed_sources !== undefined
-        && <p>Within the saved source manifest, {fmt(conversations.processed_sources)} of {fmt(conversations.known_sources)} source groups were at least partly processed.</p>}
-      {conversations && <dl>
-        {conversations.partial_sources !== undefined && <><dt>Partially available sources</dt><dd>{fmt(conversations.partial_sources)}</dd></>}
-        {conversations.excluded_sources !== undefined && <><dt>Excluded sources</dt><dd>{fmt(conversations.excluded_sources)}</dd></>}
-        {conversations.unavailable_sources !== undefined && <><dt>Unavailable sources</dt><dd>{fmt(conversations.unavailable_sources)}</dd></>}
-      </dl>}
-      {archive && <>
-        {archive.read_sessions !== undefined && archive.linked_sessions !== undefined
-          && <p>{fmt(archive.read_sessions)} of {fmt(archive.linked_sessions)} linked Codex sessions read.</p>}
-        <dl>
-          {archive.unique_turns !== undefined && <><dt>Distinct finished turns included</dt><dd>{fmt(archive.unique_turns)}</dd></>}
-          {archive.duplicate_turns_omitted !== undefined && <><dt>Repeated inherited turns collapsed</dt><dd>{fmt(archive.duplicate_turns_omitted)}</dd></>}
-          {archive.active_turns_skipped !== undefined && <><dt>Unfinished turns omitted</dt><dd>{fmt(archive.active_turns_skipped)}</dd></>}
-        </dl>
-        {!!archive.notes.length && <ul>{archive.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
-      </>}
-      {validFragments && <p>{fmt(selected)} of {fmt(available)} available conversation fragments selected for extraction
-        {omitted !== undefined ? `; ${fmt(omitted)} omitted.` : '.'}</p>}
-      {validFragments && <p><small>Fragments are pieces of saved messages, not separate conversations. This does not count remote or unlinked history.</small></p>}
-      {!!conversations?.notes.length && <ul>{conversations.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
-    </section> : !hasCustomCoverage && <p>Exact conversation coverage was not recorded for this result.</p>}
     {validItems && <p>Summary input: {fmt(overview.selected_items!)} of {fmt(overview.available_items!)} eligible Knowledge records considered
       {overview.omitted_items !== undefined && overview.omitted_items <= overview.available_items!
         && overview.selected_items! + overview.omitted_items === overview.available_items
