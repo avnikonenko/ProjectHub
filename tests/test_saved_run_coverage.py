@@ -124,7 +124,12 @@ def test_knowledge_preview_and_separate_published_summary_keep_same_recorded_run
     original_metadata = deepcopy(manager.generation_metadata)
     result = knowledge_brief.generate_knowledge_brief(prepared.engine, 1, manager)
     assert result['brief']['diagnostics'] == result['diagnostics']
-    assert result['knowledge']['diagnostics'] == result['diagnostics']
+    recorded = result['knowledge']['diagnostics']
+    assert {key: value for key, value in recorded.items() if key != 'evidence_coverage'} == {
+        key: value for key, value in result['diagnostics'].items() if key != 'evidence_coverage'}
+    assert recorded['evidence_coverage']['repository']['status'] == 'not_used'
+    assert result['brief']['diagnostics']['evidence_coverage']['repository']['status'] == 'not_linked'
+    assert recorded['evidence_coverage']['conversations'] == result['diagnostics']['evidence_coverage']['conversations']
     assert manager.generation_metadata == original_metadata
     with Session(prepared.engine) as db:
         original_overview = brief.read_brief(db, 1)
@@ -139,3 +144,4 @@ def test_knowledge_preview_and_separate_published_summary_keep_same_recorded_run
             GenerationRevision.project_id == 1, GenerationRevision.kind == 'knowledge').order_by(
                 GenerationRevision.id.desc())).first()
         assert revision.snapshot['summary']['diagnostics'] == result['diagnostics']
+        assert revision.snapshot['diagnostics']['evidence_coverage']['repository']['status'] == 'not_used'

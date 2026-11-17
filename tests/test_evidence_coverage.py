@@ -1,0 +1,104 @@
+"""Real temporary Git inventories and saved-diagnostic contracts; no AI calls."""
+from copy import deepcopy
+import hashlib
+import json
+
+from backend.app import project_evidence as evidence
+from backend.app.integrations.codex.evidence_coverage import knowledge_coverage, repository_coverage
+from backend.app.integrations.codex.knowledge_brief import _repository_signature
+from backend.tests.test_project_evidence import git, repository
+
+
+def test_tracked_file_inventory_separates_full_partial_excluded_and_failed(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'long.py').write_text('def sample():\n' + '    value = 1\n' * 25)
+    (repo / 'empty.py').write_text('')
+    (repo / 'binary.py').write_bytes(b'\x00BINARY_SENTINEL')
+    outside = tmp_path / 'outside.py'
+    outside.write_text('EXTERNAL_SENTINEL')
+    (repo / 'linked.py').symlink_to(outside)
+    (repo / 'private.secret.py').write_text('PRIVATE_SENTINEL')
+    (repo / '.env').write_text('ENV_SENTINEL')
+    (repo / 'asset.png').write_bytes(b'\x00PNG_SENTINEL')
+    git(repo, 'add', '.')
+    (repo / 'untracked.py').write_text('UNTRACKED_SENTINEL')
+    result = evidence.collect_repository_code(str(repo))
+    measured = result['inspection']
+    assert measured['inventory_complete'] is True
+    assert measured['total_files'] == 11
+    assert measured['eligible_files'] == 8
+    assert measured['read_files'] == measured['ai_input_files'] == 5
+    assert measured['full_files'] == 4 and measured['partial_files'] == 1
+    assert measured['excluded_files'] == 2 and measured['unsupported_files'] == 1
+    assert measured['failed_files'] == 2 and measured['empty_files'] == 1
+    assert measured['not_selected_files'] == 0
+    assert measured['paths']['partial'] == ['long.py']
+    assert set(measured['paths']['failed']) == {'binary.py', 'linked.py'}
+    assert measured['by_category']['code'] == {
+        'eligible_files': 5, 'read_files': 2, 'full_files': 1, 'partial_files': 1}
+    rendered = json.dumps(result)
+    assert not any(value in rendered for value in ('private.secret.py', '.env', 'PRIVATE_SENTINEL',
+                                                   'ENV_SENTINEL', 'EXTERNAL_SENTINEL',
+                                                   'UNTRACKED_SENTINEL', 'BINARY_SENTINEL'))
+
+
+def test_unselected_paths_bounded_without_losing_exact_denominator(tmp_path):
+    repo = repository(tmp_path)
+    for number in range(140):
+        (repo / f'module{number:03}.py').write_text('value = 1\n')
+    git(repo, 'add', '.')
+    measured = evidence.collect_repository_code(str(repo))['inspection']
+    assert measured['total_files'] == measured['eligible_files'] == 144
+    assert measured['read_files'] == 10
+    assert measured['not_selected_files'] == 134
+    assert len(measured['paths']['not_selected']) == 100
+    assert measured['paths_truncated'] is True
+
+
+def test_missing_inventory_never_claims_zero_total_or_complete_coverage(tmp_path, monkeypatch):
+    for result, status in ((evidence.collect_repository_code(None), 'not_linked'),
+                           (evidence.collect_repository_code(str(tmp_path / 'missing')), 'unavailable')):
+        measured = result['inspection']
+        assert measured['status'] == status
+        assert measured['total_files'] is None and measured['eligible_files'] is None
+        assert measured['inventory_complete'] is False
+    repo = repository(tmp_path)
+    def timeout(*args, **kwargs):
+        raise evidence.EvidenceReadError('Repository code inspection timed out.')
+    monkeypatch.setattr(evidence, '_code_excerpt', timeout)
+    result = evidence.collect_repository_code(str(repo))
+    assert result['sources'] == []
+    assert result['inspection']['status'] == 'unavailable'
+    assert result['inspection']['ai_input_files'] == 0
+    assert result['inspection']['total_files'] is None
+
+
+def test_long_source_lines_are_partial_even_when_all_lines_are_selected(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'source.py').write_text('long_value = ' + repr('x' * 400) + '\n')
+    git(repo, 'add', 'source.py')
+    measured = evidence.collect_repository_code(str(repo))['inspection']
+    assert 'source.py' in measured['paths']['partial']
+
+
+def test_record_coverage_does_not_claim_summary_code_was_used_for_knowledge():
+    bundle = {'manifest': {'entries': [{'source_key': 'one'}, {'source_key': 'two'}]},
+              'coverage': {'processed': ['one'], 'unprocessed': ['one'], 'unavailable': ['two']}}
+    diagnostics = {'source_selection': {'available_primary_fragments': 12,
+                                        'selected_primary_fragments': 8, 'omitted_primary_fragments': 4}}
+    result = knowledge_coverage(bundle, diagnostics)
+    assert result['repository']['status'] == 'not_used'
+    assert result['repository']['ai_input_files'] == 0
+    assert result['conversations']['known_sources'] == 2
+    assert result['conversations']['processed_sources'] == 1
+    assert result['conversations']['partial_sources'] == 1
+    assert result['conversations']['selected_fragments'] == 8
+    assert result['conversations']['omitted_fragments'] == 4
+    assert repository_coverage({})['status'] == 'unrecorded'
+
+
+def test_coverage_metadata_does_not_invalidate_existing_repository_signature():
+    old = {'sources': [{'id': 'code', 'text': 'Observed code'}], 'coverage': []}
+    measured = {**deepcopy(old), 'inspection': {'read_files': 1}}
+    legacy = hashlib.sha256(json.dumps(old, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+    assert _repository_signature(old) == _repository_signature(measured) == legacy

@@ -52,18 +52,33 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
   const counts = coverage?.file_counts;
   const policy = coverage?.inspection_policy;
   const limitations = Array.isArray(coverage?.limitations) ? coverage.limitations.filter((item): item is string => typeof item === 'string') : [];
+  const eligible = counts?.eligible_files;
+  const evidence = counts?.evidence_files;
+  const knownTotal = counts?.listing_complete === true && nonnegative(eligible) && Number.isSafeInteger(eligible)
+    && nonnegative(evidence) && Number.isSafeInteger(evidence) && nonnegative(counts.read_files)
+    && Number.isSafeInteger(counts.read_files) && evidence <= counts.read_files && counts.read_files <= eligible;
   const content = <>
     <p>{saved ? 'Inspection recorded with this saved Scheme.' : current ? 'Fresh inspection of the repository; these counts do not describe the evidence used by the saved Scheme.' : 'Current repository inspection.'}</p>
+    {counts && <>
+      <p><strong>AI input:</strong> {knownTotal ? `${evidence} of ${eligible} eligible repository files supplied`
+        : `${count(evidence)} files supplied; the eligible total is not established`}.</p>
+      <p><strong>Local reads:</strong> {count(counts.read_files)} files, including {count(counts.prefix_read_files)} prefix-only reads.
+        {' '}{count(counts.read_not_in_evidence)} read files were not included in the final AI input.</p>
+      {knownTotal && evidence < eligible && <p>{eligible - evidence} eligible files were not supplied. Expand omission reasons below.</p>}
+      <p><small>Reading a file locally and supplying it to AI are different stages. Prefixes and selected excerpts do not cover the complete file; these counts do not establish correctness.</small></p>
+    </>}
     <dl>
       <div><dt>Recorded conversation excerpts</dt><dd>{count(coverage?.conversation_excerpts)}</dd></div>
       {!counts && <div><dt>Recorded inspected files</dt><dd>{count(coverage?.files_inspected)}</dd></div>}
     </dl>
     {counts && typeof counts === 'object' ? <>
+      <details><summary>File accounting and scope</summary>
       <dl>{countRows.map(([key, title]) => <div key={key}><dt>{title}</dt><dd>{count(counts[key])}</dd></div>)}
         <div><dt>Repository listing complete</dt><dd>{typeof counts.listing_complete === 'boolean' ? counts.listing_complete ? 'Yes' : 'No' : 'Not recorded'}</dd></div>
       </dl>
       <p>Repository paths are Git-listed tracked paths plus non-ignored untracked paths before explicit path exclusions. Tracked ignored paths contribute to exclusions; ignored untracked files are not counted. Unknown totals are shown as not recorded.</p>
       <p>The pipeline lists paths, applies exclusions and candidate policy, attempts reads, then selects final evidence. Successful reads are decoded files before parsing; prefix-only reads are part of that count, so do not add them again. Final evidence counts unique repository paths after all package limits.</p>
+      </details>
     </> : <p>File counts were not recorded for {saved ? 'this saved Scheme' : 'this inspection'}.</p>}
     <p>Declared entrypoints and statically resolved local imports are prioritized; metadata, documentation, and code share the budget. Configured private-file, dependency-directory, and build-output exclusions are respected. Byte and time limits bound local inspection cost; source and package limits bound AI input and cost. These counts do not measure how much functionality the Scheme captures.</p>
     {policy && typeof policy === 'object' ? <details><summary>Recorded inspection limits</summary>
@@ -101,10 +116,10 @@ export function SchemeResultCoverage({ snapshot, current, showCurrent = false }:
   showCurrent?: boolean;
 }) {
   const inspection = schemeInspectionForDisplay(snapshot, current);
-  return <CoverageDetails savedAt={snapshot?.generated_at}
+  return <CoverageDetails savedAt={snapshot?.generated_at} customCoverage
     note={inspection.saved ? undefined : 'Current inspection; no saved Scheme is selected.'}>
     <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} embedded />
-    <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} embedded />
+    <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} />
     {showCurrent && inspection.saved && !inspection.coverage?.file_counts && current?.coverage?.file_counts &&
       <SchemeInspectionDetails coverage={current.coverage} saved={false} current />}
   </CoverageDetails>;

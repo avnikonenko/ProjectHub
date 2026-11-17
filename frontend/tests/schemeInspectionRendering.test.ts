@@ -32,6 +32,9 @@ test('inspection details show recorded pipeline and limits in closed disclosures
   assert.match(html, /Repository paths listed<\/dt><dd>100/);
   assert.match(html, /Prefix-only reads \(subset of successful reads\)<\/dt><dd>2/);
   assert.match(html, /Files in final evidence package<\/dt><dd>5/);
+  assert.match(html, /AI input:<\/strong> 5 of 20 eligible repository files supplied/);
+  assert.match(html, /15 eligible files were not supplied/);
+  assert.match(html, /Local reads:<\/strong> 7 files, including 2 prefix-only reads/);
   assert.match(html, /1000 bytes/);
   assert.match(html, /2.5 seconds/);
   assert.match(html, /do not add them again/);
@@ -97,7 +100,8 @@ test('Scheme uses one closed standard coverage disclosure with saved accounting'
   assert.match(html, /^<details[^>]*><summary[^>]*>Coverage &amp; technical details<\/summary>/);
   assert.equal((html.match(/Coverage &amp; technical details/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
-  assert.doesNotMatch(html, /<summary>How ProjectHub inspected|<summary>Repository inspection diagnostics/);
+  assert.doesNotMatch(html, /<summary>How ProjectHub inspected/);
+  assert.match(html, /<summary>Repository inspection diagnostics/);
   assert.match(html, /Inspection recorded with this saved Scheme/);
   assert.match(html, /Files successfully read<\/dt><dd>7/);
   assert.match(html, /9 seconds/);

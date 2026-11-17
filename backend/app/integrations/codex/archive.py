@@ -48,10 +48,14 @@ def archive_worker_scope(workers=None):
 
 
 def _diagnostics(state):
-    return {'archive_workers': state['workers'],
+    result = {'archive_workers': state['workers'],
             'archive_generated_batches': sum(not row['cached'] for row in state['timings']),
             'archive_cache_hits': sum(row['cached'] for row in state['timings']),
             'archive_batch_timings': [dict(row) for row in state['timings']]}
+    if 'conversations' in state:
+        recorded = state['conversations']
+        result['archive_conversations'] = {**recorded, 'notes': list(recorded['notes'])}
+    return result
 
 
 def archive_diagnostics():
@@ -381,6 +385,10 @@ def _indexed_turns(engine, project_id, session, client):
 
 def archive_history(engine, project_id, manager):
     """Read every page once; cache each bounded group before requesting another."""
+    state = _archive_run.get()
+    if state is not None:
+        # A later failed traversal in the same scope must not reuse earlier totals.
+        state.pop('conversations', None)
     progress.update(project_id, stage='Reading project sessions')
     with Session(engine) as db:
         if db.get(Project, project_id) is None:
@@ -509,6 +517,20 @@ def archive_history(engine, project_id, manager):
                 f'Omitted {duplicates_omitted} exact shared-prefix turn copies from AI evidence; original session links are retained.',
                 f'History summary batches: {reused} reused from cache, {generated} generated. '
                 'Summaries are AI interpretations and may omit details; citations retain original text fragments.']
+    if state is not None:
+        state['conversations'] = {
+            'scope': 'linked_codex_sessions',
+            'linked_sessions': len(sessions), 'read_sessions': len(sessions),
+            'finished_turns': turns_seen, 'active_turns_skipped': skipped,
+            'duplicate_turns_omitted': duplicates_omitted,
+            'unique_turns': turns_seen - duplicates_omitted, 'fragments': fragments,
+            'notes': [
+                'Counts describe linked Codex sessions read for this generation, not all sessions on disk or imported chats.',
+                'Finished turns contain user/assistant text; tool output, attachments and empty turns are excluded.',
+                'Exact shared-prefix copies are counted before deduplication but are supplied to AI only once.',
+                'Bounded history summaries may omit details even when every available finished turn was processed.',
+            ],
+        }
     return evidence, coverage
 
 

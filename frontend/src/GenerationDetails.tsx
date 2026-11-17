@@ -9,13 +9,16 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
   const overview = diagnostics.overview_selection;
   const synthesisTimings = overview?.synthesis_batch_timings;
   const overviewCoverageAvailable = overview?.selected_items !== undefined
-    && overview.available_items !== undefined && overview.selected_items <= overview.available_items;
+    && overview.available_items !== undefined && overview.selected_items <= overview.available_items
+    && (overview.omitted_items === undefined || overview.selected_items + overview.omitted_items === overview.available_items);
   const overviewStagesAvailable = overview?.synthesis_batches_completed !== undefined
     && overview.synthesis_batches_total !== undefined
     && overview.synthesis_batches_completed <= overview.synthesis_batches_total;
   const coverageAvailable = selection?.selected_primary_fragments !== undefined
     && selection.available_primary_fragments !== undefined
-    && selection.selected_primary_fragments <= selection.available_primary_fragments;
+    && selection.selected_primary_fragments <= selection.available_primary_fragments
+    && (selection.omitted_primary_fragments === undefined
+      || selection.selected_primary_fragments + selection.omitted_primary_fragments === selection.available_primary_fragments);
   const content = <>
     <dl>
       <dt>Profile</dt><dd>{profile?.label || profile?.id || 'Unavailable for this saved result'}</dd>

@@ -137,13 +137,19 @@ def test_saved_preview_run_diagnostics_are_detached_and_do_not_change_published_
     before = _stored(prepared.engine)
     result = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
     expected = deepcopy(result['diagnostics'])
+    expected_records = deepcopy(result['knowledge']['diagnostics'])
+    assert expected_records['evidence_coverage']['repository']['status'] == 'not_used'
+    assert expected['evidence_coverage']['repository']['status'] == 'not_linked'
+    assert {key: value for key, value in expected_records.items() if key != 'evidence_coverage'} == {
+        key: value for key, value in expected.items() if key != 'evidence_coverage'}
     assert expected['profile']['id'] == 'quality'
     assert expected['model_requests'] == 1  # Tagging is a separate explicit action.
     assert expected['token_usage']['total_tokens'] == 120
     assert expected['token_usage']['status'] == 'complete'
     result['diagnostics']['token_usage']['total_tokens'] = 9000
     result['diagnostics']['profile']['notes'].append('caller mutation')
-    assert result['knowledge']['diagnostics'] == expected
+    assert result['knowledge']['diagnostics'] == expected_records
+    assert result['brief']['diagnostics'] == expected
     status = progress.read(1, 'knowledge')
     assert status['state'] == 'completed' and status['diagnostics'] == expected
     status['diagnostics']['profile']['notes'].append('progress caller mutation')

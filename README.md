@@ -52,6 +52,9 @@ ProjectHub runs locally. AI generation sends selected project context to OpenAI 
 - **Long histories:** Analysis uses bounded context and may miss details. Follow source references to check conclusions.
 - **AI accuracy:** Generated architecture and current-work summaries are interpretations, not proof that features work or scientific results are valid.
 
+Open **Coverage & technical details** to inspect recorded input coverage and omissions.
+File excerpts and complete-file reads are distinguished; older results may lack counts.
+
 ## Terminal-agent skill
 
 The included [projecthub-notes skill](skills/projecthub-notes/SKILL.md) lets terminal

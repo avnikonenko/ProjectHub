@@ -1,3 +1,5 @@
+import { parseArchiveConversations, parseEvidenceCoverage, type ArchiveConversations, type EvidenceCoverage } from './evidenceCoverage.ts';
+
 export type GenerationProfileId = 'quality' | 'balanced' | 'economy';
 export type GenerationProfileOption = {
   id: GenerationProfileId; label: string; description: string;
@@ -16,6 +18,8 @@ export type SynthesisBatchTiming = {
 };
 const MAX_SYNTHESIS_TIMINGS = 4096;
 export type GenerationDiagnostics = {
+  evidence_coverage?: EvidenceCoverage;
+  archive_conversations?: ArchiveConversations;
   duration_seconds?: number; ai_requests?: number; cache_hits?: number;
   input_records?: number; input_chars?: number; cited_source_count?: number;
   archive_workers?: number; archive_generated_batches?: number; archive_cache_hits?: number;
@@ -103,6 +107,10 @@ export function generationProfilePatch(id: unknown) {
 export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics | undefined {
   if (!object(raw)) return undefined;
   const result: GenerationDiagnostics = {};
+  const evidence = parseEvidenceCoverage(raw.evidence_coverage);
+  if (evidence) result.evidence_coverage = evidence;
+  const conversations = parseArchiveConversations(raw.archive_conversations);
+  if (conversations) result.archive_conversations = conversations;
   if (typeof raw.duration_seconds === 'number' && Number.isFinite(raw.duration_seconds) && raw.duration_seconds >= 0)
     result.duration_seconds = raw.duration_seconds;
   for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'synthesis_cache_hits', 'model_requests', 'extraction_windows', 'extraction_workers', 'input_records', 'input_chars', 'cited_source_count',

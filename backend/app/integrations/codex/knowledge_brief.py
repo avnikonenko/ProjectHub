@@ -380,7 +380,10 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
 
 
 def _repository_signature(repository):
-    return hashlib.sha256(json.dumps(repository, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
+    # Coverage diagnostics describe the same evidence; adding measurements must
+    # not invalidate a previously saved preview whose actual inputs are unchanged.
+    evidence = {key: repository.get(key) for key in ('sources', 'coverage')}
+    return hashlib.sha256(json.dumps(evidence, sort_keys=True, ensure_ascii=True).encode()).hexdigest()
 
 
 def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None,
@@ -575,8 +578,14 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                                'synthesis_requests': overview_selection.get('synthesis_requests', 1),
                                'synthesis_cache_hits': overview_selection.get('synthesis_cache_hits', 0),
                                **({'overview_selection': overview_selection} if overview_selection else {})}
-            brief['diagnostics'] = deepcopy(run_diagnostics)
-            candidate['diagnostics'] = deepcopy(run_diagnostics)
+            from .evidence_coverage import knowledge_coverage, repository_coverage
+            record_coverage = knowledge_coverage(bundle, run_diagnostics)
+            summary_coverage = {**deepcopy(record_coverage),
+                                'repository': repository_coverage(repository) if bundle['project'].get('repository_path') else {
+                                    'status': 'not_linked', 'notes': ['No repository was linked for this summary.']}}
+            brief['diagnostics'] = {**deepcopy(run_diagnostics), 'evidence_coverage': summary_coverage}
+            candidate['diagnostics'] = {**deepcopy(run_diagnostics), 'evidence_coverage': record_coverage}
+            run_diagnostics['evidence_coverage'] = summary_coverage
             progress.record_diagnostics(project_id, run_diagnostics)
             if publish:
                 candidate = publish_pair(engine, project_id, candidate, brief, bundle['manifest'],

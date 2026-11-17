@@ -26,6 +26,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Lead Coverage & technical details with saved evidence coverage: eligible files versus supplied excerpts, partial reads, omissions, and conversation input. Keep request/worker/cache counts in secondary diagnostics, preserve unknown legacy totals, and use grey technical headings.
+
 - Separate the general Project Overview from the detailed Knowledge Summary. Save each independently, label unpublished previews explicitly, preserve original evidence and revisions, and keep Overview refresh separate from Knowledge generation. Recover older matching detailed summaries without rewriting the general view.
 
 - Preserve source-supported parameter defaults, reported overrides, scope and concrete project-specific trade-offs in generated Knowledge; exclude generic method caveats and distinguish reported settings from verified runtime values.

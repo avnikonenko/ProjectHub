@@ -272,6 +272,7 @@ def refresh_brief(engine, project_id, manager):
     transport_scope = ExitStack()
     started = time.monotonic()
     metrics = GenerationMetrics()
+    repository_code = None
 
     def diagnostics():
         return {**progress.read(project_id, 'brief').get('diagnostics', {}), **archive_diagnostics(),
@@ -451,6 +452,10 @@ def refresh_brief(engine, project_id, manager):
         run_diagnostics = {**diagnostics(), 'input_records': len(sources),
                            'input_chars': sum(len(source.get('text', '')) for source in sources),
                            'cited_source_count': len(cited)}
+        from .evidence_coverage import repository_coverage
+        run_diagnostics['evidence_coverage'] = {
+            'repository': repository_coverage(repository_code) if repository_path else {
+                'status': 'not_linked', 'notes': ['No repository was linked for this analysis.']}}
         progress.record_diagnostics(project_id, run_diagnostics)
         with Session(engine) as db:
             # A legacy Knowledge Summary may exist only in the current general

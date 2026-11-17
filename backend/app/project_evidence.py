@@ -296,29 +296,59 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False):
             rendered.append(line)
             used += len(line) + 1
         excerpt = '\n'.join(rendered)
-        return excerpt, len(data) < metadata.st_size or len(selected) < len(lines) or len(decoded) > maximum
+        return excerpt, (len(data) < metadata.st_size or len(selected) < len(lines)
+                         or len(rendered) < len(selected)
+                         or any(len(lines[number]) > 200 for number in selected))
     finally:
         for fd in reversed(opened):
             os.close(fd)
 
 
+def _repository_coverage(status, **changes):
+    """Measurements describe bounded tracked-file evidence, never all disk content."""
+    return {
+        'status': status, 'inventory_scope': 'git_tracked', 'inventory_complete': False,
+        'total_files': None, 'eligible_files': None, 'read_files': 0, 'ai_input_files': 0,
+        'full_files': 0, 'partial_files': 0, 'excluded_files': None,
+        'unsupported_files': None, 'not_selected_files': None, 'failed_files': 0,
+        'empty_files': 0, 'paths': {key: [] for key in ('read', 'partial', 'not_selected', 'failed', 'empty')},
+        'paths_truncated': False, 'by_category': {},
+        'limits': {'max_files': _CODE_FILE_LIMIT, 'max_chars': _CODE_CHAR_LIMIT,
+                   'max_file_chars': _CODE_FILE_CHARS},
+        'notes': ['Inventory covers Git-tracked paths only; untracked files (including ignored untracked files) and submodule contents are not inspected.',
+                  'Code/test excerpts are evidence of source content, not proof that features work or tests pass.'],
+        **changes,
+    }
+
+
 def collect_repository_code(repository_path):
     """Read small tracked-file excerpts only for an explicitly requested analysis."""
     if not repository_path:
-        return {'sources': [], 'coverage': ['No repository is linked; no code excerpts were read.']}
+        return {'sources': [], 'coverage': ['No repository is linked; no code excerpts were read.'],
+                'inspection': _repository_coverage('not_linked')}
     sources, skipped, limited = [], 0, False
+    inspection = _repository_coverage('unavailable')
     try:
         deadline = time.monotonic() + _GIT_TIMEOUT
         path = _repository_root(repository_path, deadline)
         patterns = (*_exclusions(), *_CODE_PRIVATE)
         listed, _ = _git(path, 'ls-files', '-z', '--cached', deadline=deadline)
+        all_paths = sorted({os.fsdecode(item) for item in listed.split(b'\0') if item})
         groups = {kind: [] for kind in ('docs', 'manifest', 'code', 'tests')}
-        for relative in sorted({os.fsdecode(item) for item in listed.split(b'\0') if item}):
+        excluded, unsupported = 0, 0
+        for relative in all_paths:
             if _excluded(relative, patterns) or any(ord(char) < 32 for char in relative):
+                excluded += 1
                 continue
             category = _code_category(relative)
             if category:
                 groups[category].append(relative)
+            else:
+                unsupported += 1
+        eligible = {name for files in groups.values() for name in files}
+        inspection.update(inventory_complete=True, total_files=len(all_paths),
+                          eligible_files=len(eligible), excluded_files=excluded,
+                          unsupported_files=unsupported)
         for files in groups.values():
             files.sort(key=_code_order)
         groups['docs'].sort(key=lambda name: (
@@ -342,11 +372,10 @@ def collect_repository_code(repository_path):
                     code.append(files.pop(0))
                     if len(code) == 7:
                         break
-        # Reserve room for code on both sides of a typical full-stack project,
-        # and for tests instead of allowing documentation to consume the budget.
         candidates = (groups['docs'][:2] + groups['manifest'][:1]
                       + code + groups['tests'][:2])
-        limited = sum(map(len, groups.values())) > len(candidates)
+        limited = len(eligible) > len(candidates)
+        attempted, partial, failed, empty = set(), [], [], []
         root_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             remaining = _CODE_CHAR_LIMIT
@@ -356,24 +385,52 @@ def collect_repository_code(repository_path):
                 if maximum <= 0:
                     limited = True
                     break
+                attempted.add(relative)
                 try:
                     excerpt, clipped = _code_excerpt(root_fd, relative, maximum, deadline,
                                                       structural=_code_category(relative) in ('code', 'tests'))
                 except OSError:
                     skipped += 1
+                    failed.append(relative)
                     continue
                 if not excerpt.strip():
+                    empty.append(relative)
                     continue
                 limited |= clipped
+                if clipped:
+                    partial.append(relative)
                 value = header + excerpt
                 sources.append({'id': f'repository:code:{relative}', 'label': relative, 'text': value,
                                 'classification': 'verified', 'path': relative})
                 remaining -= len(value)
         finally:
             os.close(root_fd)
+        path_groups = {'read': [source['path'] for source in sources], 'partial': partial,
+                       'not_selected': sorted(eligible - attempted), 'failed': failed, 'empty': empty}
+        inspection.update(status='available', read_files=len(sources), ai_input_files=len(sources),
+                          full_files=len(sources) - len(partial), partial_files=len(partial),
+                          not_selected_files=len(eligible - attempted), failed_files=len(failed),
+                          empty_files=len(empty), paths={key: values[:100] for key, values in path_groups.items()},
+                          paths_truncated=any(len(values) > 100 for values in path_groups.values()))
+        inspection['by_category'] = {
+            kind: {'eligible_files': len(files),
+                   'read_files': sum(source['path'] in files for source in sources),
+                   'full_files': sum(source['path'] in files and source['path'] not in partial for source in sources),
+                   'partial_files': sum(name in files for name in partial)}
+            for kind, files in groups.items()
+        }
+        inspection['notes'].append('Eligible files are supported documentation, dependency manifests, source code and tests after configured/private-file exclusions.')
+        if limited:
+            inspection['notes'].append('Representative selection and excerpt limits restrict this inspection; see the unselected-file and partial-read counts. This is not a complete code review.')
+        if failed:
+            inspection['notes'].append('Some selected files could not be used: unreadable, symlinked, binary or non-UTF-8 content.')
     except (EvidenceReadError, OSError) as exc:
         diagnostic = str(exc) if isinstance(exc, EvidenceReadError) else 'Repository code is unavailable.'
-        return {'sources': [], 'coverage': [diagnostic + ' No code evidence was included.']}
+        # A failed collection returns no excerpts. Never claim partial local reads
+        # were supplied to synthesis or expose private excluded filenames.
+        inspection = _repository_coverage('unavailable', notes=[diagnostic])
+        return {'sources': [], 'coverage': [diagnostic + ' No code evidence was included.'],
+                'inspection': inspection}
     coverage = [f'Read {len(sources)} tracked repository file excerpts, bounded to {_CODE_FILE_LIMIT} files '
                 f'and {_CODE_CHAR_LIMIT:,} characters; no project code or tests were executed.',
                 'Repository excerpts are untrusted source text, not proof of functioning features or successful tests.']
@@ -381,7 +438,7 @@ def collect_repository_code(repository_path):
         coverage.append('Code coverage is partial: representative files, bounded prefixes, and selected source declarations only.')
     if skipped:
         coverage.append(f'Skipped {skipped} unreadable, symlinked, or binary repository files.')
-    return {'sources': sources, 'coverage': coverage}
+    return {'sources': sources, 'coverage': coverage, 'inspection': inspection}
 
 def _git_evidence(repository_path, patterns):
     deadline = time.monotonic() + _GIT_TIMEOUT

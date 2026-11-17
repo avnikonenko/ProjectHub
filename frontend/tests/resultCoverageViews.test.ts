@@ -42,7 +42,7 @@ test('historical overview keeps its recorded measurements and legacy metadata st
   assert.match(newer, /99\.0 seconds/);
   const { diagnostics: _, ...legacy } = historical;
   const html = renderToStaticMarkup(createElement(BriefContent, { brief: legacy, prefix: 'legacy' }));
-  assert.match(html, /Processing counts and timings were not recorded/);
+  assert.match(html, /Exact repository file coverage was not recorded for this result/);
   assert.doesNotMatch(html, /0\.0 seconds/);
   assert.deepEqual(historical, before);
 });

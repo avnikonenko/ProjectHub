@@ -92,12 +92,23 @@ Changing profile, model or effort can require fresh extraction; returning to
 Quality reuses matching pre-profile caches when source/configuration inputs match.
 Changing settings does not invoke Codex or rewrite saved results.
 
-Expand **Coverage & technical details** under a saved result or knowledge preview for its effective
-profile/effort, elapsed time, request counts, extraction-cache hits, source coverage
-and reported token usage. JSON downloads retain these diagnostics. Older results
-without usage remain readable and show unavailable values rather than invented
-zeros. Failed/cancelled run diagnostics are also retained in generation status
-while that server process remains running.
+Expand **Coverage & technical details** to see what evidence the saved result used:
+repository files supplied versus eligible files, complete versus partial excerpts,
+omissions and read failures, plus available conversation and input-selection counts.
+Expand the file lists and reasons to identify blind spots. File totals describe the
+recorded inventory scope, not every file on disk: Overview inventories tracked paths;
+Scheme also considers non-ignored untracked files. Private and excluded paths are
+not exposed in omission lists. Missing or incomplete inventories show unknown totals.
+
+Worker/request counts, cache hits, timing and token usage are under **Processing
+diagnostics**. They explain resource use, not evidence completeness. Supplying all
+eligible input does not establish factual correctness, successful tests or scientific
+validity. Source references remain the way to check specific claims.
+
+JSON downloads retain the measurements. Older results remain readable and show
+unrecorded values rather than invented zeros or retroactively calculated coverage.
+New measurements appear after an explicitly requested generation. Failed/cancelled
+run diagnostics remain available while that server process stays running.
 
 Overview, Knowledge, Q&A and Scheme use the same collapsed disclosure. Each shows
 only the measurements recorded for that result; file counts are available where
