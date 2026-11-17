@@ -27,6 +27,10 @@ from . import progress
 
 log = logging.getLogger(__name__)
 _REVIEW_EXECUTION_ERROR = 'Codex reported an execution error; inspect session status.'
+_UNACKNOWLEDGED_DISCONNECT = 'App Server disconnected before acknowledgement.'
+_DISCONNECT_COMPLETION_UNKNOWN = 'App Server disconnected before confirming completion. Inspect the session before retrying.'
+_RESTART_COMPLETION_UNKNOWN = 'ProjectHub restarted before Codex confirmed completion. Inspect the session before retrying.'
+_COMPLETION_UNKNOWN = (_DISCONNECT_COMPLETION_UNKNOWN, _RESTART_COMPLETION_UNKNOWN)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
 _tag_generation_context = ContextVar('projecthub_tag_generation_context', default=False)
 _TAG_CONTEXT_VERSION = 'tag-classification-v1'
@@ -262,6 +266,9 @@ class CodexManager:
         self.clients = {}
         self.account_managers = {}
         self.lock = threading.RLock()
+        # Notifications can arrive while a request holds self.lock and waits
+        # on that same reader. This lock fences callback commits from retargeting.
+        self._transport_lock = threading.Lock()
         # A restart cannot establish what an in-flight turn delivered. Never
         # silently retry, declare completion, or modify Codex history.
         with Session(engine) as db:
@@ -269,9 +276,11 @@ class CodexManager:
                 status='interrupted', last_error='ProjectHub restarted; inspect the session before retrying.'))
             db.execute(update(Delivery).where(Delivery.status == 'sending').values(
                 status='unverified', error='ProjectHub restarted before delivery acknowledgement.'))
+            db.execute(update(Delivery).where(Delivery.status == 'sent').values(
+                status='interrupted', error=_RESTART_COMPLETION_UNKNOWN))
             db.commit()
 
-    def _event(self, session_id, method, params, *, expected_identity=None):
+    def _event(self, session_id, method, params, *, expected_identity=None, expected_client=None):
         if method not in ('turn/started', 'turn/completed', 'item/completed', 'error',
                           'projecthub/approvalDenied'):
             return
@@ -286,13 +295,14 @@ class CodexManager:
         has_thread = 'threadId' in params
         event_thread = params.get('threadId')
         try:
-            with Session(self.engine) as db:
+            with self._transport_lock, Session(self.engine) as db:
                 # Keep transport ownership validation atomic with the event
                 # write. A released reader can dispatch a delayed callback
                 # after a session has moved to another project.
                 db.execute(text('BEGIN IMMEDIATE'))
                 session = db.get(CodexSession, session_id)
-                if session is None:
+                if session is None or (expected_client is not None and
+                                       self.clients.get(session_id) is not expected_client):
                     return
                 if expected_identity is not None and (
                         session.project_id, session.thread_id, session.codex_account) != expected_identity:
@@ -346,7 +356,9 @@ class CodexManager:
                     for delivery in matching:
                         retryable_error = (delivery.decision_id is None and delivery.status == 'failed'
                                            and delivery.error == _REVIEW_EXECUTION_ERROR)
-                        if delivery.status not in ('sending', 'sent') and not retryable_error:
+                        completion_unknown = (delivery.status == 'interrupted'
+                                              and delivery.error in _COMPLETION_UNKNOWN)
+                        if delivery.status not in ('sending', 'sent') and not retryable_error and not completion_unknown:
                             continue
                         delivery.status = status if status in ('completed', 'failed', 'interrupted') else 'failed'
                         delivery.error = '' if status == 'completed' else 'Codex turn ' + str(status)
@@ -365,22 +377,27 @@ class CodexManager:
         except Exception:
             log.exception('Could not persist Codex event for session %s', session_id)
 
-    def _disconnected(self, session_id, *, expected_identity=None):
+    def _disconnected(self, session_id, *, expected_identity=None, expected_client=None):
         try:
-            with Session(self.engine) as db:
+            with self._transport_lock, Session(self.engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))
                 session = db.get(CodexSession, session_id)
-                if session is not None and expected_identity is not None and (
+                if session is None or (expected_client is not None and
+                                       self.clients.get(session_id) is not expected_client):
+                    return
+                if expected_identity is not None and (
                         session.project_id, session.thread_id, session.codex_account) != expected_identity:
                     return
-                if session:
-                    if session.status == 'running':
-                        session.status = 'interrupted'
-                    session.last_error = 'App Server disconnected. Explicitly resume before continuing.'
-                    db.execute(update(Delivery).where(Delivery.session_id == session_id,
-                              Delivery.status == 'sending').values(status='unverified',
-                              error='App Server disconnected before acknowledgement.'))
-                    db.commit()
+                if session.status == 'running':
+                    session.status = 'interrupted'
+                session.last_error = 'App Server disconnected. Explicitly resume before continuing.'
+                deliveries = update(Delivery).where(
+                    Delivery.project_id == session.project_id, Delivery.session_id == session_id)
+                db.execute(deliveries.where(Delivery.status == 'sending').values(
+                    status='unverified', error=_UNACKNOWLEDGED_DISCONNECT))
+                db.execute(deliveries.where(Delivery.status == 'sent').values(
+                    status='interrupted', error=_DISCONNECT_COMPLETION_UNKNOWN))
+                db.commit()
         except Exception:
             log.exception('Could not record Codex disconnect for session %s', session_id)
 
@@ -874,7 +891,6 @@ class CodexManager:
                     db.add(session)
                     db.commit()
                     db.refresh(session)
-                    self.clients[session.id] = client
                     self._bind_session_callbacks(client, session)
                     return record_dict(session)
             except Exception:
@@ -890,9 +906,16 @@ class CodexManager:
     def _bind_session_callbacks(self, client, session):
         session_id = session.id
         identity = (session.project_id, session.thread_id, session.codex_account)
-        client.on_event = lambda method, params: self._event(
-            session_id, method, params, expected_identity=identity)
-        client.on_disconnect = lambda: self._disconnected(session_id, expected_identity=identity)
+        with self._transport_lock:
+            self.clients[session_id] = client
+            client.on_event = lambda method, params: self._event(
+                session_id, method, params, expected_identity=identity, expected_client=client)
+            client.on_disconnect = lambda: self._disconnected(
+                session_id, expected_identity=identity, expected_client=client)
+
+    def _detach_session_client(self, session_id):
+        with self._transport_lock:
+            return self.clients.pop(session_id, None)
 
     def resume(self, session, project):
         if getattr(session, 'codex_account', None) != getattr(self, 'account_key', None):
@@ -908,7 +931,7 @@ class CodexManager:
                     raise CodexError('Link this session again before using it.')
                 if current.status == 'running':
                     raise CodexError('Session is busy; wait or interrupt it before resuming.')
-            old = self.clients.pop(session.id, None)
+            old = self._detach_session_client(session.id)
             if old:
                 old.close()
             cwd = project.repository_path or str(self.data_dir)
@@ -920,8 +943,6 @@ class CodexManager:
                     'approvalPolicy': 'never', 'modelProvider': 'openai'})
                 if result['thread'].get('status', {}).get('type') == 'active':
                     raise CodexError('Thread is busy elsewhere; no input was sent.')
-                session_id = session.id
-                self.clients[session_id] = client
                 self._bind_session_callbacks(client, session)
                 with Session(self.engine) as db:
                     row = db.get(CodexSession, session.id)
@@ -944,7 +965,8 @@ class CodexManager:
                     raise CodexError('Link this session again before using it.')
                 if delivery.status in ('sent', 'completed'):
                     return record_dict(delivery)
-                if delivery.status in ('sending', 'unverified'):
+                if delivery.status in ('sending', 'unverified') or (
+                        delivery.status == 'interrupted' and delivery.error in _COMPLETION_UNKNOWN):
                     raise CodexError('Delivery may already have reached Codex; inspect events before creating a new request.')
                 client = self.clients.get(session.id)
                 disconnected = client is None or not getattr(client, 'connected', not getattr(client, 'closed', False))
@@ -998,13 +1020,21 @@ class CodexManager:
                     db.commit(); db.refresh(delivery)
                     return record_dict(delivery)
             with Session(self.engine) as db:
+                db.execute(text('BEGIN IMMEDIATE'))
                 delivery = db.get(Delivery, delivery_id)
                 # A terminal error notification can precede the acknowledgement.
                 # Do not turn that failed review back into a perpetual sent request.
                 terminal_error = (delivery.decision_id is None and delivery.status == 'failed'
                                   and delivery.error == _REVIEW_EXECUTION_ERROR)
                 delivery.turn_id = turn_id
-                if not terminal_error:
+                disconnected = not getattr(client, 'connected', not getattr(client, 'closed', False))
+                if not terminal_error and (disconnected or (
+                        delivery.status == 'unverified' and delivery.error == _UNACKNOWLEDGED_DISCONNECT)):
+                    delivery.status, delivery.error = 'interrupted', _DISCONNECT_COMPLETION_UNKNOWN
+                    session = db.get(CodexSession, session_id)
+                    if session.status == 'running':
+                        session.status, session.last_error = 'interrupted', delivery.error
+                elif not terminal_error:
                     delivery.status = 'sent'
                 # Completion notifications may precede the turn/start response.
                 for event in db.scalars(select(CodexEvent).where(
@@ -1065,19 +1095,18 @@ class CodexManager:
         """
         with self.lock:
             for manager in (self, *self.account_managers.values()):
-                client = manager.clients.get(session_id)
+                client = manager._detach_session_client(session_id)
                 if client is not None:
                     client.close()
-                    manager.clients.pop(session_id, None)
 
     def close(self):
         for child in self.account_managers.values():
             child.close()
         with self.lock:
             for session_id, client in list(self.clients.items()):
+                self._detach_session_client(session_id)
                 client.close()
                 self._disconnected(session_id)
-            self.clients.clear()
 
 
 _PROJECT_ACCOUNT = object()

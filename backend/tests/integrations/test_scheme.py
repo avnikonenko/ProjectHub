@@ -3,13 +3,14 @@ from copy import deepcopy
 import json
 
 import pytest
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.integrations.codex import scheme
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import GenerationRevision, Project
+from backend.app.models import GenerationRevision, Project, ProjectKnowledge, ProjectScheme
 
 
 def evidence():
@@ -152,7 +153,12 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
     manager.raw = '{broken'
     with pytest.raises(CodexError, match='invalid JSON'):
         scheme.refresh_scheme(engine, 1, manager)
-    assert manager.calls == 2  # No automatic repair/retry.
+    invalid = output()
+    invalid['architecture']['explanation'] = 'Invalid Unicode \ud800'
+    manager.raw = json.dumps(invalid)
+    with pytest.raises(CodexError, match='invalid text'):
+        scheme.refresh_scheme(engine, 1, manager)
+    assert manager.calls == 3  # No automatic repair/retry.
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved
         revisions = list(db.scalars(select(GenerationRevision)))
@@ -292,4 +298,60 @@ def test_knowledge_publication_is_in_prompt_and_saved_with_scheme_atomically(tmp
         revisions = list(db.scalars(select(GenerationRevision)))
         assert len(revisions) == 1
         assert revisions[0].snapshot['knowledge_context']['publication_id'] == 'published-one'
+    engine.dispose()
+
+
+def test_knowledge_followup_checks_publication_at_start_and_commit(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    old_scheme = {'generated_at': 'earlier'}
+    with Session(engine) as db:
+        db.add(Project(id=1, name='One'))
+        db.flush()
+        db.add(ProjectKnowledge(project_id=1, snapshot={'publication_id': 'published-one'}))
+        db.add(ProjectScheme(project_id=1, snapshot=old_scheme))
+        db.commit()
+    context = knowledge_evidence()
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *args: context)
+
+    class Manager:
+        calls = 0
+        generation_metadata = {'model': 'mock'}
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            if self.calls == 1:
+                with Session(engine) as db:
+                    db.get(ProjectKnowledge, 1).snapshot = {'publication_id': 'published-two'}
+                    db.commit()
+            return json.dumps(output())
+
+    manager = Manager()
+    with pytest.raises(CodexError, match='Knowledge changed'):
+        scheme.refresh_scheme(engine, 1, manager, expected_publication_id='other-publication')
+    assert manager.calls == 0
+    with pytest.raises(CodexError, match='Knowledge changed'):
+        scheme.refresh_scheme(engine, 1, manager, expected_publication_id='published-one')
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == old_scheme
+        assert db.scalar(select(GenerationRevision)) is None
+    context['knowledge_context']['publication_id'] = 'published-two'
+    saved = scheme.refresh_scheme(engine, 1, manager, expected_publication_id='published-two')
+    assert saved['knowledge_context']['publication_id'] == 'published-two'
+    engine.dispose()
+
+
+def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp_path):
+    engine, _ = initialize(tmp_path)
+    legacy = {'architecture': {'explanation': 'Displayable text with \ud800'},
+              'coverage': {'file_omissions': {'files': [{'path': 'path-with-\udcff.py'}, {'path': 'valid.py'}]}}}
+    with Session(engine) as db:
+        db.add(Project(id=1, name='One'))
+        db.flush()
+        db.add(ProjectScheme(project_id=1, snapshot=legacy))
+        db.commit()
+        shown = scheme.read_scheme(db, 1)
+        assert shown['architecture']['explanation'].endswith('\ufffd')
+        assert shown['coverage']['file_omissions']['files'] == [{'path': 'valid.py'}]
+        assert json.loads(JSONResponse(shown).body) == shown
+        assert db.get(ProjectScheme, 1).snapshot == legacy
     engine.dispose()

@@ -48,14 +48,14 @@ def api(tmp_path, monkeypatch):
                 db.commit()
         return {'published': publish, 'publication_id': publication, 'knowledge': saved, 'brief': brief}
 
-    def generate_scheme(actual_engine, pid, selected):
+    def generate_scheme(actual_engine, pid, selected, *, expected_publication_id):
         assert actual_engine is engine and pid == 1 and selected is choices[1]
         assert selected is not choices[0] and selected.account_key == choices[0].account_key
         assert selected.model == choices[0].model and selected.effort == choices[0].effort
         assert 'Project one writing preference.' in ai_instructions()
         with Session(engine) as db:
             saved = db.get(ProjectKnowledge, pid).snapshot
-            assert saved['publication_id'] == 'new-knowledge'
+            assert saved['publication_id'] == expected_publication_id == 'new-knowledge'
             result = {'generated_at': 'new-scheme', 'knowledge_publication': saved['publication_id']}
             db.get(ProjectScheme, pid).snapshot = result
             db.commit()
@@ -130,7 +130,7 @@ def test_scheme_setup_failure_is_detected_before_knowledge_publication(api, monk
 
 
 def test_pre_start_scheme_error_keeps_knowledge_saved_and_reports_scheme_failure(api, monkeypatch, caplog):
-    def fail(*args):
+    def fail(*args, **kwargs):
         raise CodexError('Scheme follow-up could not inspect its sources.')
     monkeypatch.setattr(routes, 'refresh_scheme', fail)
     response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body())

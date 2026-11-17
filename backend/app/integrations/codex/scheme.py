@@ -5,10 +5,12 @@ import json
 import re
 import time
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS
-from ...models import Project, ProjectScheme, utcnow
+from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
+from ...services import begin_session_write
 from . import progress
 from .brief import BriefBusy, generation_lock, generation_metadata
 from .protocol import CodexError
@@ -22,6 +24,8 @@ MAX_INPUT_CHARS = max(SCHEME_PACKAGE_CHARS_OPTIONS) + _INPUT_HEADROOM_CHARS
 MAX_OUTPUT_CHARS = 100_000
 STATUSES = ('observed', 'proposed', 'uncertain')
 _KNOWLEDGE_INTERPRETATION = 'published Knowledge interpretation'
+_KNOWLEDGE_CHANGED = 'Knowledge changed before the follow-up Scheme could be saved. The previous Scheme is preserved.'
+_SURROGATES = re.compile(r'[\ud800-\udfff]')
 _NODE_TYPES = {
     'architecture': ('module', 'service', 'component', 'database', 'tool', 'interface', 'backend'),
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
@@ -77,18 +81,28 @@ def scheme_snapshot_for_display(snapshot):
     coverage = snapshot.get('coverage')
     omissions = coverage.get('file_omissions') if isinstance(coverage, dict) else None
     files = omissions.get('files') if isinstance(omissions, dict) else None
-    if not isinstance(files, list):
-        return snapshot
-    displayable = [file for file in files if not (isinstance(file, dict)
-                   and isinstance(file.get('path'), str) and re.search('[\ud800-\udfff]', file['path']))]
-    if len(displayable) == len(files):
-        return snapshot
-    return {**snapshot, 'coverage': {**coverage, 'file_omissions': {**omissions, 'files': displayable}}}
+    if isinstance(files, list):
+        displayable = [file for file in files if not (isinstance(file, dict)
+                       and isinstance(file.get('path'), str) and _SURROGATES.search(file['path']))]
+        if len(displayable) != len(files):
+            snapshot = {**snapshot, 'coverage': {**coverage, 'file_omissions': {**omissions, 'files': displayable}}}
+    return _displayable_json(snapshot)
+
+
+def _displayable_json(value):
+    if isinstance(value, str):
+        return _SURROGATES.sub('\ufffd', value)
+    if isinstance(value, dict):
+        return {_SURROGATES.sub('\ufffd', key): _displayable_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_displayable_json(item) for item in value]
+    return value
 
 
 def _text(value, limit, *, empty=False):
     if (not isinstance(value, str) or len(value) > limit
             or (not empty and not value.strip())
+            or _SURROGATES.search(value)
             or any(ord(char) < 32 and char not in '\n\t' for char in value)):
         raise CodexError('Scheme generation returned invalid text.')
     return value.strip()
@@ -223,7 +237,7 @@ def render_mermaid(graph):
     return '\n'.join(lines)
 
 
-def refresh_scheme(engine, project_id, manager):
+def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None):
     job_lock = generation_lock.for_job(project_id, 'scheme')
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
@@ -232,12 +246,17 @@ def refresh_scheme(engine, project_id, manager):
         progress.begin(project_id, 'scheme', engine=engine)
         progress.update(project_id, stage='Collecting Scheme evidence')
         evidence = collect_evidence(engine, project_id)
+        knowledge_context = evidence.get('knowledge_context')
+        if expected_publication_id is not None and (
+                not isinstance(knowledge_context, dict) or
+                knowledge_context.get('publication_id') != expected_publication_id):
+            raise CodexError(_KNOWLEDGE_CHANGED)
         if not evidence['sources']:
             raise CodexError('No project evidence is available for a scheme.')
         payload = {key: evidence[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
         payload['coverage'] = {key: value for key, value in evidence['coverage'].items() if key != 'file_omissions'}
-        if isinstance(evidence.get('knowledge_context'), dict):
-            payload['knowledge_context'] = evidence['knowledge_context']
+        if isinstance(knowledge_context, dict):
+            payload['knowledge_context'] = knowledge_context
         serialized = json.dumps(payload, ensure_ascii=False)
         policy = payload['coverage'].get('inspection_policy')
         package_limit = policy.get('max_package_chars') if isinstance(policy, dict) else None
@@ -348,9 +367,15 @@ def refresh_scheme(engine, project_id, manager):
             'diagnostics': {**evidence.get('diagnostics', {}), 'input_chars': len(prompt),
                             'duration_seconds': round(time.monotonic() - started, 3), 'ai_requests': 1},
         }
-        if isinstance(evidence.get('knowledge_context'), dict):
-            snapshot['knowledge_context'] = deepcopy(evidence['knowledge_context'])
+        if isinstance(knowledge_context, dict):
+            snapshot['knowledge_context'] = deepcopy(knowledge_context)
         with Session(engine) as db:
+            if expected_publication_id is not None:
+                begin_session_write(db)
+                publication_id = db.scalar(select(ProjectKnowledge.snapshot['publication_id'].as_string())
+                                           .where(ProjectKnowledge.project_id == project_id))
+                if publication_id != expected_publication_id:
+                    raise CodexError(_KNOWLEDGE_CHANGED)
             if db.get(Project, project_id) is None:
                 raise CodexError('Project not found.')
             row = db.get(ProjectScheme, project_id)

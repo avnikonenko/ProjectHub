@@ -179,6 +179,34 @@ def test_context_is_deterministic_scoped_and_has_version(setup):
     assert 'Hypothesis' not in a['content'] and 'Private B' not in a['content']
 
 
+def test_stale_discussion_preview_cannot_send_unreviewed_content(setup):
+    sid = create_session(setup)
+    base = '/api/projects/1/codex'
+    version = setup.client.get(f'{base}/context').json()['version']
+    with Session(setup.engine) as db:
+        db.get(Project, 1).description = 'Changed project description'
+        db.commit()
+
+    url = f'{base}/sessions/{sid}/turns'
+    response = setup.client.post(url, json={'prompt': 'Review', 'context_version': version})
+    assert response.status_code == 409
+    assert 'context changed' in response.json()['detail']
+    client = setup.manager.clients[sid]
+    assert not any(method == 'turn/start' for method, _ in client.calls)
+    with Session(setup.engine) as db:
+        assert db.scalar(select(Delivery)) is None
+        assert db.scalar(select(ContextPackage)) is None
+
+    preview = setup.client.get(f'{base}/context').json()
+    response = setup.client.post(url, json={'prompt': 'Review', 'context_version': preview['version']})
+    assert response.status_code == 201
+    with Session(setup.engine) as db:
+        package = db.get(ContextPackage, response.json()['context_id'])
+        assert package.version == preview['version'] and package.content == preview['content']
+    sent = next(params for method, params in client.calls if method == 'turn/start')
+    assert preview['content'] in sent['input'][0]['text']
+
+
 def test_draft_requires_explicit_confirmation_and_is_idempotent(setup):
     sid = create_session(setup)
     draft = setup.client.post('/api/projects/1/codex/deliveries', json={'decision_id': 1, 'session_id': sid}).json()
@@ -332,12 +360,79 @@ def test_restart_preserves_uncertainty(setup):
     with Session(setup.engine) as db:
         db.get(CodexSession, sid).status = 'running'
         d = Delivery(project_id=1, session_id=sid, content='pending', status='sending')
-        db.add(d); db.commit(); did = d.id
+        sent = Delivery(project_id=1, session_id=sid, content='acknowledged', status='sent', turn_id='ack')
+        db.add_all([d, sent]); db.commit(); did, sent_id = d.id, sent.id
     fresh = CodexManager(setup.engine, setup.path, client_factory=FakeClient)
     with Session(setup.engine) as db:
         assert db.get(CodexSession, sid).status == 'interrupted'
         assert db.get(Delivery, did).status == 'unverified'
+        acknowledged = db.get(Delivery, sent_id)
+        assert acknowledged.status == 'interrupted'
+        assert 'restarted' in acknowledged.error and acknowledged.turn_id == 'ack'
+    with pytest.raises(CodexError, match='already have reached'):
+        fresh.send(sent_id)
+    fresh._event(sid, 'turn/completed', {'turn': {'id': 'ack', 'status': 'completed'}})
+    with Session(setup.engine) as db:
+        assert db.get(Delivery, sent_id).status == 'completed'
     assert fresh.clients == {}
+
+
+@pytest.mark.parametrize('before_ack', [False, True])
+def test_disconnect_after_codex_accepts_review_preserves_turn_identity(setup, monkeypatch, before_ack):
+    sid = create_session(setup)
+    base = '/api/projects/1/codex'
+    client = setup.manager.clients[sid]
+    request = client.request
+
+    def disconnect():
+        client.close()
+        client.on_disconnect()
+
+    if before_ack:
+        def request_and_disconnect(method, params):
+            result = request(method, params)
+            if method == 'turn/start':
+                disconnect()
+            return result
+
+        monkeypatch.setattr(client, 'request', request_and_disconnect)
+    delivery = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'Review'}).json()
+    if not before_ack:
+        assert delivery['status'] == 'sent'
+        disconnect()
+
+    with Session(setup.engine) as db:
+        stored = db.get(Delivery, delivery['id'])
+        assert stored.status == 'interrupted' and stored.turn_id == 'turn-1'
+        assert 'before confirming completion' in stored.error
+        assert db.get(CodexSession, sid).status == 'interrupted'
+    retry = setup.client.post(f"{base}/deliveries/{delivery['id']}/send", json={'confirmed': True})
+    assert retry.status_code == 409
+    assert [method for method, _ in client.calls].count('turn/start') == 1
+
+
+def test_replaced_transport_cannot_change_same_session_or_its_active_delivery(setup):
+    sid = create_session(setup)
+    base = '/api/projects/1/codex'
+    old = setup.manager.clients[sid]
+    assert setup.client.post(f'{base}/sessions/{sid}/resume').status_code == 200
+    current = setup.manager.clients[sid]
+    delivery = setup.client.post(f'{base}/sessions/{sid}/turns', json={'prompt': 'Review'}).json()
+    with Session(setup.engine) as db:
+        thread_id = db.get(CodexSession, sid).thread_id
+
+    completion = {'threadId': thread_id, 'turn': {'id': delivery['turn_id'], 'status': 'completed'}}
+    old.on_event('turn/completed', completion)
+    old.on_disconnect()
+    with Session(setup.engine) as db:
+        assert db.get(CodexSession, sid).status == 'running'
+        assert db.get(Delivery, delivery['id']).status == 'sent'
+        assert db.scalar(select(CodexEvent).where(CodexEvent.method == 'turn/completed')) is None
+
+    current.on_event('turn/completed', completion)
+    with Session(setup.engine) as db:
+        assert db.get(CodexSession, sid).status == 'idle'
+        assert db.get(Delivery, delivery['id']).status == 'completed'
 
 
 def test_unavailable_codex_reports_failure_without_losing_core(setup, monkeypatch):

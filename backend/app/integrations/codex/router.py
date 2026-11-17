@@ -92,6 +92,7 @@ class ModelInput(Input):
 
 class TurnInput(ModelInput):
     prompt: str = Field(min_length=1, max_length=20000)
+    context_version: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
 
 class DeliveryInput(Input):
@@ -523,7 +524,7 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
         with use_project_instructions(instructions):
-            refresh_scheme(engine, project_id, manager)
+            refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='completed')
     except BriefBusy as exc:
@@ -567,11 +568,12 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         with use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:
-            if result.get('published') is not True:
+            publication_id = result.get('publication_id')
+            if result.get('published') is not True or not isinstance(publication_id, str) or not publication_id:
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
-                                      result.get('publication_id'), dependency_token)
+                                      publication_id, dependency_token)
             result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:
@@ -971,9 +973,11 @@ def turn(project_id: int, session_id: int, body: TurnInput, request: Request, db
     session = managed_session(db, project_id, session_id)
     # Initialize recovery before creating a sending row.
     try:
+        preview = context_preview(db, project_id)
+        if body.context_version is not None and body.context_version != preview['version']:
+            raise HTTPException(409, 'Project context changed since it was previewed. Preview it again before sending.')
         manager = manager_for(request.app, project_id, account=session.codex_account)
         options = send_options(manager, body)
-        preview = context_preview(db, project_id)
     except CodexError as exc:
         raise HTTPException(422, str(exc)) from exc
     package = ContextPackage(project_id=project_id, session_id=session_id, **preview)
