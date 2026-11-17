@@ -345,6 +345,7 @@ main {
 }
 .search-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
@@ -354,7 +355,7 @@ main {
   color: #88988e;
 }
 .search-bar input {
-  flex: 1;
+  flex: 1 1 min(12rem, calc(100% - 3rem));
   min-width: 0;
   margin: 0;
   background: transparent;
@@ -1113,6 +1114,7 @@ a:focus-visible {
   .project-header {
     padding: 16px 18px 12px;
     display: block;
+    position: relative;
   }
   .project-header h1 {
     font-size: 1.642857rem;
@@ -1122,6 +1124,12 @@ a:focus-visible {
     flex-direction: row;
     justify-content: space-between;
     align-items: center;
+  }
+  .project-actions .generation-settings {
+    position: static;
+  }
+  .project-actions .generation-options {
+    inset-inline-end: 18px;
   }
   .tabs {
     padding: 0 18px;
@@ -1354,8 +1362,19 @@ a:focus-visible {
 .scheme-omitted-files { overflow-wrap: anywhere; }
 .scheme-referenced-file { font-weight: 700; text-decoration: underline; text-underline-offset: .2rem; }
 .scheme-table-scroll { overflow-x: auto; margin: 1rem 0; }
-.scheme-dependencies { width: 100%; border-collapse: collapse; text-align: left; }
-.scheme-dependencies th, .scheme-dependencies td { padding: .75rem .5rem; vertical-align: top; border-bottom: 1px solid var(--border, #d9e2dd); }
+.scheme-table-scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.diagnostic-table { width: 100%; border-collapse: collapse; text-align: start; font-size: 0.89rem; }
+.diagnostic-table caption { text-align: start; margin-bottom: 0.4rem; }
+.diagnostic-table :is(th, td) { padding: 0.55rem 0.7rem; vertical-align: top; border-bottom: 1px solid var(--border); }
+.diagnostic-table thead { background: var(--surface-subtle); }
+.diagnostic-table th[scope='row'] { font-weight: inherit; }
+.diagnostic-table small { display: block; }
+.file-coverage-table th[scope='row'] { width: 32%; }
+.file-coverage-table :is(th, td):nth-child(2),
+.file-coverage-table :is(th, td):nth-child(3),
+.batch-timing-table :is(th, td) { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.file-coverage-table { min-width: 33rem; }
+.batch-timing-table :is(th, td):not(:last-child) { text-align: end; }
 .scheme-dependencies th { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .scheme-dependencies small { display: block; padding-top: .3rem; }
 

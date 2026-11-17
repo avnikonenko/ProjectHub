@@ -52,8 +52,8 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
     {!!synthesisTimings?.length && <details>
       <summary>Synthesis batch timings</summary>
       <p><small>Batch times can overlap; do not add them to the total duration.</small></p>
-      <div className="scheme-table-scroll"><table>
-        <thead><tr><th>Level</th><th>Batch</th><th>Input characters</th><th>Total (s)</th><th>Model (s)</th><th>Cache lookup (s)</th><th>Local work (s)</th><th>Result</th></tr></thead>
+      <div className="scheme-table-scroll" role="region" aria-label="Synthesis batch timings table" tabIndex={0}><table className="diagnostic-table batch-timing-table">
+        <thead><tr><th scope="col">Level</th><th scope="col">Batch</th><th scope="col">Input characters</th><th scope="col">Total (s)</th><th scope="col">Model (s)</th><th scope="col">Cache lookup (s)</th><th scope="col">Local work (s)</th><th scope="col">Result</th></tr></thead>
         <tbody>{synthesisTimings.slice(0, 100).map((timing, index) => <tr key={index}>
           <td>{timing.level}</td><td>{timing.batch}</td><td>{diagnosticCount(timing.input_chars)}</td>
           <td>{timing.seconds.toFixed(2)}</td><td>{timing.model_seconds.toFixed(2)}</td>

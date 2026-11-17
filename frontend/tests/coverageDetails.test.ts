@@ -15,9 +15,9 @@ test('coverage leads with input availability and nests processing diagnostics', 
     savedAt: '2026-11-17T10:00:00Z', sourceCount: 4, coverage: ['One linked session was unavailable.'],
     diagnostics: { duration_seconds: 12.5, input_records: 30, input_chars: 25000, archive_cache_hits: 3 },
   }));
-  assert.equal((html.match(/<details\b/g) ?? []).length, 4);
+  assert.equal((html.match(/<details\b/g) ?? []).length, 5);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
-  assert.match(html, /<summary>Coverage<\/summary><ul><li>4 cited sources<\/li><\/ul><details><summary>Detailed coverage<\/summary>/);
+  assert.match(html, /<summary>Coverage<\/summary><ul><li>4 cited sources<\/li><\/ul><details><summary>Files used and missed<\/summary>/);
   assert.match(html, /12\.5 seconds/);
   assert.match(html, /Input records/); assert.match(html, /25,000/);
   assert.match(html, /One linked session was unavailable/);
@@ -151,7 +151,7 @@ test('malformed metadata is ignored and coverage strings remain escaped data', (
 test('view-specific saved measurements use an explicit custom coverage contract', () => {
   const html = renderToStaticMarkup(createElement(CoverageDetails, { customCoverage: true, note: 'Current inspection, separate from the saved result.' },
     createElement('p', null, 'Files read: 12 of 15 eligible files.')));
-  assert.equal((html.match(/<details\b/g) ?? []).length, 2);
+  assert.equal((html.match(/<details\b/g) ?? []).length, 3);
   assert.match(html, /Files read: 12 of 15/);
   assert.doesNotMatch(html, /not recorded for this saved result/);
 });
@@ -170,8 +170,10 @@ test('per-file table separates a complete disk read from a sparse AI excerpt', (
       omission_reasons: ['declaration_selection', 'line_width_limit'] }] },
   } } }));
   assert.match(html, /<caption>Local file reads and supplied AI excerpts<\/caption>/);
-  assert.match(html, /File size \(bytes\)/); assert.match(html, /AI excerpt \(characters\)/);
-  assert.match(html, /5,000<\/td><td>5,000<\/td><td>Complete<\/td><td>300<\/td><td>Partial/);
+  assert.match(html, /aria-label="File coverage table" tabindex="0"/);
+  assert.match(html, /<th scope="row"><code>src\/app.py<\/code><\/th>/);
+  assert.match(html, /<th scope="col">Read locally<\/th><th scope="col">Sent to AI<\/th>/);
+  assert.match(html, /5,000 of 5,000 bytes<small>Complete<\/small><\/td><td>300 characters<small>Partial<\/small>/);
   assert.match(html, /Only selected declarations supplied; Long lines shortened/);
   assert.match(html, /not a percentage of understanding/);
   assert.doesNotMatch(html, /declaration_selection|line_width_limit/);

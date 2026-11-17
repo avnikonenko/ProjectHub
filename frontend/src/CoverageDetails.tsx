@@ -147,13 +147,15 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
         <summary>Files used and missed</summary>
         {repo.file_details?.length ? <>
           <p><small>A file can be read fully on disk while only selected declarations reach the AI. Bytes and characters are different units; these counts are not a percentage of understanding.</small></p>
-          <div className="scheme-table-scroll"><table>
+          <div className="scheme-table-scroll" role="region" aria-label="File coverage table" tabIndex={0}><table className="diagnostic-table file-coverage-table">
             <caption>Local file reads and supplied AI excerpts</caption>
-            <thead><tr><th>File</th><th>File size (bytes)</th><th>Read locally (bytes)</th><th>Local read</th><th>AI excerpt (characters)</th><th>AI excerpt</th><th>Why content was omitted</th></tr></thead>
+            <thead><tr><th scope="col">File</th><th scope="col">Read locally</th><th scope="col">Sent to AI</th><th scope="col">Omission reason</th></tr></thead>
             <tbody>{repo.file_details.map(detail => <tr key={detail.path}>
-              <td><code>{detail.path}</code></td><td>{fmt(detail.file_bytes)}</td><td>{fmt(detail.bytes_read)}</td>
-              <td>{detail.local_read_complete ? 'Complete' : 'Partial'}</td><td>{fmt(detail.excerpt_chars)}</td>
-              <td>{detail.excerpt_complete ? 'Complete' : 'Partial'}</td>
+              <th scope="row"><code>{detail.path}</code></th>
+              <td>{fmt(detail.bytes_read)} of {fmt(detail.file_bytes)} bytes
+                <small>{detail.local_read_complete ? 'Complete' : 'Partial'}</small></td>
+              <td>{fmt(detail.excerpt_chars)} characters
+                <small>{detail.excerpt_complete ? 'Complete' : 'Partial'}</small></td>
               <td>{detail.omission_reasons.length ? detail.omission_reasons.map(omissionLabel).join('; ')
                 : detail.excerpt_complete ? 'No source text omitted' : 'Reason not recorded'}</td>
             </tr>)}</tbody>

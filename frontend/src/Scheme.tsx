@@ -339,9 +339,9 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
   const dependencies = snapshot?.dependencies ?? result?.inspection.dependencies ?? [];
   const development = (dependency: Dependency) => /dev|test|build/i.test(dependency.category);
-  function dependencyTable(items: Dependency[]) {
-    return <div className="scheme-table-scroll"><table className="scheme-dependencies">
-      <thead><tr><th>Dependency</th><th>Declared constraint</th><th>Category</th><th>Purpose / evidence</th></tr></thead>
+  function dependencyTable(items: Dependency[], tableLabel: string) {
+    return <div className="scheme-table-scroll" role="region" aria-label={tableLabel} tabIndex={0}><table className="diagnostic-table scheme-dependencies">
+      <thead><tr><th scope="col">Dependency</th><th scope="col">Declared constraint</th><th scope="col">Category</th><th scope="col">Purpose / evidence</th></tr></thead>
       <tbody>{items.map((dependency) => <tr key={dependency.id}>
         <td>{dependency.name}</td><td><code>{dependency.constraint || 'Not specified'}</code></td>
         <td>{label(dependency.category)}</td><td><AIEmphasis text={dependency.purpose || 'Purpose not explained yet.'} />
@@ -396,10 +396,10 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
     {view === 'Dependencies' && <>
       {!dependencies.length && <Empty>No matching direct dependencies in the inspected evidence.</Empty>}
-      {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)))}
+      {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)), 'Project dependencies')}
       {!!dependencies.filter(development).length && <details className="scheme-development">
         <summary>Development dependencies ({dependencies.filter(development).length})</summary>
-        {dependencyTable(dependencies.filter(development))}
+        {dependencyTable(dependencies.filter(development), 'Development dependencies')}
       </details>}
       <small>Constraints are declarations, not installed versions. Imports do not establish a working integration.</small>
     </>}
