@@ -9,9 +9,10 @@ import json
 import time
 import re
 
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
-from ...models import ProjectHistoryBatch, ProjectKnowledge
+from ...models import ProjectHistoryBatch, ProjectKnowledge, GenerationRevision
 from ...config import DEFAULT_EXTRACTION_WORKERS, MAX_EXTRACTION_WORKERS
 from .ai_instructions import ai_instructions
 from .protocol import CodexError
@@ -282,7 +283,31 @@ def extraction_configuration(manager):
 
 def read_knowledge(db, project_id):
     row = db.get(ProjectKnowledge, project_id)
-    return None if row is None else row.snapshot
+    if row is None:
+        return None
+    snapshot = row.snapshot
+    if not isinstance(snapshot, dict) or 'summary' in snapshot:
+        return snapshot
+    publication_id = snapshot.get('publication_id')
+    if not isinstance(publication_id, str) or not publication_id:
+        return snapshot
+    # Older publications stored the detailed summary as a brief revision. Keep
+    # it available when the independent general Overview is later refreshed.
+    revision = db.scalar(select(GenerationRevision).where(
+        GenerationRevision.project_id == project_id, GenerationRevision.kind == 'brief',
+        func.json_extract(GenerationRevision.snapshot, '$.project_state.publication_id') == publication_id,
+        func.json_extract(GenerationRevision.snapshot, '$.project_state.pipeline') == 'knowledge-v1',
+    ).order_by(GenerationRevision.id.desc()).limit(1))
+    summary = revision.snapshot if revision is not None else None
+    if summary is None:
+        from .brief import read_brief
+        current = read_brief(db, project_id)
+        state = (current or {}).get('project_state') or {}
+        if state.get('publication_id') == publication_id and state.get('pipeline') == 'knowledge-v1':
+            summary = current
+    if isinstance(summary, dict) and summary.get('generated_at') == snapshot.get('generated_at'):
+        return {**deepcopy(snapshot), 'summary': deepcopy(summary)}
+    return snapshot
 
 
 def _source_excerpt(quote, text):

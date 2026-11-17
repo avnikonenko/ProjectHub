@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.models import Project, ProjectBrief, ProjectQA, GenerationRevision
+from backend.app.models import Project, ProjectBrief, ProjectQA, ProjectKnowledge, GenerationRevision
 from backend.app.integrations.codex import brief, qa, knowledge_brief, progress
 from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
@@ -119,20 +119,23 @@ def test_old_or_malformed_optional_metadata_is_not_invented(tmp_path, metadata, 
         engine.dispose()
 
 
-def test_knowledge_preview_and_published_brief_keep_same_recorded_run(prepared):
+def test_knowledge_preview_and_separate_published_summary_keep_same_recorded_run(prepared):
     manager = FakeSynthesis()
     original_metadata = deepcopy(manager.generation_metadata)
     result = knowledge_brief.generate_knowledge_brief(prepared.engine, 1, manager)
     assert result['brief']['diagnostics'] == result['diagnostics']
     assert result['knowledge']['diagnostics'] == result['diagnostics']
     assert manager.generation_metadata == original_metadata
+    with Session(prepared.engine) as db:
+        original_overview = brief.read_brief(db, 1)
     knowledge_brief.publish_pair(prepared.engine, 1, result['knowledge'], result['brief'],
                                  prepared.bundle['manifest'])
     with Session(prepared.engine) as db:
-        current = brief.read_brief(db, 1)
+        current = db.get(ProjectKnowledge, 1).snapshot['summary']
         assert current['diagnostics'] == result['diagnostics']
         assert current['generation'] == original_metadata
+        assert brief.read_brief(db, 1) == original_overview
         revision = db.scalars(select(GenerationRevision).where(
-            GenerationRevision.project_id == 1, GenerationRevision.kind == 'brief').order_by(
+            GenerationRevision.project_id == 1, GenerationRevision.kind == 'knowledge').order_by(
                 GenerationRevision.id.desc())).first()
-        assert revision.snapshot['diagnostics'] == result['diagnostics']
+        assert revision.snapshot['summary']['diagnostics'] == result['diagnostics']

@@ -1,4 +1,4 @@
-"""Unified analysis HTTP contracts; temporary SQLite and mocked generation only."""
+"""Independent Overview and Knowledge HTTP contracts; mocked generation only."""
 from copy import deepcopy
 from types import SimpleNamespace
 
@@ -49,6 +49,11 @@ def api(tmp_path, monkeypatch):
     def read(db, pid):
         calls.append(('read', pid))
         return result(pid)
+    def overview(engine_arg, pid, picked):
+        assert engine_arg is engine
+        assert f'Only project {pid} preferences.' in ai_instructions()
+        calls.append(('overview', pid, picked is chosen))
+        return {'generated_at': 'general', 'sections': {'overview': []}}
     def activate(engine_arg, pid, publication):
         assert engine_arg is engine
         calls.append(('publish', pid, publication))
@@ -57,6 +62,7 @@ def api(tmp_path, monkeypatch):
         return result(pid, published=True)
     monkeypatch.setattr(routes, 'manager_for', manager_for)
     monkeypatch.setattr(routes, 'generate_knowledge_brief', generate)
+    monkeypatch.setattr(routes, 'refresh_brief', overview)
     monkeypatch.setattr(routes, 'read_knowledge_preview', read)
     monkeypatch.setattr(routes, 'publish_saved_knowledge_preview', activate)
     app = FastAPI(); app.state.engine = engine; app.include_router(routes.router)
@@ -80,15 +86,16 @@ def test_canonical_preview_requires_confirmation_and_cannot_publish(api):
     assert 'Only project 1 preferences.' not in ai_instructions()
 
 
-def test_legacy_brief_post_updates_pair_but_returns_legacy_brief_shape(api):
+def test_brief_post_generates_only_general_overview(api):
     client = api.client
     path = '/api/projects/1/codex/brief'
     assert client.post(path, json={}).status_code == 422
     assert api.calls == []
     response = client.post(path, json={'confirmed': True})
     assert response.status_code == 200, response.text
-    assert response.json() == result(1, published=True)['brief']
-    assert ('generate', 1, False, True) in api.calls
+    assert response.json() == {'generated_at': 'general', 'sections': {'overview': []}}
+    assert ('overview', 1, False) in api.calls
+    assert all(call[0] != 'generate' for call in api.calls)
     assert 'knowledge' not in response.json() and 'published' not in response.json()
 
 
@@ -124,16 +131,16 @@ def test_read_publish_aliases_are_project_scoped_and_do_not_generate(api):
      {'state': 'failed', 'started_at': '2026-11-17T11:00:00+00:00'}, 'legacy'),
     ({'state': 'completed', 'started_at': '2026-11-17T12:00:00+00:00'}, {'state': 'idle'}, 'legacy'),
 ])
-def test_legacy_progress_observes_newer_shared_run(api, monkeypatch, legacy, shared, expected):
+def test_overview_progress_never_substitutes_knowledge_run(api, monkeypatch, legacy, shared, expected):
     snapshots = {'brief': legacy, 'knowledge': shared}
     monkeypatch.setattr(progress, 'read', lambda pid, kind: deepcopy(snapshots[kind]))
     response = api.client.get('/api/projects/1/codex/generation/status?kind=brief')
     assert response.status_code == 200
-    assert response.json() == (shared if expected == 'shared' else legacy)
+    assert response.json() == legacy
     assert api.client.get('/api/projects/1/codex/generation/status?kind=knowledge').json() == shared
 
 
-def test_legacy_cancel_maps_only_the_exact_shared_run(api, monkeypatch):
+def test_overview_cancel_never_targets_knowledge_run(api, monkeypatch):
     calls = []
     shared = {'state': 'running', 'started_at': 'shared-start'}
     legacy = {'state': 'failed', 'started_at': 'legacy-start'}
@@ -145,7 +152,9 @@ def test_legacy_cancel_maps_only_the_exact_shared_run(api, monkeypatch):
         return {'state': 'running', 'cancel_requested': True}
     monkeypatch.setattr(progress, 'cancel', cancel)
     prefix = '/api/projects/1/codex/generation/cancel'
-    assert api.client.post(prefix, json={'kind': 'brief', 'started_at': 'shared-start'}).status_code == 200
+    assert api.client.post(prefix, json={'kind': 'brief', 'started_at': 'shared-start'}).status_code == 409
+    assert calls[-1] == (1, 'brief', 'shared-start')
+    assert api.client.post(prefix, json={'kind': 'knowledge', 'started_at': 'shared-start'}).status_code == 200
     assert calls[-1] == (1, 'knowledge', 'shared-start')
     assert api.client.post(prefix, json={'kind': 'brief', 'started_at': 'legacy-start'}).status_code == 409
     assert calls[-1] == (1, 'brief', 'legacy-start')
@@ -174,18 +183,21 @@ def test_legacy_get_and_revision_history_remain_read_only_and_project_scoped(api
     assert api.calls == []
 
 
-def test_real_cancel_guard_keeps_project_and_run_identity_for_legacy_alias(api):
+def test_real_cancel_guard_keeps_project_and_generation_kind_independent(api):
     progress.begin(1, 'knowledge')
     try:
         shared = api.client.get('/api/projects/1/codex/generation/status?kind=knowledge').json()
         legacy = api.client.get('/api/projects/1/codex/generation/status?kind=brief').json()
-        assert shared['state'] == legacy['state'] == 'running'
-        assert shared['started_at'] == legacy['started_at']
+        assert shared['state'] == 'running'
+        assert legacy['state'] != 'running'
         body = {'kind': 'brief', 'started_at': shared['started_at']}
         assert api.client.post('/api/projects/2/codex/generation/cancel', json=body).status_code == 409
         assert api.client.post('/api/projects/1/codex/generation/cancel',
                                json={**body, 'started_at': 'stale'}).status_code == 409
         assert not progress.current_cancel_event().is_set()
+        assert api.client.post('/api/projects/1/codex/generation/cancel', json=body).status_code == 409
+        assert not progress.current_cancel_event().is_set()
+        body['kind'] = 'knowledge'
         response = api.client.post('/api/projects/1/codex/generation/cancel', json=body)
         assert response.status_code == 200 and response.json()['cancel_requested'] is True
         assert progress.current_cancel_event().is_set()

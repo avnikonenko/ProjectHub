@@ -362,13 +362,6 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags'):
         raise HTTPException(422, 'Unknown generation kind.')
     status = progress.read(project_id, kind)
-    if kind == 'brief':
-        # Older clients monitor brief generation. New project analysis produces
-        # both views under one shared run; keep those clients on its progress.
-        shared = progress.read(project_id, 'knowledge')
-        if shared['state'] != 'idle' and (status['state'] == 'idle' or
-                (shared.get('started_at') or '') >= (status.get('started_at') or '')):
-            return shared
     return status
 
 
@@ -376,10 +369,7 @@ def generation_status(project_id: int, db: DB, kind: str = 'brief'):
 def cancel_generation(project_id: int, body: CancelGenerationInput, db: DB):
     project(db, project_id)
     try:
-        kind = body.kind
-        if kind == 'brief' and progress.read(project_id, 'knowledge').get('started_at') == body.started_at:
-            kind = 'knowledge'
-        return progress.cancel(project_id, kind, body.started_at)
+        return progress.cancel(project_id, body.kind, body.started_at)
     except CodexError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -422,11 +412,17 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
-    # Preserve the legacy response shape, but never independently overwrite the
-    # Overview while leaving published Knowledge on a different analysis.
-    result = knowledge_brief(project_id,
-        KnowledgeGenerationInput(**body.model_dump(), publish=True), request, db)
-    return result['brief']
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return refresh_brief(request.app.state.engine, project_id, selected)
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @router.get('/knowledge')

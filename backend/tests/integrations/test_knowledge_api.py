@@ -1,4 +1,4 @@
-"""Shared analysis HTTP contracts; no Codex calls and no production data."""
+"""Independent analysis HTTP contracts; no Codex calls or production data."""
 from types import SimpleNamespace
 import pytest
 
@@ -11,7 +11,7 @@ from backend.app.integrations.codex import router as routes
 from backend.app.models import Project
 
 
-def test_preview_is_opt_in_and_legacy_brief_route_publishes_the_shared_pair(tmp_path, monkeypatch):
+def test_preview_is_opt_in_and_general_overview_route_is_independent(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add(Project(name='One'))
@@ -20,27 +20,29 @@ def test_preview_is_opt_in_and_legacy_brief_route_publishes_the_shared_pair(tmp_
     manager = SimpleNamespace(for_generation=lambda model, effort: selected)
     monkeypatch.setattr(routes, 'manager_for', lambda *args: manager)
     calls = []
-    def legacy(*args):
-        pytest.fail('The legacy HTTP route must not independently generate an Overview.')
+    def general(engine_arg, pid, chosen):
+        assert engine_arg is engine and pid == 1 and chosen is manager
+        calls.append(('overview',))
+        return {'pipeline': 'general'}
     def pilot(engine_arg, pid, chosen, *, publish):
         assert engine_arg is engine and pid == 1
         assert chosen is selected or chosen is manager
         calls.append(('pilot', publish))
         return {'published': publish, 'brief': {'pipeline': 'shared'}}
-    monkeypatch.setattr(routes, 'refresh_brief', legacy)
+    monkeypatch.setattr(routes, 'refresh_brief', general)
     monkeypatch.setattr(routes, 'generate_knowledge_brief', pilot)
     app = FastAPI()
     app.state.engine = engine
     app.include_router(routes.router)
     with TestClient(app) as client:
-        assert client.post('/api/projects/1/codex/brief', json={'confirmed': True}).json()['pipeline'] == 'shared'
-        assert calls == [('pilot', True)]
+        assert client.post('/api/projects/1/codex/brief', json={'confirmed': True}).json()['pipeline'] == 'general'
+        assert calls == [('overview',)]
         assert client.post('/api/projects/1/codex/knowledge/brief', json={}).status_code == 422
         body = {'confirmed': True, 'model': 'mock', 'effort': 'low'}
         assert client.post('/api/projects/1/codex/knowledge/brief', json=body).json()['published'] is False
         assert client.post('/api/projects/1/codex/knowledge/brief', json={**body, 'publish': True}).json()['published'] is True
         assert client.post('/api/projects/2/codex/knowledge/brief', json=body).status_code == 404
-        assert calls == [('pilot', True), ('pilot', False), ('pilot', True)]
+        assert calls == [('overview',), ('pilot', False), ('pilot', True)]
         assert client.get('/api/projects/1/codex/generation/status?kind=knowledge').status_code == 200
     engine.dispose()
 

@@ -122,22 +122,47 @@ def test_preview_preserves_published_pair_but_keeps_successful_extraction(prepar
         assert db.get(ProjectHistoryBatch, (1, 'successful-extraction')) is not None
 
 
-def test_publish_updates_knowledge_brief_and_both_revisions_with_one_identity(prepared):
+def test_publish_updates_knowledge_summary_without_replacing_overview(prepared):
     foreign_before = _stored(prepared.engine, 2)
+    before = _stored(prepared.engine)
     result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=True)
     knowledge, brief, revisions = _stored(prepared.engine)
     assert result['published'] is True
-    assert knowledge['publication_id'] == brief['project_state']['publication_id'] == result['publication_id']
-    assert revisions[-2][0] == 'knowledge' and revisions[-1][0] == 'brief'
-    assert revisions[-2][2]['publication_id'] == revisions[-1][2]['project_state']['publication_id'] == result['publication_id']
+    assert knowledge == result['knowledge']
+    assert knowledge['publication_id'] == knowledge['summary']['project_state']['publication_id'] == result['publication_id']
+    assert knowledge['summary'] == result['brief']
+    assert brief == before[1]
+    assert revisions[:-1] == before[2] and revisions[-1][0] == 'knowledge'
+    assert revisions[-1][2]['summary'] == result['brief']
     assert _stored(prepared.engine, 2) == foreign_before
+
+
+def test_knowledge_summary_publication_does_not_create_general_overview(prepared):
+    with Session(prepared.engine) as db:
+        db.delete(db.get(ProjectBrief, 1))
+        db.commit()
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=True)
+    knowledge, overview, revisions = _stored(prepared.engine)
+    assert overview is None
+    assert knowledge['summary'] == result['brief']
+    assert revisions[-1][0] == 'knowledge'
+
+
+def test_general_overview_change_does_not_mutate_saved_knowledge_summary(prepared):
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=True)
+    with Session(prepared.engine) as db:
+        db.get(ProjectBrief, 1).sections = {'overview': [{'text': 'Updated general perspective'}]}
+        db.commit()
+    knowledge, overview, _ = _stored(prepared.engine)
+    assert overview['sections']['overview'][0]['text'] == 'Updated general perspective'
+    assert knowledge['summary'] == result['brief']
 
 
 def test_database_failure_rolls_back_both_current_records_and_revisions(prepared):
     before = _stored(prepared.engine)
     with prepared.engine.begin() as connection:
-        connection.execute(text("CREATE TRIGGER fail_brief_revision BEFORE INSERT ON generation_revisions "
-                                "WHEN NEW.kind='brief' AND NEW.generated_at!='old' "
+        connection.execute(text("CREATE TRIGGER fail_knowledge_revision BEFORE INSERT ON generation_revisions "
+                                "WHEN NEW.kind='knowledge' AND NEW.generated_at!='old' "
                                 "BEGIN SELECT RAISE(ABORT, 'injected publication failure'); END"))
     with pytest.raises(IntegrityError, match='injected publication failure'):
         pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=True)

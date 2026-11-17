@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ...config import ConfigError, ai_worker_settings
 from ...generation_profiles import get_generation_profile
-from ...models import ProjectBrief, ProjectKnowledge, utcnow
+from ...models import ProjectKnowledge, utcnow
 from ...project_evidence import collect_project_evidence, collect_repository_code
 from . import progress
 from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, SECTION_ROLE_GUIDANCE, generation_lock, generation_metadata,
@@ -385,7 +385,7 @@ def _repository_signature(repository):
 
 def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, repository_path=None,
                  expected_repository=None, guarded=False, expected_preview_id=None):
-    """Short writer transaction: recheck original inputs, then publish the complete pair."""
+    """Publish Knowledge and its summary atomically, preserving the general overview."""
     if (candidate.get('project_id') != project_id
             or candidate.get('source_manifest', {}).get('fingerprint') != expected_manifest.get('fingerprint')
             or not candidate.get('publication_id')
@@ -396,6 +396,7 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
         current_repository = collect_repository_code(repository_path)
         if _repository_signature(current_repository) != _repository_signature(expected_repository):
             raise CodexError('Inspected repository evidence changed during generation; retry.')
+    published = {**deepcopy(candidate), 'summary': deepcopy(brief)}
     with Session(engine) as db:
         # Acquire the SQLite writer lock before rechecking so an index/note edit
         # cannot commit between the manifest check and publication.
@@ -404,13 +405,32 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
             saved = read_knowledge_preview(db, project_id)
             if (saved is None or saved['publication_id'] != expected_preview_id
                     or saved['knowledge'] != candidate or saved['brief'] != brief):
-                raise KnowledgePreviewConflict('A newer saved result is available. Open it before choosing Use this result.')
+                raise KnowledgePreviewConflict('A newer saved result is available. Open it before choosing Save Knowledge Summary.')
             existing = db.get(ProjectKnowledge, project_id)
-            current_brief = read_brief(db, project_id)
-            if existing is not None and existing.snapshot == candidate and current_brief == brief:
-                return  # Idempotent retry: never append duplicate revisions.
-            if current_brief != saved['baseline_brief']:
-                raise KnowledgePreviewConflict('The project overview changed after this result was generated. Regenerate before using it.')
+            current_publication = existing.snapshot.get('publication_id') if existing is not None else None
+            same_publication = existing is not None and current_publication == candidate['publication_id']
+            if same_publication:
+                mutable = {'summary', 'topic_groups', 'topic_grouping'}
+                if ({key: value for key, value in existing.snapshot.items() if key not in mutable}
+                        != {key: value for key, value in candidate.items() if key not in mutable}):
+                    raise KnowledgePreviewConflict('Published Knowledge content changed. Regenerate before saving this summary.')
+                # Tags may be generated after publication without creating a new
+                # Knowledge identity. Reapplying an older preview cannot erase them.
+                for field in ('topic_groups', 'topic_grouping'):
+                    if field in existing.snapshot:
+                        published[field] = deepcopy(existing.snapshot[field])
+                    else:
+                        published.pop(field, None)
+                if 'summary' in existing.snapshot:
+                    if existing.snapshot['summary'] != brief:
+                        raise KnowledgePreviewConflict('The saved Knowledge Summary changed. Regenerate before saving this summary.')
+                    return deepcopy(existing.snapshot)  # Idempotent retry: no duplicate revisions.
+            else:
+                if 'baseline_knowledge_publication_id' in saved:
+                    if current_publication != saved['baseline_knowledge_publication_id']:
+                        raise KnowledgePreviewConflict('Published Knowledge changed after this summary was generated. Regenerate before using it.')
+                elif existing is not None and existing.snapshot != candidate:
+                    raise KnowledgePreviewConflict('This older result has no Knowledge baseline. Regenerate before replacing published Knowledge.')
         current = load_sources(engine, project_id, previous_manifest=expected_manifest)
         if current['manifest']['fingerprint'] != expected_manifest['fingerprint']:
             raise CodexError('Project sources changed during generation. Cached extraction is preserved; retry.')
@@ -426,28 +446,16 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
             _validate_saved_publication(candidate, brief, current, project_id)
         knowledge = db.get(ProjectKnowledge, project_id)
         if knowledge is None:
-            db.add(ProjectKnowledge(project_id=project_id, snapshot=candidate))
+            db.add(ProjectKnowledge(project_id=project_id, snapshot=published))
         else:
-            knowledge.snapshot = candidate
-        row = db.get(ProjectBrief, project_id)
-        if row is None:
-            row = ProjectBrief(project_id=project_id)
-            db.add(row)
-        for field in ('generated_at', 'sections', 'sources', 'coverage', 'project_map', 'generation', 'project_state'):
-            value = brief[field]
-            if field == 'generation' and isinstance(brief.get('diagnostics'), dict):
-                # Internal storage extras must not change the preview's public
-                # provenance shape or its equality during idempotent activation.
-                value = {**deepcopy(value), 'diagnostics': deepcopy(brief['diagnostics']),
-                         'coverage': list(brief['coverage'])}
-            setattr(row, field, value)
+            knowledge.snapshot = published
         db.flush()
-        save_revision(db, project_id, 'knowledge', candidate)
-        save_revision(db, project_id, 'brief', read_brief(db, project_id))
+        save_revision(db, project_id, 'knowledge', published)
         if guarded:
             progress.complete(project_id, db.commit)
         else:
             db.commit()
+    return published
 
 
 def _validate_saved_publication(candidate, brief, bundle, project_id):
@@ -491,9 +499,9 @@ def publish_saved_knowledge_preview(engine, project_id, publication_id):
         manifest = candidate.get('source_manifest')
         if not isinstance(manifest, dict) or not isinstance(manifest.get('fingerprint'), str) or not manifest['fingerprint']:
             raise KnowledgePreviewConflict('The saved result has no source freshness record. Regenerate before using it.')
-        publish_pair(engine, project_id, candidate, brief, manifest,
-                     expected_preview_id=publication_id)
-        return {**result, 'published': True}
+        published = publish_pair(engine, project_id, candidate, brief, manifest,
+                                 expected_preview_id=publication_id)
+        return {**result, 'knowledge': published, 'published': True}
     except CodexError as exc:
         if isinstance(exc, (BriefBusy, KnowledgePreviewConflict)):
             raise
@@ -571,9 +579,9 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             candidate['diagnostics'] = deepcopy(run_diagnostics)
             progress.record_diagnostics(project_id, run_diagnostics)
             if publish:
-                publish_pair(engine, project_id, candidate, brief, bundle['manifest'],
-                             repository_path=bundle['project'].get('repository_path'),
-                             expected_repository=repository if bundle['project'].get('repository_path') else None, guarded=True)
+                candidate = publish_pair(engine, project_id, candidate, brief, bundle['manifest'],
+                                         repository_path=bundle['project'].get('repository_path'),
+                                         expected_repository=repository if bundle['project'].get('repository_path') else None, guarded=True)
             else:
                 if bundle['project'].get('repository_path') and _repository_signature(
                         collect_repository_code(bundle['project']['repository_path'])) != _repository_signature(repository):
@@ -583,6 +591,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                     raise CodexError('Sources changed during preview generation; cached extraction is preserved.')
             result = {'published': publish, 'publication_id': publication_id, 'knowledge': candidate,
                       'brief': brief, 'baseline_brief': baseline_brief,
+                      'baseline_knowledge_publication_id': (previous or {}).get('publication_id'),
                       'diagnostics': run_diagnostics,
                       'publication_context': {'repository_signature': _repository_signature(repository)
                                               if bundle['project'].get('repository_path') else None}}

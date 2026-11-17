@@ -263,15 +263,18 @@ def test_expanding_intermediate_responses_fail_finitely_without_data_loss(staged
     assert _saved_preview(staged_state.engine) == preview
 
 
-def test_successful_staged_publication_updates_pair_together_and_preserves_other_project(staged_state):
+def test_successful_staged_publication_saves_summary_and_preserves_general_overview(staged_state):
     other = _stored(staged_state.engine, 2)
     preview = _saved_preview(staged_state.engine)
+    before = _stored(staged_state.engine)
     result = pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel(), publish=True)
     knowledge, brief, revisions = _stored(staged_state.engine)
     assert result['published'] is True
-    assert knowledge['publication_id'] == brief['project_state']['publication_id'] == result['publication_id']
+    assert knowledge['publication_id'] == knowledge['summary']['project_state']['publication_id'] == result['publication_id']
+    assert knowledge['summary'] == result['brief']
+    assert brief == before[1]
     assert len(knowledge['items']) == 520
-    assert revisions[-2][0] == 'knowledge' and revisions[-1][0] == 'brief'
+    assert revisions[:-1] == before[2] and revisions[-1][0] == 'knowledge'
     assert _stored(staged_state.engine, 2) == other
     assert _saved_preview(staged_state.engine) == preview
     diagnostic = result['diagnostics']['overview_selection']

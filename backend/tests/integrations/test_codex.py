@@ -440,11 +440,7 @@ def test_generation_routes_use_project_instructions_without_leaking_scope(setup,
         seen.append(ai_instructions())
         return {'ok': True}
 
-    def generate_pair(*args, **kwargs):
-        assert kwargs['publish'] is True
-        return {'brief': generate(*args, **kwargs)}
-
-    monkeypatch.setattr(routes, 'generate_knowledge_brief', generate_pair)
+    monkeypatch.setattr(routes, 'refresh_brief', generate)
     monkeypatch.setattr(routes, 'refresh_qa', generate)
     monkeypatch.setattr(routes, 'refresh_scheme', generate)
     monkeypatch.setattr(routes, 'answer_project', generate)
