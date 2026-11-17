@@ -1,5 +1,7 @@
 """Assemble the built UI and repository resources into a release wheel."""
-from pathlib import Path
+from html.parser import HTMLParser
+from pathlib import Path, PurePosixPath
+from urllib.parse import urlsplit
 
 from setuptools import setup
 from setuptools.command.build_py import build_py
@@ -15,6 +17,34 @@ ASSET_SUFFIXES = {
 }
 
 
+class FrontendEntries(HTMLParser):
+    """Collect the bundled assets used directly by the Vite entry page."""
+
+    def __init__(self):
+        super().__init__()
+        self.assets = set()
+        self.scripts = set()
+
+    def handle_starttag(self, tag, attrs):
+        attributes = dict(attrs)
+        if tag == 'script':
+            reference = attributes.get('src')
+        elif tag == 'link' and {'stylesheet', 'modulepreload', 'preload', 'icon'}.intersection(
+                (attributes.get('rel') or '').lower().split()):
+            reference = attributes.get('href')
+        else:
+            return
+        if not reference:
+            return
+        url = urlsplit(reference)
+        if url.scheme or url.netloc or not url.path:
+            return
+        path = PurePosixPath(url.path.lstrip('/'))
+        self.assets.add(path)
+        if tag == 'script' and path.suffix in {'.js', '.mjs'}:
+            self.scripts.add(path)
+
+
 def release_files():
     frontend = ROOT / "frontend" / "dist"
     assets = frontend / "assets"
@@ -22,10 +52,19 @@ def release_files():
     compiled = sorted(
         path for path in assets.rglob("*") if path.is_file() and path.suffix in ASSET_SUFFIXES
     )
-    if not index.is_file() or not any(path.suffix in {".js", ".mjs"} for path in compiled):
+    if not index.is_file():
         raise RuntimeError(
             "The frontend build is missing. Run npm ci and npm run build in frontend/ before building a ProjectHub wheel."
         )
+    entries = FrontendEntries()
+    entries.feed(index.read_text(encoding='utf-8'))
+    entries.close()
+    if not entries.scripts:
+        raise RuntimeError('The frontend index has no local JavaScript entry. Rebuild the frontend before packaging.')
+    missing = entries.assets - {path.relative_to(frontend) for path in compiled}
+    if missing:
+        paths = ', '.join(str(path) for path in sorted(missing))
+        raise RuntimeError(f'Frontend assets referenced by index.html are missing from the wheel inputs: {paths}')
     files = [(index, BUNDLE / "frontend" / "index.html")]
     files.extend((path, BUNDLE / "frontend" / path.relative_to(frontend)) for path in compiled)
     migrations = ROOT / "migrations"
