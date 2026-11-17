@@ -37,6 +37,9 @@ function commitTip(commit: CommitTip | null | undefined, unavailable: string) {
 function BranchSync({ status }: { status: RepositoryStatus }) {
   const upstream = status.upstream;
   const localCommit = status.commits[0];
+  const upstreamCommit = upstream?.commit;
+  const sameCommit = localCommit && upstreamCommit && localCommit.hash === upstreamCommit.hash
+    && localCommit.committed_at === upstreamCommit.committed_at;
   const countsUnavailable = upstream?.commit && (upstream.ahead === null || upstream.behind === null);
   let summary = 'No upstream configured';
   if (status.branch === null) summary = 'Detached HEAD';
@@ -50,12 +53,17 @@ function BranchSync({ status }: { status: RepositoryStatus }) {
     } else summary = upstream.is_remote ? 'Matches saved remote' : 'Matches upstream';
   }
   return <details className="repository-branches repository-sync">
-    <summary>Branch sync · {summary}</summary>
-    <dl>
-      {upstream && <><dt>Upstream</dt><dd><code>{upstream.branch}</code></dd></>}
-      <dt>Latest local commit</dt><dd>{commitTip(localCommit, 'No commit yet')}</dd>
-      {upstream && <><dt>{upstream.is_remote ? 'Latest saved remote commit' : 'Latest upstream commit'}</dt>
-        <dd>{commitTip(upstream.commit, 'Unavailable')}</dd></>}
+    <summary>Branch sync <span className="muted">· {summary}</span></summary>
+    <dl className="repository-facts">
+      {upstream && <div><dt>Upstream</dt><dd><code>{upstream.branch}</code></dd></div>}
+      {sameCommit ? <div>
+        <dt>{upstream?.is_remote ? 'Local and saved remote commit' : 'Local and upstream commit'}</dt>
+        <dd>{commitTip(localCommit, 'No commit yet')}</dd>
+      </div> : <>
+        <div><dt>Latest local commit</dt><dd>{commitTip(localCommit, 'No commit yet')}</dd></div>
+        {upstream && <div><dt>{upstream.is_remote ? 'Latest saved remote commit' : 'Latest upstream commit'}</dt>
+          <dd>{commitTip(upstreamCommit, 'Unavailable')}</dd></div>}
+      </>}
     </dl>
     {countsUnavailable && <p className="muted"><small>Ahead and behind counts are unavailable.</small></p>}
     {upstream?.is_remote && <p className="muted"><small>Comparison uses the remote branch state saved in local Git.</small></p>}
@@ -106,32 +114,33 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
 } & ReturnType<typeof useRepositoryOverview>) {
   const remote = status?.remote_repository;
   return (
-    <div>
+    <div className="repository-overview">
       <h4>Git repository</h4>
-      <code className="repository">{path}</code>
-      {remote && <div className="repository-remote">
-        <small>Remote repository{remote.name && ` · ${remote.name}`}</small>
-        <code className="repository">{remote.web_url
-          ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
-          : remote.address}</code>
-      </div>}
-      <div aria-busy={loading}>
-        {loading && <Feedback>Reading repository…</Feedback>}
-        <ErrorBox error={error} />
-        {status && (
-          <p>
-            {status.branch === null ? 'Detached HEAD' : <>Branch: <code>{status.branch}</code></>}
-            {typeof status.tracked_files === 'number' && ` · ${status.tracked_files.toLocaleString()} tracked file${status.tracked_files === 1 ? '' : 's'}`}
-            {status.tracked_files === null && ' · Tracked file count unavailable'}
-            {' · '}{!status.dirty ? 'Clean working tree' : status.tracked_changes === undefined || status.untracked_files === undefined
-              ? 'Uncommitted changes'
-              : <>
+      <dl className="repository-facts">
+        <div><dt>Local repository</dt><dd><code className="repository">{path}</code></dd></div>
+        {remote && <div>
+          <dt>Remote repository{remote.name && <> · <code>{remote.name}</code></>}</dt>
+          <dd><code className="repository">{remote.web_url
+            ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
+            : remote.address}</code></dd>
+        </div>}
+        {status && <>
+          <div><dt>Branch</dt><dd>{status.branch === null ? 'Detached HEAD' : <code>{status.branch}</code>}</dd></div>
+          <div><dt>Working tree</dt><dd>
+            {typeof status.tracked_files === 'number' && `${status.tracked_files.toLocaleString()} tracked file${status.tracked_files === 1 ? '' : 's'} · `}
+            {status.tracked_files === null && 'Tracked file count unavailable · '}
+            {!status.dirty ? 'Clean working tree' : status.tracked_changes === undefined || status.untracked_files === undefined
+              ? 'Uncommitted changes' : <>
                 {status.tracked_changes > 0 && `${status.tracked_changes} tracked file${status.tracked_changes === 1 ? '' : 's'} changed`}
                 {status.tracked_changes > 0 && status.untracked_files > 0 && ' · '}
                 {status.untracked_files > 0 && `${status.untracked_files} untracked file${status.untracked_files === 1 ? '' : 's'}`}
               </>}
-          </p>
-        )}
+          </dd></div>
+        </>}
+      </dl>
+      <div aria-busy={loading}>
+        {loading && <Feedback>Reading repository…</Feedback>}
+        <ErrorBox error={error} />
       </div>
       {status && (status.upstream !== undefined || status.upstream_unavailable) && <BranchSync status={status} />}
       {!!status?.branches?.length && <details className="repository-branches">

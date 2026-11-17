@@ -24,7 +24,7 @@ const render = (status: Record<string, unknown>) => renderToStaticMarkup(createE
 test('repository shows tracked files and both saved commit times for a divergent branch', () => {
   const html = render({ tracked_files: 9, upstream });
   assert.match(html, /9 tracked files · 1 untracked file/);
-  assert.match(html, /Branch sync · 2 ahead · 1 behind/);
+  assert.match(html, /Branch sync <span class="muted">· 2 ahead · 1 behind/);
   assert.match(html, /<code>origin\/main<\/code>/);
   assert.match(html, /Latest local commit<\/dt><dd><code>abc1234<\/code> · <time dateTime="2026-11-16T10:00:00Z"/);
   assert.match(html, /Latest saved remote commit<\/dt><dd><code>def5678<\/code> · <time dateTime="2026-11-15T16:00:00Z"/);
@@ -38,14 +38,22 @@ test('an unavailable comparison is distinct from a matching remote', () => {
   assert.doesNotMatch(shallow, /Matches saved remote/);
   assert.match(render({ upstream: { ...upstream, commit: null } }), /Upstream commit unavailable/);
   assert.match(render({ upstream: null }), /No upstream configured/);
-  assert.match(render({ upstream: null, branch: null }), /Branch sync · Detached HEAD/);
+  assert.match(render({ upstream: null, branch: null }), /Branch sync <span class="muted">· Detached HEAD/);
   assert.doesNotMatch(render({}), /Branch sync/);
 });
 
 test('the remote code address appears below the local path', () => {
   const address = 'https://github.com/example/repository';
   const html = render({ remote_repository: { name: 'origin', address, web_url: address } });
-  assert.ok(html.indexOf('/example</code>') < html.indexOf('Remote repository · origin'));
+  assert.match(html, /<dt>Local repository<\/dt><dd><code class="repository">\/example/);
+  assert.match(html, /<dt>Remote repository · <code>origin<\/code><\/dt>/);
   assert.match(html, /href="https:\/\/github\.com\/example\/repository" target="_blank" rel="noopener noreferrer"/);
   assert.doesNotMatch(render({ remote_repository: { name: 'origin', address: 'ssh://example.test/code.git' } }), /<a\b/);
+});
+
+test('matching local and saved remote commits share one row', () => {
+  const html = render({ upstream: { ...upstream, ahead: 0, behind: 0, commit: local } });
+  assert.match(html, /Local and saved remote commit<\/dt><dd><code>abc1234<\/code>/);
+  assert.equal((html.match(/<time /g) ?? []).length, 1);
+  assert.doesNotMatch(html, /Latest local commit|Latest saved remote commit/);
 });

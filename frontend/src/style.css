@@ -1675,9 +1675,21 @@ a:focus-visible {
 
 .repository-branches { margin-block: .75rem; }
 .repository-branches li { overflow-wrap: anywhere; }
-.repository-remote { margin-block: .3rem .5rem; }
-.repository-remote a { color: inherit; }
-.repository-sync dl { margin-block: .4rem; }
-.repository-sync dt { color: var(--muted); }
-.repository-sync dd { margin: 0 0 .35rem; overflow-wrap: anywhere; }
+.repository-overview { container-type: inline-size; }
+.repository-facts { margin-block: .4rem .75rem; }
+.repository-facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+  align-items: baseline;
+  gap: .2rem .7rem;
+  padding-block: .35rem;
+  border-block-end: 1px solid var(--border);
+}
+.repository-facts :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
+.repository-facts dt { color: var(--muted); }
+.repository-facts .repository { padding: .2rem .35rem; }
+.repository-sync summary { cursor: pointer; }
 .repository-sync p { margin-bottom: .35rem; }
+@container (max-width: 14rem) {
+  .repository-facts > div { grid-template-columns: minmax(0, 1fr); }
+}
