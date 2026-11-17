@@ -1205,10 +1205,10 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
               : part;
           })} /></p>
           {!!result.sources.length && (
-            <div className="brief-sources">
-              <h4>Sources</h4>
+            <details className="brief-sources">
+              <summary>Sources ({result.sources.length})</summary>
               <BriefSources sources={result.sources} prefix={prefix} openInNewTab />
-            </div>
+            </details>
           )}
         </section>
       )}
@@ -1701,10 +1701,10 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         ))}
       </section>
       {!!sources.length && (
-        <section className="card brief-sources" aria-label="Q&A sources">
-          <h2>Sources</h2>
+        <details className="card brief-sources" aria-label="Q&A sources">
+          <summary className="brief-topic">Sources ({sources.length})</summary>
           <BriefSources sources={sources} prefix={base.split('/')[2] + '-qa'} />
-        </section>
+        </details>
       )}
     </>
   );
