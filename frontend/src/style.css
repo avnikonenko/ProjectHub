@@ -1675,28 +1675,18 @@ a:focus-visible {
 
 .repository-branches { margin-block: .75rem; }
 .repository-branches li { overflow-wrap: anywhere; }
-.repository-overview { container-type: inline-size; }
 .repository-facts { margin-block: .4rem .75rem; }
 .repository-facts > div {
   display: grid;
-  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
-  align-items: baseline;
-  gap: .2rem .7rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: .2rem;
   padding-block: .35rem;
   border-block-end: 1px solid var(--border);
 }
-.repository-locations {
-  margin-block-end: 0;
-}
-.repository-locations > div {
-  grid-template-columns: minmax(0, 1fr);
-}
+.repository-locations { margin-block-end: 0; }
 .repository-locations + .repository-facts { margin-block-start: 0; }
 .repository-facts :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
 .repository-facts dt { color: var(--muted); }
 .repository-facts .repository { padding: .2rem .35rem; }
 .repository-sync summary { cursor: pointer; }
 .repository-sync p { margin-bottom: .35rem; }
-@container (max-width: 14rem) {
-  .repository-facts > div { grid-template-columns: minmax(0, 1fr); }
-}

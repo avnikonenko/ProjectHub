@@ -114,7 +114,7 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
 } & ReturnType<typeof useRepositoryOverview>) {
   const remote = status?.remote_repository;
   return (
-    <div className="repository-overview">
+    <div>
       <h4>Git repository</h4>
       <dl className="repository-facts repository-locations">
         {remote && <div>
