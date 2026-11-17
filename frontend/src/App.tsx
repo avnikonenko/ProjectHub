@@ -732,9 +732,6 @@ function ProjectWorkspace({
           {bulkScheme === 'skipped' && <> Scheme was skipped because fresh Knowledge was not saved or a required view was busy.</>}
           {!!bulkSkipped.length && <> Some views were skipped because their own generation or controls were busy or not ready.</>}
         </Feedback>}
-        <details className="brief-details"><summary>Regenerate all details</summary>
-          <p>Runs Overview, Q&amp;A and Implementation Choices &amp; Limits in parallel. Knowledge saves after validation, then Scheme starts using that saved result. A failed or cancelled Knowledge run skips Scheme. Generation sends selected project evidence to OpenAI; tags stay separate.</p>
-        </details>
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}

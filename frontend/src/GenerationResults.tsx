@@ -160,5 +160,9 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
         onToggle={(kind, checked) => onSelectionChange?.(checked ? [...new Set([...selected, kind])]
           : selected.filter(value => value !== kind))} />
     </>}
+    <details className="generation-results-help">
+      <summary>Regenerate all details</summary>
+      <p>Overview, Q&amp;A and Implementation Choices &amp; Limits run in parallel. Scheme starts once Knowledge passes validation and saves. If Knowledge fails or is cancelled, Scheme is skipped. Tags are generated separately.</p>
+    </details>
   </section>;
 }

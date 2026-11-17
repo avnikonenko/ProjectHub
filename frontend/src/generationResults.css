@@ -19,3 +19,5 @@
 .generation-result-choice input { flex: 0 0 auto; width: auto; margin: 0; }
 .generation-selection-controls { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }
 .generation-selection-controls > button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.generation-results-help { margin-top: .65rem; }
+.generation-results-help > p { margin: .4rem 0 0; }
