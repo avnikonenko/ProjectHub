@@ -16,9 +16,10 @@ Keep the checkout. If the launcher is outside your `PATH`, use
 
 ## Install a wheel
 
-If you have a ProjectHub wheel, you can install it on Linux with Python 3.11 or
-later. The wheel includes the built interface and database migrations. Use the
-filename of your downloaded or [locally built wheel](README.md#build-a-wheel).
+Check [GitHub Releases](https://github.com/avnikonenko/ProjectHub/releases) for
+a wheel, or [build one from source](README.md#build-a-wheel). The wheel runs on
+Linux with Python 3.11 or later and includes the built interface and database
+migrations. Use the filename of the wheel you downloaded or built.
 
 ### With pipx
 

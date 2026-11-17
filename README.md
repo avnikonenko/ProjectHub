@@ -47,8 +47,9 @@ run `bash scripts/projecthub` from the checkout.
 
 ### Optional: install a wheel
 
-If you have a ProjectHub wheel, you can install it on Linux with **Python 3.11+**.
-The wheel bundles the built interface and database migrations.
+Check [GitHub Releases](https://github.com/avnikonenko/ProjectHub/releases) for
+a wheel, or [build one from source](docs/README.md#build-a-wheel). The wheel
+runs on Linux with **Python 3.11+** and bundles the built interface and database migrations.
 
 **With pipx**
 
@@ -72,7 +73,6 @@ projecthub
 
 Use the wheel filename you downloaded. Install Git for repository inspection and
 Codex for AI features. Source and wheel installations use the same [saved data directory](#your-data).
-See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub itself.
 
 Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 
