@@ -59,7 +59,7 @@ def test_exact_condition_and_state_transition_context_reach_extraction_and_cache
     engine, window, expected, manager = conditional_policy
     before = deepcopy(window)
     config = knowledge.extraction_configuration(manager)
-    assert config['prompt'] == 17 and config['schema'] == 3
+    assert config['prompt'] == 18 and config['schema'] == 3
     items, hit = knowledge.extract_batch(engine, 1, manager, window, config)
     assert not hit
     assert manager.payload['primary_ids'] == window['primary_ids']
