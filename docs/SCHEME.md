@@ -3,6 +3,8 @@
 Scheme shows how a project is organized and how it works. Opening saved diagrams
 and dependencies makes no AI request.
 
+![Example Scheme for Project X showing file import, validation, storage, and reporting](images/projecthub-scheme.png)
+
 ## Views
 
 - **Architecture** shows components and their relationships. Expand

@@ -43,6 +43,14 @@ Install the resulting wheel with pipx or pip in a virtual environment. Its front
 instructions, and optional Codex skill are included. Use an isolated data directory
 when testing a release build.
 
+### Reload local development changes
+
+When running the managed `projecthub` launcher, use **Settings → Restart ProjectHub**
+to load backend changes. Finish active jobs before restarting. After
+reconnecting, save any unfinished browser edits, then use **Reload page** to load
+the updated interface. If you started Uvicorn directly, restart its process from
+the terminal.
+
 ## Historical material
 
 - [Initial implementation plan](IMPLEMENTATION_PLAN.md)

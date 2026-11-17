@@ -79,13 +79,9 @@ Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
 5. In **Generation**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
 
-![Scheme architecture for Project X, showing how file import, validation, storage, and reporting are connected](docs/images/projecthub-scheme.png)
-
 ## Settings and AI
 
 Run `projecthub config` to locate your editable configuration. See [config.example.toml](config.example.toml). Environment variables override file settings; restart after changes.
-
-When started with `projecthub`, use **Settings → Restart ProjectHub** to load backend changes. Restart is blocked during active work. After reconnecting, **Reload page** loads interface changes; save unfinished edits first. Direct Uvicorn launches use their existing external process controls.
 
 AI features use your existing **Codex ChatGPT sign-in**. Install Codex separately and run `codex login`. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
 
