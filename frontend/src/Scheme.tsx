@@ -388,7 +388,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
       <p><AIEmphasis text={graph.explanation} /></p>
       {!!graph.nodes.length && <>
-        <small>Observed means supported by inspected evidence; it does not establish that the functionality works.</small>
+        <small>Observed: evidence found. Behavior untested.</small>
         <GraphEvidence graph={graph} numbers={numbers} prefix={prefix} sources={sources} />
       </>}
     </>}
