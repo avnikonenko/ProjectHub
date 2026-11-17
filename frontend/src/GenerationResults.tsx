@@ -142,6 +142,7 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
   }, [base, refreshVersion, reload]);
   return <section className="generation-results" aria-label="Generation results" aria-busy={current.loading}>
     <h3>Generation results</h3>
+    <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
     {current.loading && !current.data && <p className="muted">Loading generation status…</p>}
     {current.error && <><ErrorBox error={`Could not load generation status: ${current.error}`} />
       <button className="quiet" onClick={() => setReload(value => value + 1)}>Reload status</button></>}

@@ -145,7 +145,7 @@ test('explicit selection refreshes only checked idle views, including previously
   });
 });
 
-test('explicit Scheme-only selection can use earlier saved Knowledge but cannot race its active replacement', async () => {
+test('explicit Scheme-only selection works with or without saved Knowledge but waits out an active replacement', async () => {
   const { planSelectedProjectGeneration } = await import('../src/generationBatch.ts');
   const views = projectGenerationKinds.map(kind => ({ kind, state: 'saved', saved_at: 'saved', retryable: false }));
   Object.assign(views.find(view => view.kind === 'knowledge')!, { state: 'failed', retryable: true });
@@ -158,6 +158,6 @@ test('explicit Scheme-only selection can use earlier saved Knowledge but cannot 
   });
   Object.assign(views.find(view => view.kind === 'knowledge')!, { state: 'not_generated', saved_at: null });
   assert.deepEqual(planSelectedProjectGeneration(['scheme'], views, {}), {
-    start: [], waitForKnowledge: false, schemeSkippedForKnowledge: true,
+    start: ['scheme'], waitForKnowledge: false, schemeSkippedForKnowledge: false,
   });
 });

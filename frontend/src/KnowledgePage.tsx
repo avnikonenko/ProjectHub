@@ -292,16 +292,12 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     <section className="card" hidden={!showRecords} aria-busy={isLoading}>
       <div className="section-title">
         <div><h2>Project Knowledge</h2><small>Project #{projectId}</small></div>
-        <button disabled={blocked} onClick={generateKnowledge}>
-          {busy ? 'Generating…' : 'Refresh Knowledge Summary'}
-        </button>
       </div>
       <p>Explore project choices, reasons and their original evidence.</p>
-      <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
       {showRecords && feedback}
       {(isLoading || currentPreview?.loading) && !snapshot && !candidate && <Feedback>Loading saved knowledge…</Feedback>}
       {!isLoading && !currentPreview?.loading && !error && !currentPreview?.error && !snapshot && !candidate
-        && <Empty>No current Knowledge result. Generate to create one.</Empty>}
+        && <Empty>No current Knowledge result. Select Knowledge in Generation results to create one.</Empty>}
       {!isLoading && !snapshot && expectedPublication
         && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>

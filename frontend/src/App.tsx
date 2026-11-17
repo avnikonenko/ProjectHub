@@ -1601,11 +1601,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     <>
       <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || deleting}>
         <AIResultHeader title="AI Q&A" savedAt={saved?.generated_at} previous={revisionId !== null}
-          freshness={saved && revisionId === null ? 'Freshness not checked' : undefined}
-          action={<button disabled={generationDisabled || !validLimit} onClick={generate}>
-            {generating || recoveryBusy ? 'Generating…' : saved ? 'Refresh Q&A' : 'Generate Q&A'}
-          </button>} />
-        <small className="brief-refresh-note">Generating sends saved conversations and project evidence to OpenAI.</small>
+          freshness={saved && revisionId === null ? 'Freshness not checked' : undefined} />
         {!validLimit && <Feedback>Enter a positive whole number in Q&A details & options.</Feedback>}
         {revisionLoading && <Feedback>Loading saved Q&A version…</Feedback>}
         <ErrorBox error={error} />
@@ -1671,7 +1667,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         </div>}
         {saved && targetQuestion !== undefined && <p className="muted">Choose Show all above to filter Q&A by tags.</p>}
         {loading && <Feedback>Loading saved Q&A…</Feedback>}
-        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet. Select Q&A in Generation results to create it.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
             <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>

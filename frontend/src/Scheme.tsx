@@ -353,10 +353,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   }
   return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
-      freshness={freshness} action={<button disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge} onClick={() => void generate()}>
-        {waitingForKnowledge ? 'Waiting for Knowledge…' : generating || recoveryBusy ? 'Generating…' : snapshot ? 'Refresh Scheme' : 'Generate Scheme'}
-      </button>} />
-    <small className="brief-refresh-note">Refreshing sends project evidence to Codex.</small>
+      freshness={freshness} />
+    {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}
     <ErrorBox error={error} />
     <Feedback>{notice}</Feedback>
     {revisionLoading && <Feedback>Loading saved version…</Feedback>}
@@ -386,7 +384,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
           onClick={() => setView(name)}>{name}</button>)}
     </nav>
-    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved scheme. Generate one from this project’s available evidence.</Empty>}
+    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme in Generation results to create one.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
       <p><AIEmphasis text={graph.explanation} /></p>

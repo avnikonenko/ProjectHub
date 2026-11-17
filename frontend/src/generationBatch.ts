@@ -63,10 +63,6 @@ export function planSelectedProjectGeneration(selected: readonly ProjectGenerati
     return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
   if (start.includes('knowledge'))
     return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: true, schemeSkippedForKnowledge: false };
-  const hasSavedKnowledge = knowledge?.state === 'saved' || knowledge?.showing_previous === true
-    || (knowledge?.saved_at !== undefined && knowledge.saved_at !== null);
-  if (!hasSavedKnowledge)
-    return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
   return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
 }
 

@@ -1,11 +1,8 @@
-import type { ReactNode } from 'react';
-
-export function AIResultHeader({ title, savedAt, previous = false, freshness, action }: {
+export function AIResultHeader({ title, savedAt, previous = false, freshness }: {
   title: string;
   savedAt?: string | null;
   previous?: boolean;
   freshness?: string;
-  action: ReactNode;
 }) {
   return <div className="section-title ai-result-header">
     <div>
@@ -15,6 +12,5 @@ export function AIResultHeader({ title, savedAt, previous = false, freshness, ac
         : 'No saved result'}</small>
       {freshness && <small className="ai-result-freshness" role="status">{freshness}</small>}
     </div>
-    {action}
   </div>;
 }

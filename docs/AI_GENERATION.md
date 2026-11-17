@@ -26,9 +26,9 @@ Progress recovery requires the same ProjectHub server process to remain running.
 
 ## Two perspectives, separate saved results
 
-**Refresh Project Overview** generates the general picture of purpose, architecture,
-active work, problems and next steps. **Refresh Knowledge Summary** uses the existing
-Knowledge extraction and synthesis pipeline for a more detailed perspective on
+**Overview** generates the general picture of purpose, architecture,
+active work, problems and next steps. **Knowledge** uses extraction and synthesis
+for a more detailed perspective on
 choices, requirements, reasons and original evidence. The two saved results are independent.
 Architecture describes components and data flow. Accepted requirements alone do
 not establish current work; that section may be empty when activity is unknown.
@@ -188,8 +188,10 @@ refresh successful results merely because they may be stale. Failed Scheme alone
 retries against saved Knowledge; when both Knowledge and Scheme are unfinished,
 Knowledge retries first and requests Scheme only after saving. Existing matching
 batch caches are reused, but a single interrupted model request cannot resume.
-Use the checkboxes and **Regenerate selected** to choose views explicitly;
-unfinished views are selected initially. **Select all** selects idle views, and
+In **Generation results**, select **Overview**, **Knowledge**, **Scheme**, **Q&A**
+or **Implementation Choices & Limits**, then click **Regenerate selected**.
+The same controls generate a first result or refresh an existing result.
+Unfinished views are selected initially. **Select all idle** selects idle views, and
 running/waiting jobs cannot be selected for duplicate generation. Selecting only
 Scheme uses saved Knowledge; selecting both keeps Knowledge before Scheme.
 Attempt tracking starts with this version; outcomes already lost before tracking

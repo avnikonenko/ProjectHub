@@ -22,7 +22,7 @@ const bases = { documented: 'Documented in inspected evidence', inferred: 'AI-in
 
 export function parameterFreshnessLabel(freshness: ParameterResult['freshness'] | undefined, historical = false) {
   if (historical) return undefined;
-  if (freshness?.state === 'changed') return 'Inspected sources changed. Refresh implementation choices to update this result.';
+  if (freshness?.state === 'changed') return 'Inspected sources changed. Regenerate Implementation Choices & Limits to update this result.';
   if (freshness?.state === 'unchanged') return 'No changes detected in inspected sources';
   if (freshness?.state === 'unknown') return 'Source freshness is unknown.';
   return undefined;
@@ -299,9 +299,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
   const freshness = parameterFreshnessLabel(result?.freshness, revisionId !== null);
   return <section className="card project-parameters" aria-busy={busy}>
     <AIResultHeader title="Implementation Choices & Limits" savedAt={snapshot?.generated_at} previous={revisionId !== null}
-      freshness={freshness} action={<button disabled={busy || externalBusy} onClick={generate}>
-        {generating ? 'Generating…' : snapshot ? 'Refresh implementation choices' : 'Generate implementation choices'}
-      </button>} />
+      freshness={freshness} />
     <p>Consequential limits, filters, fallbacks and processing choices found in code, with their consequences and usage locations. These are not values verified in a particular run.</p>
     <details><summary>How this works</summary>
       <p>Explains implementation choices and limits, their practical consequences, and where they are defined and used in the code. Generation sends selected code to OpenAI through Codex.</p>
@@ -309,7 +307,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
     {loading && <Feedback>Loading saved implementation choices…</Feedback>}
     {(generating || recovering) && <GenerationStatus base={base} kind="parameters" label="Implementation Choices & Limits" />}
-    {!loading && !snapshot && <Empty>No saved implementation choices yet. Register a repository, then generate this view when ready.</Empty>}
+    {!loading && !snapshot && <Empty>No saved implementation choices yet. Register a repository, then select Implementation Choices &amp; Limits in Generation results.</Empty>}
     {snapshot && <>
       <div className="knowledge-filters">
         <label>Search implementation choices<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Limit, behavior, consequence, location or default…" /></label>

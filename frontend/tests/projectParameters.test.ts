@@ -38,7 +38,7 @@ test('parameter view is independent, explicit and does not invent runtime values
   const html = renderToStaticMarkup(createElement(ProjectParameters, { base: '/projects/2', visible: true,
     generation: { model: '', effort: '' } }));
   assert.match(html, /Implementation Choices &amp; Limits/);
-  assert.match(html, /Generate implementation choices/);
+  assert.doesNotMatch(html, /Generate implementation choices|Refresh implementation choices/);
   assert.match(html, /not values verified in a particular run/);
   assert.doesNotMatch(html, /Refresh Project Overview|Save Knowledge Summary|Generate Scheme/);
 });

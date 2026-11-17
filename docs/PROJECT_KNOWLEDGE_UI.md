@@ -17,7 +17,8 @@ are independent. Scheme provides diagrams in a separate tab.
 Under **Knowledge**, switch from **Knowledge Summary & records** to
 **Implementation Choices & Limits**. This independent view explains consequential
 code behavior: inspection caps, filters, fallbacks, unsupported paths and processing
-choices. It is not a catalogue of constants. Generate or refresh explicitly; browsing, filtering
+choices. To generate or refresh it, select **Implementation Choices & Limits**
+in **Generation results** and click **Regenerate selected**. Browsing, filtering
 and inspecting saved entries makes no model calls.
 
 Static inspection supports Python and simple scalar JSON, TOML and YAML
@@ -111,8 +112,9 @@ Saved knowledge loads automatically when Knowledge opens. If no active snapshot
 exists, the saved generated result appears directly, with its brief and all records.
 There is no separate reload button or collapsed preview workflow.
 
-Click **Refresh Knowledge Summary** to generate, validate and save using the
-configured project account, model, effort and instructions. The normal action
+Select **Knowledge** in **Generation results** and click **Regenerate selected**
+to generate, validate and save using the configured project account, model,
+effort and instructions. The normal action
 sends `confirmed:true,publish:true`; browsing never invokes AI. No separate
 Save/Use step is needed. The server checks source and repository freshness before
 atomically saving the records, matching summary and revision. Failure or
@@ -125,8 +127,9 @@ Knowledge failure/cancellation skips Scheme. Single-view Scheme generation still
 uses the currently saved Knowledge. Earlier stored results remain available as
 read-only history. They are not silently made current when their sources have changed.
 
-The Overview tab has its own **Refresh Project Overview** action. Its general
-summary and revision history are separate from Knowledge Summary. Older detailed
+To refresh the general overview, select **Overview** in **Generation results**
+and click **Regenerate selected**. Its general summary and revision history are
+separate from Knowledge Summary. Older detailed
 summaries can be recovered from a matching saved publication/revision without
 rewriting the general Overview. Before replacing that Overview or deleting a
 backing revision, the legacy summary is copied into the existing Knowledge snapshot

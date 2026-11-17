@@ -21,11 +21,11 @@ function overview() {
     sources: [], coverage: [] };
 }
 
-test('general Project Overview has its own title and refresh action', () => {
+test('general Project Overview has its own title without a duplicate refresh action', () => {
   const html = renderToStaticMarkup(createElement(ProjectBrief, { base: '/projects/2', visible: true,
     generation: { model: '', effort: '' }, onGenerating() {}, recoveryVersion: 0, recoveryBusy: false }));
   assert.match(html, /Project Overview/);
-  assert.match(html, /Refresh Project Overview/);
+  assert.doesNotMatch(html, /Refresh Project Overview/);
   assert.doesNotMatch(html, /Refresh project analysis|Overview preview|Knowledge Summary/);
 });
 

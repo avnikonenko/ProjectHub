@@ -156,20 +156,16 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
     <>
       <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
         <AIResultHeader title="Project Overview" savedAt={brief?.generated_at} previous={revisionId !== null}
-          freshness={brief && revisionId === null ? evidence?.stale === true ? 'Project changes detected. Refresh to include them.'
-            : evidence?.stale === false ? 'No changes detected in checked evidence' : 'Freshness not checked' : undefined}
-          action={<button disabled={loading || generating || recoveryBusy || externalBusy || revisionLoading} onClick={generate}>
-            {generating ? 'Generating…' : 'Refresh Project Overview'}
-          </button>} />
+          freshness={brief && revisionId === null ? evidence?.stale === true ? 'Project changes detected. Regenerate Overview to include them.'
+            : evidence?.stale === false ? 'No changes detected in checked evidence' : 'Freshness not checked' : undefined} />
         <p>What the project does, how it is built, and where work stands.</p>
-        <small className="brief-refresh-note">Refreshing sends project context to OpenAI.</small>
         {(generating || recoveryBusy) && <GenerationStatus base={base} kind="brief" label="Project Overview" />}
         <ErrorBox error={error} />
         <ErrorBox error={evidenceError} />
         <Feedback>{notice}</Feedback>
         {revisionLoading && <Feedback>Loading saved version…</Feedback>}
         {loading && <Feedback>Loading saved Project Overview…</Feedback>}
-        {!loading && !brief && <Empty>No saved Project Overview yet.</Empty>}
+        {!loading && !brief && <Empty>No saved Project Overview yet. Select Overview in Generation results to create one.</Empty>}
         {brief && (
           <>
             <BriefContent brief={brief} prefix={base.split('/')[2] + '-brief'} />

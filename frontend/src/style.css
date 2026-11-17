@@ -428,12 +428,6 @@ main {
 .ai-result-header {
   align-items: flex-start;
 }
-.section-title.ai-result-header > button {
-  min-width: 0;
-  max-width: 100%;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
 .search-result-filters {
   display: flex;
   flex-wrap: wrap;
@@ -453,7 +447,7 @@ main {
   display: block;
   margin-top: 0.35rem;
 }
-.ai-result-header + .brief-refresh-note + .brief-details {
+.ai-result-header + .brief-details {
   margin-bottom: 1rem;
 }
 .section-title p {
@@ -524,10 +518,6 @@ main {
 }
 .project-brief .section-title {
   flex-wrap: wrap;
-}
-.brief-refresh-note {
-  display: block;
-  margin-bottom: 1rem;
 }
 .brief-meta {
   border-top: 1px solid var(--border, #d6dfdb);
