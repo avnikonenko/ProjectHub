@@ -57,7 +57,7 @@ test('legacy, null and malformed counts do not invent zero or expose invalid num
 });
 test('skipped file details use saved paths and distinguish file counts from excerpt counts', () => {
   const html = renderToStaticMarkup(createElement(resultCoverage, {
-    snapshot: { coverage: { ...coverage, file_omissions: { total: 15, files: [
+    snapshot: { sources: [{ path: 'src/main.py' }, { path: 'src/main.py' }], coverage: { ...coverage, file_omissions: { total: 15, files: [
       { path: 'src/worker.py', reason: 'source_output_budget' },
       { path: 'src/extra.py', reason: 'no_usable_excerpt' },
     ] } } },
@@ -65,13 +65,29 @@ test('skipped file details use saved paths and distinguish file counts from exce
       total: 1, files: [{ path: 'current-only.py', reason: 'time_budget' }],
     } } },
   }));
-  assert.match(html, /<summary>Skipped files \(15\)<\/summary>/);
+  assert.match(html, /<summary>Files used and missed<\/summary>/);
+  assert.match(html, /<h4>Skipped files \(15\)<\/h4>/);
+  assert.equal((html.match(/src\/main\.py/g) ?? []).length, 1);
+  assert.ok(html.indexOf('src/worker.py') < html.indexOf('Detailed coverage'));
   assert.match(html, /Showing 2 of 15 skipped files/);
   assert.match(html, /src\/worker.py<\/code> · Source excerpt budget reached/);
   assert.match(html, /src\/extra.py<\/code> · No usable excerpt produced/);
   assert.doesNotMatch(html, /current-only.py/);
   const earlier = renderToStaticMarkup(createElement(details, { coverage, saved: true }));
   assert.match(earlier, /File names and individual reasons were not recorded/);
+});
+test('latest Scheme with saved counts but missing filenames can disclose the current file selection', () => {
+  const snapshot = { coverage, sources: [{ path: 'saved.py' }] };
+  const current = { coverage: { ...coverage, file_omissions: { total: 15,
+    files: [{ path: 'missed-now.py', reason: 'time_budget' }] } }, sources: [{ path: 'selected-now.py' }] };
+  const latest = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current, showCurrent: true }));
+  assert.match(latest, /Skipped file names and reasons were not recorded for this version/);
+  assert.match(latest, /<summary>Current repository file selection<\/summary>/);
+  assert.match(latest, /missed-now\.py/);
+  assert.match(latest, /selected-now\.py/);
+  const historical = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current }));
+  assert.match(historical, /saved.py/);
+  assert.doesNotMatch(historical, /missed-now.py|selected-now.py/);
 });
 test('inconsistent skipped-file details fall back to the saved aggregate', () => {
   const row = { path: 'worker.py', reason: 'source_output_budget' };
@@ -136,7 +152,7 @@ test('Scheme uses one closed standard coverage disclosure with saved accounting'
   assert.match(summary, /Direct Codex conversation excerpts<\/strong> 0/);
   assert.doesNotMatch(summary, /Files successfully read|Inspection duration/);
   assert.match(breakdown, /Files successfully read<\/dt><dd>7/);
-  assert.match(html, /<summary>Repository inspection diagnostics/);
+  assert.match(html, /<summary>Processing diagnostics/);
   assert.match(html, /Inspection recorded with this saved Scheme/);
   assert.match(html, /Files successfully read<\/dt><dd>7/);
   assert.match(html, /9 seconds/);

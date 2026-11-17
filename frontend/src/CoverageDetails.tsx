@@ -54,9 +54,6 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
   const overview = measured?.overview_selection;
   const validItems = overview?.selected_items !== undefined && overview.available_items !== undefined
     && overview.selected_items <= overview.available_items;
-  const detailedPaths = new Set(repo?.file_details?.map(detail => detail.path) ?? []);
-  const fallbackPaths = (key: 'read' | 'partial' | 'not_selected' | 'failed' | 'empty') =>
-    repo?.paths?.[key]?.filter(path => !(key === 'read' || key === 'partial') || !detailedPaths.has(path)) ?? [];
   return <>
     {(conversations || archive || fragments) ? <section>
       <h4>Conversation evidence</h4>
@@ -143,38 +140,51 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
       {!!repo.notes.length && <details><summary>Inspection scope and limits</summary>
         <ul>{uniqueNotes(repo.notes).map((note, index) => <li key={index}>{note}</li>)}</ul>
       </details>}
-      {(!!repo.file_details?.length || (!!repo.paths && Object.entries(repo.paths).some(([, paths]) => paths?.length))) && <details>
-        <summary>Files used and missed</summary>
-        {repo.file_details?.length ? <>
-          <p><small>A file can be read fully on disk while only selected declarations reach the AI. Bytes and characters are different units; these counts are not a percentage of understanding.</small></p>
-          <div className="scheme-table-scroll" role="region" aria-label="File coverage table" tabIndex={0}><table className="diagnostic-table file-coverage-table">
-            <caption>Local file reads and supplied AI excerpts</caption>
-            <thead><tr><th scope="col">File</th><th scope="col">Read locally</th><th scope="col">Sent to AI</th><th scope="col">Omission reason</th></tr></thead>
-            <tbody>{repo.file_details.map(detail => <tr key={detail.path}>
-              <th scope="row"><code>{detail.path}</code></th>
-              <td>{fmt(detail.bytes_read)} of {fmt(detail.file_bytes)} bytes
-                <small>{detail.local_read_complete ? 'Complete' : 'Partial'}</small></td>
-              <td>{fmt(detail.excerpt_chars)} characters
-                <small>{detail.excerpt_complete ? 'Complete' : 'Partial'}</small></td>
-              <td>{detail.omission_reasons.length ? detail.omission_reasons.map(omissionLabel).join('; ')
-                : detail.excerpt_complete ? 'No source text omitted' : 'Reason not recorded'}</td>
-            </tr>)}</tbody>
-          </table></div>
-          {repo.file_details_truncated && <p>Per-file details are shortened; the aggregate counts above are unchanged.</p>}
-        </> : <p>Per-file read sizes and AI excerpt lengths were not recorded for this result.</p>}
-        {(['read', 'partial', 'not_selected', 'failed', 'empty'] as const).map(key =>
-          !!fallbackPaths(key).length && <section key={key}>
-          <h4>{{ read: 'Read files', partial: 'Partly supplied files', not_selected: 'Eligible files not selected', failed: 'Read failures', empty: 'Files without usable text' }[key]}</h4>
-          <ul>{fallbackPaths(key).map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>
-        </section>)}
-        {repo.paths_truncated && <p>File lists are shortened; the recorded counts above include the full inspected inventory.</p>}
-      </details>}
     </section> : !hasCustomCoverage && <p>Exact repository file coverage was not recorded for this result.</p>}
     {validItems && <p>Summary input: {fmt(overview.selected_items!)} of {fmt(overview.available_items!)} eligible Knowledge records considered
       {overview.omitted_items !== undefined && overview.omitted_items <= overview.available_items!
         && overview.selected_items! + overview.omitted_items === overview.available_items
         ? `; ${fmt(overview.omitted_items)} omitted.` : '.'}</p>}
     <p><small>Coverage shows the available input, not whether every detail was retained or the conclusions are correct. Check source references for important claims.</small></p>
+  </>;
+}
+
+function RepositoryFileCoverage({ repo }: { repo?: NonNullable<GenerationDiagnostics['evidence_coverage']>['repository'] }) {
+  if (repo?.status !== 'available') {
+    return <p>{repo?.status === 'not_used' ? 'This result used no repository files.'
+      : repo?.status === 'not_linked' ? 'No repository was linked for this result.'
+        : 'File names and reasons were not recorded for this result.'}</p>;
+  }
+  const detailedPaths = new Set(repo.file_details?.map(detail => detail.path) ?? []);
+  const fallbackPaths = (key: 'read' | 'partial' | 'not_selected' | 'failed' | 'empty') =>
+    repo.paths?.[key]?.filter(path => !(key === 'read' || key === 'partial') || !detailedPaths.has(path)) ?? [];
+  if (!repo.file_details?.length && !Object.values(repo.paths ?? {}).some(paths => paths?.length)) {
+    return <p>File names and reasons were not recorded for this result.</p>;
+  }
+  return <>
+    {repo.file_details?.length ? <>
+      <p><small>A file can be read fully on disk while only selected declarations reach the AI. Bytes and characters are different units; these counts are not a percentage of understanding.</small></p>
+      <div className="scheme-table-scroll" role="region" aria-label="File coverage table" tabIndex={0}><table className="diagnostic-table file-coverage-table">
+        <caption>Local file reads and supplied AI excerpts</caption>
+        <thead><tr><th scope="col">File</th><th scope="col">Read locally</th><th scope="col">Sent to AI</th><th scope="col">Omission reason</th></tr></thead>
+        <tbody>{repo.file_details.map(detail => <tr key={detail.path}>
+          <th scope="row"><code>{detail.path}</code></th>
+          <td>{fmt(detail.bytes_read)} of {fmt(detail.file_bytes)} bytes
+            <small>{detail.local_read_complete ? 'Complete' : 'Partial'}</small></td>
+          <td>{fmt(detail.excerpt_chars)} characters
+            <small>{detail.excerpt_complete ? 'Complete' : 'Partial'}</small></td>
+          <td>{detail.omission_reasons.length ? detail.omission_reasons.map(omissionLabel).join('; ')
+            : detail.excerpt_complete ? 'No source text omitted' : 'Reason not recorded'}</td>
+        </tr>)}</tbody>
+      </table></div>
+      {repo.file_details_truncated && <p>Per-file details are shortened; the aggregate counts above are unchanged.</p>}
+    </> : <p>Per-file read sizes and AI excerpt lengths were not recorded for this result.</p>}
+    {(['read', 'partial', 'not_selected', 'failed', 'empty'] as const).map(key =>
+      !!fallbackPaths(key).length && <section key={key}>
+      <h4>{{ read: 'Read files', partial: 'Partly supplied files', not_selected: 'Eligible files not selected', failed: 'Read failures', empty: 'Files without usable text' }[key]}</h4>
+      <ul>{fallbackPaths(key).map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>
+    </section>)}
+    {repo.paths_truncated && <p>File lists are shortened; the recorded counts above include the full inspected inventory.</p>}
   </>;
 }
 
@@ -185,6 +195,8 @@ type Props = {
   diagnostics?: unknown;
   children?: ReactNode;
   summaryContent?: ReactNode;
+  fileCoverage?: ReactNode;
+  processingDetails?: ReactNode;
   note?: string;
   customCoverage?: boolean;
 };
@@ -224,7 +236,7 @@ function CoverageSummary({ measured, sourceCount }: { measured?: GenerationDiagn
 }
 
 /** Only metadata belonging to this saved result is supplied by callers. */
-export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, children, summaryContent, note, customCoverage = false }: Props) {
+export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, children, summaryContent, fileCoverage, processingDetails, note, customCoverage = false }: Props) {
   const measured = parseGenerationDiagnostics(diagnostics);
   const hasMeasurements = measured && Object.keys(measured).length > 0;
   const recordedSourceCount = Number.isSafeInteger(sourceCount) && sourceCount! >= 0
@@ -234,6 +246,10 @@ export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, c
   return <details className="coverage-details generation-details">
     <summary>Coverage</summary>
     {summaryContent ?? <CoverageSummary measured={measured} sourceCount={recordedSourceCount} />}
+    <details>
+      <summary>Files used and missed</summary>
+      {fileCoverage ?? <RepositoryFileCoverage repo={measured?.evidence_coverage?.repository} />}
+    </details>
     <details>
       <summary>Detailed coverage</summary>
       {date && Number.isFinite(date.getTime()) && <p><small>Recorded with the result saved {date.toLocaleString()}.</small></p>}
@@ -249,9 +265,12 @@ export function CoverageDetails({ savedAt, sourceCount, coverage, diagnostics, c
       </details>}
       {recordedSourceCount !== undefined && <p><small>Cited sources in this result: {recordedSourceCount}. Citation counts do not measure input coverage.</small></p>}
     </details>
-    {hasMeasurements && <details><summary>Processing diagnostics</summary>
-      <p><small>Timing, workers and request counts describe processing cost, not evidence coverage.</small></p>
-      <GenerationDetails diagnostics={measured} embedded />
+    {(hasMeasurements || processingDetails) && <details><summary>Processing diagnostics</summary>
+      {hasMeasurements && <>
+        <p><small>Timing, workers and request counts describe processing cost, not evidence coverage.</small></p>
+        <GenerationDetails diagnostics={measured} embedded />
+      </>}
+      {processingDetails}
     </details>}
   </details>;
 }

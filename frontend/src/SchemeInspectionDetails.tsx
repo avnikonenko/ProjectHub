@@ -72,6 +72,20 @@ function recordedOmissions(omissions: SchemeCoverage['file_omissions'], expected
   }
   return omissions;
 }
+
+function missedFileCount(coverage?: SchemeCoverage) {
+  const eligible = knownFileTotal(coverage?.file_counts);
+  const evidence = coverage?.file_counts?.evidence_files;
+  return eligible !== undefined && validCount(evidence) ? eligible - evidence : undefined;
+}
+
+function SkippedFiles({ omissions }: { omissions: NonNullable<SchemeCoverage['file_omissions']> }) {
+  return <>
+    {omissions.total > omissions.files.length && <p>Showing {omissions.files.length} of {omissions.total} skipped files.</p>}
+    <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
+      <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+  </>;
+}
 const countRows: [keyof Omit<SchemeFileCounts, 'listing_complete'>, string][] = [
   ['repository_paths_total', 'Repository paths listed'], ['excluded_paths', 'Explicitly excluded paths'],
   ['safe_paths', 'Safe paths after exclusions'], ['eligible_files', 'Eligible candidate files'],
@@ -123,14 +137,11 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
       <dl>{policyRows.map(([key, title, unit]) => <div key={key}><dt>{title}</dt><dd>{nonnegative(policy[key]) ? `${policy[key]} ${unit}` : 'Not recorded'}</dd></div>)}</dl>
     </details> : <p>Inspection limits were not recorded for {saved ? 'this saved Scheme' : 'this inspection'}.</p>}
     {coverage?.inspection_stopped && <p>Inspection stopped: {String(coverage.inspection_stopped).replaceAll('_', ' ')}</p>}
-    {omissions && <details>
+    {!embedded && !current && omissions && <details>
       <summary>Skipped files ({omissions.total})</summary>
-      {omissions.total > omissions.files.length
-        && <p>Showing {omissions.files.length} of {omissions.total} skipped files.</p>}
-      <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
-        <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+      <SkippedFiles omissions={omissions} />
     </details>}
-    {saved && missing !== undefined && missing > 0 && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
+    {!embedded && saved && missing !== undefined && missing > 0 && !omissions && <p><small>File names and individual reasons were not recorded for this version.</small></p>}
     {coverage?.omitted_reason_counts && typeof coverage.omitted_reason_counts === 'object'
       && !!Object.keys(coverage.omitted_reason_counts).length && <details><summary>Omission reasons</summary>
       <p><small>These totals count omitted evidence entries and inspection events. A file can contribute more than one excerpt.</small></p>
@@ -164,8 +175,13 @@ function SchemeCoverageSummary({ coverage, saved }: { coverage?: SchemeCoverage;
     {validCount(excerpts) && <li><strong>Direct Codex conversation excerpts</strong> {format(excerpts)}</li>}
   </ul>;
 }
+function hasInspectionTiming(diagnostics?: SchemeDiagnostics | null): diagnostics is SchemeDiagnostics {
+  return !!diagnostics && ['bytes_read', 'inspection_seconds', 'cache_hits', 'package_chars']
+    .some(key => nonnegative(diagnostics[key as keyof SchemeDiagnostics]));
+}
+
 export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }: { diagnostics?: SchemeDiagnostics | null; saved: boolean; embedded?: boolean }) {
-  if (!diagnostics || !['bytes_read', 'inspection_seconds', 'cache_hits', 'package_chars'].some(key => nonnegative(diagnostics[key as keyof SchemeDiagnostics]))) return null;
+  if (!hasInspectionTiming(diagnostics)) return null;
   const content = <>
     <p>{saved ? 'Recorded with this saved Scheme.' : 'Current repository inspection.'}</p>
     <dl>{([
@@ -183,12 +199,44 @@ export function SchemeResultCoverage({ snapshot, current, showCurrent = false }:
   showCurrent?: boolean;
 }) {
   const inspection = schemeInspectionForDisplay(snapshot, current);
+  const primary = snapshot ?? current;
+  const missing = missedFileCount(primary?.coverage);
+  const omissions = recordedOmissions(primary?.coverage?.file_omissions, missing);
+  const currentOmissions = showCurrent && snapshot && missing !== 0 && !omissions
+    ? recordedOmissions(current?.coverage?.file_omissions, missedFileCount(current?.coverage)) : undefined;
   return <CoverageDetails savedAt={snapshot?.generated_at} customCoverage
     summaryContent={<SchemeCoverageSummary coverage={inspection.coverage} saved={inspection.saved} />}
+    processingDetails={hasInspectionTiming(inspection.diagnostics)
+      && <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} embedded />}
+    fileCoverage={primary && <>
+      <SchemeFilePaths sources={primary.sources} omissions={omissions} missing={missing} saved={inspection.saved} />
+      {currentOmissions && <details><summary>Current repository file selection</summary>
+        <p>This inspection shows which files would be selected now. The saved Scheme has its own evidence.</p>
+        <SchemeFilePaths sources={current?.sources} omissions={currentOmissions}
+          missing={currentOmissions.total} saved={false} />
+      </details>}
+    </>}
     note={inspection.saved ? undefined : 'Current inspection; no saved Scheme is selected.'}>
     <SchemeInspectionDetails coverage={inspection.coverage} saved={inspection.saved} embedded />
-    <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} />
     {showCurrent && inspection.saved && !inspection.coverage?.file_counts && current?.coverage?.file_counts &&
       <SchemeInspectionDetails coverage={current.coverage} saved={false} current />}
   </CoverageDetails>;
+}
+
+function SchemeFilePaths({ sources, omissions, missing, saved }: {
+  sources?: unknown[]; omissions?: SchemeCoverage['file_omissions']; missing?: number; saved: boolean;
+}) {
+  const paths = [...new Set((sources ?? []).flatMap(source => {
+    if (!source || typeof source !== 'object' || !('path' in source)
+      || typeof source.path !== 'string' || !source.path.trim()) return [];
+    return [source.path];
+  }))].sort();
+  return <>
+    <h4>{saved ? 'Files in the AI input' : 'Files selected for AI'}</h4>
+    {paths.length ? <ul className="scheme-omitted-files">{paths.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+      : <p>{sources ? 'No repository files in this evidence package.' : 'File names were not recorded.'}</p>}
+    <h4>Skipped files{omissions ? ` (${omissions.total})` : missing ? ` (${missing})` : ''}</h4>
+    {omissions ? <SkippedFiles omissions={omissions} /> : <p>{missing === 0 ? 'No eligible files were skipped.'
+      : 'Skipped file names and reasons were not recorded for this version.'}</p>}
+  </>;
 }

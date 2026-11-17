@@ -31,8 +31,15 @@ export function parameterFreshnessLabel(freshness: ParameterResult['freshness'] 
 export function ParameterCoverage({ snapshot, freshness, historical = false }: {
   snapshot: ParameterSnapshot; freshness?: ParameterResult['freshness']; historical?: boolean;
 }) {
+  const paths = [...new Set(snapshot.sources.flatMap(source => source.path ? [source.path] : []))].sort();
   return <CoverageDetails savedAt={snapshot.generated_at} sourceCount={snapshot.sources.length}
-    coverage={snapshot.coverage} diagnostics={snapshot.diagnostics}>
+    coverage={snapshot.coverage} diagnostics={snapshot.diagnostics} fileCoverage={<>
+      <h4>Files in the AI input</h4>
+      {paths.length ? <ul>{paths.map(path => <li key={path}><code>{path}</code></li>)}</ul>
+        : <p>File names were not recorded.</p>}
+      <h4>Skipped files</h4>
+      <p>Skipped file names and reasons were not recorded for this result.</p>
+    </>}>
     {!historical && freshness && (freshness.state === 'unknown' || !!freshness.limitations.length) &&
       <details className="parameter-current-source-check"><summary>Current source check</summary>
         <p>This read-only check describes sources now, separately from the inspection recorded with the saved result.</p>

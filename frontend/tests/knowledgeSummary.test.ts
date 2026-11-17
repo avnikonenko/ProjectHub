@@ -101,7 +101,8 @@ test('legacy and mismatched summary displays never render unrelated content', ()
 
 test('earlier saved Knowledge retains content, sources and coverage as a read-only version', () => {
   const result = { published: false, publication_id: 'knowledge-one',
-    knowledge: { ...snapshot(), generated_at: brief().generated_at, coverage: { limitations: ['Earlier bounded extraction.'] } },
+    knowledge: { ...snapshot(), generated_at: brief().generated_at, coverage: { limitations: ['Earlier bounded extraction.'] },
+      extraction_version: 'earlier-extractor' },
     brief: brief(), diagnostics: { duration_seconds: 5 }, baseline_brief: null };
   const before = structuredClone(result);
   let downloads = 0;
@@ -121,6 +122,9 @@ test('earlier saved Knowledge retains content, sources and coverage as a read-on
   assert.match(html, /Retain the molecular graph/);
   assert.match(html, /Preserve chemistry/);
   assert.match(html, /Earlier bounded extraction/);
+  assert.equal((html.match(/<summary>Coverage<\/summary>/g) ?? []).length, 1);
+  assert.match(html, /Extraction version <code>earlier-extractor<\/code>/);
+  assert.doesNotMatch(html, /Knowledge coverage|Current source availability/);
   assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /[Pp]ublished|[Uu]npublished|[Pp]review|Save Knowledge Summary|Use this result/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
   const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map(match => match[1].replace(/<[^>]*>/g, ' '));

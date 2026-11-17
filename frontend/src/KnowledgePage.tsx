@@ -7,7 +7,7 @@ import { api } from './api';
 import { KnowledgeItems } from './KnowledgeItems';
 import {
   matchesPublication, parseKnowledgePreview,
-  type KnowledgeLink, type KnowledgeResponse, type KnowledgeSnapshot,
+  type KnowledgeCoverage, type KnowledgeLink, type KnowledgeResponse, type KnowledgeSnapshot,
 } from './knowledge';
 import { Empty, ErrorBox } from './ui';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
@@ -53,6 +53,27 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   </section>;
 }
 
+function KnowledgeRecordCoverage({ snapshot, diagnostics = snapshot.diagnostics, currentCoverage }: {
+  snapshot: KnowledgeSnapshot;
+  diagnostics?: KnowledgeSnapshot['diagnostics'];
+  currentCoverage?: KnowledgeCoverage;
+}) {
+  const currentGroups = Object.entries(currentCoverage ?? {}).filter(([, values]) => values.length > 0);
+  return <CoverageDetails savedAt={snapshot.generated_at} sourceCount={snapshot.sources.length}
+    coverage={snapshot.coverage} diagnostics={diagnostics}>
+    <p>Coverage describes the sources considered for these records. Topics can be discussed without yielding a record.</p>
+    {snapshot.extraction_version && <p>Extraction version <code>{snapshot.extraction_version}</code></p>}
+    {!!currentGroups.length && <details>
+      <summary>Current source availability</summary>
+      <p>This check describes source availability now.</p>
+      {currentGroups.map(([name, values]) => <div key={name}>
+        <strong>{name.replaceAll('_', ' ')}{name === 'limitations' ? '' : ` (${values.length})`}</strong>
+        <ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul>
+      </div>)}
+    </details>}
+  </CoverageDetails>;
+}
+
 /** Earlier results are read-only references; generation saves the current result automatically. */
 export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
   result: KnowledgePreview;
@@ -77,8 +98,7 @@ export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
     </div>
     <div role="tabpanel" aria-label="Knowledge records" hidden={view !== 'knowledge'}>
       <KnowledgeItems snapshot={result.knowledge} />
-      <CoverageDetails savedAt={result.knowledge.generated_at} sourceCount={result.knowledge.sources.length}
-        coverage={result.knowledge.coverage} diagnostics={result.knowledge.diagnostics ?? result.diagnostics} />
+      <KnowledgeRecordCoverage snapshot={result.knowledge} diagnostics={result.knowledge.diagnostics ?? result.diagnostics} />
     </div>
   </details>;
 }
@@ -216,7 +236,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       const result = await generateAndSaveKnowledge(base, projectId, generation, controller.signal, generateSchemeAfter);
       if (!controller.signal.aborted && active.current === run) {
         updatePublishedKnowledge(base, () => ({ snapshot: result.knowledge, paired_with_current_brief: false,
-          current_evidence_availability: {}, coverage: result.knowledge.coverage || {} }));
+          current_evidence_availability: {}, coverage: {} }));
         setPreview({ base, busy: false, error: '', started: 0 });
         setNotice({ base, error: '', notice: 'Knowledge Summary and records saved. Project Overview is unchanged.' });
         reportOutcome('saved', result.knowledge.publication_id, result.schemeRequested === true);
@@ -317,19 +337,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
           <KnowledgeItems key={`${base}:${snapshot.publication_id ?? snapshot.generated_at ?? 'published'}`}
             snapshot={snapshot} availability={load.data?.current_evidence_availability}
             selectedItemId={absentItem ? undefined : selectedItemId} />
-          <CoverageDetails savedAt={snapshot.generated_at} sourceCount={snapshot.sources.length}
-            coverage={snapshot.coverage} diagnostics={snapshot.diagnostics}
-            note={!snapshot.diagnostics && Object.values(load.data?.coverage ?? {}).some(values => values.length > 0)
-              ? 'Processing counts and timings were not recorded for this saved result.' : undefined}>
-            {!!Object.values(load.data?.coverage ?? {}).some(values => values.length > 0) && <details>
-              <summary className="source-disclosure">Current source availability</summary>
-              <p><small>This check describes sources now, separately from the saved generation.</small></p>
-              {Object.entries(load.data?.coverage ?? {}).filter(([, values]) => values.length > 0).map(([name, values]) => <div key={name}>
-                <strong>{name.replaceAll('_', ' ')}{name === 'limitations' ? '' : ` (${values.length})`}</strong>
-                <ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul>
-              </div>)}
-            </details>}
-          </CoverageDetails>
+          <KnowledgeRecordCoverage snapshot={snapshot} currentCoverage={load.data?.coverage} />
           {!candidate && currentLegacy?.result && <>
             <button className="secondary" onClick={downloadPreview}>Download JSON</button>
           </>}

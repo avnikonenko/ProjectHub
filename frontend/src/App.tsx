@@ -1647,7 +1647,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           }} />
         </details>
         {saved && <CoverageDetails savedAt={saved.generated_at} sourceCount={saved.sources.length}
-          coverage={saved.coverage} diagnostics={saved.diagnostics} />}
+          coverage={saved.coverage} diagnostics={saved.diagnostics}
+          fileCoverage={<p>Q&amp;A uses saved project evidence without inspecting repository files directly.</p>} />}
         {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
           generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
