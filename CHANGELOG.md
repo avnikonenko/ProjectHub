@@ -66,6 +66,12 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Prevent direct server startup from interrupting jobs owned by another ProjectHub process using the same data directory.
+- Preserve credential-free Git protocol remotes and escaped repository paths while redacting authentication details.
+- Preserve terminal Review errors when acknowledgements fail, and report a dropped connection during resume as interrupted.
+- Reject release builds that are missing lazy frontend chunks or their assets.
+- Save AI model and reasoning choices for the selected project and account. Switching accounts clears the previous choices even if you leave the project while saving.
+
 - Keep generation summaries consistent during concurrent saves, include older Knowledge in unfinished retries, retain open history after a new result saves, and avoid reporting failure after a successful save when transport cleanup fails.
 
 - Inset the generation-results panel and group dates beneath statuses for clearer row separation at larger text sizes and in narrow panels.

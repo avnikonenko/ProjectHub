@@ -20,6 +20,7 @@ import { LazyNote, useLoadedNote } from './LazyNote';
 import { noteEditPatch } from './noteEditing';
 import { createEditorIdentity } from './editorIdentity';
 import { completedMessages } from './codex';
+import { useProjectGenerationSettings, type Generation } from './generationSettings';
 import { GenerationStatus, useGenerationRecovery, SavedGeneration, type GenerationProvenance, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import { RevisionHistory } from './RevisionHistory';
 import {
@@ -319,10 +320,9 @@ function ProjectWorkspace({
     if (view === 'Scheme') setVisited((previous) => previous.scheme ? previous : { ...previous, scheme: true });
     if (view === 'Reviews') setVisitedReviews(true);
   }, [view]);
-  const [generation, setGeneration] = useState(loadGenerationSettings);
-  useEffect(() => {
-    try { localStorage.setItem('projecthub.ai-settings', JSON.stringify(generation)); } catch { /* Storage is optional. */ }
-  }, [generation]);
+  const base = `/projects/${projectId}`;
+  const generationSettings = useProjectGenerationSettings(base);
+  const { generation } = generationSettings;
   const [error, setError] = useState('');
   const [form, setForm] = useState<{
     identity: number;
@@ -339,7 +339,6 @@ function ProjectWorkspace({
   const [searchTarget, setSearchTarget] = useState<{ kind: string; id: number; question?: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
-  const base = `/projects/${projectId}`;
   const onGenerationResultsState = useCallback((state: GenerationResultsState) => {
     if (state.base !== base) return;
     setGenerationResultsState(state);
@@ -655,7 +654,7 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
-          <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
+          <GenerationSettings base={base} settings={generationSettings} />
         </div>
       </div>
       <nav className="tabs" aria-label="Project sections">
@@ -1132,16 +1131,7 @@ type SavedQA = {
   sources: BriefSource[];
 };
 
-type Generation = { model: string; effort: string };
 type GenerationProps = { base: string; generation: Generation };
-
-function loadGenerationSettings(): Generation {
-  try {
-    const saved = JSON.parse(localStorage.getItem('projecthub.ai-settings') ?? 'null');
-    if (typeof saved?.model === 'string' && typeof saved?.effort === 'string') return saved;
-  } catch { /* Storage is optional. */ }
-  return { model: '', effort: '' };
-}
 
 function generationBody({ model, effort }: Generation) {
   return { model: model || null, effort: effort || null };
@@ -1290,8 +1280,8 @@ function AppSettings() {
   );
 }
 
-function GenerationSettings({ base, generation, onChange }: GenerationProps & {
-  onChange: (settings: Generation) => void;
+function GenerationSettings({ base, settings }: {
+  base: string; settings: ReturnType<typeof useProjectGenerationSettings>;
 }) {
   const panel = useSettingsDismiss();
   const [open, setOpen] = useState(false);
@@ -1321,10 +1311,13 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
       <details ref={panel} className="generation-settings" onToggle={(event) => {
         const isOpen = event.currentTarget.open;
         setOpen(isOpen);
-        if (isOpen) setVisited(true);
+        if (isOpen) {
+          setVisited(true);
+          settings.reloadAccount();
+        }
       }}>
         <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
-        {visited && <GenerationOptions active={open} base={base} generation={generation} onChange={onChange}>
+        {visited && <GenerationOptions active={open} base={base} settings={settings}>
           <button type="button" className="secondary" disabled={loadingInstructions} onClick={openInstructions}>
             {loadingInstructions ? 'Loading instructions…' : 'Project AI instructions'}
           </button>
@@ -1352,75 +1345,31 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
   );
 }
 
-function GenerationOptions({ active, base, generation, onChange, children }: GenerationProps & {
-  active: boolean;
-  onChange: (settings: Generation) => void;
+function GenerationOptions({ active, base, settings, children }: {
+  active: boolean; base: string;
+  settings: ReturnType<typeof useProjectGenerationSettings>;
   children: React.ReactNode;
 }) {
-  const [models, setModels] = useState<{ id: string; label: string; efforts: string[] }[]>([]);
-  const [status, setStatus] = useState('Loading Codex models…');
-  const [accounts, setAccounts] = useState<{ account: string | null; options: { id: string; label: string }[]; include_launch?: boolean; launch_label?: string } | null>(null);
-  const [savingAccount, setSavingAccount] = useState(false);
-  const [accountError, setAccountError] = useState('');
-  const [accountVersion, setAccountVersion] = useState(0);
-  const accountRead = useRef(0);
-  const accountMutation = useRef(false);
-  // Closing the popover must not abandon an account change already sent.
-  useEffect(() => () => { accountRead.current++; }, [base]);
+  const { accounts, accountError, savingAccount, changeAccount, changeGeneration, generation } = settings;
+  type Model = { id: string; label: string; efforts: string[] };
+  const [modelList, setModelList] = useState<{ account: string | null; models: Model[] } | null>(null);
+  const [status, setStatus] = useState('');
+  const account = accounts?.account;
+  const models = modelList?.account === account ? modelList?.models ?? [] : [];
   useEffect(() => {
-    if (!active) return;
-    let controller: AbortController;
-    function loadAccounts() {
-      if (accountMutation.current) return;
-      const identity = ++accountRead.current;
-      controller?.abort();
-      controller = new AbortController();
-      const current = controller;
-      api<typeof accounts>(`${base}/codex/account`, { signal: current.signal })
-        .then((result) => {
-          if (!current.signal.aborted && accountRead.current === identity) { setAccounts(result); setAccountError(''); }
-        })
-        .catch((e) => { if (!current.signal.aborted && accountRead.current === identity) setAccountError(e.message); });
-    }
-    loadAccounts();
-    window.addEventListener('projecthub:profiles-changed', loadAccounts);
-    return () => {
-      controller?.abort();
-      window.removeEventListener('projecthub:profiles-changed', loadAccounts);
-    };
-  }, [active, base]);
-  async function changeAccount(account: string) {
-    if (accountMutation.current) return;
-    accountMutation.current = true;
-    const identity = ++accountRead.current;
-    setSavingAccount(true);
-    setAccountError('');
-    try {
-      const result = await patch(`${base}/codex/account`, { account: account || null });
-      if (accountRead.current !== identity) return;
-      setAccounts(result);
-      setModels([]);
-      onChange({ model: '', effort: '' });
-      setAccountVersion((value) => value + 1);
-    } catch (e) {
-      if (accountRead.current === identity) setAccountError((e as Error).message);
-    } finally {
-      accountMutation.current = false;
-      if (accountRead.current === identity) setSavingAccount(false);
-    }
-  }
-  useEffect(() => {
-    if (!active || savingAccount) return;
-    let current = true;
-    api<typeof models>(`${base}/codex/models`)
+    if (!active || savingAccount || account === undefined) return;
+    const controller = new AbortController();
+    setModelList(null);
+    setStatus('Loading Codex models…');
+    api<Model[]>(`${base}/codex/models`, { signal: controller.signal })
       .then((result) => {
-        if (!current) return;
-        setModels(result);
+        if (controller.signal.aborted) return;
+        setModelList({ account, models: result });
         setStatus(result.length ? '' : 'No models reported by Codex.');
       })
-      .catch(() => { if (current) setStatus('Could not load Codex models.'); });
-    return () => { current = false; };
-  }, [active, base, accountVersion, savingAccount]);
+      .catch(() => { if (!controller.signal.aborted) setStatus('Could not load Codex models.'); });
+    return () => controller.abort();
+  }, [active, base, account, savingAccount]);
   const model = models.find((option) => option.id === generation.model);
   const efforts = model?.efforts ?? [];
   return (
@@ -1440,19 +1389,19 @@ function GenerationOptions({ active, base, generation, onChange, children }: Gen
       <ErrorBox error={accountError} />
       <label>
         Model
-        <select value={generation.model} disabled={savingAccount} onChange={(e) => onChange({ model: e.target.value, effort: '' })}>
+        <select value={generation.model} disabled={!accounts || savingAccount} onChange={(e) => changeGeneration({ model: e.target.value, effort: '' })}>
           <option value="">Codex default</option>
           {generation.model && !model && <option value={generation.model}>{generation.model}</option>}
           {models.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
         </select>
       </label>
       <SettingsHelp title="About model selection">
-        <p>Codex default uses the account's configured model. Choosing another model resets reasoning effort to its default and applies to future generation.</p>
+        <p>Codex default uses the account's configured model. Choosing another model resets reasoning effort to its default. Your choices are saved for this project and account.</p>
       </SettingsHelp>
       <label>
         Reasoning effort
-        <select value={generation.effort} disabled={!efforts.length}
-          onChange={(e) => onChange({ ...generation, effort: e.target.value })}>
+        <select value={generation.effort} disabled={savingAccount || !efforts.length}
+          onChange={(e) => changeGeneration({ ...generation, effort: e.target.value })}>
           <option value="">Model default</option>
           {generation.effort && !efforts.includes(generation.effort) && <option value={generation.effort}>{generation.effort}</option>}
           {efforts.map((effort) => <option key={effort} value={effort}>{label(effort)}</option>)}
