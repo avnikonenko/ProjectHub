@@ -37,14 +37,20 @@ lock preventing concurrent writers. Legacy matching summaries remain recoverable
 Opening a view only reads saved results and lightweight progress/freshness data.
 Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
 
-### Parameters and project-specific trade-offs
+### Implementation choices and project-specific limits
 
 `parameter_evidence.py` performs bounded, read-only extraction from the registered
-repository. Declarations and code/configuration defaults are deterministic facts;
-`parameters.py` makes one explicit Codex request for separately labeled explanations.
+repository. Declarations, code/configuration defaults and bounded application-site
+excerpts are deterministic facts; `parameters.py` makes one explicit Codex request
+for separately labeled behavior, consequences and explanations. Non-parameter
+findings must cite their recorded application evidence, not just a definition.
 The model cannot replace parameter names, defaults or locations, and explanation
 citations must refer to inspected evidence. No run execution or runtime-value
 tracking is involved.
+
+The UI leads with consequential findings and links separately to saved definition
+and application snippets. Ordinary defaults and legacy snapshots remain available.
+The endpoint and revision kind retain their `parameters` names for compatibility.
 
 `GET/POST /api/projects/{id}/codex/parameters` reuse project ownership checks,
 generation locks, cancellation/budgets and existing revision storage. Successful

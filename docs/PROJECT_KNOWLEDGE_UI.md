@@ -12,12 +12,12 @@ more detailed perspective on extracted choices, requirements, reasons and suppor
 passages, with searchable Knowledge records alongside it. The saved perspectives
 are independent. Scheme provides diagrams in a separate tab.
 
-## Parameters & Trade-offs
+## Implementation Choices & Limits
 
 Under **Knowledge**, switch from **Knowledge Summary & records** to
-**Parameters & Trade-offs**. This independent view inspects declared settings,
-thresholds, limits and resource budgets in the registered repository. Click
-**Generate parameters** or **Refresh parameters** explicitly; browsing, filtering
+**Implementation Choices & Limits**. This independent view explains consequential
+code behavior: inspection caps, filters, fallbacks, unsupported paths and processing
+choices. It is not a catalogue of constants. Generate or refresh explicitly; browsing, filtering
 and inspecting saved entries makes no model calls.
 
 Static inspection supports Python and simple scalar JSON, TOML and YAML
@@ -25,26 +25,34 @@ configuration. It never imports or executes repository code. Credentials and
 sensitive declarations are excluded; supported formats and inspection limits are
 reported in coverage. Unsupported languages and syntax may leave gaps.
 
-Each entry preserves its name, declared value/default, component, file, symbol,
-line range and inspected content revision. Configuration values are labeled
+Each finding shows its behavior and concrete consequence, with separate clickable
+locations for the declaration and the code that applies or references it. Links open
+the saved evidence excerpt, not an unverified current file. Inspected content hashes
+identify the saved file version. A constant declaration alone does not establish
+enforcement; unsupported connections are not invented.
+
+Entries preserve their name, declared value/default when applicable, component, file,
+symbol and line range. Configuration values are labeled
 separately from code defaults; precedence is not assumed. Conditional declarations
 remain separate with their unevaluated conditions. Required parameters and missing
 defaults are labeled explicitly; expressions such as CPU-derived values remain
 expressions rather than invented numbers.
 
-AI explains purpose and concrete project-specific trade-offs using the inspected
-evidence. Documented and inferred explanations remain distinct. Reasons for choosing
+AI explains behavior and concrete project-specific trade-offs using the inspected
+evidence. Findings require supporting usage evidence. Documented and inferred explanations remain distinct. Reasons for choosing
 a value are included only when documented; generic methodological caveats and
 individual-run/effective values are outside this view. Search and component filters
-operate locally. Expand an entry for its original declaration evidence.
+operate locally. Expand an entry for its saved declaration and usage evidence.
+Other inspected defaults remain available in a collapsed section. Existing older
+parameter snapshots remain readable; regenerate to discover the new findings.
 
-Parameters save independently in existing generation revisions. They do not replace
+Results save independently in existing generation revisions. They do not replace
 or regenerate Project Overview, Knowledge Summary, Knowledge records or Scheme.
 Source changes flag the saved result; failed/cancelled generation preserves the
 previous snapshot. **Generation & saved versions** opens earlier parameter results,
 whose original coverage is kept separate from the current source check.
 
-Validation on 2026-11-17 used an isolated, frozen ProjectHub checkout and real
+Validation of the earlier declaration-only version on 2026-11-17 used an isolated, frozen ProjectHub checkout and real
 Codex (`gpt-6.1-sol`, medium reasoning). One request completed in 204.5 seconds:
 100 selected declarations retained their inspected defaults, with 96 purposes,
 41 trade-offs and one documented rationale; unsupported explanations stayed
@@ -56,6 +64,16 @@ An isolated Firefox check verified saved values, conditional/expression/required
 labels, local search, and source-change warnings without automatic regeneration
 or model calls. Automated checks cover project ownership, independent revisions,
 source changes, cancellation/failures and explanation-reference validation.
+
+The revised choices view was evaluated with real Codex (`gpt-6.1-sol`, medium)
+against an isolated Python repository containing a 24-file cap imported from
+another module, a 12-record slice, a `.bak` exclusion, an exception fallback and
+an unsupported export. All five behaviors were surfaced with usage references;
+an unused worker default stayed a parameter-only record. One request completed
+in 34.4 seconds (16,801 input / 1,430 output tokens). This fixture demonstrates
+the supported paths, not exhaustive repository analysis. Static inspection of
+ProjectHub completed its 63 supported files within the unchanged five-second
+budget; selection and evidence-size limits still make the result partial.
 
 ## Use
 

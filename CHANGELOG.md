@@ -28,6 +28,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Refocus Parameters & Trade-offs as Implementation Choices & Limits: surface code-backed caps, filters, fallbacks and unsupported paths with separate definition and usage locations. Keep ordinary defaults and older saved results available; code links open saved evidence without losing project navigation.
+
 - Show conversation evidence before targeted code inspection, clarify supporting code's role, and collapse repeated scope notes while preserving exact measurements.
 
 - Lead Coverage & technical details with saved evidence coverage: eligible files versus supplied excerpts, per-file read extent, omissions, and conversation input against all linked sessions and imported shared chats. Keep request/worker/cache counts in secondary diagnostics, preserve unknown legacy totals, and use grey technical headings.

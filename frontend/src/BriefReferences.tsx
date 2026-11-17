@@ -34,10 +34,12 @@ function CitationGroup({ ids, numbers, prefix, sources = [] }: {
     const target = `${prefix}-source-${number}`;
     return <a className={detailed ? 'citation-source' : 'brief-reference'} key={id}
       href={`#${target}`} aria-label={detailed ? undefined : `Read source ${number}`}
-      onClick={() => {
+      onClick={(event) => {
+        event.preventDefault();
         for (let element = document.getElementById(target); element; element = element.parentElement) {
           if (element instanceof HTMLDetailsElement) element.open = true;
         }
+        document.getElementById(target)?.scrollIntoView({ block: 'nearest' });
       }}>
       {detailed ? `[${number}] ${byId.get(id)?.label || 'Source ' + number}` : `[${number}]`}
     </a>;

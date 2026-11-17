@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer, type ViteDevServer } from 'vite';
 import { filterParameters, parameterDefault, parameterGroups, parseParameterResult, parseParameterSnapshot,
-  parameterRevisionResult,
+  parameterRevisionResult, isImplementationChoice,
   type ParameterSnapshot, type ProjectParameter } from '../src/parameters.ts';
 
 let server: ViteDevServer;
@@ -37,10 +37,64 @@ const result = (saved: ParameterSnapshot | null = snapshot()) => ({ snapshot: sa
 test('parameter view is independent, explicit and does not invent runtime values', () => {
   const html = renderToStaticMarkup(createElement(ProjectParameters, { base: '/projects/2', visible: true,
     generation: { model: '', effort: '' } }));
-  assert.match(html, /Parameters &amp; Trade-offs/);
-  assert.match(html, /Generate parameters/);
+  assert.match(html, /Implementation Choices &amp; Limits/);
+  assert.match(html, /Generate implementation choices/);
   assert.match(html, /not values verified in a particular run/);
   assert.doesNotMatch(html, /Refresh Project Overview|Save Knowledge Summary|Generate Scheme/);
+});
+
+test('implementation choices expose behavior, consequence, definition and applied code locations', () => {
+  const usage = { id: 'source:usage', kind: 'implementation_usage', label: 'Enforced input bound',
+    text: 'if len(selected) >= MAX_CONTEXT: break', path: 'app/reader.py', revision: 'usage-hash',
+    line_start: 33, line_end: 34, symbol: 'collect' };
+  const finding = item({ title: 'Selected input is bounded', finding_kind: 'limit',
+    behavior: 'Collection stops when selected evidence reaches the bound.', behavior_basis: 'documented',
+    usage_source_ids: [usage.id], explanation_source_ids: ['source:one', usage.id] });
+  const saved = snapshot({ view_version: 2, items: [finding, item({ id: 'parameter:other', name: 'DEFAULT_WORKERS' })],
+    sources: [...snapshot().sources, usage] });
+  const parsed = parseParameterSnapshot(saved, 2);
+  assert.equal(parsed.sources[1].kind, 'implementation_usage');
+  assert.equal(isImplementationChoice(parsed.items[0]), true);
+  assert.equal(isImplementationChoice(parsed.items[1]), false);
+  const html = renderToStaticMarkup(createElement(ParameterList, { snapshot: parsed, prefix: '2-implementation' }));
+  assert.match(html, /Selected input is bounded/);
+  assert.match(html, /Collection stops when selected evidence reaches the bound/);
+  assert.match(html, /Project-specific consequence/);
+  assert.match(html, /Defined at/);
+  assert.match(html, /Applied \/ referenced at/);
+  assert.match(html, /href="#2-implementation-source-1"[^>]*>app\/config.py:12/);
+  assert.match(html, /href="#2-implementation-source-2"[^>]*>app\/reader.py:33–34/);
+  assert.match(html, /Inspected file content hash/);
+  assert.doesNotMatch(html, /Inspected revision/);
+  assert.match(html, /Other inspected defaults \(1\)/);
+  assert.ok(html.indexOf('Selected input is bounded') < html.indexOf('Other inspected defaults'));
+  assert.equal(filterParameters(parsed.items, 'collection stops').length, 1);
+  assert.equal(filterParameters(parsed.items, 'reader.py', '', parsed.sources).length, 1);
+});
+
+test('legacy and declaration-only records stay accessible without implying enforcement', () => {
+  const declaredOnly = item({ finding_kind: 'limit', behavior: 'An unestablished effect.', behavior_basis: 'inferred' });
+  const html = renderToStaticMarkup(createElement(ParameterList, { snapshot: snapshot({ items: [declaredOnly] }), prefix: '2-old' }));
+  assert.equal(isImplementationChoice(declaredOnly), false);
+  assert.match(html, /Refresh to discover implementation choices/);
+  assert.match(html, /Other inspected defaults \(1\)/);
+  assert.match(html, /No usage site established/);
+  assert.match(html, /declaration alone does not prove enforcement/);
+  assert.match(html, /MAX_CONTEXT/);
+  assert.doesNotMatch(html, /Implementation behavior/);
+});
+
+test('inline implementation behavior has a code location without inventing a default', () => {
+  const inline = item({ declaration_kind: 'implementation_behavior', default_kind: 'unspecified', default_value: null,
+    title: 'Only the first 24 files are inspected', behavior: 'The input list is sliced before reading files.',
+    behavior_basis: 'documented', finding_kind: 'limit', usage_source_ids: ['source:one'] });
+  const saved = snapshot({ view_version: 2, items: [inline],
+    sources: [{ ...snapshot().sources[0], kind: 'implementation_usage', text: 'selected = files[:24]' }] });
+  const html = renderToStaticMarkup(createElement(ParameterList, { snapshot: parseParameterSnapshot(saved, 2), prefix: '2-inline' }));
+  assert.match(html, /Only the first 24 files are inspected/);
+  assert.match(html, /Code location/);
+  assert.match(html, /Code behavior/);
+  assert.doesNotMatch(html, /Declared default|No declared default|Default:/);
 });
 
 test('literal, required, unspecified and dynamic defaults retain their actual meanings', () => {
@@ -106,7 +160,13 @@ test('API validation protects project scope, declaration evidence and safe metad
     { ...saved, items: [item(), item()] }, { ...saved, items: [item({ default_kind: 'required', default_value: 'false' })] },
     { ...saved, sources: [{ ...saved.sources[0], revision: {} }] },
     { ...saved, generation: { account: {}, model: 'x', effort: 'medium' } },
-    { ...saved, items: [item({ rationale_basis: 'inferred' as any })] }])
+    { ...saved, items: [item({ rationale_basis: 'inferred' as any })] },
+    { ...saved, items: [item({ usage_source_ids: ['foreign'] })] },
+    { ...saved, items: [item({ usage_source_ids: ['source:one'] })] },
+    { ...saved, items: [item({ finding_kind: 'unverified' as any })] },
+    { ...saved, items: [item({ behavior_basis: 'proven' as any })] },
+    { ...saved, items: [item({ behavior: {} as any })] },
+    { ...saved, view_version: {} }])
     assert.throws(() => parseParameterSnapshot(raw, 2));
   assert.throws(() => parseParameterResult({ snapshot: saved, freshness: {} }, 2));
 });

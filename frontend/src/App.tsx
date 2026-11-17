@@ -603,7 +603,7 @@ function ProjectWorkspace({
           <GenerationStatus base={base} kind="knowledge" label="Knowledge Summary"
             sharedProgress={recovery.running.knowledge ? recovery.progress.knowledge : undefined} />}
         {(parameterState.running || recovery.running.parameters) && (view !== 'Knowledge' || knowledgeSubview !== 'parameters' || !!results) &&
-          <GenerationStatus base={base} kind="parameters" label="Parameters & Trade-offs"
+          <GenerationStatus base={base} kind="parameters" label="Implementation Choices & Limits"
             sharedProgress={recovery.running.parameters ? recovery.progress.parameters : undefined} />}
         <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
@@ -624,7 +624,7 @@ function ProjectWorkspace({
                 onClick={() => setKnowledgeSubview('knowledge')}>Knowledge Summary & records</button>
               <button type="button" className={knowledgeSubview === 'parameters' ? 'active' : ''}
                 aria-current={knowledgeSubview === 'parameters' ? 'page' : undefined}
-                onClick={() => { setParametersVisited(true); setKnowledgeSubview('parameters'); }}>Parameters &amp; Trade-offs</button>
+                onClick={() => { setParametersVisited(true); setKnowledgeSubview('parameters'); }}>Implementation Choices &amp; Limits</button>
             </nav>
             <div hidden={knowledgeSubview !== 'knowledge'}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}

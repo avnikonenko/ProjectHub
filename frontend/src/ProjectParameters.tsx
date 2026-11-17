@@ -9,7 +9,7 @@ import { GenerationStatus, SavedGeneration, isGenerationCancelled, cancelledGene
 import { RevisionHistory } from './RevisionHistory';
 import { Empty, ErrorBox } from './ui';
 import { filterParameters, parameterDefault, parameterGroups, parseParameterResult, parseParameterSnapshot,
-  parameterRevisionResult,
+  parameterRevisionResult, isImplementationChoice,
   type ParameterResult, type ParameterSnapshot, type ProjectParameter } from './parameters';
 import './knowledge.css';
 
@@ -21,7 +21,7 @@ const bases = { documented: 'Documented in inspected evidence', inferred: 'AI-in
 
 export function parameterFreshnessLabel(freshness: ParameterResult['freshness'] | undefined, historical = false) {
   if (historical) return undefined;
-  if (freshness?.state === 'changed') return 'Inspected sources changed. Refresh parameters to update this result.';
+  if (freshness?.state === 'changed') return 'Inspected sources changed. Refresh implementation choices to update this result.';
   if (freshness?.state === 'unchanged') return 'No changes detected in inspected sources';
   if (freshness?.state === 'unknown') return 'Source freshness is unknown.';
   return undefined;
@@ -104,56 +104,98 @@ export async function recoverProjectParameters(base: string, projectId: number, 
   }
 }
 
+function SavedCodeLinks({ ids, snapshot, prefix }: {
+  ids: string[]; snapshot: ParameterSnapshot; prefix: string;
+}) {
+  return <ul>{[...new Set(ids)].flatMap(id => {
+    const index = snapshot.sources.findIndex(source => source.id === id);
+    if (index < 0) return [];
+    const source = snapshot.sources[index];
+    const target = `${prefix}-source-${index + 1}`;
+    return <li key={id}><a href={`#${target}`} onClick={event => {
+      event.preventDefault();
+      const evidence = document.getElementById(target);
+      for (let element = evidence; element; element = element.parentElement)
+        if (element instanceof HTMLDetailsElement) element.open = true;
+      evidence?.scrollIntoView({ block: 'nearest' });
+    }}>{source.path ? `${source.path}${source.line_start ? ':' + source.line_start : ''}${source.line_end && source.line_end !== source.line_start ? '–' + source.line_end : ''}` : source.label}</a>
+      {source.symbol && <small> · {source.symbol}</small>}</li>;
+  })}</ul>;
+}
+
 export function ParameterList({ snapshot, prefix, query = '', component = '' }: {
   snapshot: ParameterSnapshot; prefix: string; query?: string; component?: string;
 }) {
   const numbers = new Map(snapshot.sources.map((source, index) => [source.id, index + 1]));
   const filtered = filterParameters(snapshot.items, query, component, snapshot.sources);
-  const explanation = (item: ProjectParameter, field: 'purpose' | 'rationale' | 'trade_off', title: string) => {
+  const findings = filtered.filter(isImplementationChoice);
+  const other = filtered.filter(item => !isImplementationChoice(item));
+  const explanation = (item: ProjectParameter, field: 'purpose' | 'rationale' | 'trade_off' | 'behavior', title: string) => {
     const value = item[field];
-    const basis = field === 'purpose' ? item.purpose_basis : field === 'rationale' ? item.rationale_basis : item.trade_off_basis;
+    const basis = field === 'purpose' ? item.purpose_basis : field === 'rationale' ? item.rationale_basis
+      : field === 'behavior' ? item.behavior_basis ?? 'unknown' : item.trade_off_basis;
     return <><dt>{title}</dt><dd>{value ? <><AIEmphasis text={value} /> <small>({bases[basis]})</small>
       {briefReferences(item.explanation_source_ids, numbers, prefix, snapshot.sources)}</>
       : 'Not documented in the inspected evidence.'}</dd></>;
   };
-  return <>
-    <p role="status">{filtered.length} of {snapshot.items.length} parameters</p>
-    {!filtered.length && <Empty>{snapshot.items.length ? 'No parameters match these filters.' : 'No supported parameter declarations were found in this saved inspection.'}</Empty>}
-    {parameterGroups(filtered).map(([name, items]) => <section className="knowledge-group" key={name}>
-      <h3>{name || 'Unspecified component'} <small>({items.length})</small></h3>
-      {items.map(item => <details className="knowledge-item" key={item.id}>
-        <summary><span className="knowledge-item-title">{item.name}</span>
-          <small className="knowledge-item-meta"><span>{item.declaration_kind === 'configuration_value' ? 'Declared value' : 'Default'}: <code>{parameterDefault(item)}</code>
+  const records = (selected: ProjectParameter[]) => parameterGroups(selected).map(([name, items]) => <section className="knowledge-group" key={name}>
+    <h3>{name || 'Unspecified component'} <small>({items.length})</small></h3>
+    {items.map(item => {
+      const choice = isImplementationChoice(item);
+      const inline = item.declaration_kind === 'implementation_behavior';
+      return <details className="knowledge-item" key={item.id}>
+        <summary><span className="knowledge-item-title">{choice ? item.title || item.name : item.name}</span>
+          <small className="knowledge-item-meta"><span>{inline ? 'Code behavior' : <>{item.declaration_kind === 'configuration_value' ? 'Declared value' : 'Default'}: <code>{parameterDefault(item)}</code></>}
             {item.default_kind === 'expression' && ' · expression; not evaluated'}
             {item.condition && ' · conditional declaration'}</span>
             <span>{item.path}:{item.line_start}</span></small>
         </summary>
         <div className="knowledge-item-body">
-          <p className="muted">Code/configuration declaration</p>
           <dl className="knowledge-fields">
-            <dt>{item.declaration_kind === 'configuration_value' ? 'Declared configuration value' : 'Declared default'}</dt><dd><code>{parameterDefault(item)}</code>
-              {briefReferences(item.source_ids, numbers, prefix, snapshot.sources)}</dd>
-            {item.default_kind === 'expression' && <><dt>Default form</dt><dd>Expression preserved from code; its runtime value was not evaluated.</dd></>}
-            {!!item.condition && <><dt>Declaration condition</dt><dd><code>{item.condition}</code><small> — not evaluated</small></dd></>}
-            <dt>Location</dt><dd><code>{item.path}:{item.line_start}{item.line_end !== item.line_start && `–${item.line_end}`}</code></dd>
-            {!!item.symbol && <><dt>Symbol</dt><dd><code>{item.symbol}</code></dd></>}
-            {explanation(item, 'purpose', 'Purpose')}
-            {item.units && <><dt>Units noted in explanation</dt><dd>{item.units}</dd></>}
-            {explanation(item, 'trade_off', 'Project-specific trade-off')}
+            {choice && explanation(item, 'behavior', 'Implementation behavior')}
+            {explanation(item, 'trade_off', 'Project-specific consequence')}
+            <dt>{inline ? 'Code location' : 'Defined at'}</dt><dd><SavedCodeLinks ids={item.source_ids} snapshot={snapshot} prefix={prefix} /></dd>
+            <dt>Applied / referenced at</dt><dd>{item.usage_source_ids?.length
+              ? <SavedCodeLinks ids={item.usage_source_ids} snapshot={snapshot} prefix={prefix} />
+              : 'No usage site established by this saved inspection. A declaration alone does not prove enforcement.'}</dd>
             {explanation(item, 'rationale', 'Documented reason')}
           </dl>
-          <details><summary>Declaration evidence</summary>
-            {item.source_ids.map(id => {
+          <details><summary>Implementation details & defaults</summary>
+            <p className="muted">{inline ? 'Inspected implementation behavior' : 'Code/configuration declaration'}</p>
+            <dl className="knowledge-fields">
+              {!inline && <><dt>{item.declaration_kind === 'configuration_value' ? 'Declared configuration value' : 'Declared default'}</dt><dd><code>{parameterDefault(item)}</code>
+                {briefReferences(item.source_ids, numbers, prefix, snapshot.sources)}</dd></>}
+              {item.default_kind === 'expression' && <><dt>Default form</dt><dd>Expression preserved from code; its runtime value was not evaluated.</dd></>}
+              {!!item.condition && <><dt>Declaration condition</dt><dd><code>{item.condition}</code><small> — not evaluated</small></dd></>}
+              <dt>Location</dt><dd><code>{item.path}:{item.line_start}{item.line_end !== item.line_start && `–${item.line_end}`}</code></dd>
+              {!!item.symbol && <><dt>Symbol</dt><dd><code>{item.symbol}</code></dd></>}
+              {explanation(item, 'purpose', 'Purpose')}
+              {item.units && <><dt>Units noted in explanation</dt><dd>{item.units}</dd></>}
+            </dl>
+          </details>
+          <details><summary>Saved code evidence</summary>
+            {[...new Set([...item.source_ids, ...(item.usage_source_ids ?? [])])].map(id => {
               const source = snapshot.sources.find(value => value.id === id)!;
               return <article key={id}><strong>{source.label}</strong>
-                {source.revision && <p><small>Inspected revision: {source.revision}</small></p>}
+                {source.revision && <p><small>{source.revision_kind === 'inspected_prefix_hash' ? 'Inspected file prefix hash' : 'Inspected file content hash'}: {source.revision}</small></p>}
                 <pre className="json-report">{source.text}</pre>
               </article>;
             })}
           </details>
         </div>
-      </details>)}
-    </section>)}
+      </details>;
+    })}
+  </section>);
+  return <>
+    <p role="status">{filtered.length} of {snapshot.items.length} inspected records · {findings.length} implementation choices</p>
+    {snapshot.view_version !== 2 && <p className="muted">This saved version contains parameter declarations. Refresh to discover implementation choices and their usage sites; existing records remain available below.</p>}
+    {!filtered.length && <Empty>{snapshot.items.length ? 'No records match these filters.' : 'No supported code choices or parameter declarations were found in this saved inspection.'}</Empty>}
+    {!!filtered.length && !findings.length && <p>No implementation choices with supporting usage evidence were established in these results.</p>}
+    {records(findings)}
+    {!!other.length && <details className="parameter-other-defaults"><summary>Other inspected defaults ({other.length})</summary>
+      <p>These declarations remain searchable. Their existence does not establish that they are enforced or represent a consequential implementation choice.</p>
+      {records(other)}
+    </details>}
   </>;
 }
 
@@ -254,22 +296,22 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
   const choices = [...new Set(snapshot?.items.map(item => item.component).filter(Boolean) ?? [])].sort();
   const freshness = parameterFreshnessLabel(result?.freshness, revisionId !== null);
   return <section className="card project-parameters" aria-busy={busy}>
-    <AIResultHeader title="Parameters & Trade-offs" savedAt={snapshot?.generated_at} previous={revisionId !== null}
+    <AIResultHeader title="Implementation Choices & Limits" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} action={<button disabled={busy || externalBusy} onClick={generate}>
-        {generating ? 'Generating…' : snapshot ? 'Refresh parameters' : 'Generate parameters'}
+        {generating ? 'Generating…' : snapshot ? 'Refresh implementation choices' : 'Generate implementation choices'}
       </button>} />
-    <p>Declared values, defaults and project-specific trade-offs from inspected code and configuration. These are not values verified in a particular run.</p>
+    <p>Consequential limits, filters, fallbacks and processing choices found in code, with their consequences and usage locations. These are not values verified in a particular run.</p>
     <details><summary>How this works</summary>
-      <p>Generation sends selected repository declarations to OpenAI through Codex. Code values remain separate from AI explanations; inferred consequences are labeled. Saving parameters does not regenerate Overview, Knowledge or Scheme. Browsing and searching saved results makes no model calls.</p>
-      <p>Static inspection supports Python declarations and supported scalar settings in JSON, TOML and YAML. Other languages and complete configuration precedence are not analyzed; recorded coverage lists inspection limits.</p>
+      <p>Generation sends selected code declarations and usage evidence to OpenAI through Codex. A declaration alone does not establish enforcement. Code evidence remains separate from AI explanations; inferred consequences are labeled. Saving this view does not regenerate Overview, Knowledge or Scheme. Browsing and searching saved results makes no model calls.</p>
+      <p>Static inspection supports Python code and supported scalar settings in JSON, TOML and YAML. Usage matching is bounded and does not establish every call path or configuration override. Other languages and complete configuration precedence are not analyzed; recorded coverage lists inspection limits.</p>
     </details>
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
-    {loading && <Feedback>Loading saved parameters…</Feedback>}
-    {(generating || recovering) && <GenerationStatus base={base} kind="parameters" label="Parameters" />}
-    {!loading && !snapshot && <Empty>No saved parameters yet. Register a repository, then generate this view when ready.</Empty>}
+    {loading && <Feedback>Loading saved implementation choices…</Feedback>}
+    {(generating || recovering) && <GenerationStatus base={base} kind="parameters" label="Implementation Choices & Limits" />}
+    {!loading && !snapshot && <Empty>No saved implementation choices yet. Register a repository, then generate this view when ready.</Empty>}
     {snapshot && <>
       <div className="knowledge-filters">
-        <label>Search parameters<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Parameter, value, purpose or evidence…" /></label>
+        <label>Search implementation choices<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Limit, behavior, consequence, location or default…" /></label>
         <label>Component<select value={component} onChange={event => setComponent(event.target.value)}>
           <option value="">All components</option>{choices.map(value => <option key={value} value={value}>{value}</option>)}
         </select></label>

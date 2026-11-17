@@ -122,7 +122,7 @@ function describeProgress(stage: string, kind: GenerationKind) {
     case 'Cancelled': return 'Cancelled. Saved results are unchanged.';
     case 'Failed': return 'Generation failed';
     case '':
-    case 'Starting generation': return kind === 'tags' ? 'Preparing AI tags' : kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'ask' ? 'Preparing an answer' : kind === 'knowledge' ? 'Preparing source-linked knowledge' : 'Preparing questions and answers';
+    case 'Starting generation': return kind === 'tags' ? 'Preparing AI tags' : kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'parameters' ? 'Preparing implementation choices and limits' : kind === 'ask' ? 'Preparing an answer' : kind === 'knowledge' ? 'Preparing source-linked knowledge' : 'Preparing questions and answers';
     default: return stage;
   }
 }
