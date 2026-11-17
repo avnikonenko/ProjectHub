@@ -56,6 +56,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
+- Prevent generation-result labels, statuses and dates from overlapping at larger text sizes or in narrow panels.
+
 - Parameter inspection now filters credential accessors, sensitive match patterns and credential comment continuations, and preserves exception/loop/match/context-manager conditions. Returning from parameter history rechecks source freshness instead of reusing an old verdict.
 
 - Mark turn-limited conversations as partial even after empty turns, reject files changed during inspection, bound category coverage by repository totals, and keep read paths visible when per-file details are missing.
