@@ -292,6 +292,7 @@ function ProjectWorkspace({
   }
   const view = historyLink ? 'History' : knowledgeLink ? 'Knowledge' : selectedView;
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
+  const [visitedReviews, setVisitedReviews] = useState(false);
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
   const [analysisState, setAnalysisState] = useState({ busy: false, running: false });
   const [knowledgeSubview, setKnowledgeSubview] = useState<'knowledge' | 'parameters'>('knowledge');
@@ -316,6 +317,7 @@ function ProjectWorkspace({
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
     if (view === 'Knowledge') setVisited((previous) => previous.knowledge ? previous : { ...previous, knowledge: true });
     if (view === 'Scheme') setVisited((previous) => previous.scheme ? previous : { ...previous, scheme: true });
+    if (view === 'Reviews') setVisitedReviews(true);
   }, [view]);
   const [generation, setGeneration] = useState(loadGenerationSettings);
   useEffect(() => {
@@ -363,11 +365,18 @@ function ProjectWorkspace({
     setParameterState(state); observeGeneration('parameters', state.running);
   }, [observeGeneration]);
   const currentGenerationResults = generationResultsState.base === base ? generationResultsState : null;
+  const generationRecoveryBusy = {
+    brief: recovery.checkingByKind.brief || recovery.running.brief,
+    qa: recovery.checkingByKind.qa || recovery.running.qa,
+    scheme: recovery.checkingByKind.scheme || recovery.running.scheme,
+    knowledge: recovery.checkingByKind.knowledge || recovery.running.knowledge,
+    parameters: recovery.checkingByKind.parameters || recovery.running.parameters,
+  };
   const generationBusy = {
-      brief: running.brief || recovery.running.brief, qa: running.qa || recovery.running.qa,
-      scheme: running.scheme || recovery.running.scheme,
-      knowledge: analysisState.running || recovery.running.knowledge,
-      parameters: parameterState.running || recovery.running.parameters,
+      brief: running.brief || generationRecoveryBusy.brief, qa: running.qa || generationRecoveryBusy.qa,
+      scheme: running.scheme || generationRecoveryBusy.scheme,
+      knowledge: analysisState.running || generationRecoveryBusy.knowledge,
+      parameters: parameterState.running || generationRecoveryBusy.parameters,
   };
   if (currentGenerationResults?.data && !currentGenerationResults.error) {
     for (const view of currentGenerationResults.data.views)
@@ -378,6 +387,7 @@ function ProjectWorkspace({
   const selectedGenerations = generationSelection?.project_id === projectId ? generationSelection.selected : [];
   const selectedPlan = currentGenerationResults?.data && !currentGenerationResults.error
     ? planSelectedProjectGeneration(selectedGenerations, currentGenerationResults.data.views, generationBusy) : null;
+  const allPlan = planProjectGeneration(generationBusy);
   function dispatchGenerationPlan(plan: GenerationPlan) {
     setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
     setBulkAttemptCount(plan.start.length + Number(plan.waitForKnowledge));
@@ -392,16 +402,16 @@ function ProjectWorkspace({
     });
   }
   function regenerateAll() {
-    if (recovery.checking || bulkDispatching.current) return;
-    dispatchGenerationPlan(planProjectGeneration(generationBusy));
+    if (bulkDispatching.current || !allPlan.start.length) return;
+    dispatchGenerationPlan(allPlan);
   }
   function retryUnfinished() {
-    if (recovery.checking || bulkDispatching.current || !currentGenerationResults
-        || currentGenerationResults.loading || currentGenerationResults.error || !retryPlan) return;
+    if (bulkDispatching.current || !currentGenerationResults
+        || currentGenerationResults.loading || currentGenerationResults.error || !retryPlan?.start.length) return;
     dispatchGenerationPlan(retryPlan);
   }
   function regenerateSelected() {
-    if (recovery.checking || bulkDispatching.current || !currentGenerationResults
+    if (bulkDispatching.current || !currentGenerationResults
         || currentGenerationResults.loading || currentGenerationResults.error || !selectedPlan?.start.length) return;
     dispatchGenerationPlan(selectedPlan);
   }
@@ -726,13 +736,13 @@ function ProjectWorkspace({
         <div hidden={view !== 'Generation' || !!results}>
           <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
             selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
-            onRegenerateSelected={regenerateSelected} regenerateDisabled={recovery.checking || bulkPending.length > 0
+            onRegenerateSelected={regenerateSelected} regenerateDisabled={bulkPending.length > 0
               || bulkScheme === 'waiting' || !selectedPlan?.start.length}
             bulkActions={<>
-              <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
+              <button className="secondary" disabled={!allPlan.start.length || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
                 {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
               </button>
-              <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'
+              <button className="secondary" disabled={bulkPending.length > 0 || bulkScheme === 'waiting'
                 || !currentGenerationResults || currentGenerationResults.loading || !!currentGenerationResults.error
                 || !retryPlan?.start.length} onClick={retryUnfinished}>Retry unfinished</button>
             </>} />
@@ -741,7 +751,7 @@ function ProjectWorkspace({
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results} generation={generation}
-              recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
+              recoveryVersion={recovery.version.brief} recoveryBusy={generationRecoveryBusy.brief}
               onRecoveryNeeded={() => recovery.recheck('brief')}
               generationRequest={bulkRequests.brief} onGenerationRequestHandled={started => bulkHandled('brief', started)}
               onGenerating={(active) => { observeGeneration('brief', active); setRunning(previous => ({ ...previous, brief: active })); }} />
@@ -778,18 +788,23 @@ function ProjectWorkspace({
             <ProjectQA base={base} generation={generation} visible={view === 'AI Q&A' && !results}
               generationRequest={bulkRequests.qa} onGenerationRequestHandled={started => bulkHandled('qa', started)}
               targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
-              recoveryVersion={recovery.version.qa} recoveryBusy={recovery.checking || recovery.running.qa}
+              recoveryVersion={recovery.version.qa} recoveryBusy={generationRecoveryBusy.qa}
               onGenerating={(active) => { observeGeneration('qa', active); setRunning((previous) => ({ ...previous, qa: active })); }} />
           </div>
         )}
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
-              waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checking)
+              waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
-              recoveryVersion={recovery.version.scheme} recoveryBusy={recovery.checking || recovery.running.scheme}
+              recoveryVersion={recovery.version.scheme} recoveryBusy={generationRecoveryBusy.scheme}
               onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />
+          </div>
+        )}
+        {(visitedReviews || view === 'Reviews') && (
+          <div hidden={view !== 'Reviews' || !!results}>
+            <AskProject base={base} projectId={projectId} generation={generation} visible={view === 'Reviews' && !results} />
           </div>
         )}
         {results ? (
@@ -1022,14 +1037,11 @@ function ProjectWorkspace({
               </>
             )}
             {view === 'Reviews' && (
-              <>
-                <AskProject base={base} projectId={projectId} generation={generation} />
                 <details>
                   <summary className="review-discussion-toggle">Continue a Codex discussion</summary>
                   <CodexReview base={base} generation={generation} onNotesChanged={load}
                     onManageSessions={() => { setReport(null); setView('Sources'); }} />
                 </details>
-              </>
             )}
           </>
         )}
@@ -1135,7 +1147,7 @@ function generationBody({ model, effort }: Generation) {
   return { model: model || null, effort: effort || null };
 }
 
-function AskProject({ base, projectId, generation }: GenerationProps & { projectId: number }) {
+function AskProject({ base, projectId, generation, visible }: GenerationProps & { projectId: number; visible: boolean }) {
   const [question, setQuestion] = useState('');
   const [result, setResult] = useState<{ answer: string; sources: BriefSource[] } | null>(null);
   const [answeredQuestion, setAnsweredQuestion] = useState('');
@@ -1188,7 +1200,7 @@ function AskProject({ base, projectId, generation }: GenerationProps & { project
         </label>
         <button disabled={busy || remoteBusy || !question.trim()}>{busy || remoteBusy ? 'Asking…' : 'Ask Project'}</button>
       </form>
-      <GenerationStatus base={base} kind="ask" label="Project answer" onRunningChange={setRemoteBusy} />
+      {(visible || busy) && <GenerationStatus base={base} kind="ask" label="Project answer" onRunningChange={setRemoteBusy} />}
       <ErrorBox error={error} />
       {result && (
         <section className="brief-section">
@@ -1283,6 +1295,7 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
 }) {
   const panel = useSettingsDismiss();
   const [open, setOpen] = useState(false);
+  const [visited, setVisited] = useState(false);
   const [instructions, setInstructions] = useState<string | null>(null);
   const [loadingInstructions, setLoadingInstructions] = useState(false);
   const [instructionsError, setInstructionsError] = useState('');
@@ -1305,9 +1318,13 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
 
   return (
     <>
-      <details ref={panel} className="generation-settings" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <details ref={panel} className="generation-settings" onToggle={(event) => {
+        const isOpen = event.currentTarget.open;
+        setOpen(isOpen);
+        if (isOpen) setVisited(true);
+      }}>
         <summary className="button secondary" aria-label="AI settings" title="AI settings">⚙</summary>
-        {open && <GenerationOptions base={base} generation={generation} onChange={onChange}>
+        {visited && <GenerationOptions active={open} base={base} generation={generation} onChange={onChange}>
           <button type="button" className="secondary" disabled={loadingInstructions} onClick={openInstructions}>
             {loadingInstructions ? 'Loading instructions…' : 'Project AI instructions'}
           </button>
@@ -1335,7 +1352,8 @@ function GenerationSettings({ base, generation, onChange }: GenerationProps & {
   );
 }
 
-function GenerationOptions({ base, generation, onChange, children }: GenerationProps & {
+function GenerationOptions({ active, base, generation, onChange, children }: GenerationProps & {
+  active: boolean;
   onChange: (settings: Generation) => void;
   children: React.ReactNode;
 }) {
@@ -1347,7 +1365,10 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
   const [accountVersion, setAccountVersion] = useState(0);
   const accountRead = useRef(0);
   const accountMutation = useRef(false);
+  // Closing the popover must not abandon an account change already sent.
+  useEffect(() => () => { accountRead.current++; }, [base]);
   useEffect(() => {
+    if (!active) return;
     let controller: AbortController;
     function loadAccounts() {
       if (accountMutation.current) return;
@@ -1365,10 +1386,9 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
     window.addEventListener('projecthub:profiles-changed', loadAccounts);
     return () => {
       controller?.abort();
-      accountRead.current++;
       window.removeEventListener('projecthub:profiles-changed', loadAccounts);
     };
-  }, [base]);
+  }, [active, base]);
   async function changeAccount(account: string) {
     if (accountMutation.current) return;
     accountMutation.current = true;
@@ -1390,16 +1410,17 @@ function GenerationOptions({ base, generation, onChange, children }: GenerationP
     }
   }
   useEffect(() => {
-    let active = true;
+    if (!active || savingAccount) return;
+    let current = true;
     api<typeof models>(`${base}/codex/models`)
       .then((result) => {
-        if (!active) return;
+        if (!current) return;
         setModels(result);
         setStatus(result.length ? '' : 'No models reported by Codex.');
       })
-      .catch(() => { if (active) setStatus('Could not load Codex models.'); });
-    return () => { active = false; };
-  }, [base, accountVersion]);
+      .catch(() => { if (current) setStatus('Could not load Codex models.'); });
+    return () => { current = false; };
+  }, [active, base, accountVersion, savingAccount]);
   const model = models.find((option) => option.id === generation.model);
   const efforts = model?.efforts ?? [];
   return (
@@ -2398,6 +2419,8 @@ function Codex({ base, onError, notes, onImported, targetSessionId }: {
   );
 }
 
+const staleReviewContextMessage = 'Project context changed since it was previewed. Preview it again before sending.';
+
 function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   base: string;
   generation: Generation;
@@ -2410,13 +2433,16 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   const [sessionId, setSessionId] = useState('');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [prompt, setPrompt] = useState('');
-  const [context, setContext] = useState<string | null>(null);
+  const [context, setContext] = useState<{ content: string; version: string } | null>(null);
+  const [contextVisible, setContextVisible] = useState(false);
+  const [contextNeedsPreview, setContextNeedsPreview] = useState(false);
   const [events, setEvents] = useState<any>(null);
   const responseVersion = useRef(0);
   const [eventsError, setEventsError] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const actionInFlight = useRef(false);
   const [cancelRequested, setCancelRequested] = useState<number | null>(null);
   const [waiting, setWaiting] = useState<{ id: number; sessionId: string; generation: Generation } | null>(null);
   const autoRetried = useRef<number | null>(null);
@@ -2457,6 +2483,8 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   }, [prefix, sessionStorageKey]);
 
   async function action(fn: () => Promise<unknown>) {
+    if (actionInFlight.current) return;
+    actionInFlight.current = true;
     setBusy(true);
     setError('');
     try {
@@ -2464,9 +2492,21 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
     } catch (e) {
       setError((e as Error).message);
     } finally {
+      actionInFlight.current = false;
       setBusy(false);
     }
   }
+
+  async function previewContext() {
+    const result = await api<{ content: string; version: string }>(`${prefix}/context`);
+    if (typeof result.content !== 'string' || !/^[0-9a-f]{64}$/.test(result.version)) {
+      throw new Error('The project context preview could not be verified. Try previewing it again.');
+    }
+    setContext(result);
+    setContextVisible(true);
+    setContextNeedsPreview(false);
+  }
+
   async function cancelReview(id: number) {
     if (busy || cancelRequested === id) return;
     if (waiting?.id === id) setWaiting(null);
@@ -2498,18 +2538,36 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
   }
 
   async function ask(question: string, fresh = false) {
+    if (contextNeedsPreview) throw new Error(staleReviewContextMessage);
     let target = sessionId;
-    if (fresh || !canSend) {
-      const name = Array.from(question.replace(/\s+/g, ' ').trim());
-      const title = name.length > 72 ? name.slice(0, 71).join('').trimEnd() + '…' : name.join('');
-      const session: RecordData = await post(`${prefix}/sessions`, { title });
-      target = String(session.id);
-      setSessions((rows) => [...(rows ?? []), session]);
-      selectReviewSession(target);
+    let request: RecordData;
+    try {
+      if (fresh || !canSend) {
+        if (context) {
+          const current = await api<{ version: string }>(`${prefix}/context`);
+          if (current.version !== context.version) throw new Error(staleReviewContextMessage);
+        }
+        const name = Array.from(question.replace(/\s+/g, ' ').trim());
+        const title = name.length > 72 ? name.slice(0, 71).join('').trimEnd() + '…' : name.join('');
+        const session: RecordData = await post(`${prefix}/sessions`, { title });
+        target = String(session.id);
+        setSessions((rows) => [...(rows ?? []), session]);
+        selectReviewSession(target);
+      }
+      request = await post(`${prefix}/sessions/${target}/turns`, {
+        prompt: question, ...generationBody(generation),
+        ...(context ? { context_version: context.version } : {}),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === staleReviewContextMessage) {
+        setContext(null);
+        setContextVisible(false);
+        setContextNeedsPreview(true);
+      }
+      throw error;
     }
-    const request: RecordData = await post(`${prefix}/sessions/${target}/turns`, {
-      prompt: question, ...generationBody(generation),
-    });
+    setContext(null);
+    setContextVisible(false);
     if (request.status === 'queued') {
       setWaiting({ id: request.id, sessionId: target, generation });
     }
@@ -2590,32 +2648,29 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
             <form onSubmit={(e) => {
               e.preventDefault();
               const question = prompt.trim();
-              if (busy || waiting || !question) return;
+              if (busy || waiting || contextNeedsPreview || !question) return;
               void action(() => ask(question));
             }}>
               <label>
                 Project question
-                <textarea rows={3} required maxLength={20000} value={prompt}
+                <textarea rows={3} required maxLength={20000} value={prompt} readOnly={busy}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="What should we do next, based on this project's history?" />
               </label>
               <p className="muted">This sends your question and project context to Codex for a read-only response.</p>
               <div className="actions left">
-                <button disabled={busy || !!waiting || !prompt.trim()}>
+                <button disabled={busy || !!waiting || contextNeedsPreview || !prompt.trim()}>
                   {busy ? 'Working…' : canSend ? 'Ask Codex' : 'Ask in a new review session'}
                 </button>
-                <button type="button" className="quiet" disabled={busy} aria-expanded={context !== null}
+                <button type="button" className="quiet" disabled={busy} aria-expanded={contextVisible}
                   onClick={() => {
-                    if (context !== null) setContext(null);
-                    else void action(async () => {
-                      const result = await api<{ content: string }>(`${prefix}/context`);
-                      setContext(result.content);
-                    });
+                    if (context) setContextVisible(!contextVisible);
+                    else void action(previewContext);
                   }}>
-                  {context === null ? 'Preview context' : 'Hide context'}
+                  {contextVisible ? 'Hide context' : 'Preview context'}
                 </button>
               </div>
-              {context !== null && <pre className="json-report">{context}</pre>}
+              {contextVisible && context && <pre className="json-report">{context.content}</pre>}
             </form>
           </details>
         )}
@@ -2730,7 +2785,7 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                             Approve and retry this request
                           </button>
                           {question !== content && (
-                            <button className="secondary" disabled={busy || !!waiting}
+                            <button className="secondary" disabled={busy || !!waiting || contextNeedsPreview}
                               onClick={() => void action(() => ask(question, true))}>
                               Ask in a new session
                             </button>

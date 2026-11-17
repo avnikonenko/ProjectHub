@@ -69,11 +69,36 @@ function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any,
   globalThis.fetch = async (input, options) => {
     const kind = new URL(String(input), 'http://test.local').searchParams.get('kind')!;
     calls.push({ kind, method: options?.method ?? 'GET' });
-    return Response.json(responses[kind]);
+    const response = responses[kind];
+    return response instanceof Response ? response.clone() : Response.json(response);
   };
   const host = new HookHost(); host.includeParameters = initialParameters !== undefined; host.render();
   return { host, responses, calls, dispose() { host.dispose(); globalThis.fetch = original; } };
 }
+test('an unavailable status keeps only its own view locked and polls it until recovery', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const run = fixture({ state: 'idle' },
+    Response.json({ detail: 'Temporary status unavailable' }, { status: 503 }));
+  try {
+    await settle();
+    assert.deepEqual(run.host.value.checkingByKind, {
+      brief: false, qa: false, scheme: false, knowledge: false, parameters: true,
+    });
+    assert.match(run.host.value.error, /Temporary status unavailable/);
+
+    run.responses.brief = { state: 'completed', started_at: 'new-brief' };
+    run.host.value.recheck('brief'); await settle();
+    assert.equal(run.host.value.version.brief, 1);
+    assert.equal(run.host.value.checkingByKind.parameters, true);
+
+    const callsBeforeRetry = run.calls.length;
+    run.responses.parameters = { state: 'idle' };
+    t.mock.timers.tick(1500); await settle();
+    assert.deepEqual(run.calls.slice(callsBeforeRetry), [{ kind: 'parameters', method: 'GET' }]);
+    assert.equal(run.host.value.checking, false);
+    assert.equal(run.host.value.error, '');
+  } finally { run.dispose(); }
+});
 test('opt-in workspace recovery follows Parameters completion without generating another result', async t => {
   const run = fixture({ state: 'idle' }, { state: 'running', started_at: 'parameters-run' });
   try {

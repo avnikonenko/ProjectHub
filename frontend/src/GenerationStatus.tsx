@@ -6,7 +6,6 @@ import { api, post } from './api';
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
 type RecoveryKind = SavedGenerationKind | 'knowledge';
 export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
-const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
 
 export type GenerationProvenance = { account: string; model: string; effort: string };
 export type Progress = {
@@ -32,80 +31,94 @@ export type Progress = {
 const pendingGeneration = (status: Progress) => status.state === 'running'
   || status.latest_attempt?.state === 'waiting';
 
+type RecoveryState = { checking: boolean; running: boolean; version: number; error: string; progress?: Progress };
+const initialRecovery: RecoveryState = { checking: true, running: false, version: 0, error: '' };
+
+function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
+  const [request, setRequest] = useState<{ previousStartedAt?: string } | null>(null);
+  const [state, setState] = useState(initialRecovery);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const abort = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let handoffChecks = 0;
+
+    async function poll(recovering = false) {
+      try {
+        const status = await api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal });
+        if (abort.signal.aborted) return;
+        const running = pendingGeneration(status);
+        // A lost POST response can precede the server starting its run.
+        if (!recovering && request && !running
+            && status.started_at === request.previousStartedAt && handoffChecks < 2) {
+          handoffChecks++;
+          timer = setTimeout(() => void poll(), 1500);
+          return;
+        }
+        const error = status.state === 'failed'
+          ? status.error || 'AI generation failed. The previous result is preserved.'
+          : status.state === 'idle' && recovering && !running
+            ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
+            : '';
+        setState(previous => ({
+          checking: false, running, progress: status, error,
+          version: previous.version + Number(!running && (recovering || request !== null)),
+        }));
+        if (running) timer = setTimeout(() => void poll(true), 1500);
+      } catch (error) {
+        if (abort.signal.aborted) return;
+        setState(previous => ({ ...previous, checking: true, error: `Could not recover AI progress: ${(error as Error).message}` }));
+        timer = setTimeout(() => void poll(recovering), 1500);
+      }
+    }
+
+    void poll();
+    return () => { abort.abort(); if (timer !== undefined) clearTimeout(timer); };
+  }, [base, kind, enabled, request]);
+
+  const clearError = useCallback(() => {
+    setState(previous => previous.error ? { ...previous, error: '' } : previous);
+  }, []);
+
+  return {
+    ...state,
+    checking: enabled && state.checking,
+    clearError,
+    recheck: () => {
+      setState(previous => ({ ...previous, checking: true }));
+      setRequest({ previousStartedAt: state.progress?.started_at });
+    },
+  };
+}
+
 export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false, includeParameters = false }: {
   includeBrief?: boolean; includeKnowledge?: boolean; includeParameters?: boolean;
 } = {}) {
-  const [recheckRequest, setRecheckRequest] = useState<{
-    sequence: number; kind: RecoveryKind | null; previousStartedAt?: string;
-  }>({ sequence: 0, kind: null });
-  const [checking, setChecking] = useState(true);
-  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false, knowledge: false, parameters: false });
-  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0, knowledge: 0, parameters: 0 });
-  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '', knowledge: '', parameters: '' });
-  const [progress, setProgress] = useState<Partial<Record<RecoveryKind, Progress>>>({});
-  useEffect(() => {
-    const abort = new AbortController();
-    const timers: Partial<Record<RecoveryKind, ReturnType<typeof setTimeout>>> = {};
-    const checked = new Set<string>();
-    let handoffChecks = 0;
-    const kinds: RecoveryKind[] = includeBrief ? [...generationKinds] : generationKinds.filter(kind => kind !== 'brief');
-    if (includeKnowledge) kinds.push('knowledge');
-    if (includeParameters) kinds.push('parameters');
-    function poll(kind: RecoveryKind, recovering = false) {
-      void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
-        .then((status) => {
-          if (abort.signal.aborted) return;
-          // A lost POST response can precede the server starting its run. Do
-          // not mistake the preceding request's idle/terminal status for it.
-          if (!recovering && recheckRequest.kind === kind && !pendingGeneration(status)
-              && status.started_at === recheckRequest.previousStartedAt && handoffChecks < 2) {
-            handoffChecks++;
-            timers[kind] = setTimeout(() => poll(kind), 1500);
-            return;
-          }
-          checked.add(kind);
-          setProgress(previous => ({ ...previous, [kind]: status }));
-          if (checked.size === kinds.length) setChecking(false);
-          setErrors((previous) => ({ ...previous, [kind]: '' }));
-          if (pendingGeneration(status)) {
-            setRunning((previous) => ({ ...previous, [kind]: true }));
-            timers[kind] = setTimeout(() => poll(kind, true), 1500);
-          } else {
-            setRunning((previous) => ({ ...previous, [kind]: false }));
-            if (recovering || recheckRequest.kind === kind)
-              setVersion((previous) => ({ ...previous, [kind]: previous[kind] + 1 }));
-            const error = status.state === 'failed'
-              ? status.error || 'AI generation failed. The previous result is preserved.'
-              : status.state === 'idle' && recovering
-                ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
-                : '';
-            setErrors((previous) => ({ ...previous, [kind]: error }));
-          }
-        })
-        .catch((e: Error) => {
-          if (abort.signal.aborted) return;
-          setErrors((previous) => ({ ...previous, [kind]: `Could not recover AI progress: ${e.message}` }));
-          timers[kind] = setTimeout(() => poll(kind, recovering), 1500);
-        });
-    }
-    kinds.forEach((kind) => poll(kind));
-    return () => {
-      abort.abort();
-      Object.values(timers).forEach(clearTimeout);
-    };
-  }, [base, includeBrief, includeKnowledge, includeParameters, recheckRequest]);
+  const brief = useKindRecovery(base, 'brief', includeBrief);
+  const qa = useKindRecovery(base, 'qa', true);
+  const scheme = useKindRecovery(base, 'scheme', true);
+  const knowledge = useKindRecovery(base, 'knowledge', includeKnowledge);
+  const parameters = useKindRecovery(base, 'parameters', includeParameters);
+  const states = { brief, qa, scheme, knowledge, parameters };
+  const clearBrief = brief.clearError, clearQA = qa.clearError, clearScheme = scheme.clearError;
+  const clearKnowledge = knowledge.clearError, clearParameters = parameters.clearError;
   const clearError = useCallback((kind?: RecoveryKind) => {
-    setErrors(previous => kind ? { ...previous, [kind]: '' }
-      : { brief: '', qa: '', scheme: '', knowledge: '', parameters: '' });
-  }, []);
+    const clear = { brief: clearBrief, qa: clearQA, scheme: clearScheme, knowledge: clearKnowledge, parameters: clearParameters };
+    if (kind) clear[kind]();
+    else Object.values(clear).forEach(clearKind => clearKind());
+  }, [clearBrief, clearQA, clearScheme, clearKnowledge, clearParameters]);
+  const checkingByKind = { brief: brief.checking, qa: qa.checking, scheme: scheme.checking,
+    knowledge: knowledge.checking, parameters: parameters.checking };
   return {
-    checking, running, version, progress, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
+    checking: Object.values(checkingByKind).some(Boolean), checkingByKind,
+    running: { brief: brief.running, qa: qa.running, scheme: scheme.running, knowledge: knowledge.running, parameters: parameters.running },
+    version: { brief: brief.version, qa: qa.version, scheme: scheme.version, knowledge: knowledge.version, parameters: parameters.version },
+    progress: { brief: brief.progress, qa: qa.progress, scheme: scheme.progress,
+      knowledge: knowledge.progress, parameters: parameters.progress },
+    error: [...new Set(Object.values(states).map(state => state.error).filter(Boolean))].join(' '),
     clearError,
-    recheck: (kind: RecoveryKind) => {
-      setChecking(true);
-      setRecheckRequest(previous => ({ sequence: previous.sequence + 1, kind,
-        previousStartedAt: progress[kind]?.started_at }));
-    },
+    recheck: (kind: RecoveryKind) => states[kind].recheck(),
   };
 }
 
