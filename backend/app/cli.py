@@ -1,5 +1,6 @@
 """Local ProjectHub entry point; configuration is applied before app startup."""
 import argparse
+from contextlib import ExitStack
 import os
 from pathlib import Path
 import sys
@@ -64,9 +65,8 @@ def main(argv=None):
         print(f'projecthub: {message}', file=sys.stderr)
         return 1
     import uvicorn
-    print(f'ProjectHub: http://127.0.0.1:{settings.port}', flush=True)
     from .main import create_app
-    from .restart import RestartController
+    from .restart import RestartController, own_data_directory
     def validate_restart():
         from fastapi import HTTPException
         try:
@@ -83,11 +83,28 @@ def main(argv=None):
                             factory=True, host='127.0.0.1', port=settings.port)
     server = uvicorn.Server(config)
     controller.bind(lambda: setattr(server, 'should_exit', True))
-    try:
-        server.run()
-    except BaseException:
-        controller.close(cancel=True)
-        raise
+    with ExitStack() as resources:
+        try:
+            resources.enter_context(own_data_directory(settings.data_dir))
+        except BlockingIOError:
+            print('projecthub: Another server is using this data directory.', file=sys.stderr)
+            return 3
+        except OSError:
+            print('projecthub: Could not lock the local data directory.', file=sys.stderr)
+            return 1
+        try:
+            # Uvicorn normally binds after startup. Reserve the port before
+            # building the app, which performs persistent recovery at startup.
+            listener = resources.enter_context(config.bind_socket())
+        except SystemExit as exc:
+            return exc.code if isinstance(exc.code, int) else 3
+        listener.set_inheritable(False)
+        print(f'ProjectHub: http://127.0.0.1:{settings.port}', flush=True)
+        try:
+            server.run(sockets=[listener])
+        except BaseException:
+            controller.close(cancel=True)
+            raise
     if not getattr(server, 'started', True):
         controller.close(cancel=True)
         return 3

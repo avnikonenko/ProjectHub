@@ -146,6 +146,25 @@ def test_notes_reference_matches_merge_without_duplicates_across_pages(search_ap
     assert not get(client, 'notes', 'foreign ligand')['notes']['results']
 
 
+def test_note_fallback_folds_each_candidate_once(search_app, monkeypatch):
+    from backend.app import project_search
+
+    client, engine = search_app
+    original = project_search._search_contains
+    calls = []
+
+    def measured(value, *terms):
+        calls.append(terms)
+        return original(value, *terms)
+
+    monkeypatch.setattr(project_search, '_search_contains', measured)
+    with Session(engine) as db:
+        db.add(Note(project_id=1, title='Method', content='Straße screening', reference='https://example.test/Ligand'))
+        db.commit()
+    assert get(client, 'notes', 'method STRASSE ligand')['notes']['results']
+    assert calls == [('method', 'strasse', 'ligand')]
+
+
 def test_sessions_match_local_id_account_and_status(search_app):
     client, engine = search_app
     with Session(engine) as db:

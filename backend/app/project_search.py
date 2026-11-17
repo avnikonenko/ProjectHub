@@ -40,11 +40,17 @@ def _records(db, project_id, kind, match, offset):
 
 
 def _contains_terms(expression, terms, params):
-    clauses = []
+    arguments = []
     for i, term in enumerate(terms):
         params[f'term{i}'] = term.casefold()
-        clauses.append(f'instr(projecthub_search_fold({expression}), :term{i}) > 0')
-    return ' AND '.join(clauses)
+        arguments.append(f':term{i}')
+    return f"projecthub_search_contains({expression}, {', '.join(arguments)})"
+
+
+def _search_contains(value, *terms):
+    # Fold one candidate at a time, without materializing every large note.
+    folded = str(value or '').casefold()
+    return all(term in folded for term in terms)
 
 
 def _notes(db, project_id, match, terms, offset):
@@ -62,8 +68,8 @@ def _notes(db, project_id, match, terms, offset):
         "AND NOT (n.kind='document' AND lower(n.reference) GLOB :share) "
         "UNION ALL SELECT n.id,substr(n.title,1,500),substr(n.content || ' ' || n.reference,1,600),0.0 "
         "FROM notes n WHERE n.project_id=:pid AND NOT (n.kind='document' AND lower(n.reference) GLOB :share) "
-        'AND ' + where + " AND n.id NOT IN (SELECT entity_id FROM search_index WHERE search_index MATCH :match "
-        "AND project_id=:pid AND entity_type='notes')) "
+        "AND n.id NOT IN (SELECT entity_id FROM search_index WHERE search_index MATCH :match "
+        "AND project_id=:pid AND entity_type='notes') AND " + where + ') '
         "SELECT id,title,snippet FROM matches ORDER BY score,id LIMIT :limit OFFSET :offset"
     ), params).mappings().all()
     return _page('notes', [{'id': f"notes:{row['id']}", 'title': row['title'], 'snippet': row['snippet']}
@@ -147,7 +153,7 @@ def project_search(db, project_id, query, kind='all', offset=0):
     # SQLite lower() handles ASCII only. A connection-local pure function keeps
     # JSON/session searches case-insensitive for Unicode without changing stored data.
     db.connection().connection.driver_connection.create_function(
-        'projecthub_search_fold', 1, lambda value: str(value or '').casefold(), deterministic=True)
+        'projecthub_search_contains', -1, _search_contains, deterministic=True)
     terms = re.findall(r'\w+', query, flags=re.UNICODE)[:30]
     selected = KINDS if kind == 'all' else (kind,)
     if not terms:

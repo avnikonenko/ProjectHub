@@ -1,5 +1,8 @@
 """Coordinated restart for the ProjectHub-owned Uvicorn launcher."""
 from contextlib import contextmanager
+import fcntl
+import os
+from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
@@ -10,6 +13,22 @@ from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from .models import CodexSession, Delivery
+
+
+@contextmanager
+def own_data_directory(directory):
+    path = Path(directory).expanduser().absolute()
+    if any(part.is_symlink() for part in (path, *path.parents)):
+        raise OSError('Application data directory must not be a symlink')
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        # Lock the directory inode for the process lifetime. A failed launcher
+        # must never mark another server's active database work interrupted.
+        fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+    finally:
+        os.close(descriptor)
 
 
 class RestartController:

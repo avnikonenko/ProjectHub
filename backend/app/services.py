@@ -11,7 +11,17 @@ from .models import Project, Question, Answer, Decision, Task, Note, AuditEvent,
 
 
 def serialize(obj):
-    return {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+    row = {c.name: getattr(obj, c.name) for c in obj.__table__.columns}
+    if isinstance(obj, Project):
+        row['git_remote'] = safe_project_git_remote(row['git_remote'])
+    elif isinstance(obj, AuditEvent) and row['entity_type'] == 'projects':
+        # Legacy audit snapshots may contain explicit URLs saved before this
+        # field was sanitized. Preserve history while masking it at read time.
+        for field in ('before', 'after'):
+            snapshot = row[field]
+            if isinstance(snapshot, dict) and 'git_remote' in snapshot:
+                row[field] = {**snapshot, 'git_remote': safe_project_git_remote(snapshot['git_remote'])}
+    return row
 
 
 def require_project(db, project_id):
@@ -71,7 +81,7 @@ def _repository_env():
 
 def repository_github_target(remote, path=None, *, validated=False):
     if remote.strip():
-        return github_repository(remote)
+        return github_repository(safe_project_git_remote(remote))
     if not path:
         return None
     env = _repository_env()
@@ -132,6 +142,24 @@ def _safe_remote_address(name, raw):
         if github:
             web_url = f'https://github.com/{github}'
     return {'name': name, 'address': address, **({'web_url': web_url} if web_url else {})}
+
+
+def safe_project_git_remote(raw):
+    """ProjectHub stores a display address, never Git authentication details."""
+    remote = _safe_remote_address('project', raw) if isinstance(raw, str) else None
+    if remote is None:
+        return ''
+    address = remote['address']
+    # GitHub's credential-free web URL also keeps the Issues view available
+    # when the original form used SSH, including an SCP-style URL.
+    return address if address.startswith('https://') else remote.get('web_url', address)
+
+
+def validate_project_git_remote(raw):
+    sanitized = safe_project_git_remote(raw)
+    if isinstance(raw, str) and raw.strip() and not sanitized:
+        raise HTTPException(422, 'Use an HTTP(S), SSH, or SCP-style Git remote address.')
+    return sanitized
 
 
 def _repository_remote_address(git, upstream_remote, registered_remote):

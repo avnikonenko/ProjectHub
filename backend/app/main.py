@@ -21,7 +21,7 @@ from .project_export import audit_response, project_export_response
 from .models import *
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
-from .services import repository_snapshot, repository_github_target
+from .services import repository_snapshot, repository_github_target, validate_project_git_remote
 from .resource_paths import runtime_resource
 from .version import VERSION
 
@@ -101,6 +101,7 @@ def create_app(data_dir=None, restart_controller=None):
     @app.post('/api/projects',status_code=201)
     def create_project(payload: ProjectCreate,db: Session=db_dep):
         values=payload.model_dump(); values['repository_path']=validate_repository(values['repository_path'])
+        values['git_remote'] = validate_project_git_remote(values['git_remote'])
         p=Project(**values);db.add(p);db.flush();audit(db,p.id,p,'created');db.commit();return serialize(p)
 
     @app.get('/api/projects/{project_id}')
@@ -127,6 +128,7 @@ def create_app(data_dir=None, restart_controller=None):
     def update_project(project_id:int,payload:ProjectPatch,db:Session=db_dep):
         p=require_project(db,project_id);before=serialize(p);values=payload.model_dump(exclude_unset=True)
         if 'repository_path' in values: values['repository_path']=validate_repository(values['repository_path'])
+        if 'git_remote' in values: values['git_remote'] = validate_project_git_remote(values['git_remote'])
         apply_values(p,values);audit(db,project_id,p,'updated',before);db.commit();return serialize(p)
 
     @app.get('/api/projects/{project_id}/overview')

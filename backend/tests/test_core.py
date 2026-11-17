@@ -29,6 +29,39 @@ def answer(c,pid,qid,solution='Method A',**kwargs):
     r=c.post(f'/api/projects/{pid}/questions/{qid}/answers',json={'solution':solution,**kwargs});assert r.status_code==201,r.text;return r.json()
 
 
+def test_project_git_remotes_redact_new_and_legacy_credentials(client):
+    from sqlalchemy.orm import Session
+    from backend.app.models import AuditEvent, Project
+
+    unsafe = 'https://remote-user:fake-pass@github.com/team/sample.git?token=fake-query#fake-fragment'
+    safe = 'https://github.com/team/sample.git'
+    saved = project(client, git_remote=unsafe)
+    pid = saved['id']
+    route = f'/api/projects/{pid}'
+    assert saved['git_remote'] == safe
+    with Session(client.app.state.engine) as db:
+        assert db.get(Project, pid).git_remote == safe
+    response = client.patch(route, json={'git_remote': 'git@github.com:team/other.git'})
+    assert response.status_code == 200
+    assert response.json()['git_remote'] == 'https://github.com/team/other'
+    cleared = client.patch(route, json={'git_remote': '  '})
+    assert cleared.status_code == 200 and cleared.json()['git_remote'] == ''
+
+    # Restore the shape of a pre-existing, unsanitized record in this test DB.
+    with Session(client.app.state.engine) as db:
+        db.get(Project, pid).git_remote = unsafe
+        db.add(AuditEvent(project_id=pid, entity_type='projects', entity_id=pid,
+                          action='updated', before={'git_remote': unsafe}, after={'git_remote': unsafe}))
+        db.commit()
+    for suffix in ('', '/overview?compact=true&note_content=false', '/audit', '/export'):
+        response = client.get(route + suffix)
+        assert response.status_code == 200
+        assert 'remote-user' not in response.text and 'fake-' not in response.text
+        assert safe in response.text
+    with Session(client.app.state.engine) as db:
+        assert db.get(Project, pid).git_remote == unsafe
+
+
 def test_compact_workspace_reads_preserve_full_api_and_project_scope(client):
     first = project(client, 'First', description='Full project metadata')
     second = project(client, 'Second')
