@@ -66,8 +66,3 @@ to load backend changes. Finish active jobs before restarting. After
 reconnecting, save any unfinished browser edits, then use **Reload page** to load
 the updated interface. If you started Uvicorn directly, restart its process from
 the terminal.
-
-## Historical material
-
-- [Initial implementation plan](IMPLEMENTATION_PLAN.md)
-- [Implementation handoff](IMPLEMENTATION_REPORT.md)

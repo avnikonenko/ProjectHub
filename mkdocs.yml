@@ -33,6 +33,3 @@ nav:
       - Validation: TEST_REPORT.md
       - Security: SECURITY_REVIEW.md
       - Engineering decisions: DECISIONS.md
-  - History:
-      - Initial implementation plan: IMPLEMENTATION_PLAN.md
-      - Implementation handoff: IMPLEMENTATION_REPORT.md
