@@ -71,6 +71,13 @@ See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub i
 
 Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
 
+## Example: Use ProjectHub to work on ProjectHub
+
+1. Click **Add project**, name it **ProjectHub**, and link your ProjectHub checkout as its local Git repository.
+2. In **Sources**, link a Codex session where you worked on ProjectHub, or use **Import shared chat** to add a conversation you want to keep.
+3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Read the saved result and follow its citations to the original discussions.
+4. When you come back to the project, open **Reviews → Ask Project** and ask “Why did we keep the source installer alongside the wheel?” With the optional Codex skill, you can also ask a new session “Read ProjectHub context for ProjectHub before we continue.”
+
 ## Settings and AI
 
 Run `projecthub config` to locate your editable configuration. See [config.example.toml](config.example.toml). Environment variables override file settings; restart after changes.
