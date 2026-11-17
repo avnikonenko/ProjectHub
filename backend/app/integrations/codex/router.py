@@ -15,6 +15,8 @@ from .accounts import account_options, account_home, launch_home, launch_label, 
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import read_scheme, refresh_scheme
+from .parameters import read_parameters, refresh_parameters
+from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
 from .knowledge_sources import load_sources
 from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
@@ -117,7 +119,7 @@ class TagGenerationInput(GenerationInput):
 
 
 class CancelGenerationInput(Input):
-    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags']
+    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters']
     started_at: str = Field(min_length=1, max_length=100)
 
 
@@ -331,7 +333,7 @@ def project_evidence(project_id: int, request: Request, db: DB):
 def revisions(project_id: int, db: DB, kind: str = 'brief',
               offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'parameters'):
         raise HTTPException(422, 'Unknown generation kind.')
     return list_revisions(db, project_id, kind, offset)
 
@@ -367,7 +369,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters'):
         raise HTTPException(422, 'Unknown generation kind.')
     status = progress.read(project_id, kind)
     return status
@@ -531,6 +533,40 @@ def generate_scheme(project_id: int, body: GenerationInput, request: Request, db
         db.rollback()
         with use_project_instructions(instructions):
             return refresh_scheme(request.app.state.engine, project_id, selected)
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/parameters')
+def get_parameters(project_id: int, request: Request, db: DB):
+    project(db, project_id)
+    saved = read_parameters(db, project_id)
+    db.rollback()
+    inspected = collect_parameter_evidence(request.app.state.engine, project_id)
+    coverage = inspected['coverage']
+    state = ('not_generated' if saved is None else
+             'unknown' if coverage.get('freshness_unknown') or not inspected.get('fingerprint') else
+             'unchanged' if saved.get('fingerprint') == inspected['fingerprint'] else 'changed')
+    return {'snapshot': saved,
+        'freshness': {'state': state, 'partial': coverage.get('partial', True),
+                      'limitations': coverage.get('limitations', [])},
+        'inspection': {'coverage': coverage, 'diagnostics': inspected.get('diagnostics', {})}}
+
+
+@router.post('/parameters')
+def generate_parameters(project_id: int, body: GenerationInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Confirm sending inspected parameter evidence to Codex before generation.')
+    try:
+        manager = manager_for(request.app, project_id)
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions):
+            return refresh_parameters(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:
