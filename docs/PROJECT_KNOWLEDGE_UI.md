@@ -18,7 +18,7 @@ Under **Knowledge**, switch from **Knowledge Summary & records** to
 **Implementation Choices & Limits**. This independent view explains consequential
 code behavior: inspection caps, filters, fallbacks, unsupported paths and processing
 choices. To generate or refresh it, select **Implementation Choices & Limits**
-in **Generation results** and click **Regenerate selected**. Browsing, filtering
+in the **Generation** tab and click **Regenerate selected**. Browsing, filtering
 and inspecting saved entries makes no model calls.
 
 Static inspection supports Python and simple scalar JSON, TOML and YAML
@@ -112,7 +112,7 @@ Saved knowledge loads automatically when Knowledge opens. If no active snapshot
 exists, the saved generated result appears directly, with its brief and all records.
 There is no separate reload button or collapsed preview workflow.
 
-Select **Knowledge** in **Generation results** and click **Regenerate selected**
+Select **Knowledge** in the **Generation** tab and click **Regenerate selected**
 to generate, validate and save using the configured project account, model,
 effort and instructions. The normal action
 sends `confirmed:true,publish:true`; browsing never invokes AI. No separate
@@ -120,14 +120,14 @@ Save/Use step is needed. The server checks source and repository freshness befor
 atomically saving the records, matching summary and revision. Failure or
 cancellation keeps the previous saved result and completed extraction caches.
 
-**Regenerate all** runs Knowledge alongside Overview, Q&A and Implementation
+**Regenerate all** in the **Generation** tab runs Knowledge alongside Overview, Q&A and Implementation
 Choices, then starts Scheme only after Knowledge saves successfully. The server
 owns this follow-up, so changing the selected project does not discard it.
 Knowledge failure/cancellation skips Scheme. Single-view Scheme generation still
 uses the currently saved Knowledge. Earlier stored results remain available as
 read-only history. They are not silently made current when their sources have changed.
 
-To refresh the general overview, select **Overview** in **Generation results**
+To refresh the general overview, select **Overview** in the **Generation** tab
 and click **Regenerate selected**. Its general summary and revision history are
 separate from Knowledge Summary. Older detailed
 summaries can be recovered from a matching saved publication/revision without

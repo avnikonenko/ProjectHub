@@ -383,7 +383,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
           onClick={() => setView(name)}>{name}</button>)}
     </nav>
-    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme in Generation results to create one.</Empty>}
+    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme on the Generation tab to create one.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
       <p><AIEmphasis text={graph.explanation} /></p>

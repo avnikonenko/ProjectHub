@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { ErrorBox } from './ui';
 import { projectGenerationKinds, type GenerationRetryView, type ProjectGenerationKind } from './generationBatch';
@@ -111,11 +111,12 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
 
 /** Reads only. Polling stops once no view is running or waiting. */
 export function GenerationResults({ base, refreshVersion, onState, selected = [], onSelectionChange, busy = {},
-  onRegenerateSelected, regenerateDisabled = false }: {
+  onRegenerateSelected, regenerateDisabled = false, bulkActions }: {
   base: string; refreshVersion: number; onState: (state: GenerationResultsState) => void;
   selected?: readonly ProjectGenerationKind[]; onSelectionChange?: (selected: ProjectGenerationKind[]) => void;
   busy?: Partial<Record<ProjectGenerationKind, boolean>>;
   onRegenerateSelected?: () => void; regenerateDisabled?: boolean;
+  bulkActions?: ReactNode;
 }) {
   const [state, setState] = useState<GenerationResultsState>({ base, data: null, loading: true, error: '' });
   const [reload, setReload] = useState(0);
@@ -141,15 +142,18 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
     return () => { controller.abort(); if (timer !== undefined) clearTimeout(timer); };
   }, [base, refreshVersion, reload]);
   return <section className="generation-results" aria-label="Generation results" aria-busy={current.loading}>
-    <h3>Generation results</h3>
+    <h2>Generation results</h2>
     <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
+    <div className="generation-selection-controls">
+      {current.data && <button className="secondary" onClick={onRegenerateSelected}
+        disabled={regenerateDisabled || current.loading || !!current.error || !onRegenerateSelected}>Regenerate selected</button>}
+      {bulkActions}
+    </div>
     {current.loading && !current.data && <p className="muted">Loading generation status…</p>}
     {current.error && <><ErrorBox error={`Could not load generation status: ${current.error}`} />
       <button className="quiet" onClick={() => setReload(value => value + 1)}>Reload status</button></>}
     {current.data && <>
       <div className="generation-selection-controls">
-        <button className="secondary" onClick={onRegenerateSelected}
-          disabled={regenerateDisabled || current.loading || !!current.error || !onRegenerateSelected}>Regenerate selected</button>
         <button className="quiet" disabled={current.loading || !!current.error || !onSelectionChange}
           onClick={() => onSelectionChange?.(selectableGenerationKinds(current.data!, busy))}>Select all</button>
         <button className="quiet" disabled={!selected.length || !onSelectionChange}

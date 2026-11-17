@@ -609,6 +609,7 @@ function ProjectWorkspace({
     </li>
   );
   const tabs = [
+    'Generation',
     'Dashboard',
     'Knowledge',
     'Scheme',
@@ -645,24 +646,15 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
-          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
-            {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
-          </button>
-          <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'
-            || !currentGenerationResults || currentGenerationResults.loading || !!currentGenerationResults.error
-            || !retryPlan?.start.length} onClick={retryUnfinished}>Retry unfinished</button>
           <GenerationSettings base={base} generation={generation} onChange={setGeneration} />
         </div>
       </div>
-      <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
-        selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
-        onRegenerateSelected={regenerateSelected} regenerateDisabled={recovery.checking || bulkPending.length > 0
-          || bulkScheme === 'waiting' || !selectedPlan?.start.length} />
       <nav className="tabs" aria-label="Project sections">
         {tabs.map((t) => (
           <button
             key={t}
             className={view === t ? 'active' : ''}
+            aria-current={view === t ? 'page' : undefined}
             onClick={() => {
               if (historyLink || knowledgeLink) onLeaveHistory();
               if (t === 'Knowledge') window.location.hash = knowledgeHref({ projectId });
@@ -732,6 +724,20 @@ function ProjectWorkspace({
           {bulkScheme === 'skipped' && <> Scheme was skipped because fresh Knowledge was not saved or a required view was busy.</>}
           {!!bulkSkipped.length && <> Some views were skipped because their own generation or controls were busy or not ready.</>}
         </Feedback>}
+        <div hidden={view !== 'Generation' || !!results}>
+          <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
+            selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
+            onRegenerateSelected={regenerateSelected} regenerateDisabled={recovery.checking || bulkPending.length > 0
+              || bulkScheme === 'waiting' || !selectedPlan?.start.length}
+            bulkActions={<>
+              <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
+                {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
+              </button>
+              <button className="secondary" disabled={recovery.checking || bulkPending.length > 0 || bulkScheme === 'waiting'
+                || !currentGenerationResults || currentGenerationResults.loading || !!currentGenerationResults.error
+                || !retryPlan?.start.length} onClick={retryUnfinished}>Retry unfinished</button>
+            </>} />
+        </div>
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
@@ -1664,7 +1670,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         </div>}
         {saved && targetQuestion !== undefined && <p className="muted">Choose Show all above to filter Q&A by tags.</p>}
         {loading && <Feedback>Loading saved Q&A…</Feedback>}
-        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet. Select Q&A in Generation results to create it.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet. Select Q&A on the Generation tab to create it.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
             <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>

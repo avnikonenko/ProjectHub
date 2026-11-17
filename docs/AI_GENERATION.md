@@ -167,7 +167,8 @@ still use one call. Duplicate generation for the same project/view is blocked.
 Each job has independent progress, cancellation, time budget and saved results.
 Restart and source/account maintenance still wait for all active jobs.
 
-**Regenerate all** starts idle Overview, Knowledge, Q&A and Implementation Choices
+Open **Generation**, the first project tab, to manage generations. **Regenerate all**
+starts idle Overview, Knowledge, Q&A and Implementation Choices
 in parallel. Scheme waits until the new Knowledge is successfully saved. A
 server-owned follow-up then starts Scheme using saved Knowledge, even if the user
 navigates away. Knowledge failure/cancellation skips Scheme; siblings continue
@@ -188,7 +189,7 @@ refresh successful results merely because they may be stale. Failed Scheme alone
 retries against saved Knowledge; when both Knowledge and Scheme are unfinished,
 Knowledge retries first and requests Scheme only after saving. Existing matching
 batch caches are reused, but a single interrupted model request cannot resume.
-In **Generation results**, select **Overview**, **Knowledge**, **Scheme**, **Q&A**
+In the **Generation** tab, select **Overview**, **Knowledge**, **Scheme**, **Q&A**
 or **Implementation Choices & Limits**, then click **Regenerate selected**.
 The same controls generate a first result or refresh an existing result.
 Unfinished views are selected initially. **Select all** selects available views, and

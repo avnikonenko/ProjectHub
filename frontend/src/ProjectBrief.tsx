@@ -165,7 +165,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
         <Feedback>{notice}</Feedback>
         {revisionLoading && <Feedback>Loading saved version…</Feedback>}
         {loading && <Feedback>Loading saved Project Overview…</Feedback>}
-        {!loading && !brief && <Empty>No saved Project Overview yet. Select Overview in Generation results to create one.</Empty>}
+        {!loading && !brief && <Empty>No saved Project Overview yet. Select Overview on the Generation tab to create one.</Empty>}
         {brief && (
           <>
             <BriefContent brief={brief} prefix={base.split('/')[2] + '-brief'} />

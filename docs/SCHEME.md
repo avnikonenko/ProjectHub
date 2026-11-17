@@ -22,7 +22,7 @@ components and cycles use blue. Evidence-status labels and border styles remain.
 
 1. Link a repository through **Edit overview**, if available, and relevant
    conversations through **Sources**.
-2. In **Generation results**, select **Scheme** and click **Regenerate selected**.
+2. Open the **Generation** tab, select **Scheme**, and click **Regenerate selected**.
 3. Open the **Scheme** tab to inspect the diagrams and expand **Evidence used** for original excerpts, or
    **Components and relationships** for individual references.
 
@@ -54,8 +54,8 @@ input. Items with many references may use a disclosed selection of original
 passages; omitted references do not independently support generated claims.
 
 Saving a new Knowledge version updates the existing Scheme's freshness indicator,
-even if selected statements are unchanged. Select **Scheme** in
-**Generation results** and click **Regenerate selected** to use the new context.
+even if selected statements are unchanged. Select **Scheme** in the
+**Generation** tab and click **Regenerate selected** to use the new context.
 Older Scheme revisions retain the Knowledge version they used. Reading and selecting
 Knowledge adds no model calls; Scheme still makes one explicit generation request.
 

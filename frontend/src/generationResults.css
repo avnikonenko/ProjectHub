@@ -1,5 +1,5 @@
-.generation-results { margin: 14px 28px; padding: 14px 16px; min-width: 0; container-type: inline-size; background: var(--surface, #fff); border: 1px solid var(--border, #70827955); border-radius: .35rem; }
-.generation-results h3 { margin: 0 0 8px; font-size: 1rem; }
+.generation-results { padding: 14px 16px; min-width: 0; container-type: inline-size; background: var(--surface, #fff); border: 1px solid var(--border, #70827955); border-radius: .35rem; }
+.generation-results h2 { margin: 0 0 8px; font-size: 1.1rem; }
 .generation-results-list { list-style: none; margin: 0; padding: 0; }
 .generation-results-list > li { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 2px 18px; padding: 10px 0; border-bottom: 1px solid var(--border, #70827955); align-items: start; }
 .generation-results-list > li:last-child { border-bottom: 0; }
@@ -8,8 +8,6 @@
 .generation-result-description { grid-column: 2; grid-row: 2; color: var(--muted); font-size: .9rem; overflow-wrap: anywhere; }
 .generation-result-description details { margin-top: 2px; }
 .generation-result-description details p { white-space: pre-wrap; margin: 6px 0; }
-@media (max-width: 1050px) { .generation-results { margin-inline: 25px; } }
-@media (max-width: 750px) { .generation-results { margin-inline: 18px; } }
 @container (max-width: 32rem) {
   .generation-results-list > li { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .generation-results-list > li > :is(.generation-result-choice, strong, .generation-result-description) { grid-column: 1; grid-row: auto; }
@@ -17,7 +15,7 @@
 .generation-result-choice { display: flex; grid-column: 1; grid-row: 1 / span 2; align-items: baseline; gap: 8px; min-width: 0; margin: 0; font-weight: inherit; }
 .generation-result-choice > span { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
 .generation-result-choice input { flex: 0 0 auto; width: auto; margin: 0; }
-.generation-selection-controls { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 6px; }
+.generation-selection-controls { display: flex; flex-wrap: wrap; gap: .35rem .6rem; margin: .4rem 0; }
 .generation-selection-controls > button { min-width: 0; max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
 .generation-results-help { margin-top: .65rem; }
 .generation-results-help > p { margin: .4rem 0 0; }

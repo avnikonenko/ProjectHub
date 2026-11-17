@@ -297,7 +297,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       {showRecords && feedback}
       {(isLoading || currentPreview?.loading) && !snapshot && !candidate && <Feedback>Loading saved knowledge…</Feedback>}
       {!isLoading && !currentPreview?.loading && !error && !currentPreview?.error && !snapshot && !candidate
-        && <Empty>No current Knowledge result. Select Knowledge in Generation results to create one.</Empty>}
+        && <Empty>No current Knowledge result. Select Knowledge on the Generation tab to create one.</Empty>}
       {!isLoading && !snapshot && expectedPublication
         && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>
