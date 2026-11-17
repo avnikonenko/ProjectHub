@@ -97,7 +97,7 @@ export function BriefContent({ brief, prefix, perspective = 'project' }: { brief
       );
     })}
     {!visibleSections.length && <Empty>The available sources did not support a project summary.</Empty>}
-    <CoverageDetails savedAt={brief.generated_at} sourceCount={brief.sources.length}
+    <CoverageDetails savedAt={brief.generated_at} sourceCount={sources.length}
       coverage={brief.coverage.map(validationCopy)} diagnostics={brief.diagnostics} />
   </>;
 }

@@ -46,7 +46,7 @@ test('legacy, null and malformed counts do not invent zero or expose invalid num
     const html = renderToStaticMarkup(createElement(details, { coverage: { ...coverage, file_counts }, saved: true }));
     assert.doesNotMatch(html, /<dd>(?:-1|8|NaN|1.5|Yes)<\/dd>/);
     assert.doesNotMatch(html, /(?:Files[^<]*|Prefix-only[^<]*)<\/dt><dd>0<\/dd>/);
-    assert.match(html, /Recorded conversation excerpts<\/dt><dd>0/);
+    assert.match(html, /Direct Codex conversation excerpts<\/dt><dd>0/);
     assert.match(html, /not recorded|Not recorded/);
   }
   const html = renderToStaticMarkup(createElement(details, { coverage: { ...coverage,
@@ -132,8 +132,8 @@ test('Scheme uses one closed standard coverage disclosure with saved accounting'
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
   assert.doesNotMatch(html, /<summary>How ProjectHub inspected/);
   const [summary, breakdown] = html.split(/<summary[^>]*>Detailed coverage<\/summary>/);
-  assert.match(summary, /Repository files<\/strong> 5 of 20 eligible in AI input · 15 omitted/);
-  assert.match(summary, /Conversation excerpts<\/strong> 0/);
+  assert.match(summary, /Repository excerpts<\/strong> from 5 of 20 eligible files in AI input · 15 files omitted/);
+  assert.match(summary, /Direct Codex conversation excerpts<\/strong> 0/);
   assert.doesNotMatch(summary, /Files successfully read|Inspection duration/);
   assert.match(breakdown, /Files successfully read<\/dt><dd>7/);
   assert.match(html, /<summary>Repository inspection diagnostics/);
@@ -148,7 +148,7 @@ test('historical Scheme without counts shows unknowns instead of newer inspectio
     partial: false, limitations: [], files_inspected: 3, conversation_excerpts: 0 } };
   const current = { coverage: { ...coverage, file_counts: { ...coverage.file_counts, read_files: 913 } } };
   const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current }));
-  assert.match(html, /Repository files<\/strong> Coverage not recorded/);
+  assert.match(html, /Repository excerpts<\/strong> Coverage not recorded/);
   assert.match(html, /File counts were not recorded for this saved Scheme/);
   assert.doesNotMatch(html, /Files successfully read|913/);
   const disclosed = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current, showCurrent: true }));
@@ -164,6 +164,15 @@ test('inspection before first Scheme is clearly identified as current', () => {
     current: { coverage, diagnostics: { inspection_seconds: 0.5 } } }));
   assert.match(html, /Current inspection; no saved Scheme is selected/);
   assert.match(html, /Current repository inspection/);
-  assert.match(html, /5 of 20 eligible selected for AI · 15 omitted/);
+  assert.match(html, /5 of 20 eligible files selected for AI · 15 files omitted/);
   assert.doesNotMatch(html, /Recorded with the result saved|Recorded with this saved Scheme/);
+});
+
+test('compact coverage omits the denominator and skipped totals for an incomplete inventory', () => {
+  const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot: {
+    coverage: { ...coverage, file_counts: { ...coverage.file_counts, listing_complete: false } },
+  } }));
+  const [summary] = html.split(/<summary[^>]*>Detailed coverage<\/summary>/);
+  assert.match(summary, /Repository excerpts<\/strong> from 5 files in AI input \(eligible total unknown\)/);
+  assert.doesNotMatch(summary, /of 20|15 files omitted/);
 });

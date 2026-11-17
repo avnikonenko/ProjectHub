@@ -106,7 +106,7 @@ export function SchemeInspectionDetails({ coverage, saved, current = false, embe
       <p><small>Reading a file locally and supplying it to AI are different stages. Prefixes and selected excerpts do not cover the complete file; these counts do not establish correctness.</small></p>
     </>}
     <dl>
-      <div><dt>Recorded conversation excerpts</dt><dd>{count(coverage?.conversation_excerpts)}</dd></div>
+      <div><dt>Direct Codex conversation excerpts</dt><dd>{count(coverage?.conversation_excerpts)}</dd></div>
       {!counts && <div><dt>Recorded inspected files</dt><dd>{count(coverage?.files_inspected)}</dd></div>}
     </dl>
     {counts && typeof counts === 'object' ? <>
@@ -154,14 +154,14 @@ function SchemeCoverageSummary({ coverage, saved }: { coverage?: SchemeCoverage;
   const format = (value: number) => value.toLocaleString();
   const destination = saved ? 'in AI input' : 'selected for AI';
   return <ul>
-    <li><strong>Repository files</strong> {validCount(evidence)
+    <li><strong>Repository excerpts</strong> {validCount(evidence)
       ? eligible === undefined
-        ? `${format(evidence)} ${destination} (eligible total unknown)`
-        : `${format(evidence)} of ${format(eligible)} eligible ${destination}`
+        ? `from ${format(evidence)} files ${destination} (eligible total unknown)`
+        : `from ${format(evidence)} of ${format(eligible)} eligible files ${destination}`
       : 'Coverage not recorded'}
       {eligible !== undefined && validCount(evidence) && evidence < eligible
-        && ` · ${format(eligible - evidence)} omitted`}</li>
-    {validCount(excerpts) && <li><strong>Conversation excerpts</strong> {format(excerpts)}</li>}
+        && ` · ${format(eligible - evidence)} ${eligible - evidence === 1 ? 'file' : 'files'} omitted`}</li>
+    {validCount(excerpts) && <li><strong>Direct Codex conversation excerpts</strong> {format(excerpts)}</li>}
   </ul>;
 }
 export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }: { diagnostics?: SchemeDiagnostics | null; saved: boolean; embedded?: boolean }) {

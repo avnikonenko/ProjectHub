@@ -26,7 +26,8 @@ test('overview coverage is one closed disclosure and no longer appears above the
     assert.match(html, /<details class="coverage-details generation-details">/);
     assert.doesNotMatch(html, /<details[^>]*\bopen(?:=|[ >])/);
     assert.ok(html.indexOf('Overview uses selected original evidence.') > html.indexOf(marker));
-    assert.match(html, /Cited sources in this result: 2/);
+    assert.match(html, /<li>1 cited source<\/li>/);
+    assert.match(html, /Cited sources in this result: 1/);
     assert.match(html, /7\.5 seconds/);
     assert.doesNotMatch(html, /Preview coverage/);
   }
