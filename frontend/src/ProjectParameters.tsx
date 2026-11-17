@@ -302,8 +302,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       </button>} />
     <p>Consequential limits, filters, fallbacks and processing choices found in code, with their consequences and usage locations. These are not values verified in a particular run.</p>
     <details><summary>How this works</summary>
-      <p>Generation sends selected code declarations and usage evidence to OpenAI through Codex. A declaration alone does not establish enforcement. Code evidence remains separate from AI explanations; inferred consequences are labeled. Saving this view does not regenerate Overview, Knowledge or Scheme. Browsing and searching saved results makes no model calls.</p>
-      <p>Static inspection supports Python code and supported scalar settings in JSON, TOML and YAML. Usage matching is bounded and does not establish every call path or configuration override. Other languages and complete configuration precedence are not analyzed; recorded coverage lists inspection limits.</p>
+      <p>Codex explains selected code choices, limits and their locations. Generation sends evidence to OpenAI; browsing saved results makes no AI calls.</p>
     </details>
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
     {loading && <Feedback>Loading saved implementation choices…</Feedback>}
