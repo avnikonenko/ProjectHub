@@ -13,8 +13,9 @@ checks are cooperative; an in-flight protocol operation can take additional time
 to stop.
 
 To change the budget without restarting, open **Settings → Overall time budget
-(seconds)**, enter a whole number from 30 to 7200, and click **Save time budget**.
-The default is 900 seconds (15 minutes). Saving updates your local configuration
+(seconds)** and enter a whole number from 30 to 7200. The value saves after a
+short pause, when you press Enter, or when you leave the field. The default is
+900 seconds (15 minutes). Saving updates your local configuration
 and the next generation's allowance; an already-running request keeps its original
 budget. Increasing this setting does not increase the separate per-response timeout.
 It covers Project status, AI Q&A, Scheme, Knowledge generation, and Ask Project AI
@@ -154,10 +155,11 @@ single requests.
 Independent AI Q&A drafts and consolidation groups share this worker limit;
 their dependent final ranking remains sequential.
 
-You can also enter N in **Settings → AI workers per job**, then click
-**Save workers per job**. It saves the value in your local ProjectHub settings and
-applies it to the next generation, without interrupting an active run or invoking
-Codex. A launch-time environment override still takes precedence after restarting;
+You can also enter N in **Settings → AI workers per job**. The field saves
+automatically, like the time budget. Dropdowns save as soon as you make a selection.
+ProjectHub saves the worker count locally and uses it for the next generation.
+Saving leaves active runs alone and makes no Codex request. A launch-time
+environment override still takes precedence after restarting;
 the control shows when the effective and saved values differ.
 
 Overview, Knowledge, Scheme, Q&A and Implementation Choices can run concurrently.
