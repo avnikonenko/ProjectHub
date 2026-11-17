@@ -1,0 +1,42 @@
+{
+  "description": "Synthetic proposals only; no project transcripts. Live results are documented separately, not an automated model-accuracy test.",
+  "source": {
+    "id": "synthetic:assistant:1",
+    "role": "assistant",
+    "text": "These are six independent, unaccepted assistant proposals for a synthetic project.\nProposal A: Make CSV export an optional switch.\nProposal B: Make timestamped logging an optional switch.\nProposal C: Make local search indexing an optional switch.\nProposal D: Make input checksum validation an optional switch.\nProposal E: Make intermediate-file retention an optional switch.\nProposal F: Make weekly report export an optional switch.",
+    "revision": "dcae2a465a31dbc9b025784172f34c7d43259b65e4cbd7c05fa5e9ae42dfc148",
+    "conversation_id": "synthetic:conversation",
+    "order": 0,
+    "source_key": "synthetic:conversation",
+    "label": "Synthetic assistant proposals",
+    "partial_message": false,
+    "message_revision": "dcae2a465a31dbc9b025784172f34c7d43259b65e4cbd7c05fa5e9ae42dfc148",
+    "message_order": 1,
+    "offset_start": 0,
+    "offset_end": 432
+  },
+  "probe_instructions": "Extract these six independent proposals into the supplied knowledge JSON schema. Use one item per proposal, naming its label and optional setting. All are unaccepted assistant proposals: use PROPOSAL/PROPOSED and agreement_basis none. Copy one short exact supporting excerpt per item with the supplied source ID and assistant role. Use scope synthetic project. Leave absent rationale, alternatives, limitations and revises_statement as empty strings and conflicting_statements as an empty array. Return compact JSON only; no commentary. If the schema item ceiling prevents all six, return up to its allowed maximum and omit the others. Do not exceed the schema ceiling.",
+  "schema_reference": "backend.app.integrations.codex.knowledge.OUTPUT_SCHEMA at schema version 2, prompt version 10",
+  "cases": [
+    {
+      "name": "control24",
+      "max_items": 24,
+      "instructions": "probe_instructions"
+    },
+    {
+      "name": "pressure4",
+      "max_items": 4,
+      "instructions": "probe_instructions"
+    },
+    {
+      "name": "relaxed8",
+      "max_items": 8,
+      "instructions": "probe_instructions"
+    },
+    {
+      "name": "production_prompt24",
+      "max_items": 24,
+      "instructions": "backend.app.integrations.codex.knowledge.PROMPT"
+    }
+  ]
+}

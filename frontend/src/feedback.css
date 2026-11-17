@@ -1,0 +1,35 @@
+/* Feedback is scoped so pagination and other status labels keep their layout. */
+.feedback.feedback-info,
+.feedback.feedback-success,
+.feedback.feedback-error {
+  margin-block: 0.6rem 0.85rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border, #d6dfdb);
+  border-inline-start: 3px solid var(--accent, #2f6757);
+  border-radius: 5px;
+  background: var(--surface-subtle, #f2f6f3);
+  color: var(--text, #26332e);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.feedback.feedback-success { border-inline-start-color: #38744d; }
+.feedback.feedback-error {
+  background: #fff0ee;
+  color: #8f3430;
+  border-color: #efceca;
+  border-inline-start-color: #a6453e;
+  white-space: pre-wrap;
+}
+[data-theme='dark'] .feedback.feedback-error {
+  background: #422522;
+  color: #ffc5bd;
+  border-color: #82524a;
+  border-inline-start-color: #f0a49a;
+}
+[data-theme='dark'] .feedback.feedback-success { border-inline-start-color: #9bd4b6; }
+.feedback > :first-child { margin-block-start: 0; }
+.feedback > :last-child { margin-block-end: 0; }
+.feedback > p { margin-block: 0.25rem; }
+.feedback.generation-progress { margin-block-start: 0.6rem; }

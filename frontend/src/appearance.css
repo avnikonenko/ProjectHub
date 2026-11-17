@@ -1,0 +1,128 @@
+/* Portfolio layout and neutral surfaces are shared by all accent colours. */
+:root {
+  --page: #efeeea;
+  --surface: #faf9f6;
+  --surface-subtle: #e8e7e2;
+  --text: #212327;
+  --muted: #51565e;
+  --accent: #315b80;
+  --border: #d0d2d6;
+  --palette-selected: #e3ebf3;
+  --palette-button: #315b80;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+  line-height: 1.65;
+}
+
+:root[data-theme='dark'] {
+  --page: #171717;
+  --surface: #1c1c1c;
+  --surface-subtle: #242424;
+  --text: #f3efe7;
+  --muted: #b4afa6;
+  --accent: #a3c6e6;
+  --border: #3c3c3c;
+  --palette-selected: #263442;
+  --palette-button: #35536c;
+}
+
+:root[data-palette] :is(.project-header, .tabs) {
+  background: var(--page);
+}
+
+:root .card {
+  border-radius: .35rem;
+  box-shadow: none;
+  padding: clamp(1rem, 2.5vw, 1.65rem);
+}
+
+:root :is(h1, h2, h3) {
+  letter-spacing: -.018em;
+}
+
+:root[data-palette='sage'] {
+  --accent: #36604e;
+  --palette-selected: #e1ede5;
+  --palette-button: #36604e;
+}
+
+:root[data-palette='sage'][data-theme='dark'] {
+  --accent: #a0c8af;
+  --palette-selected: #283b31;
+  --palette-button: #385948;
+}
+
+:root[data-palette='lavender'] {
+  --accent: #614781;
+  --palette-selected: #eee5f5;
+  --palette-button: #614781;
+}
+
+:root[data-palette='lavender'][data-theme='dark'] {
+  --accent: #d0b5e6;
+  --palette-selected: #3c3046;
+  --palette-button: #61477c;
+}
+
+:root[data-palette='amber'] {
+  --accent: #765014;
+  --palette-selected: #f5ead8;
+  --palette-button: #765014;
+}
+
+:root[data-palette='amber'][data-theme='dark'] {
+  --accent: #edc48d;
+  --palette-selected: #443727;
+  --palette-button: #62491f;
+}
+
+:root[data-palette='graphite'] {
+  --accent: #414751;
+  --palette-selected: #e6e8ec;
+  --palette-button: #414751;
+}
+
+:root[data-palette='graphite'][data-theme='dark'] {
+  --accent: #c3cad4;
+  --palette-selected: #35383d;
+  --palette-button: #4c5460;
+}
+
+.ai-emphasis, .markdown strong {
+  color: var(--emphasis);
+}
+
+:root[data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
+  font-weight: 750;
+  color: var(--accent);
+  color: color-mix(in srgb, var(--accent) 82%, #000);
+}
+
+:root[data-theme='dark'][data-palette] :is(h1, h2, h3, h4, h5, h6, .brief-topic) {
+  color: color-mix(in srgb, var(--accent) 90%, #000);
+}
+
+:root[data-palette] :is(.brief-reference, .citation-source, .source-disclosure, .brief-sources ol summary) {
+  color: var(--muted);
+}
+
+:is(.coverage-details, .knowledge-coverage, .brief-sources) > summary,
+.result-support > details > summary {
+  color: var(--text);
+}
+
+:root[data-palette] .coverage-details :is(h1, h2, h3, h4, h5, h6, .brief-topic),
+:root[data-palette] .coverage-details details summary {
+  color: var(--muted);
+}
+
+:root[data-palette] :is(.brief-reference, .citation-source):is(:hover, :focus-visible) {
+  color: var(--accent);
+}
+
+
+:root { --emphasis: #76501f; }
+:root[data-theme='dark'] { --emphasis: #e2bf89; }
+:root[data-palette='sage'], :root[data-palette='amber'] { --emphasis: #6b4a8b; }
+:root[data-theme='dark']:is([data-palette='sage'], [data-palette='amber']) { --emphasis: #cdb2e8; }
+:root[data-palette='lavender'] { --emphasis: #36604e; }
+:root[data-theme='dark'][data-palette='lavender'] { --emphasis: #a0c8af; }

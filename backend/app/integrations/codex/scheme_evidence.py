@@ -1,0 +1,1250 @@
+"""Bounded Scheme inputs from local files and stored records; never runs project code or AI."""
+import ast
+from collections import deque
+from copy import deepcopy
+import hashlib
+import json
+import os
+from pathlib import PurePosixPath
+import re
+import stat
+import time
+import tomllib
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import SQLAlchemyError
+
+from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, DEFAULT_SCHEME_READ_BYTES, scheme_inspection_limits
+from ...models import ProjectHistoryBatch
+from ...project_evidence import (
+    EvidenceReadError, _CODE_PRIVATE, _code_category, _code_order, _digest,
+    _excluded, _exclusions, _git, _repository_root,
+)
+from ...services import require_project
+from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
+from .scheme_environments import environment_dependencies, is_environment_manifest
+from .scheme_knowledge import collect_published_knowledge
+
+_MAX_PATHS = 300
+_MAX_BYTES = 65536
+_INSPECTION_SECONDS = 5.0
+_MAX_METADATA_BYTES = 1024 * 1024
+_METADATA_SECONDS = 5.0
+_MAX_EXCERPT = 1600
+_MAX_DEPENDENCIES = 100
+_MAX_RECORDED_FILE_OMISSIONS = 100
+_REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
+
+
+def _source(identifier, label, value, provenance, **metadata):
+    return {'id': identifier, 'label': label[:240], 'text': value,
+            'provenance': provenance, 'content_hash': hashlib.sha256(value.encode()).hexdigest(), **metadata}
+
+
+def _knowledge_closure(result):
+    """Budgeting must not leave an interpretation without its original evidence."""
+    sources = result['sources']
+    primary_ids = {source['id'] for source in sources
+                   if source.get('provenance') != 'published Knowledge interpretation'}
+    kept = [source for source in sources if source.get('provenance') != 'published Knowledge interpretation'
+            or source.get('supporting_source_ids') and set(source['supporting_source_ids']) <= primary_ids]
+    removed = len(sources) - len(kept)
+    sources[:] = kept
+    context = result.get('knowledge_context')
+    if isinstance(context, dict):
+        interpretations = [source for source in sources if source.get('provenance') == 'published Knowledge interpretation']
+        context['included_items'] = len(interpretations)
+        context['omitted_items'] = max(0, context.get('available_items', 0) - context['included_items'])
+        if 'input_chars' in context:
+            context['input_chars'] = sum(len(source['text']) for source in sources
+                if source.get('provenance') in {'published Knowledge interpretation', 'published Knowledge original evidence'})
+        if 'current_evidence_availability' in context:
+            availability = {}
+            for source in interpretations:
+                state = source.get('evidence_availability', 'unknown')
+                availability[state] = availability.get(state, 0) + 1
+            context['current_evidence_availability'] = availability
+        if 'partial_evidence_items' in context:
+            context['partial_evidence_items'] = sum(source.get('evidence_partial') is True for source in interpretations)
+    if removed:
+        coverage = result['coverage']
+        coverage['partial'] = True
+        coverage['limitations'] = sorted({*coverage['limitations'],
+            'Some Knowledge interpretations were omitted because their original evidence did not fit the input budget.'})
+        coverage['omitted_reason_counts']['knowledge_support_budget'] = removed
+
+
+def _bound_package(result, max_chars=DEFAULT_SCHEME_PACKAGE_CHARS):
+    """Bound serialized metadata too, keeping whole sources and valid references."""
+    def update_file_counts():
+        counts = result['coverage'].get('file_counts')
+        if counts is not None:
+            counts['evidence_files'] = len({source['path'] for source in result['sources'] if source.get('path')})
+            counts['read_not_in_evidence'] = counts['read_files'] - counts['evidence_files']
+
+    def serialized_size(value):
+        return len(json.dumps(value, ensure_ascii=False))
+
+    _knowledge_closure(result)
+    update_file_counts()
+    payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context') if key in result}
+    used = serialized_size(payload)
+    if used > max_chars:
+        coverage = result['coverage']
+        coverage['partial'] = True
+        coverage['limitations'] = sorted({*coverage['limitations'],
+            'The serialized evidence package budget was reached; some structure or source evidence was omitted.'})
+        counts = coverage['omitted_reason_counts']
+        counts['package_output_budget'] = 0
+        used = serialized_size(payload)
+
+        def remove(items, index=-1):
+            nonlocal used
+            value = items.pop(index)
+            used -= serialized_size(value) + (2 if items else 0)
+            counts['package_output_budget'] += 1
+            return value
+
+        # Structure is supplemental; preserve priority-ordered source evidence first.
+        # Reserve a little space for the updated counters and coverage metadata.
+        while used > max(0, max_chars - 512):
+            if result['tree']:
+                remove(result['tree'])
+            elif result['sources']:
+                removed = remove(result['sources'])
+                for index in range(len(result['dependencies']) - 1, -1, -1):
+                    if removed['id'] in result['dependencies'][index]['source_ids']:
+                        remove(result['dependencies'], index)
+            else:
+                break
+        _knowledge_closure(result)
+        coverage['conversation_excerpts'] = sum(
+            source['provenance'] == 'Codex conversation' for source in result['sources'])
+    update_file_counts()
+    return serialized_size(payload)
+
+
+def _safe_relative(value, patterns):
+    path = PurePosixPath(value)
+    return (bool(value) and not path.is_absolute() and '..' not in path.parts
+            and not any(c < '\x20' or '\ud800' <= c <= '\udfff' for c in value)
+            and not _excluded(value, patterns))
+
+
+def _manifest(path):
+    name = PurePosixPath(path).name.lower()
+    return is_environment_manifest(path) or name in ('pyproject.toml', 'package.json') or (
+        name.startswith('requirements') and name.endswith(('.txt', '.in')))
+
+
+def _descriptor(root_fd, relative):
+    """Open each component relative to the root without following symlinks."""
+    opened = []
+    try:
+        current = root_fd
+        for part in PurePosixPath(relative).parts[:-1]:
+            current = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current)
+            opened.append(current)
+        fd = os.open(PurePosixPath(relative).name, os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=current)
+        opened.append(fd)
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError('Not a regular file')
+        return os.dup(fd)
+    finally:
+        for fd in reversed(opened):
+            os.close(fd)
+
+
+class _InspectionStopped(Exception):
+    def __init__(self, reason):
+        self.reason = reason
+
+
+class _InspectionBudget:
+    def __init__(self, max_bytes=DEFAULT_SCHEME_READ_BYTES):
+        self.started = time.monotonic()
+        self.deadline = self.started + _INSPECTION_SECONDS
+        self.bytes_read = 0
+        self.max_bytes = max_bytes
+        self.prefix_read_files = 0
+
+    def check(self):
+        if time.monotonic() >= self.deadline:
+            raise _InspectionStopped('time_budget')
+        if self.bytes_read >= self.max_bytes:
+            raise _InspectionStopped('byte_budget')
+
+
+def _read(root_fd, relative, *, allow_prefix=False, budget=None):
+    if budget is not None:
+        budget.check()
+    fd = _descriptor(root_fd, relative)
+    try:
+        data = bytearray()
+        while len(data) <= _MAX_BYTES:
+            maximum = min(8192, _MAX_BYTES + 1 - len(data))
+            if budget is not None:
+                budget.check()
+                maximum = min(maximum, budget.max_bytes - budget.bytes_read)
+            chunk = os.read(fd, maximum)
+            if budget is not None:
+                budget.bytes_read += len(chunk)
+                if time.monotonic() >= budget.deadline:
+                    raise _InspectionStopped('time_budget')
+            if not chunk:
+                break
+            data.extend(chunk)
+            # An exact-budget file can already be complete. Confirm EOF using
+            # the open descriptor without spending another byte of the budget.
+            if budget is not None and budget.bytes_read == budget.max_bytes and len(data) == os.fstat(fd).st_size:
+                break
+        if b'\0' in data:
+            raise ValueError('Binary file')
+        prefix = len(data) > _MAX_BYTES
+        if prefix:
+            if not allow_prefix:
+                raise ValueError('Oversized file')
+            data = data[:_MAX_BYTES].rsplit(b'\n', 1)[0]
+        value = data.decode('utf-8')
+        if prefix and budget is not None:
+            budget.prefix_read_files += 1
+        return value
+    finally:
+        os.close(fd)
+
+
+def _markers(root_fd, candidates):
+    result = []
+    deadline = time.monotonic() + _METADATA_SECONDS
+    size = 0
+    for relative in candidates:
+        if time.monotonic() >= deadline:
+            return result, 'time_budget'
+        # Reserve enough room for the bounded numeric stat fields as well as the path.
+        size += len(relative.encode('utf-8', errors='surrogateescape')) + 256
+        if size > _MAX_METADATA_BYTES:
+            return result, 'byte_budget'
+        try:
+            fd = _descriptor(root_fd, relative)
+            try:
+                s = os.fstat(fd)
+                marker = [s.st_ino, s.st_mtime_ns, s.st_ctime_ns, s.st_size, s.st_mode]
+            finally:
+                os.close(fd)
+        except OSError:
+            marker = 'unavailable'
+        result.append([relative, marker])
+    return result, 'time_budget' if time.monotonic() >= deadline else None
+
+
+_AUXILIARY = {'script', 'scripts', 'migration', 'migrations', 'test', 'tests',
+              'tool', 'tools', 'benchmark', 'benchmarks', 'example', 'examples', 'docs'}
+_ENTRYPOINTS = {'main', 'app', 'index', 'server', 'cli', 'router', 'routes', 'services', 'models'}
+_CODE_EXTENSIONS = ('.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
+
+
+def _scheme_category(relative):
+    """Include project guides without changing other features' evidence policy."""
+    path = PurePosixPath(relative)
+    if path.suffix.lower() in {'.md', '.rst'} and any(
+            part.casefold() in {'docs', 'documentation'} for part in path.parts[:-1]):
+        return 'docs'
+    return _code_category(relative)
+
+
+def _production_path(relative):
+    path = PurePosixPath(relative)
+    return _scheme_category(relative) == 'code' and not any(
+        part.casefold() in _AUXILIARY | {'archive', 'archives', 'backup', 'backups'}
+        or part.startswith('.') or part.casefold().startswith('_changed_')
+        for part in path.parts[:-1])
+
+
+def _historical_path(relative):
+    """A selection hint, not proof that an old file is unused."""
+    return any(part.casefold() in {'archive', 'archives', 'backup', 'backups', 'old'}
+               or part.casefold().startswith(('old_', '_changed_'))
+               for part in PurePosixPath(relative).parts[:-1])
+
+
+def _scheme_order(relative):
+    path = PurePosixPath(relative)
+    category = _scheme_category(relative)
+    group = 0 if _manifest(relative) or path.name == 'setup.py' else 1 if category == 'docs' else 2 if _production_path(relative) else 3
+    return group, path.stem.casefold() not in _ENTRYPOINTS, len(path.parts), relative.casefold(), relative
+
+
+def _area(relative):
+    parts = PurePosixPath(relative).parts
+    return parts[0] if len(parts) > 1 else '.'
+
+
+def _shared_feature_stems(paths):
+    areas = {}
+    for relative in paths:
+        if _production_path(relative):
+            stem = PurePosixPath(relative).stem.casefold()
+            if stem not in _ENTRYPOINTS:
+                areas.setdefault(stem, set()).add(_area(relative))
+    # Selection hint only: matching names do not establish a dependency.
+    return {stem for stem, locations in areas.items() if len(locations) > 1}
+
+
+def _import_targets(value, relative, available):
+    """Resolve explicit local imports; prioritize application entrypoints/feature use."""
+    path = PurePosixPath(relative)
+    bases, feature_names = [], set()
+    if path.suffix.lower() == '.py':
+        try:
+            parsed = ast.parse(value)
+        except (SyntaxError, ValueError, RecursionError):
+            return []
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Call):
+                name = _qualified_name(node.value.func)
+                if name:
+                    feature_names.add(name.split('.')[0])
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {'include_router', 'register_blueprint', 'use'}:
+                feature_names.update(argument.id for argument in node.args if isinstance(argument, ast.Name))
+        for node in ast.walk(parsed):
+            if isinstance(node, ast.Import):
+                bases.extend((PurePosixPath(*alias.name.split('.')), alias.asname or alias.name.split('.')[0]) for alias in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    parent = path.parent
+                    for _ in range(node.level - 1):
+                        parent = parent.parent
+                    base = parent / PurePosixPath(*(node.module or '').split('.'))
+                else:
+                    base = PurePosixPath(*(node.module or '').split('.'))
+                for alias in node.names:
+                    name = alias.asname or alias.name
+                    bases.append((base, name))
+                    if alias.name != '*':
+                        bases.append((base / alias.name, name))
+    else:
+        masked = _mask_js(value)
+        feature_names.update(re.findall(r'<([A-Z][A-Za-z0-9_]*)\b', masked))
+        for match in re.finditer(r"(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['\"]([^'\"]{1,180})['\"]", value):
+            if not masked[match.start():match.start() + 4].strip():
+                continue
+            target = match[1]
+            if target.startswith('.') and not any(char in target for char in ('?', '#', ':')):
+                parts = list(path.parent.parts)
+                safe = True
+                for part in PurePosixPath(target).parts:
+                    if part == '..':
+                        if parts:
+                            parts.pop()
+                        else:
+                            safe = False
+                            break
+                    elif part != '.':
+                        parts.append(part)
+                if safe:
+                    base = PurePosixPath(*parts)
+                    bases.append((base, base.stem))
+    found = {}
+    for base, symbol in bases:
+        candidates = [base.as_posix(), *((str(base) + ext) for ext in _CODE_EXTENSIONS),
+                      *((base / ('index' + ext)).as_posix() for ext in _CODE_EXTENSIONS),
+                      (base / '__init__.py').as_posix()]
+        for candidate in candidates:
+            if candidate in available and candidate != relative:
+                score = (symbol not in feature_names,
+                         PurePosixPath(candidate).stem.casefold() not in {'router', 'routes', 'app', 'main', 'index', 'server'})
+                found[candidate] = min(found.get(candidate, score), score)
+    return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
+
+
+def _repository(repository_path, patterns, *, inventory=None):
+    if not repository_path:
+        return None, [], [], ['No repository is linked; diagrams can use saved discussions only.']
+    deadline = time.monotonic() + 5
+    root = _repository_root(repository_path, deadline)
+    listed, _ = _git(root, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', deadline=deadline)
+    paths = sorted({os.fsdecode(v) for v in listed.split(b'\0') if v}, key=_code_order)
+    listed_count = len(paths)
+    # Git's exclude rules apply to untracked files; explicit tracked ignored files are excluded too.
+    ignored, _ = _git(root, 'ls-files', '-z', '--cached', '--ignored', '--exclude-standard', deadline=deadline)
+    ignored_paths = {os.fsdecode(v) for v in ignored.split(b'\0') if v}
+    paths = [v for v in paths if v not in ignored_paths and _safe_relative(v, patterns)]
+    limits = []
+    if len(paths) > _MAX_PATHS:
+        limits.append('Code structure display is limited to 300 safe paths; source inspection uses separate byte and time budgets.')
+    paths = sorted(paths, key=_scheme_order)
+    manifests = sorted((v for v in paths if _manifest(v)), key=_code_order)
+    declarations = [v for v in paths if PurePosixPath(v).name == 'setup.py']
+    docs = sorted((v for v in paths if _scheme_category(v) == 'docs'), key=_code_order)
+    shared_stems = _shared_feature_stems(paths)
+    code = sorted((v for v in paths if _scheme_category(v) == 'code' and v not in declarations), key=lambda v: (
+        PurePosixPath(v).stem.casefold() not in _ENTRYPOINTS,
+        PurePosixPath(v).stem.casefold() not in shared_stems, *_scheme_order(v)))
+    production = [v for v in code if _production_path(v)]
+    if production:
+        code = production
+    # Round-robin top-level areas so a backend does not hide a frontend.
+    buckets = {}
+    for value in code:
+        buckets.setdefault(_area(value), deque()).append(value)
+    chosen = []
+    active = deque(buckets.values())
+    while active:
+        values = active.popleft()
+        chosen.append(values.popleft())
+        if values:
+            active.append(values)
+    # No category may consume the entire read budget before application code.
+    # Preserve each category's order, with declared entrypoint overrides below.
+    groups = deque(deque(group) for group in (manifests, declarations, docs, chosen) if group)
+    candidates = []
+    while groups:
+        group = groups.popleft()
+        candidates.append(group.popleft())
+        if group:
+            groups.append(group)
+    if len(candidates) < len(paths):
+        limits.append('Only selected source files and bounded declaration excerpts were inspected.')
+    if inventory is not None:
+        inventory.update(repository_paths_total=listed_count, excluded_paths=listed_count - len(paths),
+                         safe_paths=len(paths), eligible_files=len(set(candidates)),
+                         policy_omitted_paths=len(set(paths) - set(candidates)), listing_complete=True)
+    return root, paths, candidates, limits
+
+
+def _entrypoint_declarations(value, relative):
+    """Read literal packaging declarations only; never import or evaluate setup code."""
+    entries = []
+    name = PurePosixPath(relative).name
+    if name == 'pyproject.toml':
+        project = tomllib.loads(value).get('project', {})
+        for group in ('scripts', 'gui-scripts'):
+            mapping = project.get(group, {})
+            if isinstance(mapping, dict):
+                entries.extend(list(mapping.items())[:_MAX_DEPENDENCIES])
+    elif name == 'setup.py':
+        try:
+            parsed = ast.parse(value)
+        except (SyntaxError, ValueError, RecursionError):
+            return []
+        setup_names, modules = set(), set()
+        for node in parsed.body:
+            if isinstance(node, ast.Import):
+                modules.update(alias.asname or alias.name for alias in node.names if alias.name == 'setuptools')
+            elif isinstance(node, ast.ImportFrom) and node.module == 'setuptools' and not node.level:
+                setup_names.update(alias.asname or alias.name for alias in node.names if alias.name == 'setup')
+        for statement in parsed.body:
+            if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+                continue
+            call = statement.value
+            if _qualified_name(call.func) not in setup_names | {module + '.setup' for module in modules}:
+                continue
+            for keyword in call.keywords:
+                if keyword.arg != 'entry_points' or not isinstance(keyword.value, ast.Dict):
+                    continue
+                for key, group in zip(keyword.value.keys, keyword.value.values):
+                    if not isinstance(key, ast.Constant) or key.value not in ('console_scripts', 'gui_scripts'):
+                        continue
+                    if not isinstance(group, (ast.List, ast.Tuple)):
+                        continue
+                    for entry in group.elts[:_MAX_DEPENDENCIES]:
+                        if isinstance(entry, ast.Constant) and isinstance(entry.value, str) and '=' in entry.value:
+                            command, target = entry.value.split('=', 1)
+                            entries.append((command.strip(), target.strip()))
+    result = []
+    for command, target in entries[:_MAX_DEPENDENCIES]:
+        if (isinstance(command, str) and isinstance(target, str)
+                and re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}', command)
+                and len(target) <= 240
+                and re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*', target, re.ASCII)):
+            result.append((command, target))
+    return sorted(set(result))
+
+
+def _entrypoint_targets(declarations, relative, available):
+    targets = []
+    for _, target in declarations:
+        module = PurePosixPath(*target.split(':', 1)[0].split('.'))
+        for base in (PurePosixPath(relative).parent, PurePosixPath(relative).parent / 'src'):
+            for candidate in (str(base / module) + '.py', (base / module / '__init__.py').as_posix()):
+                if candidate in available and candidate not in targets:
+                    targets.append(candidate)
+    return targets
+
+
+def _guide_excerpt(value):
+    """Retain original guide purpose, outline and short CLI-help descriptions."""
+    from .scheme_passages import _passage_ranges
+
+    ranges, _ = _passage_ranges(value)
+    candidates = []
+    prose_count = 0
+    for left, right in ranges:
+        body = value[left:right]
+        if re.match(r"[ \t]*(`{3,}|~{3,})", body):
+            # CLI help is often one enormous fence. Its purpose prose remains
+            # useful while usage flags/options tables are implementation detail.
+            if re.search(r"(?m)^usage:[ \t]", body):
+                purpose = re.search(
+                    r"\n[ \t]*\n([\s\S]*?)\n[ \t]*\n(?:options|optional arguments|positional arguments):",
+                    body)
+                if purpose and len(purpose[1]) <= 600:
+                    candidates.append((0, left + purpose.start(1), left + purpose.end(1)))
+            continue
+        headings = list(re.finditer(r"(?m)^#{1,6}[ \t]+[^\n]+", body))
+        for heading in headings:
+            candidates.append((2, left + heading.start(), left + heading.end()))
+        # Prefer the introduction before later detailed configuration prose.
+        if len(body) <= 600 and (not headings or len(body.splitlines()) > len(headings)):
+            candidates.append((1 if prose_count < 2 else 3, left, right))
+            prose_count += 1
+    selected = []
+    for _, left, right in sorted(candidates):
+        if any(left >= start and right <= end for start, end in selected):
+            continue
+        proposed = [(start, end) for start, end in selected if not (start >= left and end <= right)]
+        proposed.append((left, right))
+        proposed.sort()
+        text = GAP.join(value[start:end] for start, end in proposed)
+        if len(text) <= _MAX_EXCERPT and len(proposed) <= 24:
+            selected = proposed
+    if not selected:
+        return select_passages(value, _MAX_EXCERPT)['text']
+    return GAP.join(value[start:end] for start, end in selected)
+
+
+def _documentation_excerpt(value):
+    """Prefer a whole feature section over decorative README prefixes."""
+    heading = re.search(r'(?im)^(#{1,6})[ \t]+(?:features?|capabilities)[ \t]*:?[ \t]*$', value)
+    if heading is None:
+        return (value if len(value) <= _MAX_EXCERPT else _guide_excerpt(value)), len(value) > _MAX_EXCERPT
+    depth = len(heading[1])
+    following = re.search(r'(?m)^#{1,' + str(depth) + r'}[ \t]+', value[heading.end():])
+    end = heading.end() + following.start() if following else len(value)
+    section = value[heading.start():end].rstrip()
+    excerpt = select_passages(section, _MAX_EXCERPT)['text']
+    # Keep short title/intro paragraphs when room remains; omit badges and logos.
+    introduction = []
+    for match in re.finditer(r'\S[\s\S]*?(?=\n[ \t]*\n|\Z)', value[:heading.start()]):
+        paragraph = match[0]
+        if re.match(r'(?:<|!\[|\[!\[)', paragraph):
+            continue
+        candidate = GAP.join([*introduction, paragraph, excerpt])
+        if len(candidate) <= _MAX_EXCERPT:
+            introduction.append(paragraph)
+        if len(introduction) == 2:
+            break
+    result = GAP.join([*introduction, excerpt]) if introduction else excerpt
+    return result, result != value
+
+
+def _dependency(name, constraint, category, source_id, dependencies, limitations):
+    if not isinstance(name, str) or not re.fullmatch(r'[@A-Za-z0-9][@A-Za-z0-9._/-]{0,159}', name):
+        limitations.add('Some malformed dependency declarations were omitted.')
+        return
+    if not isinstance(constraint, str) or len(constraint) > 300 or any(ord(c) < 32 for c in constraint):
+        limitations.add('Some malformed dependency declarations were omitted.')
+        return
+    # Direct URLs, credentials, and local machine paths must not be echoed into diagrams.
+    direct_reference = re.match(r'^\s*(?:\[[^\]\r\n]*\]\s*)?@', constraint)
+    home_reference = re.match(r'^~(?![=])', constraint)
+    if (any(token in constraint.lower() for token in ('://', 'git+', 'file:', ' @ ', '\\'))
+            or direct_reference or home_reference or constraint.startswith('/')):
+        constraint = 'Direct/local reference (location omitted)'
+    identifier = 'dependency:' + _digest([name, category, source_id, constraint])[:20]
+    dependencies.append({'id': identifier, 'name': name, 'constraint': constraint,
+                         'category': category, 'source_ids': [source_id], 'purpose': ''})
+
+
+def _requirements(value, path, source_id, dependencies, includes, limitations):
+    # Requirement file purpose is evidence; package names alone are not. Keep
+    # documentation/CI/release declarations out of the runtime dependency group.
+    parts = PurePosixPath(path.lower()).parts
+    labels = set(re.split(r'[._-]+', PurePosixPath(path).stem.lower())) | set(parts[:-1])
+    category = ('development:documentation' if labels & {'doc', 'docs', 'documentation'}
+                else 'build' if labels & {'build', 'release', 'packaging'}
+                else 'development' if labels & {'ci', 'dev', 'development', 'test', 'tests', 'testing'}
+                else 'runtime')
+    for line in value.splitlines()[:500]:
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        if line.startswith(('-r ', '--requirement ')):
+            include = line.split(None, 1)[1].strip()
+            candidate = (PurePosixPath(path).parent / include).as_posix()
+            includes.append(candidate)
+            continue
+        if line.startswith('-'):
+            limitations.add('Requirements options and constraints-file semantics are not evaluated.')
+            continue
+        match = _REQUIREMENT.fullmatch(line.split(' #', 1)[0])
+        if match:
+            name, extras, constraint = match.groups()
+            _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
+        else:
+            limitations.add('Some requirements declarations could not be parsed.')
+
+
+def _manifest_excerpts(declared_excerpt, dependencies, source_id):
+    """Keep complete normalized declarations with the exact chunk they cite."""
+    chunks, lines, size = [], [], 0
+    entries = [(line, None) for line in declared_excerpt.splitlines()]
+    entries.extend((f"{item['name']} {item['constraint']} ({item['category']})", item)
+                   for item in dependencies)
+    for line, dependency in entries:
+        if lines and size + len(line) + 1 > 3200:
+            chunks.append('\n'.join(lines))
+            lines, size = [], 0
+        chunk_id = source_id if not chunks else f'{source_id}:part:{len(chunks) + 1}'
+        if dependency is not None:
+            dependency['source_ids'] = [chunk_id]
+        lines.append(line)
+        size += len(line) + (1 if len(lines) > 1 else 0)
+    if lines:
+        chunks.append('\n'.join(lines))
+    return [(source_id if index == 0 else f'{source_id}:part:{index + 1}', value)
+            for index, value in enumerate(chunks)]
+
+
+def _parse_manifest(value, path, source_id, dependencies, includes, limitations):
+    if is_environment_manifest(path):
+        for name, constraint, category in environment_dependencies(value, limitations):
+            _dependency(name, constraint, category, source_id, dependencies, limitations)
+    elif PurePosixPath(path).name.lower() == 'package.json':
+        parsed = json.loads(value)
+        if not isinstance(parsed, dict):
+            raise ValueError('Invalid package manifest')
+        for field, category in (('dependencies', 'runtime'), ('devDependencies', 'development'),
+                                ('optionalDependencies', 'optional'), ('peerDependencies', 'peer')):
+            entries = parsed.get(field, {})
+            if not isinstance(entries, dict):
+                raise ValueError('Invalid dependency map')
+            if len(entries) > _MAX_DEPENDENCIES:
+                limitations.add('Some dependency declarations exceeded the extraction limit and were omitted.')
+            for name, constraint in list(entries.items())[:_MAX_DEPENDENCIES]:
+                _dependency(name, constraint, category, source_id, dependencies, limitations)
+    elif PurePosixPath(path).name.lower() == 'pyproject.toml':
+        parsed = tomllib.loads(value)
+        project = parsed.get('project', {})
+        groups = [('runtime', project.get('dependencies', []))]
+        for category, entries in project.get('optional-dependencies', {}).items():
+            groups.append(('optional:' + category, entries))
+        for category, entries in parsed.get('dependency-groups', {}).items():
+            groups.append(('development:' + category, entries))
+        for category, entries in groups:
+            if not isinstance(entries, list):
+                raise ValueError('Invalid Python dependency group')
+            if len(entries) > _MAX_DEPENDENCIES:
+                limitations.add('Some dependency declarations exceeded the extraction limit and were omitted.')
+            for entry in entries[:_MAX_DEPENDENCIES]:
+                match = _REQUIREMENT.fullmatch(entry) if isinstance(entry, str) else None
+                if match:
+                    name, extras, constraint = match.groups()
+                    _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
+                else:
+                    limitations.add('Dynamic Python dependency groups are not evaluated.')
+        if parsed.get('tool', {}).get('poetry') or 'dependencies' in project.get('dynamic', []):
+            limitations.add('Poetry and dynamic Python declarations are not supported in this MVP.')
+    else:
+        _requirements(value, path, source_id, dependencies, includes, limitations)
+
+
+def _qualified_name(node):
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        parent = _qualified_name(node.value)
+        return parent + '.' + node.attr if parent else node.attr
+    if isinstance(node, ast.Call):
+        name = _qualified_name(node.func)
+        return name + '(...)' if name else ''
+    return ''
+
+
+def _mask_js(value):
+    """Mask literals/comments for conservative lexical JS inspection, not a parser."""
+    chars = list(value)
+    index, length = 0, len(chars)
+    while index < length:
+        begin = index
+        if value.startswith('//', index):
+            index = value.find('\n', index)
+            if index < 0:
+                index = length
+        elif value.startswith('/*', index):
+            end = value.find('*/', index + 2)
+            index = length if end < 0 else end + 2
+        elif value[index] in ('"', "'", '`'):
+            quote = value[index]
+            index += 1
+            while index < length:
+                if value[index] == '\\':
+                    index += 2
+                elif value[index] == quote:
+                    index += 1
+                    break
+                else:
+                    index += 1
+            index = min(index, length)
+        else:
+            index += 1
+            continue
+        for offset in range(begin, index):
+            if chars[offset] != '\n':
+                chars[offset] = ' '
+    return ''.join(chars)
+
+
+_ROUTINE_CALLS = {'isinstance', 'len', 'set', 'list', 'dict', 'tuple', 'str', 'int', 'bool', 'any', 'all',
+                  'min', 'max', 'round', 'sorted', 'enumerate', 'range', 'getattr', 'hasattr', 'ord',
+                  'ValueError', 'TypeError', 'RuntimeError', 'Error', 'setTimeout', 'clearTimeout'}
+
+
+def _call_summary(names, preferred=()):
+    def priority(name):
+        leaf = name.rsplit('.', 1)[-1]
+        return (name in _ROUTINE_CALLS or leaf in {'append', 'extend', 'strip', 'get', 'items', 'values', 'keys', 'join'},
+                name not in preferred, leaf.startswith(('use', 'set')), name.startswith('_'))
+    return ', '.join(sorted(names, key=priority)[:12])
+
+
+def _structural_excerpt(value, relative):
+    """Balanced declarations/imports/static call names; no argument or initializer literals."""
+    imports, declarations, calls = [], [], []
+    if PurePosixPath(relative).suffix.lower() == '.py':
+        try:
+            parsed = ast.parse(value)
+        except (SyntaxError, ValueError, RecursionError):
+            parsed = None
+        if parsed is not None:
+            class Visitor(ast.NodeVisitor):
+                scope = []
+                observed_calls = {}
+
+                def visit_Import(self, node):
+                    imports.append((node.lineno, 'import ' + ', '.join(alias.name for alias in node.names)))
+
+                def visit_ImportFrom(self, node):
+                    imports.append((node.lineno, 'from ' + '.' * node.level + (node.module or '')
+                                    + ' import ' + ', '.join(alias.name for alias in node.names)))
+
+                def visit_FunctionDef(self, node):
+                    declarations.append((node.lineno, 'def ' + node.name + '(...)'))
+                    self.scope.append(node.name)
+                    # Defaults/decorators are not function-body runtime evidence.
+                    for child in node.body:
+                        self.visit(child)
+                    self.scope.pop()
+
+                visit_AsyncFunctionDef = visit_FunctionDef
+
+                def visit_ClassDef(self, node):
+                    declarations.append((node.lineno, 'class ' + node.name))
+                    self.scope.append(node.name)
+                    for child in node.body:
+                        self.visit(child)
+                    self.scope.pop()
+
+                def visit_Call(self, node):
+                    name = _qualified_name(node.func)
+                    if name and self.scope:
+                        key = '.'.join(self.scope)
+                        names = self.observed_calls.setdefault(key, [node.lineno, []])[1]
+                        if name not in names and len(names) < 64:
+                            names.append(name)
+                    self.generic_visit(node)
+
+            preferred = set()
+            for node in ast.walk(parsed):
+                if isinstance(node, ast.ImportFrom):
+                    preferred.update(alias.asname or alias.name for alias in node.names
+                                     if (alias.asname or alias.name)[:1].islower())
+                if isinstance(node, (ast.Assign, ast.AnnAssign, ast.Return)) and isinstance(node.value, ast.Call):
+                    preferred.add(_qualified_name(node.value.func))
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in {'commit', 'flush', 'rollback'}:
+                    preferred.add(_qualified_name(node.func))
+            visitor = Visitor()
+            visitor.visit(parsed)
+            calls = [(line, scope + ' uses call syntax: ' + _call_summary(names, preferred))
+                     for scope, (line, names) in visitor.observed_calls.items()]
+    if not declarations and not imports:
+        masked = _mask_js(value)
+        declared_positions = set()
+        declaration_pattern = re.compile(r'\b(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?(?:function|def)\s+|class\s+|(?:const|let|var|interface|type|enum)\s+)([A-Za-z_$][\w$]*)')
+        for match in declaration_pattern.finditer(masked):
+            number = value.count('\n', 0, match.start()) + 1
+            declarations.append((number, 'declaration ' + match[1]))
+            declared_positions.add(match.start(1))
+        import_pattern = re.compile(r"(?:\bfrom\s*|\bimport\s*(?:\(\s*)?)['\"]([^'\"]{1,180})['\"]")
+        for match in import_pattern.finditer(value):
+            if not masked[match.start():match.start() + 4].strip():
+                continue
+            target = match[1]
+            if '://' in target or any(char in target for char in ('?', '#')):
+                target = '[external module location omitted]'
+            imports.append((value.count('\n', 0, match.start()) + 1, 'import ' + target))
+        seen_calls = set()
+        function_marks = [(match.start(1), match[1]) for match in re.finditer(
+            r'\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', masked)]
+        grouped_calls = {}
+        for match in re.finditer(r'\b([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)(?:<[^<>;{}\n]{1,120}>)?\s*\(', masked):
+            name = re.sub(r'\s+', '', match[1])
+            if (name in seen_calls or name in {'if', 'for', 'while', 'switch', 'catch', 'function', 'import', 'super', 'return', 'async'}
+                    or match.start(1) in declared_positions):
+                continue
+            seen_calls.add(name)
+            scope = next((name for start, name in reversed(function_marks) if start < match.start()), 'module')
+            number = value.count('\n', 0, match.start()) + 1
+            group = grouped_calls.setdefault(scope, [number, []])
+            if len(group[1]) < 64:
+                group[1].append(name)
+        calls = [(number, scope + ' lexical call syntax: ' + _call_summary(names))
+                 for scope, (number, names) in grouped_calls.items()]
+    # Public declarations and their call groups should not disappear behind long
+    # import blocks or private helpers. Interleave groups within the same hard cap.
+    declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
+    calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
+    buckets = [declarations, calls, imports]
+    rendered = ['Static syntax only; call names do not prove runtime execution.']
+    used = len(rendered[0]) + 1
+    positions = [0, 0, 0]
+    while any(positions[i] < len(bucket) for i, bucket in enumerate(buckets)):
+        for i, bucket in enumerate(buckets):
+            if positions[i] >= len(bucket):
+                continue
+            number, statement = bucket[positions[i]]
+            positions[i] += 1
+            line = f'L{number}: {statement[:320]}'
+            if used + len(line) + 1 <= _MAX_EXCERPT:
+                rendered.append(line)
+                used += len(line) + 1
+    return '\n'.join(rendered) if len(rendered) > 1 else ''
+
+
+def _records(db, project):
+    from .history_duplicates import deduplicate_sources
+    sources, markers, limitations = [], [], []
+    if len(project.description) > 1600 or len(project.goals) > 1600:
+        limitations.append('Project description or goals were truncated to 1,600 characters each.')
+    if len(project.architecture_mermaid) > 2400:
+        limitations.append('Saved architecture was truncated to 2,400 characters.')
+    objective = '\n'.join(v for v in (project.name, project.description[:1600], project.goals[:1600]) if v)
+    sources.append(_source('project:objective', 'Project description and goals', objective,
+                           'project metadata'))
+    if project.architecture_mermaid:
+        sources.append(_source('project:architecture', 'Saved architecture description',
+                               project.architecture_mermaid[:2400], 'user-maintained architecture'))
+    sessions = db.execute(text('SELECT id,thread_id,history_indexed_at,history_indexed_activity,codex_activity_at '
+        'FROM codex_sessions WHERE project_id=:pid AND is_linked=1 ORDER BY id LIMIT 33'), {'pid': project.id}).mappings().all()
+    markers.extend(dict(row) for row in sessions)
+    if len(sessions) > 32:
+        limitations.append('Freshness checks include only the first 33 linked session metadata records.')
+    if sessions:
+        limitations.append('Conversation coverage uses at most 12 recent stored excerpts; earlier discussion may be omitted.')
+    if any(not row['history_indexed_at'] or not row['history_indexed_activity']
+           or not row['codex_activity_at'] or row['history_indexed_activity'] != row['codex_activity_at']
+           for row in sessions):
+        limitations.append('Some linked conversations have no current saved index; no live Codex history was read.')
+    turns = db.execute(text('SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS excerpt,length(h.content) AS content_length '
+        'FROM codex_history_turns h JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+        "WHERE h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' ORDER BY h.id DESC LIMIT 12"),
+        {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,:read_chars) AS content,kind,updated_at, '
+                           'length(content) AS content_length,length(title) AS title_length '
+                           'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'),
+                       {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    # Bound discussion context independently so larger notes cannot crowd out all
+    # repository evidence from the existing 40,000-character source package.
+    turn_budget = 12_000 if notes else 24_000
+    note_budget = 12_000 if turns else 24_000
+
+    def passage(value, original_length, remaining):
+        complete = value
+        if original_length > len(value):
+            # SQL's bounded read can end inside a paragraph or diagram. That
+            # suffix is not a complete passage merely because it is end-of-input.
+            boundaries = list(re.finditer(r'\n[ \t]*\n', value))
+            complete = value[:boundaries[-1].end()] if boundaries else ''
+        selected = select_passages(complete, min(EXCERPT_CHARS, max(0, remaining)))
+        if selected['omitted']:
+            limitations.append('Some discussion sections were omitted from bounded whole-passage selection; omitted text is not evidence of absence.')
+        if original_length > len(value):
+            limitations.append('Some discussions exceeded the 65,536-character inspection bound; later content was not inspected.')
+        return selected, {'excerpt_spans': selected['spans'],
+                          'inspected_hash': hashlib.sha256(value.encode()).hexdigest(),
+                          'inspected_chars': len(value), 'original_chars': original_length}
+
+    turn_sources = [_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
+        f"Session #{row['session_id']}, turn {row['turn_id']}", row['excerpt'], 'Codex conversation',
+        session_id=row['session_id'], turn_id=row['turn_id'], original_chars=row['content_length'])
+        for row in turns]
+    # Confirm shared-prefix identity before charging the context budget; repeated
+    # forks must not crowd out complementary turns that follow them.
+    turn_sources = deduplicate_sources(db, project.id, turn_sources)
+    excerpt_count = 0
+    for source in turn_sources:
+        selected, metadata = passage(source['text'], source['original_chars'], turn_budget)
+        if selected['text']:
+            sources.append({**source, **metadata, 'text': selected['text'],
+                            'content_hash': hashlib.sha256(selected['text'].encode()).hexdigest()})
+            turn_budget -= len(selected['text'])
+            excerpt_count += 1
+    if len(notes) > 6:
+        limitations.append('Only the six most recent notes or imported documents were included.')
+    if any(row['title_length'] > 160 for row in notes[:6]):
+        limitations.append('Some note titles were truncated to 160 characters.')
+    for row in notes[:6]:
+        selected, metadata = passage(row['content'], row['content_length'], note_budget)
+        if selected['text']:
+            sources.append(_source(f"note:{row['id']}", row['title'], selected['text'],
+                'imported discussion' if row['kind'] == 'document' else 'project note',
+                date=row['updated_at'], **metadata))
+            note_budget -= len(selected['text'])
+    brief = db.execute(text('SELECT substr(sections,1,1800),generated_at,length(sections) FROM project_briefs WHERE project_id=:pid'),
+                       {'pid': project.id}).first()
+    if brief:
+        if brief[2] > 1800:
+            limitations.append('The previous AI summary was truncated to a 1,800-character excerpt.')
+        sources.append(_source('brief:previous', 'Previous AI project summary (interpretation)', brief[0],
+                               'prior AI interpretation', date=brief[1]))
+    return sources, markers, limitations, excerpt_count
+
+
+def collect_evidence(engine, project_id):
+    """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
+    started = time.monotonic()
+    source_budget, read_budget, package_budget = scheme_inspection_limits()
+    limitations = set()
+    freshness_unknown = False
+    with Session(engine) as db:
+        project = require_project(db, project_id)
+        repository_path = project.repository_path
+        objective = project.name
+        try:
+            records, session_markers, record_limits, excerpt_count = _records(db, project)
+        except SQLAlchemyError:
+            db.rollback()
+            records = [_source('project:objective', 'Project name', objective, 'project metadata')]
+            session_markers, excerpt_count = [], 0
+            record_limits = ['Stored conversation or project knowledge evidence could not be read.']
+            freshness_unknown = True
+        try:
+            knowledge = collect_published_knowledge(db, project_id)
+        except SQLAlchemyError:
+            db.rollback()
+            knowledge = {'sources': [], 'metadata': {'status': 'unavailable', 'available_items': 0,
+                'included_items': 0, 'omitted_items': 0}, 'marker': {'status': 'unavailable'},
+                'limitations': ['Published Knowledge could not be read; repository and conversation evidence remain available.']}
+            freshness_unknown = True
+        records = records[:1] + knowledge['sources'] + records[1:]
+        limitations.update(knowledge['limitations'])
+        freshness_unknown |= knowledge['metadata'].get('status') == 'unavailable'
+    freshness_unknown |= any('no current saved index' in value for value in record_limits)
+    limitations.update(record_limits)
+    root = None
+    paths, candidates, repo_limits = [], [], []
+    inventory = dict.fromkeys(('repository_paths_total', 'excluded_paths', 'safe_paths',
+                               'eligible_files', 'policy_omitted_paths'))
+    inventory['listing_complete'] = False
+    policy = {'max_read_bytes': read_budget, 'max_inspection_seconds': _INSPECTION_SECONDS,
+              'max_file_bytes': _MAX_BYTES, 'max_source_chars': source_budget,
+              'max_package_chars': package_budget, 'max_tree_paths': _MAX_PATHS,
+              'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
+    try:
+        patterns = (*_exclusions(), *_CODE_PRIVATE)
+        root, paths, candidates, repo_limits = _repository(repository_path, patterns, inventory=inventory)
+    except (EvidenceReadError, OSError) as exc:
+        freshness_unknown = True
+        patterns = ()
+        limitations.add(str(exc) if isinstance(exc, EvidenceReadError) else 'The repository is unavailable.')
+    limitations.update(repo_limits)
+    eligible = set(candidates)
+    try:
+        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW) if root else None
+    except OSError:
+        root_fd = None
+        freshness_unknown = True
+        limitations.add('The repository became unavailable during inspection.')
+    try:
+        # Included requirement files are selected from the same safe bounded path list.
+        # All requirement candidates participate in markers, including not-yet-expanded includes.
+        markers, metadata_stop = _markers(root_fd, paths) if root_fd is not None else ([], None)
+        file_omission_reasons = {}
+        if metadata_stop:
+            limitations.add(f'The repository metadata {metadata_stop.replace("_", " ")} was reached; some paths were omitted.')
+            marked_paths = {relative for relative, _ in markers}
+            file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
+            paths = [relative for relative in paths if relative in marked_paths]
+            candidates = [relative for relative in candidates if relative in marked_paths]
+        key = _digest({'namespace': 'scheme-inspection-v13', 'project_id': project_id,
+            'published_knowledge': knowledge['marker'],
+            'budgets': policy, 'inventory': inventory,
+            'repository': repository_path, 'patterns': patterns, 'markers': markers,
+            'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
+            'freshness_unknown': freshness_unknown})
+        with Session(engine) as db:
+            cached = db.get(ProjectHistoryBatch, (project_id, key))
+            if not metadata_stop and cached is not None and isinstance(cached.evidence, list) and len(cached.evidence) == 1:
+                result = deepcopy(cached.evidence[0])
+                result['diagnostics'].update(cache_hits=1, duration_ms=round((time.monotonic() - started) * 1000))
+                return result
+        sources, dependencies = list(records), []
+        scanned = set()
+        files_read = 0
+        decoded_reads = 0
+        omitted_reasons = {}
+        inspection_stop = None
+        budget = _InspectionBudget(read_budget)
+        marker_by_path = dict(markers)
+        # A vanished repository has no directory descriptor to anchor safe reads.
+        pending = list(candidates) if root_fd is not None else []
+        shared_stems = _shared_feature_stems(paths)
+        priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in {'main', 'app', 'index', 'server', 'cli'}
+                             else (1, -1) if PurePosixPath(path).stem.casefold() in shared_stems
+                             else (99, i)) for i, path in enumerate(candidates)}
+        last_area = None
+        # Directory names set initial priority, not whether explicitly imported
+        # code can participate in the application. Resolve imports against every
+        # safe code path; unreferenced backups remain outside initial candidates.
+        code_paths = {path for path in paths if _scheme_category(path) == 'code'}
+        requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
+        entrypoint_paths = set()
+        declared_commands, guide_words = set(), {}
+        while pending:
+            try:
+                budget.check()
+            except _InspectionStopped as exc:
+                inspection_stop = exc.reason
+                omitted_reasons[exc.reason] = len(set(pending) - scanned)
+                break
+            pick = 0
+            declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
+            if declared:
+                pick = min(declared, key=lambda i: priorities[pending[i]])
+            elif pending and _scheme_category(pending[0]) == 'code' and PurePosixPath(pending[0]).name != 'setup.py':
+                choices = [i for i, candidate in enumerate(pending)
+                           if _area(candidate) != last_area and _scheme_category(candidate) == 'code']
+                if not choices:
+                    choices = [i for i, candidate in enumerate(pending) if _scheme_category(candidate) == 'code']
+                pick = min(choices, key=lambda i: priorities.get(pending[i], (99, i)))
+            relative = pending.pop(pick)
+            if _scheme_category(relative) == 'code':
+                last_area = _area(relative)
+            if relative in scanned:
+                continue
+            scanned.add(relative)
+            try:
+                is_code = (_scheme_category(relative) == 'code'
+                           or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
+                value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
+                decoded_reads += 1
+                declarations = _entrypoint_declarations(value, relative)
+                declared_commands.update(command for command, _ in declarations)
+                if _scheme_category(relative) == 'docs':
+                    guide_words[relative] = set(re.findall(r'[A-Za-z][A-Za-z0-9_.-]*', value))
+                targets = _entrypoint_targets(declarations, relative, paths)
+                if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
+                    limitations.add('Some declared entrypoint modules were unavailable within the safe bounded repository paths.')
+                for order, target in enumerate(targets):
+                    eligible.add(target)
+                    entrypoint_paths.add(target)
+                    priorities[target] = (-1, order)
+                    if target not in scanned and target not in pending:
+                        pending.append(target)
+                declared_excerpt = '\n'.join(f'Declared entrypoint {command} = {target}' for command, target in declarations)
+                if is_code:
+                    # Metadata already participates in the cache key; a large file
+                    # contributes only a bounded prefix, never an implied full scan.
+                    marker = marker_by_path.get(relative)
+                    if isinstance(marker, list) and marker[3] > _MAX_BYTES:
+                        limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
+                    linked = _import_targets(value, relative, code_paths)
+                    for order, target in enumerate(linked):
+                        eligible.add(target)
+                        if target not in scanned:
+                            candidate_priority = (priorities.get(relative, (99, 0))[0] + 1, order)
+                            priorities[target] = min(priorities.get(target, candidate_priority), candidate_priority)
+                            if target not in pending:
+                                pending.append(target)
+                files_read += 1
+                source_id = 'repository:file:' + hashlib.sha256(relative.encode()).hexdigest()[:24]
+                includes = []
+                manifest_excerpts = None
+                if _manifest(relative) or relative in requirement_paths:
+                    before = len(dependencies)
+                    if relative in requirement_paths:
+                        _requirements(value, relative, source_id, dependencies, includes, limitations)
+                    else:
+                        _parse_manifest(value, relative, source_id, dependencies, includes, limitations)
+                    # Preserve safe normalized declarations, not package-manager credentials/URLs.
+                    # Deduplicate exact declarations in linear time before chunk
+                    # references are assigned; different constraints keep distinct IDs.
+                    dependencies[before:] = list({item['id']: item for item in dependencies[before:]}.values())
+                    manifest_excerpts = _manifest_excerpts(declared_excerpt, dependencies[before:], source_id)
+                    excerpt = ''
+                    provenance = 'dependency manifest'
+                    for include in includes:
+                        if include in paths and _safe_relative(include, patterns) and include not in scanned:
+                            eligible.add(include)
+                            requirement_paths.add(include)
+                            pending.insert(0, include)
+                        else:
+                            limitations.add('Some requirement includes were excluded or outside the bounded repository paths.')
+                elif is_code:
+                    excerpt = '\n'.join(part for part in (declared_excerpt, _structural_excerpt(value, relative)) if part)
+                    provenance = 'observed in code'
+                else:
+                    excerpt, omitted = _documentation_excerpt(value)
+                    if omitted:
+                        limitations.add('Some documentation sections were omitted from bounded excerpts; omitted text is not evidence of absence.')
+                    provenance = 'project documentation'
+                if manifest_excerpts is not None:
+                    for chunk_id, chunk in manifest_excerpts:
+                        sources.append(_source(chunk_id, relative, chunk, provenance, path=relative,
+                                               revision=hashlib.sha256(value.encode()).hexdigest()))
+                elif excerpt:
+                    if len(excerpt) > 3200:
+                        limitations.add('Some normalized manifest declaration excerpts were truncated.')
+                    sources.append(_source(source_id, relative, excerpt[:3200], provenance, path=relative,
+                                           revision=hashlib.sha256(value.encode()).hexdigest()))
+            except _InspectionStopped as exc:
+                inspection_stop = exc.reason
+                omitted_reasons[exc.reason] = 1 + len(set(pending) - scanned)
+                file_omission_reasons[relative] = exc.reason
+                break
+            except OSError:
+                omitted_reasons['unsafe_or_unavailable'] = omitted_reasons.get('unsafe_or_unavailable', 0) + 1
+                file_omission_reasons[relative] = 'unsafe_or_unavailable'
+                freshness_unknown = True
+                limitations.add('Some selected files could not be read safely; their freshness is unknown.')
+            except (ValueError, TypeError, AttributeError, RecursionError):
+                omitted_reasons['unreadable_or_malformed'] = omitted_reasons.get('unreadable_or_malformed', 0) + 1
+                file_omission_reasons[relative] = 'unreadable_or_malformed'
+                limitations.add('Some selected files were unreadable, unsafe, malformed, binary, above 64 KiB, or too deeply nested.')
+        inspection_seconds = round(time.monotonic() - budget.started, 6)
+        if not inspection_stop and inspection_seconds >= _INSPECTION_SECONDS:
+            inspection_stop = 'time_budget'
+            omitted_reasons['time_budget'] = len(set(pending) - scanned)
+        if inspection_stop:
+            file_omission_reasons.update(dict.fromkeys(set(pending) - scanned, inspection_stop))
+            limitations.add(f'The source inspection {inspection_stop.replace("_", " ")} was reached; coverage may be incomplete.')
+        # Prevent an unusually large manifest/dependency set from exhausting the AI input budget.
+        bounded, size = [], 0
+        included_ids = set()
+        source_by_id = {source['id']: source for source in sources}
+
+        def add_source(source, limit):
+            nonlocal size
+            support = source.get('supporting_source_ids', [])
+            if any(identifier not in source_by_id for identifier in support):
+                return False
+            bundle = [source, *(source_by_id[identifier] for identifier in support)]
+            additions = {entry['id']: entry for entry in bundle if entry['id'] not in included_ids}
+            required = sum(len(entry['text']) for entry in additions.values())
+            if size + required > limit:
+                return False
+            bounded.extend(additions.values())
+            included_ids.update(additions)
+            size += required
+            return True
+        command_guides = {path for path, words in guide_words.items() if words & declared_commands}
+        repository_sources = sorted(sources[len(records):], key=lambda source: (
+            _historical_path(source.get('path', '')),
+            source.get('path') not in entrypoint_paths,
+            PurePosixPath(source.get('path', '')).name not in {'setup.py', 'pyproject.toml'},
+            not _manifest(source.get('path', '')),
+            source.get('path') not in command_guides))
+        # Reserve half for repository evidence when both kinds are present. Keep
+        # whole excerpts and return any unused repository allowance to records.
+        repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))
+        deferred = []
+        for source in records:
+            if not add_source(source, source_budget - repository_reserve):
+                deferred.append(source)
+        for source in [*repository_sources, *deferred]:
+            if not add_source(source, source_budget):
+                omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1
+                limitations.add('The source excerpt budget was reached; some evidence was omitted.')
+                continue
+        allowed_ids = {source['id'] for source in bounded}
+        dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
+        source_order = {source['id']: index for index, source in enumerate(bounded)}
+        dependencies.sort(key=lambda dependency: min(source_order[ref] for ref in dependency['source_ids']))
+        if len(dependencies) > _MAX_DEPENDENCIES:
+            dependencies = dependencies[:_MAX_DEPENDENCIES]
+            limitations.add('Only the first 100 dependency declarations supported by retained evidence are included.')
+        excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
+        tree = {}
+        for relative in paths[:_MAX_PATHS]:
+            parts = PurePosixPath(relative).parts
+            for n in range(1, len(parts)):
+                tree['/'.join(parts[:n])] = 'directory'
+            # Symlinks/nonregular files should not appear as inspectable code.
+            if root_fd is not None:
+                try:
+                    fd = _descriptor(root_fd, relative)
+                    os.close(fd)
+                except OSError:
+                    continue
+            tree[relative] = 'file'
+        result = {'sources': bounded, 'dependencies': dependencies,
+            'knowledge_context': deepcopy(knowledge['metadata']),
+            'tree': [{'path': path, 'type': kind} for path, kind in sorted(tree.items())],
+            'coverage': {'partial': bool(limitations), 'freshness_unknown': freshness_unknown,
+                         'limitations': sorted(limitations),
+                         'inspection_stopped': inspection_stop, 'omitted_reason_counts': omitted_reasons,
+                         'inspection_policy': policy,
+                         'file_counts': {**inventory,
+                             'eligible_files': len(eligible) if inventory['listing_complete'] else None,
+                             'policy_omitted_paths': inventory['safe_paths'] - len(eligible) if inventory['listing_complete'] else None,
+                             'attempted_files': len(scanned), 'read_files': decoded_reads,
+                             'prefix_read_files': budget.prefix_read_files,
+                             'failed_reads': len(scanned) - decoded_reads,
+                             'not_attempted_files': len(eligible) - len(scanned) if inventory['listing_complete'] else None,
+                             'evidence_files': 0, 'read_not_in_evidence': decoded_reads},
+                         'files_inspected': files_read, 'conversation_excerpts': excerpt_count},
+            'diagnostics': {'cache_hits': 0, 'input_chars': size, 'files_inspected': files_read,
+                            'files_attempted': len(scanned), 'bytes_read': budget.bytes_read,
+                            'inspection_seconds': inspection_seconds,
+                            'omitted_reason_counts': omitted_reasons,
+                            'conversation_excerpts': excerpt_count,
+                            'duration_ms': round((time.monotonic() - started) * 1000)}}
+        selected_paths = {source['path'] for source in bounded if source.get('path')}
+        package_chars = _bound_package(result, package_budget)
+        # Attach local accounting only after the AI package has been finalized.
+        # A file with even one retained excerpt is counted as supplied.
+        if inventory['listing_complete']:
+            supplied_paths = {source['path'] for source in result['sources'] if source.get('path')}
+            prepared_paths = {source['path'] for source in repository_sources}
+            omitted_paths = eligible - supplied_paths
+            file_omission_reasons.update(dict.fromkeys(prepared_paths - selected_paths, 'source_output_budget'))
+            file_omission_reasons.update(dict.fromkeys(selected_paths - supplied_paths, 'package_output_budget'))
+            default_reason = 'unsafe_or_unavailable' if root_fd is None else 'not_attempted'
+            result['coverage']['file_omissions'] = {
+                'total': len(omitted_paths),
+                'files': [
+                    {'path': path, 'reason': file_omission_reasons.get(
+                        path, 'no_usable_excerpt' if path in scanned else default_reason)}
+                    for path in sorted(omitted_paths)[:_MAX_RECORDED_FILE_OMISSIONS]
+                ],
+            }
+        result['diagnostics'].update(package_chars=package_chars,
+            input_chars=sum(len(source['text']) for source in result['sources']),
+            conversation_excerpts=result['coverage']['conversation_excerpts'],
+            duration_ms=round((time.monotonic() - started) * 1000))
+        # Local coverage accounting describes the inspection, not changes to its sources.
+        fingerprint_coverage = {key: value for key, value in result['coverage'].items()
+                                if key not in {'file_counts', 'inspection_policy', 'file_omissions'}}
+        result['fingerprint'] = _digest({key: result[key] for key in
+            ('sources', 'dependencies', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
+                'published_knowledge': knowledge['marker']})
+        if inspection_stop != 'time_budget' and not metadata_stop:
+            with Session(engine) as db:
+                if db.get(ProjectHistoryBatch, (project_id, key)) is None:
+                    db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[result]))
+                    db.commit()
+        return result
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)

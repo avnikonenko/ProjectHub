@@ -1,0 +1,32 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+/build/
+/dist/
+node_modules/
+frontend/dist/
+frontend/coverage/
+*.tsbuildinfo
+*.sqlite3*
+.local-data/
+__codex_resume*.md
+
+# Private settings and credentials
+.env
+.env.*
+!.env.example
+config.toml
+*.pem
+*.key
+auth.json
+
+# Local project backlog
+/todo.md
+
+# Private local experiment reports
+/docs/experiments/
+
+# Local IDE settings
+.idea/

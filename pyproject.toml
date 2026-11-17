@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projecthub-local"
+version = "0.2.1"
+description = "Local project history, notes, TODOs, and read-only AI workspace"
+license = {file = "LICENSE"}
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1",
+  "pydantic>=2.12,<3",
+  "uvicorn>=0.34,<1",
+  "SQLAlchemy>=2.0.40,<3",
+  "alembic>=1.15,<2",
+  "python-multipart>=0.0.20,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<10", "httpx>=0.28,<1"]
+
+[project.scripts]
+projecthub = "backend.app.cli:main"
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["backend", "backend.app*", "scripts"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "tests"]
+pythonpath = ["."]

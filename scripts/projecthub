@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+script_path="$(readlink -f "${BASH_SOURCE[0]}")"
+project_root="$(cd "$(dirname "$script_path")/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage: projecthub [command]
+
+Commands:
+  start    Start ProjectHub (default)
+  check    Run the project checks
+  setup    Install or refresh local dependencies
+  config   Create the local config if missing and show its path
+  install-skill  Install the optional Codex notes skill
+  projects List local project IDs and names
+  context  Read a compact saved project briefing
+  read     Read a page of saved project information
+  search   Search saved project records locally
+  note     List notes or add an AI note
+  todo     List TODOs or add a checklist item
+  session  List or link Codex sessions for reading
+  help     Show this help
+
+Environment:
+  PROJECTHUB_CONFIG     Config file (default: XDG config directory/projecthub/config.toml)
+  PROJECTHUB_PORT       Loopback port (default: 8766)
+  PROJECTHUB_DATA_DIR   Absolute application data directory
+  PROJECTHUB_GENERATION_TIMEOUT  Seconds per AI generation call (default: 600)
+  CODEX_HOME            Existing Codex profile home (credentials stay there)
+EOF
+}
+
+command_name="${1:-start}"
+
+case "$command_name" in
+  projects|note|notes|todo|session|context|read|search)
+    if [[ ! -x "$project_root/.venv/bin/python" ]]; then
+      echo "projecthub: run 'projecthub setup' first" >&2
+      exit 1
+    fi
+    cd "$project_root"
+    exec "$project_root/.venv/bin/python" -m scripts.notes_cli "$@"
+    ;;
+  start)
+    cd "$project_root"
+    if [[ $# -gt 1 ]]; then
+      echo "projecthub: start does not accept arguments" >&2
+      exit 2
+    fi
+    if [[ ! -x .venv/bin/python ]]; then
+      echo "projecthub: local Python environment is missing; run 'projecthub setup'" >&2
+      exit 1
+    fi
+    if [[ ! -f frontend/dist/index.html ]]; then
+      echo "projecthub: frontend build is missing; run 'projecthub setup'" >&2
+      exit 1
+    fi
+    exec .venv/bin/python -m backend.app.cli start
+    ;;
+  config|install-skill)
+    cd "$project_root"
+    if [[ $# -gt 1 ]]; then
+      echo "projecthub: $command_name does not accept arguments" >&2
+      exit 2
+    fi
+    if [[ ! -x .venv/bin/python ]]; then
+      echo "projecthub: run 'projecthub setup' first" >&2
+      exit 1
+    fi
+    exec .venv/bin/python -m backend.app.cli "$command_name"
+    ;;
+  check)
+    cd "$project_root"
+    exec bash scripts/check.sh
+    ;;
+  setup)
+    cd "$project_root"
+    exec bash scripts/setup.sh
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "projecthub: unknown command '$command_name'" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,51 @@
+User:
+How does the sample library inventory workflow fit together?
+
+ChatGPT:
+Synthetic library inventory workflow
+
+An example library receives a spreadsheet of donated books and routes checked records to two destinations.
+
+Input: Donation spreadsheet and shelf list
+                 │
+                 ▼
+┌─────────────────────────────────────────────┐
+│ 1. Spreadsheet intake                       │
+│ Open the sample inventory in read-only mode │
+│ Note the workbook name and worksheet label  │
+│ Assign a batch label for the donation       │
+│ Keep a copy of the raw cells for comparison │
+└────────────────┬────────────────────────────┘
+                 ▼
+┌─────────────────────────────────────────────┐
+│ 2. Field classification                     │
+│ Identify titles, authors and series names   │
+│ Separate accession numbers from shelf IDs   │
+│ Mark blank fields and duplicate titles      │
+│ Keep donor notes separate from book fields  │
+└────────────────┬────────────────────────────┘
+                 ▼
+┌─────────────────────────────────────────────┐
+│ 3. Catalog planning                         │
+│ Choose the shelf vocabulary for this batch  │
+│ Assign likely destinations for each record  │
+│ Collect questions for the reviewing clerk   │
+└────────────────┬────────────────────────────┘
+                 ▼
+┌─────────────────────────────────────────────┐
+│ 4. Record assembly                          │
+│ Attach the batch label to each record       │
+│ Combine checked fields into catalog rows    │
+│ Preserve the original workbook references   │
+└────────────────┬────────────────────────────┘
+                 ▼
+┌─────────────────────────────────────────────┐
+│ 5. Validation and reporting                 │
+│ Check required fields and duplicate IDs     │
+│ Record review notes and rejected rows       │
+│ Preserve the source worksheet identity      │
+└────────────────┬────────────────────────────┘
+                 ▼
+          Catalog output
+            /        \
+    Shelving queue   Review queue
