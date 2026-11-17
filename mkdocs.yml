@@ -30,6 +30,5 @@ nav:
       - Knowledge pipeline: KNOWLEDGE_PIPELINE.md
       - Knowledge interface: KNOWLEDGE_UI_INTERNALS.md
       - Scheme implementation: scheme-implementation.md
-      - Validation: TEST_REPORT.md
       - Security: SECURITY_REVIEW.md
       - Engineering decisions: DECISIONS.md

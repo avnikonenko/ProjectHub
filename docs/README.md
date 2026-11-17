@@ -19,18 +19,31 @@ architecture diagrams when you need to get back up to speed.
 
 ## For contributors
 
-Run `projecthub check` or `bash scripts/check.sh` for backend/frontend tests,
-TypeScript checks, and the production build.
-
 - [Architecture](ARCHITECTURE.md)
 - [HTTP API contract](API_CONTRACT.md)
 - [Data model](DATA_MODEL.md)
 - [Knowledge pipeline and isolated testing](KNOWLEDGE_PIPELINE.md)
 - [Knowledge interface API and implementation](KNOWLEDGE_UI_INTERNALS.md)
-- [Validation commands and scope](TEST_REPORT.md)
 - [Security and deployment boundaries](SECURITY_REVIEW.md)
 - [Engineering decisions](DECISIONS.md)
 - [Scheme implementation reference](scheme-implementation.md)
+
+### Validate a release
+
+From a clean checkout, set up the project and run the automated and smoke checks.
+
+```bash
+bash scripts/setup.sh
+bash scripts/check.sh
+.venv/bin/python scripts/smoke.py
+```
+
+The check script runs backend and frontend tests, TypeScript checks, and the
+production build. Before release, use temporary XDG data and configuration
+directories to test import, search, TODOs, reviews, and persistence after restart
+in a browser. Verify Codex sign-in and a completed read-only generation separately
+with the installed Codex version. Record the commit, environment, results, and
+which checks used simulated or live services.
 
 ### Preview the documentation
 
