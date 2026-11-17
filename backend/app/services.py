@@ -3,7 +3,7 @@ import re
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from .integrations.github_issues import github_repository, issues_url
@@ -103,13 +103,14 @@ def _safe_remote_address(name, raw):
     value = raw.strip()
     if not value or '\\' in value or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
         return None
-    if '://' in value:
+    is_url = '://' in value
+    if is_url:
         try:
             remote = urlsplit(value)
             host, port = remote.hostname, remote.port
         except ValueError:
             return None
-        if (remote.scheme not in ('https', 'http', 'ssh') or not host
+        if (remote.scheme not in ('https', 'http', 'ssh', 'git') or not host
                 or remote.netloc.count('@') > 1 or port == 0):
             return None
         # urlsplit validates bracketed IPv6. Keep only clear host and path
@@ -134,9 +135,20 @@ def _safe_remote_address(name, raw):
                 or host in ('https', 'http', 'ssh', 'git', 'file')):
             return None
         address, port, web_url = f'{host}:{path}', None, None
-    if (not re.fullmatch(r'/?[a-zA-Z0-9._~/-]+', path) or '//' in path
-            or not path.strip('/') or any(piece in ('.', '..') for piece in path.split('/'))):
+    path_pattern = r'(?:[a-zA-Z0-9._~/-]|%[a-fA-F0-9]{2})+' if is_url else r'[a-zA-Z0-9._~/-]+'
+    if not re.fullmatch(path_pattern, path) or '//' in path or not path.strip('/'):
         return None
+    # Keep URL escapes in the display value, but validate the decoded path
+    # segments to rule out encoded separators, traversal and control characters.
+    for segment in path.split('/'):
+        try:
+            decoded = unquote(segment, errors='strict')
+        except UnicodeDecodeError:
+            return None
+        if decoded in ('.', '..') or any(
+            not (char.isalnum() or char in ' ._~-') for char in decoded
+        ):
+            return None
     if host == 'github.com' and port is None:
         github = github_repository(f'https://github.com/{path.lstrip("/")}')
         if github:
@@ -158,7 +170,7 @@ def safe_project_git_remote(raw):
 def validate_project_git_remote(raw):
     sanitized = safe_project_git_remote(raw)
     if isinstance(raw, str) and raw.strip() and not sanitized:
-        raise HTTPException(422, 'Use an HTTP(S), SSH, or SCP-style Git remote address.')
+        raise HTTPException(422, 'Use an HTTP(S), SSH, git://, or SCP-style Git remote address.')
     return sanitized
 
 

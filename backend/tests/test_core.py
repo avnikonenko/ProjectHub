@@ -62,6 +62,25 @@ def test_project_git_remotes_redact_new_and_legacy_credentials(client):
         assert db.get(Project, pid).git_remote == unsafe
 
 
+@pytest.mark.parametrize(('remote', 'expected'), [
+    ('git://example.org/team/repo.git', 'git://example.org/team/repo.git'),
+    ('https://user:dummy@example.org/Team%20Name/_git/Repo?token=dummy',
+     'https://example.org/Team%20Name/_git/Repo'),
+])
+def test_project_git_remotes_preserve_safe_git_and_escaped_paths(client, remote, expected):
+    row = project(client, git_remote=remote)
+    route = f"/api/projects/{row['id']}"
+    assert row['git_remote'] == expected
+    assert client.get(route).json()['git_remote'] == expected
+    assert expected in client.get(f'{route}/export').text
+
+
+@pytest.mark.parametrize('path', ('team%2fother/repo', 'team/%2e%2e/repo', 'team/%2520', 'team/%0a'))
+def test_project_git_remotes_reject_encoded_separators_and_controls(client, path):
+    response = client.post('/api/projects', json={'name': 'test', 'git_remote': f'https://example.org/{path}'})
+    assert response.status_code == 422
+
+
 def test_compact_workspace_reads_preserve_full_api_and_project_scope(client):
     first = project(client, 'First', description='Full project metadata')
     second = project(client, 'Second')

@@ -4,6 +4,7 @@ import os
 import re
 import sqlite3
 import uuid
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 from urllib.parse import urlparse
 from typing import Literal
@@ -23,6 +24,7 @@ from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
 from .services import repository_snapshot, repository_github_target, validate_project_git_remote
 from .resource_paths import runtime_resource
+from .restart import install_restart, own_data_directory
 from .version import VERSION
 
 
@@ -30,14 +32,42 @@ def db_dependency(request: Request):
     yield from get_db(request)
 
 
-def create_app(data_dir=None, restart_controller=None):
-    app = FastAPI(title='ProjectHub', version=VERSION)
-    engine, directory = initialize(data_dir or default_data_dir())
+def create_app(data_dir=None, restart_controller=None, *, data_directory_owned=False):
+    directory = data_dir or default_data_dir()
+    ownership = nullcontext if data_directory_owned else lambda: own_data_directory(directory)
+    # Keep factory-time database recovery safe even when invoked outside the
+    # managed CLI. The lifespan also guards requests and shutdown.
+    with ownership():
+        return _create_app(directory, restart_controller, ownership)
+
+
+def _create_app(data_dir, restart_controller, ownership):
+    @asynccontextmanager
+    async def lifespan(app):
+        with ownership():
+            try:
+                history_sync = getattr(app.state, 'history_sync', None)
+                if history_sync is not None:
+                    history_sync.start()
+                yield
+            finally:
+                try:
+                    if history_sync is not None:
+                        history_sync.close()
+                    manager = getattr(app.state, 'codex_manager', None)
+                    if manager is not None:
+                        manager.close()
+                finally:
+                    engine.dispose()
+                    if restart_controller is not None:
+                        restart_controller.close()
+
+    app = FastAPI(title='ProjectHub', version=VERSION, lifespan=lifespan)
+    engine, directory = initialize(data_dir)
     from .integrations.codex.generation_attempts import interrupt_running
     interrupt_running(engine)
     app.state.engine, app.state.data_dir = engine, directory
     db_dep = Depends(db_dependency)
-    from .restart import install_restart
     install_restart(app, restart_controller)
 
     @app.middleware('http')
@@ -417,17 +447,6 @@ def create_app(data_dir=None, restart_controller=None):
                                             interval=sync_interval) if sync_enabled else None
         app.include_router(codex_router)
         app.include_router(settings_router)
-        @app.on_event('startup')
-        def start_history_sync():
-            if app.state.history_sync is not None:
-                app.state.history_sync.start()
-
-        @app.on_event('shutdown')
-        def shutdown_codex():
-            if app.state.history_sync is not None:
-                app.state.history_sync.close()
-            manager = getattr(app.state, 'codex_manager', None)
-            if manager is not None: manager.close()
     except ModuleNotFoundError as exc:
         if exc.name not in ('backend.app.integrations','backend.app.integrations.codex','backend.app.integrations.codex.router'):raise
 
@@ -438,11 +457,6 @@ def create_app(data_dir=None, restart_controller=None):
         def web(path:str):
             if path.startswith('api/'):raise HTTPException(404,'API endpoint not found')
             return FileResponse(frontend/'index.html')
-    @app.on_event('shutdown')
-    def dispose_engine():
-        engine.dispose()
-        if restart_controller is not None:
-            restart_controller.close()
     return app
 
 

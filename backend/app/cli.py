@@ -79,7 +79,8 @@ def main(argv=None):
             raise HTTPException(409, 'Restart from the terminal to apply a changed server port.')
 
     controller = RestartController(validate_restart=validate_restart)
-    config = uvicorn.Config(lambda: create_app(restart_controller=controller),
+    config = uvicorn.Config(lambda: create_app(data_dir=settings.data_dir, restart_controller=controller,
+                                              data_directory_owned=True),
                             factory=True, host='127.0.0.1', port=settings.port)
     server = uvicorn.Server(config)
     controller.bind(lambda: setattr(server, 'should_exit', True))

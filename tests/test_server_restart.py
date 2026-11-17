@@ -226,7 +226,7 @@ class _FakeConfig:
         return nullcontext(SimpleNamespace(set_inheritable=lambda value: None))
 
 
-@pytest.mark.parametrize('blocked_by', ['data directory', 'port'])
+@pytest.mark.parametrize('blocked_by', ['data directory', 'port', 'direct app factory'])
 def test_failed_second_launch_does_not_run_startup_recovery(tmp_path, monkeypatch, blocked_by):
     settings = tmp_path / 'config.toml'
     settings.write_text('')
@@ -242,19 +242,36 @@ def test_failed_second_launch_does_not_run_startup_recovery(tmp_path, monkeypatc
         db.add(Delivery(id=1, project_id=1, session_id=1, content='Active turn', status='sending'))
         db.add(ProjectGenerationAttempt(project_id=1, kind='qa', started_at='now', state='running'))
         db.commit()
-    with socket.socket() as occupied:
-        occupied.bind(('127.0.0.1', 0))
-        port = occupied.getsockname()[1]
-        monkeypatch.setenv('PROJECTHUB_PORT', str(port))
-        if blocked_by == 'port':
+    if blocked_by == 'port':
+        with socket.socket() as occupied:
+            occupied.bind(('127.0.0.1', 0))
+            monkeypatch.setenv('PROJECTHUB_PORT', str(occupied.getsockname()[1]))
             occupied.listen()
             assert cli.main(['start']) == 3
-        else:
-            occupied.close()
-            with own_data_directory(data):
+    else:
+        with own_data_directory(data):
+            if blocked_by == 'direct app factory':
+                with pytest.raises(BlockingIOError):
+                    create_app(data)
+            else:
                 assert cli.main(['start']) == 3
     with Session(engine) as db:
         assert db.get(CodexSession, 1).status == 'running'
         assert db.get(Delivery, 1).status == 'sending'
         assert db.get(ProjectGenerationAttempt, (1, 'qa')).state == 'running'
     engine.dispose()
+
+
+def test_direct_app_holds_the_directory_until_shutdown(tmp_path, monkeypatch):
+    monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
+    first = create_app(tmp_path)
+    second = create_app(tmp_path)
+    try:
+        with TestClient(first) as client:
+            assert client.get('/api/health').status_code == 200
+            with pytest.raises(BlockingIOError), TestClient(second):
+                pytest.fail('A second server started with the same directory')
+        with TestClient(second) as client:
+            assert client.get('/api/health').status_code == 200
+    finally:
+        second.state.engine.dispose()
