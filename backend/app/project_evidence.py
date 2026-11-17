@@ -237,7 +237,7 @@ def _code_order(relative):
     return (path.stem.lower() not in entrypoints, len(path.parts), relative.casefold(), relative)
 
 
-def _code_excerpt(root_fd, relative, maximum, deadline, structural=False):
+def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measurements=None):
     parts = PurePosixPath(relative).parts
     if not parts or any(part in ('..', '/', '') for part in parts):
         raise OSError('Unsafe relative path')
@@ -265,14 +265,31 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False):
             raise OSError('Binary file')
         # Decode strictly so a binary payload is not silently made into text.
         # A bounded UTF-8 prefix can end inside a multibyte character.
+        decoding_trimmed = False
         try:
             decoded = bytes(data).decode('utf-8')
         except UnicodeDecodeError as exc:
             if exc.end != len(data) or exc.reason != 'unexpected end of data':
                 raise OSError('Non-UTF-8 file') from exc
             decoded = bytes(data[:exc.start]).decode('utf-8')
+            decoding_trimmed = True
+        reasons = ['byte_limit'] if len(data) < metadata.st_size else []
+        if decoding_trimmed:
+            reasons.append('utf8_boundary')
+
+        def finish(excerpt, omissions):
+            if measurements is not None:
+                measurements.update(path=relative, file_bytes=metadata.st_size,
+                                    bytes_read=len(data), excerpt_chars=len(excerpt),
+                                    local_read_complete=len(data) == metadata.st_size,
+                                    excerpt_complete=not omissions,
+                                    omission_reasons=omissions)
+            return excerpt, bool(omissions)
+
         if not structural:
-            return decoded[:maximum], len(data) < metadata.st_size or len(decoded) > maximum
+            if len(decoded) > maximum:
+                reasons.append('character_limit')
+            return finish(decoded[:maximum], reasons)
         # Read a bounded source prefix, then expose declarations and routes
         # instead of letting imports consume the complete output allowance.
         lines = decoded.splitlines()
@@ -296,9 +313,13 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False):
             rendered.append(line)
             used += len(line) + 1
         excerpt = '\n'.join(rendered)
-        return excerpt, (len(data) < metadata.st_size or len(selected) < len(lines)
-                         or len(rendered) < len(selected)
-                         or any(len(lines[number]) > 200 for number in selected))
+        if len(selected) < len(lines):
+            reasons.append('declaration_selection')
+        if len(rendered) < len(selected):
+            reasons.append('excerpt_limit')
+        if any(len(lines[number]) > 200 for number in selected):
+            reasons.append('line_width_limit')
+        return finish(excerpt, reasons)
     finally:
         for fd in reversed(opened):
             os.close(fd)
@@ -312,7 +333,7 @@ def _repository_coverage(status, **changes):
         'full_files': 0, 'partial_files': 0, 'excluded_files': None,
         'unsupported_files': None, 'not_selected_files': None, 'failed_files': 0,
         'empty_files': 0, 'paths': {key: [] for key in ('read', 'partial', 'not_selected', 'failed', 'empty')},
-        'paths_truncated': False, 'by_category': {},
+        'paths_truncated': False, 'by_category': {}, 'file_details': [],
         'limits': {'max_files': _CODE_FILE_LIMIT, 'max_chars': _CODE_CHAR_LIMIT,
                    'max_file_chars': _CODE_FILE_CHARS},
         'notes': ['Inventory covers Git-tracked paths only; untracked files (including ignored untracked files) and submodule contents are not inspected.',
@@ -375,7 +396,7 @@ def collect_repository_code(repository_path):
         candidates = (groups['docs'][:2] + groups['manifest'][:1]
                       + code + groups['tests'][:2])
         limited = len(eligible) > len(candidates)
-        attempted, partial, failed, empty = set(), [], [], []
+        attempted, partial, failed, empty, file_details = set(), [], [], [], []
         root_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             remaining = _CODE_CHAR_LIMIT
@@ -386,9 +407,11 @@ def collect_repository_code(repository_path):
                     limited = True
                     break
                 attempted.add(relative)
+                measured_file = {}
                 try:
                     excerpt, clipped = _code_excerpt(root_fd, relative, maximum, deadline,
-                                                      structural=_code_category(relative) in ('code', 'tests'))
+                                                      structural=_code_category(relative) in ('code', 'tests'),
+                                                      measurements=measured_file)
                 except OSError:
                     skipped += 1
                     failed.append(relative)
@@ -402,6 +425,7 @@ def collect_repository_code(repository_path):
                 value = header + excerpt
                 sources.append({'id': f'repository:code:{relative}', 'label': relative, 'text': value,
                                 'classification': 'verified', 'path': relative})
+                file_details.append(measured_file)
                 remaining -= len(value)
         finally:
             os.close(root_fd)
@@ -411,7 +435,8 @@ def collect_repository_code(repository_path):
                           full_files=len(sources) - len(partial), partial_files=len(partial),
                           not_selected_files=len(eligible - attempted), failed_files=len(failed),
                           empty_files=len(empty), paths={key: values[:100] for key, values in path_groups.items()},
-                          paths_truncated=any(len(values) > 100 for values in path_groups.values()))
+                          paths_truncated=any(len(values) > 100 for values in path_groups.values()),
+                          file_details=file_details[:100])
         inspection['by_category'] = {
             kind: {'eligible_files': len(files),
                    'read_files': sum(source['path'] in files for source in sources),

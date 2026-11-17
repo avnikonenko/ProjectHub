@@ -49,8 +49,8 @@ test('repository coverage separates input files, partial reads and omissions wit
     diagnostics: { evidence_coverage: { repository }, extraction_workers: 10, model_requests: 247 },
   }));
   assert.match(html, /5 file excerpts supplied from 20 tracked paths/);
-  assert.match(html, /Code files: 3 of 12 eligible tracked code files read; 2 only in part/);
-  assert.match(html, /Files read only in part<\/dt><dd>3/);
+  assert.match(html, /Code files: 3 of 12 eligible tracked code files read; 2 supplied only in part/);
+  assert.match(html, /Files supplied only in part<\/dt><dd>3/);
   assert.match(html, /Eligible files not selected<\/dt><dd>9/);
   assert.match(html, /Files excluded by inspection rules<\/dt><dd>1/);
   assert.match(html, /Files used and missed/); assert.match(html, /src\/extra.py/);
@@ -117,4 +117,40 @@ test('current source checks cannot hide missing saved coverage measurements', ()
     createElement('details', null, createElement('summary', null, 'Current source availability'))));
   assert.match(html, /Exact repository file coverage was not recorded for this result/);
   assert.match(html, /Exact conversation coverage was not recorded for this result/);
+});
+
+test('per-file table separates a complete disk read from a sparse AI excerpt', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, { diagnostics: { evidence_coverage: {
+    repository: { ...repository, file_details: [{ path: 'src/app.py', file_bytes: 5000, bytes_read: 5000,
+      excerpt_chars: 300, local_read_complete: true, excerpt_complete: false,
+      omission_reasons: ['declaration_selection', 'line_width_limit'] }] },
+  } } }));
+  assert.match(html, /<caption>Local file reads and supplied AI excerpts<\/caption>/);
+  assert.match(html, /File size \(bytes\)/); assert.match(html, /AI excerpt \(characters\)/);
+  assert.match(html, /5,000<\/td><td>5,000<\/td><td>Complete<\/td><td>300<\/td><td>Partial/);
+  assert.match(html, /Only selected declarations supplied; Long lines shortened/);
+  assert.match(html, /not a percentage of understanding/);
+  assert.doesNotMatch(html, /declaration_selection|line_width_limit/);
+  const legacy = renderToStaticMarkup(createElement(CoverageDetails, {
+    diagnostics: { evidence_coverage: { repository } },
+  }));
+  assert.match(legacy, /Per-file read sizes and AI excerpt lengths were not recorded/);
+  assert.doesNotMatch(legacy, /<caption>Local file reads/);
+});
+
+test('registered conversation totals reveal sources beyond the saved bounded manifest', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, { diagnostics: { evidence_coverage: {
+    conversations: { inventory_scope: 'saved_source_manifest', known_sources: 60, processed_sources: 58,
+      notes: [], source_inventory: { scope: 'registered_project_sources', linked_codex_sessions_total: 100,
+        linked_codex_sessions_considered: 64, linked_codex_sessions_omitted_parent_limit: 36,
+        imported_chats_total: 70, imported_chats_considered: 64, imported_chats_omitted_parent_limit: 6,
+        omission_reasons: { active_turns: 2, parent_limit_linked_sessions: 36 }, notes: [] } },
+  } } }));
+  assert.match(html, /64 of 100 linked Codex sessions considered; 36 omitted by the source-count limit/);
+  assert.match(html, /64 of 70 imported chats considered; 6 omitted by the source-count limit/);
+  assert.match(html, /Within the saved source manifest, 58 of 60 source groups/);
+  assert.match(html, /Considered sources may still have omitted messages/);
+  assert.match(html, /Unfinished turns omitted<\/dt><dd>2/);
+  assert.match(html, /must not be added together/);
+  assert.doesNotMatch(html, /active_turns|parent_limit_linked_sessions/);
 });

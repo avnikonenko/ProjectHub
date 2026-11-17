@@ -2,6 +2,8 @@
 from copy import deepcopy
 import hashlib
 import json
+import os
+import time
 
 from backend.app import project_evidence as evidence
 from backend.app.integrations.codex.evidence_coverage import knowledge_coverage, repository_coverage
@@ -79,6 +81,82 @@ def test_long_source_lines_are_partial_even_when_all_lines_are_selected(tmp_path
     git(repo, 'add', 'source.py')
     measured = evidence.collect_repository_code(str(repo))['inspection']
     assert 'source.py' in measured['paths']['partial']
+    detail = next(item for item in measured['file_details'] if item['path'] == 'source.py')
+    assert detail['local_read_complete'] is True and detail['excerpt_complete'] is False
+    assert detail['omission_reasons'] == ['line_width_limit']
+
+
+def test_per_file_details_distinguish_full_local_read_from_selected_declarations(tmp_path):
+    repo = repository(tmp_path)
+    body = 'def sample():\n' + '    value = 1\n' * 25
+    (repo / 'long.py').write_text(body)
+    git(repo, 'add', 'long.py')
+    result = evidence.collect_repository_code(str(repo))
+    measured = next(item for item in result['inspection']['file_details'] if item['path'] == 'long.py')
+    original = next(source for source in result['sources'] if source['path'] == 'long.py')
+    assert measured['file_bytes'] == measured['bytes_read'] == len(body.encode())
+    assert measured['local_read_complete'] is True
+    assert measured['excerpt_complete'] is False
+    assert measured['omission_reasons'] == ['declaration_selection']
+    assert measured['excerpt_chars'] == len(original['text'].split('\n', 2)[2])
+    assert 'file_bytes' not in original and 'bytes_read' not in original
+
+
+def test_large_source_records_exact_bounded_local_prefix_and_file_size(tmp_path):
+    repo = repository(tmp_path)
+    body = 'value = 1\n' * 8000
+    (repo / 'large.py').write_text(body)
+    git(repo, 'add', 'large.py')
+    measured = next(item for item in evidence.collect_repository_code(str(repo))['inspection']['file_details']
+                    if item['path'] == 'large.py')
+    assert measured['file_bytes'] == len(body.encode())
+    assert measured['bytes_read'] == 65536 < measured['file_bytes']
+    assert measured['local_read_complete'] is False and measured['excerpt_complete'] is False
+    assert 'byte_limit' in measured['omission_reasons']
+    assert 'declaration_selection' in measured['omission_reasons']
+
+
+def test_unicode_counts_bytes_and_excerpt_characters_independently(tmp_path):
+    repo = repository(tmp_path)
+    body = 'Léxico 🧪\n' * 3
+    (repo / 'README.md').write_text(body)
+    git(repo, 'add', 'README.md')
+    measured = next(item for item in evidence.collect_repository_code(str(repo))['inspection']['file_details']
+                    if item['path'] == 'README.md')
+    assert measured['file_bytes'] == measured['bytes_read'] == len(body.encode('utf-8'))
+    assert measured['excerpt_chars'] == len(body) < measured['file_bytes']
+    assert measured['local_read_complete'] is True and measured['excerpt_complete'] is True
+    assert measured['omission_reasons'] == []
+
+
+def test_character_and_structural_excerpt_limits_report_different_reasons(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'README.md').write_text('Readable documentation. ' * 180)
+    (repo / 'declarations.py').write_text('def same(): pass\n' * 200)
+    git(repo, 'add', '.')
+    details = {item['path']: item for item in evidence.collect_repository_code(str(repo))['inspection']['file_details']}
+    for path, reason in (('README.md', 'character_limit'), ('declarations.py', 'excerpt_limit')):
+        measured = details[path]
+        assert measured['file_bytes'] == measured['bytes_read']
+        assert measured['local_read_complete'] is True and measured['excerpt_complete'] is False
+        assert measured['omission_reasons'] == [reason]
+
+
+def test_multibyte_prefix_boundary_preserves_exact_local_byte_measurements(tmp_path):
+    body = 'a' + '🧪' * 3
+    (tmp_path / 'README.md').write_text(body)
+    root_fd = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    measured = {}
+    try:
+        excerpt, partial = evidence._code_excerpt(root_fd, 'README.md', 2,
+                                                  time.monotonic() + 5, measurements=measured)
+    finally:
+        os.close(root_fd)
+    assert excerpt == 'a🧪' and partial is True
+    assert measured['file_bytes'] == 13 and measured['bytes_read'] == 8
+    assert measured['excerpt_chars'] == 2
+    assert measured['local_read_complete'] is False and measured['excerpt_complete'] is False
+    assert measured['omission_reasons'] == ['byte_limit', 'utf8_boundary']
 
 
 def test_record_coverage_does_not_claim_summary_code_was_used_for_knowledge():

@@ -3,10 +3,31 @@ import { GenerationDetails } from './GenerationDetails';
 import { parseGenerationDiagnostics } from './generationDiagnostics';
 import type { GenerationDiagnostics } from './generationDiagnostics';
 
+const omissionLabels: Record<string, string> = {
+  byte_limit: 'Local read size limit', character_limit: 'AI text length limit',
+  declaration_selection: 'Only selected declarations supplied', line_width_limit: 'Long lines shortened',
+  excerpt_limit: 'Excerpt size limit', utf8_boundary: 'Read ended within a text character',
+  parent_limit_linked_sessions: 'Linked sessions omitted by source-count limit',
+  parent_limit_imported_chats: 'Imported chats omitted by source-count limit',
+  unlinked_sessions: 'Unlinked sessions excluded', active_turns: 'Unfinished turns omitted',
+  oversized_turns: 'Oversized turns omitted', oversized_documents: 'Oversized documents omitted',
+  global_text_budget_turns: 'Turns omitted by total text budget',
+  global_text_budget_documents: 'Documents omitted by total text budget',
+  global_text_budget_messages: 'Messages omitted by total text budget',
+  global_message_budget_turns: 'Turns omitted by message-count limit',
+  global_message_budget_messages: 'Messages omitted by message-count limit',
+  invalid_turns: 'Turns with unreadable or invalid content', invalid_documents: 'Unreadable or invalid documents omitted',
+  empty_sessions: 'Sessions without usable messages', turn_limit_turns: 'Turns omitted by per-session limit',
+};
+function omissionLabel(value: string) {
+  return Object.prototype.hasOwnProperty.call(omissionLabels, value) ? omissionLabels[value] : value.replaceAll('_', ' ');
+}
+
 function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationDiagnostics; hasCustomCoverage: boolean }) {
   const repo = measured?.evidence_coverage?.repository;
   const code = repo?.by_category?.code;
   const conversations = measured?.evidence_coverage?.conversations;
+  const inventory = conversations?.source_inventory;
   const archive = measured?.archive_conversations;
   const selected = conversations?.selected_fragments ?? measured?.source_selection?.selected_primary_fragments;
   const available = conversations?.available_fragments ?? measured?.source_selection?.available_primary_fragments;
@@ -31,12 +52,12 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
                   : `${fmt(repo.ai_input_files)} file excerpts supplied; the complete tracked-file count is unknown.`}</p>
               {repo.inventory_complete && code?.read_files !== undefined && code.eligible_files !== undefined
                 && <p>Code files: {fmt(code.read_files)} of {fmt(code.eligible_files)} eligible tracked code files read
-                  {code.partial_files !== undefined ? `; ${fmt(code.partial_files)} only in part.` : '.'}</p>}
+                  {code.partial_files !== undefined ? `; ${fmt(code.partial_files)} supplied only in part.` : '.'}</p>}
               <dl>
                 {repo.eligible_files != null && <><dt>Eligible source, documentation and configuration files</dt><dd>{fmt(repo.eligible_files)}</dd></>}
                 {repo.read_files !== undefined && <><dt>Files read locally</dt><dd>{fmt(repo.read_files)}</dd></>}
-                {repo.full_files !== undefined && <><dt>Files with full text read</dt><dd>{fmt(repo.full_files)}</dd></>}
-                {repo.partial_files !== undefined && <><dt>Files read only in part</dt><dd>{fmt(repo.partial_files)}</dd></>}
+                {repo.full_files !== undefined && <><dt>Files supplied in full</dt><dd>{fmt(repo.full_files)}</dd></>}
+                {repo.partial_files !== undefined && <><dt>Files supplied only in part</dt><dd>{fmt(repo.partial_files)}</dd></>}
                 {repo.not_selected_files !== undefined && <><dt>Eligible files not selected</dt><dd>{fmt(repo.not_selected_files)}</dd></>}
                 {repo.excluded_files !== undefined && <><dt>Files excluded by inspection rules</dt><dd>{fmt(repo.excluded_files)}</dd></>}
                 {repo.unsupported_files !== undefined && <><dt>Files outside supported inspection types</dt><dd>{fmt(repo.unsupported_files)}</dd></>}
@@ -46,10 +67,26 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
               <p><small>The inventory covers Git-tracked paths only. Untracked paths, including ignored untracked files, are outside this inventory. A supplied excerpt may contain only a prefix or selected declarations.</small></p>
             </>}
       {!!repo.notes.length && <ul>{repo.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
-      {!!repo.paths && Object.entries(repo.paths).some(([, paths]) => paths?.length) && <details>
+      {(!!repo.file_details?.length || (!!repo.paths && Object.entries(repo.paths).some(([, paths]) => paths?.length))) && <details>
         <summary>Files used and missed</summary>
-        {(['read', 'partial', 'not_selected', 'failed', 'empty'] as const).map(key => !!repo.paths?.[key]?.length && <section key={key}>
-          <h4>{{ read: 'Read files', partial: 'Partly read files', not_selected: 'Eligible files not selected', failed: 'Read failures', empty: 'Files without usable text' }[key]}</h4>
+        {repo.file_details?.length ? <>
+          <p><small>A file can be read fully on disk while only selected declarations reach the AI. Bytes and characters are different units; these counts are not a percentage of understanding.</small></p>
+          <div className="scheme-table-scroll"><table>
+            <caption>Local file reads and supplied AI excerpts</caption>
+            <thead><tr><th>File</th><th>File size (bytes)</th><th>Read locally (bytes)</th><th>Local read</th><th>AI excerpt (characters)</th><th>AI excerpt</th><th>Why content was omitted</th></tr></thead>
+            <tbody>{repo.file_details.map(detail => <tr key={detail.path}>
+              <td><code>{detail.path}</code></td><td>{fmt(detail.file_bytes)}</td><td>{fmt(detail.bytes_read)}</td>
+              <td>{detail.local_read_complete ? 'Complete' : 'Partial'}</td><td>{fmt(detail.excerpt_chars)}</td>
+              <td>{detail.excerpt_complete ? 'Complete' : 'Partial'}</td>
+              <td>{detail.omission_reasons.length ? detail.omission_reasons.map(omissionLabel).join('; ')
+                : detail.excerpt_complete ? 'No source text omitted' : 'Reason not recorded'}</td>
+            </tr>)}</tbody>
+          </table></div>
+          {repo.file_details_truncated && <p>Per-file details are shortened; the aggregate counts above are unchanged.</p>}
+        </> : <p>Per-file read sizes and AI excerpt lengths were not recorded for this result.</p>}
+        {(['read', 'partial', 'not_selected', 'failed', 'empty'] as const).map(key =>
+          !!repo.paths?.[key]?.length && (!(key === 'read' || key === 'partial') || !repo.file_details?.length) && <section key={key}>
+          <h4>{{ read: 'Read files', partial: 'Partly supplied files', not_selected: 'Eligible files not selected', failed: 'Read failures', empty: 'Files without usable text' }[key]}</h4>
           <ul>{repo.paths[key]!.map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>
         </section>)}
         {repo.paths_truncated && <p>File lists are shortened; the recorded counts above include the full inspected inventory.</p>}
@@ -57,8 +94,32 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
     </section> : !hasCustomCoverage && <p>Exact repository file coverage was not recorded for this result.</p>}
     {(conversations || archive || validFragments) ? <section>
       <h4>Conversations</h4>
+      {inventory ? <>
+        {!(inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined)
+          && !(inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined)
+          && !(inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined)
+          && <p>Complete registered-source totals were not recorded for this result.</p>}
+        {inventory.linked_codex_sessions_considered !== undefined && inventory.linked_codex_sessions_total !== undefined
+          && <p>{fmt(inventory.linked_codex_sessions_considered)} of {fmt(inventory.linked_codex_sessions_total)} linked Codex sessions considered
+            {inventory.linked_codex_sessions_omitted_parent_limit !== undefined
+              ? `; ${fmt(inventory.linked_codex_sessions_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
+        {inventory.imported_chats_considered !== undefined && inventory.imported_chats_total !== undefined
+          && <p>{fmt(inventory.imported_chats_considered)} of {fmt(inventory.imported_chats_total)} imported chats considered
+            {inventory.imported_chats_omitted_parent_limit !== undefined
+              ? `; ${fmt(inventory.imported_chats_omitted_parent_limit)} omitted by the source-count limit.` : '.'}</p>}
+        {inventory.document_notes_considered !== undefined && inventory.document_notes_total !== undefined
+          && <p>{fmt(inventory.document_notes_considered)} of {fmt(inventory.document_notes_total)} stored documents considered, including imported chats.</p>}
+        <p><small>Considered sources may still have omitted messages. These totals cover sources registered in this project, not remote or unlinked conversations.</small></p>
+        {!!inventory.omission_reasons && Object.values(inventory.omission_reasons).some(value => value > 0) && <details>
+          <summary>Conversation omission reasons</summary>
+          <p><small>Counts have different units—sessions, chats, turns, messages or documents—and must not be added together.</small></p>
+          <dl>{Object.entries(inventory.omission_reasons).filter(([, value]) => value > 0).map(([reason, value]) =>
+            <div key={reason}><dt>{omissionLabel(reason)}</dt><dd>{fmt(value)}</dd></div>)}</dl>
+        </details>}
+        {!!inventory.notes.length && <ul>{inventory.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
+      </> : conversations && <p>Complete registered-source totals were not recorded for this result.</p>}
       {conversations?.known_sources !== undefined && conversations.processed_sources !== undefined
-        && <p>{fmt(conversations.processed_sources)} of {fmt(conversations.known_sources)} saved conversation sources at least partly processed.</p>}
+        && <p>Within the saved source manifest, {fmt(conversations.processed_sources)} of {fmt(conversations.known_sources)} source groups were at least partly processed.</p>}
       {conversations && <dl>
         {conversations.partial_sources !== undefined && <><dt>Partially available sources</dt><dd>{fmt(conversations.partial_sources)}</dd></>}
         {conversations.excluded_sources !== undefined && <><dt>Excluded sources</dt><dd>{fmt(conversations.excluded_sources)}</dd></>}

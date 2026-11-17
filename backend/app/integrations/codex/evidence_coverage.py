@@ -21,6 +21,10 @@ def conversation_coverage(bundle, diagnostics):
                            ('omitted_fragments', 'omitted_primary_fragments')):
         if type(selection.get(source)) is int and selection[source] >= 0:
             result[target] = selection[source]
+    # Additive saved measurements; absent on older bundles rather than invented
+    # from the bounded manifest, which may omit registered source parents.
+    if isinstance(bundle.get('source_inventory'), dict):
+        result['source_inventory'] = deepcopy(bundle['source_inventory'])
     return result
 
 

@@ -100,6 +100,13 @@ recorded inventory scope, not every file on disk: Overview inventories tracked p
 Scheme also considers non-ignored untracked files. Private and excluded paths are
 not exposed in omission lists. Missing or incomplete inventories show unknown totals.
 
+Per-file details separate bytes read locally from excerpt characters supplied to AI.
+A complete local read can still produce a sparse excerpt of declarations. These
+different units are not a code-coverage percentage. Conversation inventories count
+registered linked sessions and imported shared chats separately from the bounded
+selection, so sources omitted by parent limits remain visible in the denominator.
+Reasons identify which limits or unavailable inputs prevented fuller coverage.
+
 Worker/request counts, cache hits, timing and token usage are under **Processing
 diagnostics**. They explain resource use, not evidence completeness. Supplying all
 eligible input does not establish factual correctness, successful tests or scientific

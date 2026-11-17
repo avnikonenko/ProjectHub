@@ -21,6 +21,54 @@ MAX_PARENTS = 64
 _MARKER = re.compile(r'(?m)^(User|ChatGPT):[ \t]*(?:\r?\n)?')
 _SHARE = re.compile(r'https://chatgpt\.com/share/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/?', re.I)
 
+# SQLite metadata-only equivalent of _SHARE.fullmatch. A prefix LIKE alone would
+# count ordinary references as imported chats and overstate the denominator.
+_SHARE_SQL = """typeof(reference)='text'
+    AND instr(reference,char(0))=0
+    AND replace(lower(substr(reference,1,26)),'ſ','s')='https://chatgpt.com/share/'
+    AND (length(reference)=62 OR (length(reference)=63 AND substr(reference,63,1)='/'))
+    AND substr(reference,35,1)='-' AND substr(reference,40,1)='-'
+    AND substr(reference,45,1)='-' AND substr(reference,50,1)='-'
+    AND length(replace(substr(reference,27,36),'-',''))=32
+    AND lower(replace(substr(reference,27,36),'-','')) NOT GLOB '*[^0-9a-f]*'"""
+
+
+def _source_inventory(db, project_id, sessions, notes):
+    session_counts = db.execute(text('SELECT count(*) AS total, '
+        'coalesce(sum(CASE WHEN is_linked THEN 1 ELSE 0 END),0) AS linked '
+        'FROM codex_sessions WHERE project_id=:pid'), {'pid': project_id}).mappings().one()
+    document_counts = db.execute(text(f'SELECT count(*) AS total, '
+        f'coalesce(sum(CASE WHEN {_SHARE_SQL} THEN 1 ELSE 0 END),0) AS shared '
+        "FROM notes WHERE project_id=:pid AND kind='document'"), {'pid': project_id}).mappings().one()
+    considered_sessions, considered_documents = sessions[:MAX_PARENTS], notes[:MAX_PARENTS]
+    linked = sum(bool(session.is_linked) for session in considered_sessions)
+    imported = sum(isinstance(note['reference'], str) and bool(_SHARE.fullmatch(note['reference']))
+                   for note in considered_documents)
+    return {
+        'scope': 'registered_project_sources',
+        'codex_sessions_total': session_counts['total'],
+        'linked_codex_sessions_total': session_counts['linked'],
+        'codex_sessions_considered': len(considered_sessions),
+        'linked_codex_sessions_considered': linked,
+        'unlinked_codex_sessions_considered': len(considered_sessions) - linked,
+        'codex_sessions_omitted_parent_limit': session_counts['total'] - len(considered_sessions),
+        'linked_codex_sessions_omitted_parent_limit': session_counts['linked'] - linked,
+        'document_notes_total': document_counts['total'],
+        'document_notes_considered': len(considered_documents),
+        'imported_chats_total': document_counts['shared'],
+        'imported_chats_considered': imported,
+        'imported_chats_omitted_parent_limit': document_counts['shared'] - imported,
+        'other_documents_considered': len(considered_documents) - imported,
+        'omission_reasons': {
+            'parent_limit_linked_sessions': session_counts['linked'] - linked,
+            'parent_limit_imported_chats': document_counts['shared'] - imported,
+            'unlinked_sessions': len(considered_sessions) - linked,
+        },
+        'notes': ['Totals count registered local sources, not remote conversations or complete transcript content.',
+                  'Session selection includes unlinked records; document selection includes ordinary document notes. These can occupy parent-limit slots before eligible conversations.',
+                  'Omission reasons count different units (source groups, turns, documents or messages); do not add them into one total.'],
+    }
+
 
 def _hash(value):
     return hashlib.sha256(json.dumps(value, ensure_ascii=True, sort_keys=True,
@@ -84,10 +132,19 @@ def load_sources(engine, project_id, previous_manifest=None):
     chars = 0
     message_count = 0
     orders = {}
+    inventory = {}
+
+    def omitted(reason, count=1):
+        reasons = inventory.setdefault('omission_reasons', {})
+        reasons[reason] = reasons.get(reason, 0) + count
 
     def append(body, role, ordinal, parent, identity, label, offset=0, **metadata):
         nonlocal chars, message_count
-        if message_count >= MAX_MESSAGES or chars + len(body) > MAX_SOURCE_CHARS:
+        if message_count >= MAX_MESSAGES:
+            omitted('global_message_budget_messages')
+            return False
+        if chars + len(body) > MAX_SOURCE_CHARS:
+            omitted('global_text_budget_messages')
             return False
         message_count += 1
         chars += len(body)
@@ -106,6 +163,9 @@ def load_sources(engine, project_id, previous_manifest=None):
         return True
 
     with Session(engine) as db:
+        # Keep metadata counts, bounded content and historical availability checks
+        # on one SQLite read snapshot without changing evidence fingerprints.
+        db.execute(text('BEGIN'))
         project = db.get(Project, project_id)
         if project is None:
             raise CodexError('Project not found.')
@@ -115,8 +175,11 @@ def load_sources(engine, project_id, previous_manifest=None):
         notes = list(db.execute(text('SELECT id,title,reference,length(content) AS size '
             "FROM notes WHERE project_id=:pid AND kind='document' ORDER BY id LIMIT :lim"),
             {'pid': project_id, 'lim': MAX_PARENTS + 1}).mappings())
+        inventory = _source_inventory(db, project_id, sessions, notes)
         if len(sessions) > MAX_PARENTS or len(notes) > MAX_PARENTS:
-            coverage['limitations'].append('Only the first 64 sessions and 64 imported documents were considered.')
+            coverage['limitations'].append(
+                f'Only the first {MAX_PARENTS} session records and {MAX_PARENTS} document notes were considered; '
+                'unlinked sessions and ordinary document notes can occupy slots before eligible conversations.')
         for session in sessions[:MAX_PARENTS]:
             parent = f'codex:{session.id}:{session.thread_id}'
             entry = {'source_key': parent, 'session_id': session.id, 'thread_id': session.thread_id,
@@ -127,15 +190,22 @@ def load_sources(engine, project_id, previous_manifest=None):
                 entry['revision'] = _hash(['unlinked', session.thread_id])
                 coverage['excluded'].append(parent)
                 continue
+            total_turns = db.scalar(text('SELECT count(*) FROM codex_history_turns '
+                'WHERE project_id=:pid AND session_id=:sid'), {'pid': project_id, 'sid': session.id})
             rows = db.execute(text('SELECT turn_id,status,length(messages) AS size '
                 'FROM codex_history_turns WHERE project_id=:pid AND session_id=:sid ORDER BY id LIMIT :lim'),
                 {'pid': project_id, 'sid': session.id, 'lim': MAX_MESSAGES + 1})
-            hashes, had_rows = [], False
+            hashes, had_rows, considered_turns = [], False, 0
             first_source = len(sources)
             for row in rows.mappings():
                 had_rows = True
-                if (row['status'] == 'inProgress' or row['size'] > MAX_DOCUMENT_CHARS
-                        or message_count >= MAX_MESSAGES or chars + row['size'] > MAX_SOURCE_CHARS):
+                considered_turns += 1
+                reason = ('active_turns' if row['status'] == 'inProgress' else
+                          'oversized_turns' if row['size'] > MAX_DOCUMENT_CHARS else
+                          'global_message_budget_turns' if message_count >= MAX_MESSAGES else
+                          'global_text_budget_turns' if chars + row['size'] > MAX_SOURCE_CHARS else None)
+                if reason:
+                    omitted(reason)
                     coverage['unprocessed'].append(parent)
                     hashes.append([row['turn_id'], row['status'], row['size']])
                     continue
@@ -157,9 +227,13 @@ def load_sources(engine, project_id, previous_manifest=None):
                                       session_id=session.id, turn_id=row['turn_id']):
                             coverage['unprocessed'].append(parent)
                 except (ValueError, TypeError, RecursionError):
+                    omitted('invalid_turns')
                     coverage['unavailable'].append(parent)
+            if total_turns > considered_turns:
+                omitted('turn_limit_turns', total_turns - considered_turns)
             entry['revision'] = _hash(hashes)
             if not had_rows:
+                omitted('empty_sessions')
                 entry['availability'] = 'unavailable'
                 coverage['unavailable'].append(parent)
             elif parent in coverage['unavailable']:
@@ -179,6 +253,7 @@ def load_sources(engine, project_id, previous_manifest=None):
                      'availability': 'available', 'revision': None}
             entries.append(entry)
             if note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > MAX_SOURCE_CHARS:
+                omitted('oversized_documents' if note['size'] > MAX_DOCUMENT_CHARS else 'global_text_budget_documents')
                 entry['availability'] = 'excluded'
                 entry['revision'] = _hash(['excluded_by_limit', note['size']])
                 coverage['excluded'].append(parent)
@@ -186,12 +261,14 @@ def load_sources(engine, project_id, previous_manifest=None):
             value = db.scalar(select(Note.content).where(Note.project_id == project_id, Note.id == note['id']))
             entry['revision'] = _hash(value)
             if not isinstance(value, str):
+                omitted('invalid_documents')
                 entry.update(availability='unavailable', reason='changed_during_read')
                 coverage['unavailable'].append(parent)
                 continue
             try:
                 messages = _messages(value)
             except ValueError:
+                omitted('invalid_documents')
                 entry['availability'] = 'unavailable'
                 coverage['unavailable'].append(parent)
                 continue
@@ -205,9 +282,8 @@ def load_sources(engine, project_id, previous_manifest=None):
                 coverage['processed'].append(parent)
             if parent in coverage['unprocessed']:
                 entry['partial'] = True
-    current_keys = {entry['source_key'] for entry in entries}
-    previous_entries = (previous_manifest or {}).get('entries', [])
-    with Session(engine) as db:
+        current_keys = {entry['source_key'] for entry in entries}
+        previous_entries = (previous_manifest or {}).get('entries', [])
         for old in previous_entries:
             if old['source_key'] in current_keys:
                 continue
@@ -234,7 +310,8 @@ def load_sources(engine, project_id, previous_manifest=None):
         coverage[key] = list(dict.fromkeys(coverage[key]))
     manifest = {'entries': entries, 'project_revision': _hash(project_data),
                 'fingerprint': _hash({'entries': entries, 'project': project_data})}
-    return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage}
+    return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage,
+            'source_inventory': inventory}
 
 
 def has_heading_continuation(source, following):
