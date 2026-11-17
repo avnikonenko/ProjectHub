@@ -67,12 +67,17 @@ session and try these prompts:
 - “Mark ‘test the import’ finished in Project X.”
 - “Link this session to Project X.”
 
-You can also read the briefing and saved Knowledge from a terminal:
+<details>
+<summary>Optional terminal commands</summary>
+
+Run these directly if you want to read the same project context outside a Codex session.
 
 ```bash
 projecthub context --project 'Project X'
 projecthub read --project 'Project X' --kind knowledge
 ```
+
+</details>
 
 See the [terminal-agent guide](docs/TERMINAL_AGENTS.md) for installation options and commands.
 
