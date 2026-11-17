@@ -67,7 +67,7 @@ session and try these prompts:
 - “Mark ‘test the import’ finished in Project X.”
 - “Link this session to Project X.”
 - “Unlink this session from Project X.”
-- “Link Codex sessions THREAD_ID_1 and THREAD_ID_2 to Project X.”
+- “Find all codex sessions related to X and link them to Project X.”
 
 <details>
 <summary>Optional terminal commands</summary>
