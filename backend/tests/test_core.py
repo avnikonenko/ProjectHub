@@ -502,6 +502,69 @@ def test_repository_snapshot_compares_saved_upstream_tips(client, tmp_path, monk
     assert upstream['commit'] is not None and upstream['ahead'] is None and upstream['behind'] is None
 
 
+def test_repository_snapshot_reports_tracking_before_the_first_local_commit(client, tmp_path):
+    repo = tmp_path / 'unborn-upstream'
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    git('init', '-b', 'main')
+    git('remote', 'add', 'team', 'https://example.test/team/project.git')
+    git('config', 'branch.main.remote', 'team')
+    git('config', 'branch.main.merge', 'refs/heads/main')
+    url = f"/api/projects/{project(client, repository_path=str(repo))['id']}/repository"
+    snapshot = client.get(url).json()
+    assert snapshot['branch'] == 'main' and snapshot['commits'] == []
+    assert snapshot['upstream'] == {'branch': 'team/main', 'is_remote': True, 'ahead': None, 'behind': None, 'commit': None}
+    assert snapshot['remote_repository']['name'] == 'team'
+
+    git('-c', 'user.name=Example', '-c', 'user.email=example@example.test', 'commit', '--allow-empty', '-m', 'Initial')
+    git('update-ref', 'refs/remotes/team/main', 'HEAD')
+    git('checkout', '--orphan', 'new')
+    git('config', 'branch.new.remote', 'team')
+    git('config', 'branch.new.merge', 'refs/heads/main')
+    snapshot = client.get(url).json()
+    assert snapshot['branch'] == 'new' and snapshot['commits'] == []
+    upstream = snapshot['upstream']
+    assert upstream['branch'] == 'team/main' and upstream['commit']['hash'] == git('rev-parse', '--short', 'refs/remotes/team/main')
+    assert upstream['ahead'] is None and upstream['behind'] is None
+
+
+def test_repository_snapshot_pins_tip_to_the_captured_branch(client, tmp_path, monkeypatch):
+    from backend.app import project_evidence
+
+    repo = tmp_path / 'switched-head'
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True, text=True).stdout.strip()
+
+    git('init', '-b', 'main')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    git('commit', '--allow-empty', '-m', 'Main')
+    git('remote', 'add', 'origin', 'https://example.test/team/project.git')
+    git('update-ref', 'refs/remotes/origin/main', 'HEAD')
+    git('branch', '--set-upstream-to=origin/main')
+    git('checkout', '-b', 'other')
+    git('commit', '--allow-empty', '-m', 'Other')
+    git('checkout', 'main')
+    url = f"/api/projects/{project(client, repository_path=str(repo))['id']}/repository"
+    original_git = project_evidence._git
+
+    def switch_after_reading_branch(path, *args, **kwargs):
+        result = original_git(path, *args, **kwargs)
+        if args == ('symbolic-ref', '--quiet', 'HEAD'):
+            git('symbolic-ref', 'HEAD', 'refs/heads/other')
+        return result
+
+    monkeypatch.setattr(project_evidence, '_git', switch_after_reading_branch)
+    snapshot = client.get(url).json()
+    assert snapshot['branch'] == 'main' and snapshot['commits'][0]['subject'] == 'Main'
+    assert snapshot['upstream']['ahead'] == snapshot['upstream']['behind'] == 0
+
+
 def test_repository_snapshot_deduplicates_conflicted_index_paths(client, tmp_path):
     repo = tmp_path / 'conflicted-index'
     repo.mkdir()
@@ -544,6 +607,10 @@ def test_repository_snapshot_sanitizes_remote_addresses_and_prefers_the_upstream
 
     assert remote() == {'name': 'origin', 'address': 'https://github.com/owner/repo.git',
                         'web_url': 'https://github.com/owner/repo'}
+    git('config', '--add', 'remote.origin.url', 'https://other.example/mirror.git')
+    assert remote() == {'name': 'origin', 'address': 'https://github.com/owner/repo.git',
+                        'web_url': 'https://github.com/owner/repo'}
+    git('config', '--fixed-value', '--unset-all', 'remote.origin.url', 'https://other.example/mirror.git')
     git('config', 'branch.main.remote', 'upstream')
     git('config', 'branch.main.merge', 'refs/heads/main')
     assert remote() == {'name': 'upstream', 'address': 'git.example.com:team/repo.git'}
@@ -557,6 +624,19 @@ def test_repository_snapshot_sanitizes_remote_addresses_and_prefers_the_upstream
         assert remote() == {'name': 'project', 'address': 'https://fallback.example/team/repo.git',
                             'web_url': 'https://fallback.example/team/repo.git'}
 
+
+def test_repository_snapshot_uses_a_sole_custom_remote_without_tracking(client, tmp_path):
+    repo = tmp_path / 'sole-remote'
+    subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+    subprocess.run(['git', '-C', str(repo), 'remote', 'add', 'team',
+                    'ssh://hidden-user@git.example.test/code.git'], check=True)
+    url = f"/api/projects/{project(client, repository_path=str(repo))['id']}/repository"
+    assert client.get(url).json()['remote_repository'] == {
+        'name': 'team', 'address': 'ssh://git.example.test/code.git',
+    }
+    subprocess.run(['git', '-C', str(repo), 'remote', 'add', 'other',
+                    'https://example.test/code.git'], check=True)
+    assert client.get(url).json()['remote_repository'] is None
 
 
 def test_repository_issues_are_project_scoped_and_only_fetch_on_request(client, tmp_path, monkeypatch):

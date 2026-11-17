@@ -135,37 +135,81 @@ def _safe_remote_address(name, raw):
 
 
 def _repository_remote_address(git, upstream_remote, registered_remote):
-    for name in dict.fromkeys((upstream_remote, 'origin')):
+    preferred = dict.fromkeys((upstream_remote, 'origin'))
+
+    def configured_address(name):
         if not name or not re.fullmatch(r'[a-zA-Z0-9._/-]+', name):
-            continue
-        configured = git('config', '--local', '--no-includes', '--null', '--get',
+            return None
+        configured = git('config', '--local', '--no-includes', '--null', '--get-all',
                          f'remote.{name}.url', optional=True, limit=8192)
         if configured is not None:
-            address = _safe_remote_address(name, configured.stdout.removesuffix('\0'))
-            if address is not None:
-                return address
-    return _safe_remote_address('project', registered_remote)
+            # Git fetch uses the first configured URL for a remote.
+            return _safe_remote_address(name, configured.stdout.partition('\0')[0])
+        return None
+
+    for name in preferred:
+        address = configured_address(name)
+        if address is not None:
+            return address
+    registered = _safe_remote_address('project', registered_remote)
+    if registered is not None:
+        return registered
+    configured = git('config', '--local', '--no-includes', '--null', '--name-only', '--get-regexp',
+                     r'^remote\..*\.url$', optional=True, limit=8192)
+    if configured is None:
+        return None
+    names = {key.removeprefix('remote.').removesuffix('.url')
+             for key in configured.stdout.split('\0') if key}
+    if len(names) != 1:
+        return None
+    name = names.pop()
+    return configured_address(name) if name not in preferred else None
 
 
-def _repository_upstream(git, current_ref, head):
+def _repository_upstream(git, current_ref, head, overrides):
     if not current_ref:
         return None, False, None
-    tracked = git('for-each-ref', '--count=1', '--format=%(refname)%09%(upstream)%09%(upstream:remotename)',
-                  os.fsdecode(current_ref), optional=True, raw=True)
-    if tracked is None:
-        return None, True, None
-    current, _, data = tracked.stdout.rstrip(b'\n').partition(b'\t')
-    upstream_ref, _, upstream_remote = data.partition(b'\t')
-    if current != current_ref or not upstream_ref:
-        return None, False, None
-
-    name = upstream_ref.removeprefix(b'refs/remotes/').removeprefix(b'refs/heads/')
-    remote = upstream_remote.decode('utf-8', errors='replace') if upstream_remote and upstream_remote != b'.' else None
+    if head:
+        tracked = git('for-each-ref', '--count=1', '--format=%(refname)%09%(upstream)%09%(upstream:remotename)',
+                      os.fsdecode(current_ref), optional=True, raw=True)
+        if tracked is None:
+            return None, True, None
+        current, _, data = tracked.stdout.rstrip(b'\n').partition(b'\t')
+        upstream_ref, _, upstream_remote = data.partition(b'\t')
+        if current != current_ref or not upstream_ref:
+            return None, False, None
+        name = upstream_ref.removeprefix(b'refs/remotes/').removeprefix(b'refs/heads/')
+        target = os.fsdecode(upstream_ref)
+        remote = upstream_remote.decode('utf-8', errors='replace') or None
+    else:
+        # A branch without a commit has no ref for for-each-ref. Git's status
+        # header still reports the upstream configured for that branch.
+        branch_name = current_ref.removeprefix(b'refs/heads/')
+        status = git('status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no',
+                     '--ignore-submodules=all', '--no-renames', overrides=overrides, optional=True, raw=True)
+        if status is None:
+            return None, True, None
+        headers = dict(entry.split(b' ', 2)[1:] for entry in status.stdout.split(b'\0')
+                       if entry.startswith(b'# ') and entry.count(b' ') >= 2)
+        if headers.get(b'branch.head') != branch_name:
+            return None, True, None
+        name = headers.get(b'branch.upstream')
+        if not name:
+            return None, False, None
+        branch = os.fsdecode(branch_name)
+        configured = git('config', '--local', '--no-includes', '--null', '--get', f'branch.{branch}.remote',
+                         optional=True, limit=8192)
+        remote = configured.stdout.removesuffix('\0') if configured is not None else None
+        if remote is None:
+            return None, True, None
+        target = f'{branch}@{{upstream}}'
+    if remote == '.':
+        remote = None
     upstream = {'branch': name.decode('utf-8', errors='replace'),
                 'is_remote': remote is not None,
                 'ahead': None, 'behind': None, 'commit': None}
     tip = git('rev-parse', '--quiet', '--verify', '--end-of-options',
-              os.fsdecode(upstream_ref) + '^{commit}', optional=True)
+              target + '^{commit}', optional=True)
     if tip is None:
         return upstream, False, remote
     upstream_hash = tip.stdout.strip()
@@ -228,7 +272,8 @@ def repository_snapshot(value, remote=''):
         if refname.startswith('refs/remotes/') and not target:
             remote_branches.append(refname.removeprefix('refs/remotes/'))
     remote_branches_limited = len(remote_branches) > 300 or len(remote_refs) == remote_ref_limit
-    head_result = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
+    head_result = git('rev-parse', '--quiet', '--verify', '--end-of-options',
+                      os.fsdecode(current_ref) if current_ref else 'HEAD', allowed=(0, 1))
     head = head_result.stdout.strip() if head_result.returncode == 0 else None
     commits = []
     if head:
@@ -268,7 +313,7 @@ def repository_snapshot(value, remote=''):
     target = repository_github_target(remote, path, validated=True)
     index_paths = git('ls-files', '--cached', '-z', optional=True, raw=True)
     tracked_files = None if index_paths is None else len(set(filter(None, index_paths.stdout.split(b'\0'))))
-    upstream, upstream_unavailable, upstream_remote = _repository_upstream(git, current_ref, head)
+    upstream, upstream_unavailable, upstream_remote = _repository_upstream(git, current_ref, head, overrides)
     return {'branch': current_branch, 'branches': branches, 'branches_limited': branches_limited,
             'remote_branches': remote_branches[:300], 'remote_branches_limited': remote_branches_limited,
             'dirty': bool(status.stdout), 'commits': commits,

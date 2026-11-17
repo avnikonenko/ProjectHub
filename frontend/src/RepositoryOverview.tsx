@@ -62,9 +62,12 @@ function BranchSync({ status }: { status: RepositoryStatus }) {
   </details>;
 }
 
-export function useRepositoryOverview(base: string, path: string | null) {
+export function useRepositoryOverview(base: string, path: string | null, registeredRemote: string) {
   const [snapshot, setSnapshot] = useState<{
+    base: string;
     path: string;
+    registeredRemote: string;
+    refresh: number;
     status: RepositoryStatus | null;
     error: string;
   } | null>(null);
@@ -76,25 +79,25 @@ export function useRepositoryOverview(base: string, path: string | null) {
       return;
     }
     const controller = new AbortController();
+    const request = { base, path, registeredRemote, refresh };
     api<RepositoryStatus>(`${base}/repository`, { signal: controller.signal })
       .then((status) => {
-        if (!controller.signal.aborted) setSnapshot({ path, status, error: '' });
+        if (!controller.signal.aborted) setSnapshot({ ...request, status, error: '' });
       })
       .catch((err: Error) => {
-        if (!controller.signal.aborted) setSnapshot({ path, status: null, error: err.message });
+        if (!controller.signal.aborted) setSnapshot({ ...request, status: null, error: err.message });
       });
     return () => controller.abort();
-  }, [base, path, refresh]);
+  }, [base, path, registeredRemote, refresh]);
 
-  const current = snapshot?.path === path ? snapshot : null;
+  const current = snapshot?.base === base && snapshot.path === path && snapshot.registeredRemote === registeredRemote
+    ? snapshot : null;
+  const loading = !!path && current?.refresh !== refresh;
   return {
     status: current?.status ?? null,
-    error: current?.error ?? '',
-    loading: !!path && !current,
-    reload: () => {
-      setSnapshot(null);
-      setRefresh((value) => value + 1);
-    },
+    error: loading ? '' : current?.error ?? '',
+    loading,
+    reload: () => setRefresh((value) => value + 1),
   };
 }
 

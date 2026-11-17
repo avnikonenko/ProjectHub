@@ -517,7 +517,7 @@ function ProjectWorkspace({
   }
   useEffect(() => { cancelPendingNoteEdit(); }, [view, historyLink, knowledgeLink, results]);
   const repository = useRepositoryOverview(base, view === 'Dashboard' && !results
-    ? overview?.project.repository_path ?? null : null);
+    ? overview?.project.repository_path ?? null : null, overview?.project.git_remote ?? '');
   if (!overview)
     return (
       <main>
