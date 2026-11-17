@@ -3,7 +3,7 @@ import { ErrorBox } from './ui';
 import { useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
 
-type SavedGenerationKind = 'brief' | 'qa' | 'scheme';
+type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
 type RecoveryKind = SavedGenerationKind | 'knowledge';
 export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
 const generationKinds: SavedGenerationKind[] = ['brief', 'qa', 'scheme'];
@@ -26,14 +26,16 @@ export type Progress = {
   elapsed_seconds?: number;
 };
 
-export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false }: { includeBrief?: boolean; includeKnowledge?: boolean } = {}) {
+export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false, includeParameters = false }: {
+  includeBrief?: boolean; includeKnowledge?: boolean; includeParameters?: boolean;
+} = {}) {
   const [recheckRequest, setRecheckRequest] = useState<{
     sequence: number; kind: RecoveryKind | null; previousStartedAt?: string;
   }>({ sequence: 0, kind: null });
   const [checking, setChecking] = useState(true);
-  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
-  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0, knowledge: 0 });
-  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '', knowledge: '' });
+  const [running, setRunning] = useState({ brief: false, qa: false, scheme: false, knowledge: false, parameters: false });
+  const [version, setVersion] = useState({ brief: 0, qa: 0, scheme: 0, knowledge: 0, parameters: 0 });
+  const [errors, setErrors] = useState({ brief: '', qa: '', scheme: '', knowledge: '', parameters: '' });
   const [progress, setProgress] = useState<Partial<Record<RecoveryKind, Progress>>>({});
   useEffect(() => {
     const abort = new AbortController();
@@ -42,6 +44,7 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
     let handoffChecks = 0;
     const kinds: RecoveryKind[] = includeBrief ? [...generationKinds] : generationKinds.filter(kind => kind !== 'brief');
     if (includeKnowledge) kinds.push('knowledge');
+    if (includeParameters) kinds.push('parameters');
     function poll(kind: RecoveryKind, recovering = false) {
       void api<Progress>(`${base}/codex/generation/status?kind=${kind}`, { signal: abort.signal })
         .then((status) => {
@@ -84,10 +87,10 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
       abort.abort();
       Object.values(timers).forEach(clearTimeout);
     };
-  }, [base, includeBrief, includeKnowledge, recheckRequest]);
+  }, [base, includeBrief, includeKnowledge, includeParameters, recheckRequest]);
   return {
     checking, running, version, progress, error: [...new Set(Object.values(errors).filter(Boolean))].join(' '),
-    clearError: () => setErrors({ brief: '', qa: '', scheme: '', knowledge: '' }),
+    clearError: () => setErrors({ brief: '', qa: '', scheme: '', knowledge: '', parameters: '' }),
     recheck: (kind: RecoveryKind) => {
       setChecking(true);
       setRecheckRequest(previous => ({ sequence: previous.sequence + 1, kind,

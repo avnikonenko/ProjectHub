@@ -11,7 +11,7 @@ export function RevisionHistory<T>({
   base, kind, version, disabled, selectedId, onSelect, onLoadingChange,
 }: {
   base: string;
-  kind: 'brief' | 'qa' | 'scheme';
+  kind: 'brief' | 'qa' | 'scheme' | 'parameters';
   version: string | null;
   disabled: boolean;
   selectedId: number | null;
@@ -62,8 +62,8 @@ export function RevisionHistory<T>({
     try {
       let snapshot: T | null;
       if (id === null) {
-        snapshot = kind === 'scheme'
-          ? (await api<{ snapshot: T | null }>(`${prefix}/scheme`)).snapshot
+        snapshot = kind === 'scheme' || kind === 'parameters'
+          ? (await api<{ snapshot: T | null }>(`${prefix}/${kind}`)).snapshot
           : await api<T | null>(`${prefix}/${kind}`);
       } else {
         const result = await api<{ kind: string; snapshot: T }>(`${prefix}/revisions/${id}`);

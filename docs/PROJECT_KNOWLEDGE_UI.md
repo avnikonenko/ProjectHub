@@ -12,6 +12,51 @@ more detailed perspective on extracted choices, requirements, reasons and suppor
 passages, with searchable Knowledge records alongside it. The saved perspectives
 are independent. Scheme provides diagrams in a separate tab.
 
+## Parameters & Trade-offs
+
+Under **Knowledge**, switch from **Knowledge Summary & records** to
+**Parameters & Trade-offs**. This independent view inspects declared settings,
+thresholds, limits and resource budgets in the registered repository. Click
+**Generate parameters** or **Refresh parameters** explicitly; browsing, filtering
+and inspecting saved entries makes no model calls.
+
+Static inspection supports Python and simple scalar JSON, TOML and YAML
+configuration. It never imports or executes repository code. Credentials and
+sensitive declarations are excluded; supported formats and inspection limits are
+reported in coverage. Unsupported languages and syntax may leave gaps.
+
+Each entry preserves its name, declared value/default, component, file, symbol,
+line range and inspected content revision. Configuration values are labeled
+separately from code defaults; precedence is not assumed. Conditional declarations
+remain separate with their unevaluated conditions. Required parameters and missing
+defaults are labeled explicitly; expressions such as CPU-derived values remain
+expressions rather than invented numbers.
+
+AI explains purpose and concrete project-specific trade-offs using the inspected
+evidence. Documented and inferred explanations remain distinct. Reasons for choosing
+a value are included only when documented; generic methodological caveats and
+individual-run/effective values are outside this view. Search and component filters
+operate locally. Expand an entry for its original declaration evidence.
+
+Parameters save independently in existing generation revisions. They do not replace
+or regenerate Project Overview, Knowledge Summary, Knowledge records or Scheme.
+Source changes flag the saved result; failed/cancelled generation preserves the
+previous snapshot. **Generation & saved versions** opens earlier parameter results,
+whose original coverage is kept separate from the current source check.
+
+Validation on 2026-11-17 used an isolated, frozen ProjectHub checkout and real
+Codex (`gpt-6.1-sol`, medium reasoning). One request completed in 204.5 seconds:
+100 selected declarations retained their inspected defaults, with 96 purposes,
+41 trade-offs and one documented rationale; unsupported explanations stayed
+unknown. Reported usage was 56,261 input and 9,925 output tokens. This is one
+measured run, not a general speed or cost guarantee. Coverage explicitly recorded
+103 omitted declarations, unsupported-language files and partial reads.
+
+An isolated Firefox check verified saved values, conditional/expression/required
+labels, local search, and source-change warnings without automatic regeneration
+or model calls. Automated checks cover project ownership, independent revisions,
+source changes, cancellation/failures and explanation-reference validation.
+
 ## Use
 
 Open a project and select **Knowledge**. Published knowledge loads when that view

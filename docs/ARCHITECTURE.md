@@ -37,6 +37,22 @@ lock preventing concurrent writers. Legacy matching summaries remain recoverable
 Opening a view only reads saved results and lightweight progress/freshness data.
 Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
 
+### Parameters and project-specific trade-offs
+
+`parameter_evidence.py` performs bounded, read-only extraction from the registered
+repository. Declarations and code/configuration defaults are deterministic facts;
+`parameters.py` makes one explicit Codex request for separately labeled explanations.
+The model cannot replace parameter names, defaults or locations, and explanation
+citations must refer to inspected evidence. No run execution or runtime-value
+tracking is involved.
+
+`GET/POST /api/projects/{id}/codex/parameters` reuse project ownership checks,
+generation locks, cancellation/budgets and existing revision storage. Successful
+snapshots append `GenerationRevision(kind='parameters')` atomically; the latest
+revision is the saved view, so no new table or knowledge subsystem is needed.
+Reads and client-side search never invoke Codex. Other saved project views are
+untouched, and failures/source changes preserve prior parameter results.
+
 ### Legacy acceptance records
 
 Answer acceptance is a single database transaction: validate ownership, preserve previous state, supersede any prior linked accepted decision, select the answer, resolve the question, create the new accepted decision, optionally create a task, and append an audit event. The overview and summary are derived from committed records, avoiding stale summary caches.

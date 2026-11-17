@@ -4,6 +4,7 @@ import { TagGeneration } from './TagGeneration';
 import { ALL_TOPICS, topicChoices, filterTopicItems, type TopicGroup } from './topicGroups';
 import { TopicPicker } from './TopicPicker';
 import { KnowledgePage } from './KnowledgePage';
+import { ProjectParameters } from './ProjectParameters';
 import { BriefPreview, type Brief } from './BriefContent';
 import { CoverageDetails } from './CoverageDetails';
 import type { GenerationDiagnostics } from './generationDiagnostics';
@@ -290,6 +291,12 @@ function ProjectWorkspace({
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
   const [analysisState, setAnalysisState] = useState({ busy: false, running: false });
+  const [knowledgeSubview, setKnowledgeSubview] = useState<'knowledge' | 'parameters'>('knowledge');
+  const [parametersVisited, setParametersVisited] = useState(false);
+  const [parameterState, setParameterState] = useState({ busy: false, running: false });
+  useEffect(() => {
+    if (knowledgeLink) setKnowledgeSubview('knowledge');
+  }, [knowledgeLink?.publicationId, knowledgeLink?.itemId]);
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });
@@ -317,7 +324,7 @@ function ProjectWorkspace({
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const base = `/projects/${projectId}`;
-  const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true });
+  const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true, includeParameters: true });
   useEffect(() => {
     if (historyLink || knowledgeLink) {
       setResults(null);
@@ -592,9 +599,12 @@ function ProjectWorkspace({
           && (kind !== 'brief' || view !== 'Dashboard' || !!results) && (
           <GenerationStatus key={kind} base={base} kind={kind} label={kind === 'brief' ? 'Project Overview' : kind === 'qa' ? 'AI Q&A' : 'Scheme'} />
         ))}
-        {(analysisState.running || recovery.running.knowledge) && (view !== 'Knowledge' || !!results) &&
+        {(analysisState.running || recovery.running.knowledge) && (view !== 'Knowledge' || knowledgeSubview !== 'knowledge' || !!results) &&
           <GenerationStatus base={base} kind="knowledge" label="Knowledge Summary"
             sharedProgress={recovery.running.knowledge ? recovery.progress.knowledge : undefined} />}
+        {(parameterState.running || recovery.running.parameters) && (view !== 'Knowledge' || knowledgeSubview !== 'parameters' || !!results) &&
+          <GenerationStatus base={base} kind="parameters" label="Parameters & Trade-offs"
+            sharedProgress={recovery.running.parameters ? recovery.progress.parameters : undefined} />}
         <ErrorBox error={recovery.error} />
         {(visited.brief || view === 'Dashboard') && (
           <div hidden={view !== 'Dashboard' || !!results}>
@@ -602,18 +612,34 @@ function ProjectWorkspace({
               visible={view === 'Dashboard' && !results} generation={generation}
               recoveryVersion={recovery.version.brief} recoveryBusy={recovery.checking || recovery.running.brief}
               onRecoveryNeeded={() => recovery.recheck('brief')}
-              externalBusy={analysisState.busy || recovery.running.knowledge}
+              externalBusy={analysisState.busy || recovery.running.knowledge || parameterState.busy || recovery.running.parameters}
               onGenerating={(active) => { if (active) recovery.clearError(); setRunning(previous => ({ ...previous, brief: active })); }} />
           </div>
         )}
         {(visited.knowledge || view === 'Knowledge') && (
           <div hidden={view !== 'Knowledge' || !!results}>
+            <nav className="tabs" aria-label="Knowledge views">
+              <button type="button" className={knowledgeSubview === 'knowledge' ? 'active' : ''}
+                aria-current={knowledgeSubview === 'knowledge' ? 'page' : undefined}
+                onClick={() => setKnowledgeSubview('knowledge')}>Knowledge Summary & records</button>
+              <button type="button" className={knowledgeSubview === 'parameters' ? 'active' : ''}
+                aria-current={knowledgeSubview === 'parameters' ? 'page' : undefined}
+                onClick={() => { setParametersVisited(true); setKnowledgeSubview('parameters'); }}>Parameters &amp; Trade-offs</button>
+            </nav>
+            <div hidden={knowledgeSubview !== 'knowledge'}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}
-              visible={view === 'Knowledge' && !results}
-              showRecords externalBusy={running.brief || recovery.running.brief} onBusyChange={setAnalysisState}
+              visible={view === 'Knowledge' && knowledgeSubview === 'knowledge' && !results}
+              showRecords externalBusy={running.brief || recovery.running.brief || parameterState.busy || recovery.running.parameters} onBusyChange={setAnalysisState}
               renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
                 prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
                 perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Preview sources'} />} />
+            </div>
+            {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
+              <ProjectParameters base={base} generation={generation}
+                visible={view === 'Knowledge' && knowledgeSubview === 'parameters' && !results}
+                externalBusy={running.brief || recovery.running.brief || analysisState.busy || recovery.running.knowledge}
+                onBusyChange={setParameterState} />
+            </div>}
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (
