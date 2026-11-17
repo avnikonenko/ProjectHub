@@ -20,19 +20,26 @@ If you have a ProjectHub wheel, you can install it on Linux with Python 3.11 or
 later. The wheel includes the built interface and database migrations. Use the
 filename of your downloaded or [locally built wheel](README.md#build-a-wheel).
 
+### With pipx
+
 ```bash
 pipx install ./projecthub_local-0.2.1-py3-none-any.whl
 projecthub
 ```
 
 If the launcher is outside your `PATH`, run `pipx ensurepath` and reopen the
-terminal. To keep a wheel installation alongside an existing source launcher, use
-a separate virtual environment and run its launcher directly.
+terminal.
+
+### With Conda
+
+You can install the wheel alongside an existing source launcher using a named
+Conda environment.
 
 ```bash
-python3 -m venv projecthub-venv
-./projecthub-venv/bin/python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
-./projecthub-venv/bin/projecthub
+conda create -n projecthub -c conda-forge python=3.12 pip
+conda activate projecthub
+python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
 ```
 
 Install Git separately to inspect local repositories from a wheel installation.
@@ -53,5 +60,5 @@ Run `projecthub config` to locate the editable settings file, which defaults to
 at startup. Restart ProjectHub after editing the file. See the
 [configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml).
 
-Both installation methods store project data in `~/.local/share/projecthub` by
+Source and wheel installations store project data in `~/.local/share/projecthub` by
 default. Back up this directory to preserve saved history, notes, and tasks.

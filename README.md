@@ -58,19 +58,20 @@ projecthub
 ```
 
 If the launcher is outside your PATH, run `pipx ensurepath` and reopen the terminal.
-If you already have a source launcher named `projecthub`, the virtual environment
-option below lets you try the wheel alongside it.
+If you already have a source launcher named `projecthub`, you can try the wheel
+in a separate Conda environment.
 
-**With pip in a virtual environment**
+**With Conda**
 
 ```bash
-python3 -m venv projecthub-venv
-./projecthub-venv/bin/python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
-./projecthub-venv/bin/projecthub
+conda create -n projecthub -c conda-forge python=3.12 pip
+conda activate projecthub
+python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
 ```
 
 Use the wheel filename you downloaded. Install Git for repository inspection and
-Codex for AI features. Both installation paths use the same [saved data directory](#your-data).
+Codex for AI features. Source and wheel installations use the same [saved data directory](#your-data).
 See [building a wheel](docs/README.md#build-a-wheel) if you work on ProjectHub itself.
 
 Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
