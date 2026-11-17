@@ -67,7 +67,7 @@ def test_text_budget_does_not_orphan_knowledge_or_hide_publication_identity(tmp_
     engine = setup(tmp_path)
     try:
         publish(engine)
-        monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 70)
+        monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (70, 2 * 1024 * 1024, 140_000))
         first = evidence.collect_evidence(engine, 1)
         assert first['knowledge_context']['publication_id'] == 'publication-one'
         assert first['knowledge_context']['included_items'] == 0
@@ -80,7 +80,7 @@ def test_text_budget_does_not_orphan_knowledge_or_hide_publication_identity(tmp_
         engine.dispose()
 
 
-def test_serialized_budget_removes_interpretation_when_original_is_trimmed(monkeypatch):
+def test_serialized_budget_removes_interpretation_when_original_is_trimmed():
     derived = evidence._source('derived', 'Interpretation', 'Agreed design',
         'published Knowledge interpretation', supporting_source_ids=['original'])
     original = evidence._source('original', 'Original quote', 'Original evidence. ' * 100,
@@ -88,8 +88,7 @@ def test_serialized_budget_removes_interpretation_when_original_is_trimmed(monke
     result = {'sources': [derived, original], 'dependencies': [], 'tree': [],
         'knowledge_context': {'available_items': 1, 'included_items': 1, 'publication_id': 'publication-one'},
         'coverage': {'limitations': [], 'partial': False, 'omitted_reason_counts': {}}}
-    monkeypatch.setattr(evidence, '_MAX_PACKAGE_CHARS', len(json.dumps(result)) - 300)
-    evidence._bound_package(result)
+    evidence._bound_package(result, len(json.dumps(result)) - 300)
     assert_closed(result)
     assert result['knowledge_context']['publication_id'] == 'publication-one'
     assert result['knowledge_context']['included_items'] == 0

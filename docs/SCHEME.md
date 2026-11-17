@@ -95,13 +95,18 @@ and section outline, including short command-help descriptions. Guides mentionin
 declared commands take priority over peripheral documentation. Backup and archive
 paths do not displace current application evidence, but remain in the inventory.
 
-Source inspection uses a 2 MiB read budget and a cooperative 5-second deadline,
-rather than a fixed number of files. Individual source reads are limited to
-64 KiB. In **Settings**, the **Scheme excerpt budget** controls how much source
+Source inspection defaults to a 2 MiB total read budget and a cooperative
+5-second deadline. Individual source reads are limited to 64 KiB. In
+**Settings**, the **Scheme excerpt budget** controls how much source
 text enters the AI input. It defaults to 40,000 characters. For larger projects,
 try 60,000, then 80,000 if useful files are still being skipped. This can increase
-token use and generation time. The 140,000-character serialized evidence package
-limit still applies.
+token use and generation time.
+
+Under **Advanced Scheme settings**, choose a local file read limit of 2, 4, or
+8 MiB and an evidence package limit of 140,000, 180,000, or 220,000 characters.
+The package includes source text, identifiers, dependencies, and the file tree.
+Use the corresponding omission reason in Coverage to identify which limit to
+adjust. The saved Scheme records the limits used for that generation.
 Code structure displays at most 300 paths; that display limit does not restrict
 which files can be inspected. Coverage reports distinguish budget-stopped reading
 from inspected material omitted from the final AI input.

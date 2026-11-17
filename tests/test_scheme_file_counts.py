@@ -86,7 +86,7 @@ def test_budget_denominator_survives_partial_inspection(tmp_path, monkeypatch, l
     for i in range(3):
         (repo / f'module{i}.py').write_text('class Module: pass\n')
     if limit == 'bytes':
-        monkeypatch.setattr(evidence, '_MAX_INSPECTION_BYTES', 1)
+        monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (40_000, 1, 140_000))
     elif limit == 'metadata':
         monkeypatch.setattr(evidence, '_MAX_METADATA_BYTES', 280)
     else:
@@ -103,7 +103,8 @@ def test_budget_denominator_survives_partial_inspection(tmp_path, monkeypatch, l
         assert value['evidence_files'] == 0
         reason = 'byte_budget' if limit == 'bytes' else 'time_budget'
         assert omissions(result) == {f'module{i}.py': reason for i in range(3)}
-    assert result['coverage']['inspection_policy']['max_read_bytes'] == evidence._MAX_INSPECTION_BYTES
+    assert result['coverage']['inspection_policy']['max_read_bytes'] == (
+        1 if limit == 'bytes' else evidence.DEFAULT_SCHEME_READ_BYTES)
 
 
 @pytest.mark.parametrize('kind', ['unlinked', 'missing', 'empty', 'no_code'])
@@ -122,7 +123,7 @@ def test_final_package_drops_are_counted_and_cached_without_rereads(tmp_path, mo
     repo = repository(tmp_path)
     for i in range(10):
         (repo / f'feature{i}.py').write_text(f'class Feature{i}: pass\n')
-    monkeypatch.setattr(evidence, '_MAX_PACKAGE_CHARS', 4000)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (40_000, 2 * 1024 * 1024, 4000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -173,7 +174,7 @@ def test_declared_package_entrypoint_expands_initial_candidate_set_safely(tmp_pa
 def test_source_text_budget_omissions_are_successful_reads(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'main.py').write_text('class Main: pass\n')
-    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 0)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (0, 2 * 1024 * 1024, 140_000))
     result = inspect(tmp_path, repo)
     value = counts(result)
     assert value['read_files'] == value['read_not_in_evidence'] == 1
@@ -202,7 +203,7 @@ def test_configured_excerpt_budget_expands_file_coverage_and_scopes_the_cache(tm
         assert expanded['diagnostics']['cache_hits'] == 0
         assert counts(expanded)['evidence_files'] > counts(baseline)['evidence_files']
         assert 40_000 < expanded['diagnostics']['input_chars'] <= 80_000
-        assert expanded['diagnostics']['package_chars'] <= evidence._MAX_PACKAGE_CHARS
+        assert expanded['diagnostics']['package_chars'] <= evidence.DEFAULT_SCHEME_PACKAGE_CHARS
         assert (expanded['coverage']['inspection_policy']['max_read_bytes']
                 == baseline['coverage']['inspection_policy']['max_read_bytes'])
         assert expanded['fingerprint'] != baseline['fingerprint']
@@ -214,7 +215,7 @@ def test_configured_excerpt_budget_expands_file_coverage_and_scopes_the_cache(tm
 def test_manifest_with_one_retained_excerpt_is_not_a_skipped_file(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'requirements.txt').write_text(''.join(f'package{i:03}{"x" * 100}==1.0\n' for i in range(60)))
-    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 3300)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (3300, 2 * 1024 * 1024, 140_000))
     result = inspect(tmp_path, repo)
     value = counts(result)
     assert value['eligible_files'] == value['evidence_files'] == 1

@@ -7,6 +7,7 @@ import time
 
 from sqlalchemy.orm import Session
 
+from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS
 from ...models import Project, ProjectScheme, utcnow
 from . import progress
 from .brief import BriefBusy, generation_lock, generation_metadata
@@ -16,7 +17,8 @@ from .scheme_evidence import collect_evidence
 
 MAX_NODES = 20
 MAX_EDGES = 40
-MAX_INPUT_CHARS = 160_000
+_INPUT_HEADROOM_CHARS = 20_000
+MAX_INPUT_CHARS = max(SCHEME_PACKAGE_CHARS_OPTIONS) + _INPUT_HEADROOM_CHARS
 MAX_OUTPUT_CHARS = 100_000
 STATUSES = ('observed', 'proposed', 'uncertain')
 _KNOWLEDGE_INTERPRETATION = 'published Knowledge interpretation'
@@ -237,7 +239,11 @@ def refresh_scheme(engine, project_id, manager):
         if isinstance(evidence.get('knowledge_context'), dict):
             payload['knowledge_context'] = evidence['knowledge_context']
         serialized = json.dumps(payload, ensure_ascii=False)
-        if len(serialized) > MAX_INPUT_CHARS:
+        policy = payload['coverage'].get('inspection_policy')
+        package_limit = policy.get('max_package_chars') if isinstance(policy, dict) else None
+        if package_limit not in SCHEME_PACKAGE_CHARS_OPTIONS:
+            package_limit = DEFAULT_SCHEME_PACKAGE_CHARS
+        if len(serialized) > min(MAX_INPUT_CHARS, package_limit + _INPUT_HEADROOM_CHARS):
             raise CodexError('Scheme evidence exceeds the generation input limit.')
         schema = deepcopy(OUTPUT_SCHEMA)
         source_ids = [source['id'] for source in evidence['sources']]

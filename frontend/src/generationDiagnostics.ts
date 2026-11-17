@@ -103,19 +103,30 @@ export function generationProfilePatch(id: unknown) {
   return { generation_profile: id };
 }
 
+function parseSchemePreset(raw: Record<string, unknown>, name: string, presets: number[], label: string) {
+  const fields = [name, `configured_${name}`, `${name}_options`];
+  if (fields.every(field => !(field in raw))) return null;
+  const [value, configured, options] = fields.map(field => raw[field]);
+  if (!Array.isArray(options) || options.length !== presets.length
+    || !presets.every(option => options.includes(option))
+    || !count(value) || !options.includes(value) || !count(configured) || !options.includes(configured)) {
+    throw new Error(`AI settings returned an unsupported ${label}.`);
+  }
+  return { value, configured, options: presets };
+}
+
 export function parseSchemeSourceSettings(raw: unknown) {
   if (!object(raw)) throw new Error('AI settings returned an invalid Scheme excerpt budget.');
-  const fields = ['scheme_source_chars', 'configured_scheme_source_chars', 'scheme_source_chars_options'];
-  if (fields.every(field => !(field in raw))) return null;
-  const options = raw.scheme_source_chars_options;
-  const value = raw.scheme_source_chars;
-  const configured = raw.configured_scheme_source_chars;
-  if (!Array.isArray(options) || options.length !== 3
-    || ![40_000, 60_000, 80_000].every(option => options.includes(option))
-    || !count(value) || !options.includes(value) || !count(configured) || !options.includes(configured)) {
-    throw new Error('AI settings returned an unsupported Scheme excerpt budget.');
-  }
-  return { value, configured, options: options as number[] };
+  return parseSchemePreset(raw, 'scheme_source_chars', [40_000, 60_000, 80_000], 'Scheme excerpt budget');
+}
+
+export function parseAdvancedSchemeSettings(raw: unknown) {
+  if (!object(raw)) throw new Error('AI settings returned invalid advanced Scheme settings.');
+  const mib = 1024 * 1024;
+  return {
+    scheme_read_bytes: parseSchemePreset(raw, 'scheme_read_bytes', [2 * mib, 4 * mib, 8 * mib], 'Scheme local read limit'),
+    scheme_package_chars: parseSchemePreset(raw, 'scheme_package_chars', [140_000, 180_000, 220_000], 'Scheme evidence package limit'),
+  };
 }
 
 /** Diagnostics never invalidate an otherwise valid legacy preview or invent unavailable measurements. */

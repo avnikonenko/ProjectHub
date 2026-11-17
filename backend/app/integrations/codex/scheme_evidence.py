@@ -15,7 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
-from ...config import scheme_source_chars
+from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, DEFAULT_SCHEME_READ_BYTES, scheme_inspection_limits
 from ...models import ProjectHistoryBatch
 from ...project_evidence import (
     EvidenceReadError, _CODE_PRIVATE, _code_category, _code_order, _digest,
@@ -28,13 +28,11 @@ from .scheme_knowledge import collect_published_knowledge
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
-_MAX_INSPECTION_BYTES = 2 * 1024 * 1024
 _INSPECTION_SECONDS = 5.0
 _MAX_METADATA_BYTES = 1024 * 1024
 _METADATA_SECONDS = 5.0
 _MAX_EXCERPT = 1600
 _MAX_DEPENDENCIES = 100
-_MAX_PACKAGE_CHARS = 140_000
 _MAX_RECORDED_FILE_OMISSIONS = 100
 _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
 
@@ -77,7 +75,7 @@ def _knowledge_closure(result):
         coverage['omitted_reason_counts']['knowledge_support_budget'] = removed
 
 
-def _bound_package(result):
+def _bound_package(result, max_chars=DEFAULT_SCHEME_PACKAGE_CHARS):
     """Bound serialized metadata too, keeping whole sources and valid references."""
     def update_file_counts():
         counts = result['coverage'].get('file_counts')
@@ -92,7 +90,7 @@ def _bound_package(result):
     update_file_counts()
     payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context') if key in result}
     used = serialized_size(payload)
-    if used > _MAX_PACKAGE_CHARS:
+    if used > max_chars:
         coverage = result['coverage']
         coverage['partial'] = True
         coverage['limitations'] = sorted({*coverage['limitations'],
@@ -110,7 +108,7 @@ def _bound_package(result):
 
         # Structure is supplemental; preserve priority-ordered source evidence first.
         # Reserve a little space for the updated counters and coverage metadata.
-        while used > max(0, _MAX_PACKAGE_CHARS - 512):
+        while used > max(0, max_chars - 512):
             if result['tree']:
                 remove(result['tree'])
             elif result['sources']:
@@ -164,16 +162,17 @@ class _InspectionStopped(Exception):
 
 
 class _InspectionBudget:
-    def __init__(self):
+    def __init__(self, max_bytes=DEFAULT_SCHEME_READ_BYTES):
         self.started = time.monotonic()
         self.deadline = self.started + _INSPECTION_SECONDS
         self.bytes_read = 0
+        self.max_bytes = max_bytes
         self.prefix_read_files = 0
 
     def check(self):
         if time.monotonic() >= self.deadline:
             raise _InspectionStopped('time_budget')
-        if self.bytes_read >= _MAX_INSPECTION_BYTES:
+        if self.bytes_read >= self.max_bytes:
             raise _InspectionStopped('byte_budget')
 
 
@@ -187,7 +186,7 @@ def _read(root_fd, relative, *, allow_prefix=False, budget=None):
             maximum = min(8192, _MAX_BYTES + 1 - len(data))
             if budget is not None:
                 budget.check()
-                maximum = min(maximum, _MAX_INSPECTION_BYTES - budget.bytes_read)
+                maximum = min(maximum, budget.max_bytes - budget.bytes_read)
             chunk = os.read(fd, maximum)
             if budget is not None:
                 budget.bytes_read += len(chunk)
@@ -911,7 +910,7 @@ def _records(db, project):
 def collect_evidence(engine, project_id):
     """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
     started = time.monotonic()
-    source_budget = scheme_source_chars()
+    source_budget, read_budget, package_budget = scheme_inspection_limits()
     limitations = set()
     freshness_unknown = False
     with Session(engine) as db:
@@ -944,9 +943,9 @@ def collect_evidence(engine, project_id):
     inventory = dict.fromkeys(('repository_paths_total', 'excluded_paths', 'safe_paths',
                                'eligible_files', 'policy_omitted_paths'))
     inventory['listing_complete'] = False
-    policy = {'max_read_bytes': _MAX_INSPECTION_BYTES, 'max_inspection_seconds': _INSPECTION_SECONDS,
+    policy = {'max_read_bytes': read_budget, 'max_inspection_seconds': _INSPECTION_SECONDS,
               'max_file_bytes': _MAX_BYTES, 'max_source_chars': source_budget,
-              'max_package_chars': _MAX_PACKAGE_CHARS, 'max_tree_paths': _MAX_PATHS,
+              'max_package_chars': package_budget, 'max_tree_paths': _MAX_PATHS,
               'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
     try:
         patterns = (*_exclusions(), *_CODE_PRIVATE)
@@ -992,7 +991,7 @@ def collect_evidence(engine, project_id):
         decoded_reads = 0
         omitted_reasons = {}
         inspection_stop = None
-        budget = _InspectionBudget()
+        budget = _InspectionBudget(read_budget)
         marker_by_path = dict(markers)
         # A vanished repository has no directory descriptor to anchor safe reads.
         pending = list(candidates) if root_fd is not None else []
@@ -1208,7 +1207,7 @@ def collect_evidence(engine, project_id):
                             'conversation_excerpts': excerpt_count,
                             'duration_ms': round((time.monotonic() - started) * 1000)}}
         selected_paths = {source['path'] for source in bounded if source.get('path')}
-        package_chars = _bound_package(result)
+        package_chars = _bound_package(result, package_budget)
         # Attach local accounting only after the AI package has been finalized.
         # A file with even one retained excerpt is counted as supplied.
         if inventory['listing_complete']:

@@ -163,7 +163,7 @@ def test_production_entrypoints_and_imported_modules_survive_utility_noise(tmp_p
     } <= selected
     assert not any(path.startswith(('migrations/', 'scripts/', 'tests/')) for path in selected)
     assert result['coverage']['files_inspected'] > 24
-    assert result['diagnostics']['bytes_read'] <= evidence._MAX_INSPECTION_BYTES
+    assert result['diagnostics']['bytes_read'] <= evidence.DEFAULT_SCHEME_READ_BYTES
     assert len(result['sources']) < len(files)
     engine.dispose()
 

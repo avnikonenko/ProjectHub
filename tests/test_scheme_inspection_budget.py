@@ -57,7 +57,7 @@ def test_read_budget_charges_binary_oversize_and_invalid_utf8_raw_bytes(tmp_path
 def test_byte_budget_stops_inside_read_without_partial_manifest(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'requirements.txt').write_text('fastapi>=0.115\n' * 30)
-    monkeypatch.setattr(evidence, '_MAX_INSPECTION_BYTES', 20)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (40_000, 20, 140_000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -70,15 +70,19 @@ def test_byte_budget_stops_inside_read_without_partial_manifest(tmp_path, monkey
         engine.dispose()
 
 
-def test_default_byte_budget_bounds_rejected_binary_inputs(tmp_path):
+@pytest.mark.parametrize('read_mib', [2, 4])
+def test_configured_byte_budget_bounds_rejected_binary_inputs(tmp_path, monkeypatch, read_mib):
     repo = repository(tmp_path)
     for index in range(40):
         (repo / f'module_{index:03}.py').write_bytes(b'\0' * 70_000)
     engine = setup(tmp_path, repo)
     try:
+        read_budget = read_mib * 1024**2
+        monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', str(read_budget))
         result = evidence.collect_evidence(engine, 1)
-        assert result['diagnostics']['bytes_read'] == evidence._MAX_INSPECTION_BYTES
-        assert result['coverage']['inspection_stopped'] == 'byte_budget'
+        assert result['coverage']['inspection_policy']['max_read_bytes'] == read_budget
+        assert result['diagnostics']['bytes_read'] == min(read_budget, 40 * (evidence._MAX_BYTES + 1))
+        assert result['coverage']['inspection_stopped'] == ('byte_budget' if read_mib == 2 else None)
         assert result['coverage']['files_inspected'] == 0
         assert result['diagnostics']['files_attempted'] > 24
         assert result['coverage']['omitted_reason_counts']['unreadable_or_malformed'] > 24
@@ -139,7 +143,7 @@ def test_time_budget_in_final_parse_is_not_cached(tmp_path, monkeypatch):
         engine.dispose()
 
 
-@pytest.mark.parametrize('budget_name', ['_MAX_INSPECTION_BYTES', '_INSPECTION_SECONDS', '_MAX_METADATA_BYTES', '_MAX_PACKAGE_CHARS'])
+@pytest.mark.parametrize('budget_name', ['_INSPECTION_SECONDS', '_MAX_METADATA_BYTES'])
 def test_budget_configuration_invalidates_cache(tmp_path, monkeypatch, budget_name):
     repo = repository(tmp_path)
     (repo / 'main.py').write_text('class Main: pass\n')
@@ -153,11 +157,33 @@ def test_budget_configuration_invalidates_cache(tmp_path, monkeypatch, budget_na
         engine.dispose()
 
 
+@pytest.mark.parametrize(('env', 'policy_key', 'new_limit'), [
+    ('PROJECTHUB_SCHEME_READ_BYTES', 'max_read_bytes', 4 * 1024**2),
+    ('PROJECTHUB_SCHEME_PACKAGE_CHARS', 'max_package_chars', 180_000),
+])
+def test_advanced_presets_scope_the_inspection_cache(tmp_path, monkeypatch, env, policy_key, new_limit):
+    repo = repository(tmp_path)
+    (repo / 'main.py').write_text('class Main: pass\n')
+    engine = setup(tmp_path, repo)
+    try:
+        monkeypatch.delenv(env, raising=False)
+        first = evidence.collect_evidence(engine, 1)
+        assert evidence.collect_evidence(engine, 1)['diagnostics']['cache_hits'] == 1
+        monkeypatch.setenv(env, str(new_limit))
+        changed = evidence.collect_evidence(engine, 1)
+        assert changed['diagnostics']['cache_hits'] == 0
+        assert changed['coverage']['inspection_policy'][policy_key] == new_limit
+        assert changed['coverage']['inspection_policy'][policy_key] != first['coverage']['inspection_policy'][policy_key]
+        assert evidence.collect_evidence(engine, 1)['diagnostics']['cache_hits'] == 1
+    finally:
+        engine.dispose()
+
+
 def test_output_budget_is_distinct_from_inspection_budget(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     for index in range(30):
         (repo / f'feature_{index:02}.py').write_text('class Feature: pass\n' * 3)
-    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 400)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (400, 2 * 1024 * 1024, 140_000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -176,7 +202,7 @@ def test_declared_entrypoint_is_read_before_small_budget_expires(tmp_path, monke
     (repo / 'zzz.py').write_text('def main(): pass\n')
     for index in range(30):
         (repo / f'aaa_{index:02}.py').write_text('class Other: pass\n')
-    monkeypatch.setattr(evidence, '_MAX_INSPECTION_BYTES', len(declaration.encode()) + 30)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (40_000, len(declaration.encode()) + 30, 140_000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -279,21 +305,24 @@ def test_large_document_or_manifest_sets_do_not_starve_application_code(tmp_path
         result = evidence.collect_evidence(engine, 1)
         assert 'main.py' in source_paths(result)
         assert result['coverage']['inspection_stopped'] == 'byte_budget'
-        assert result['diagnostics']['bytes_read'] == evidence._MAX_INSPECTION_BYTES
+        assert result['diagnostics']['bytes_read'] == evidence.DEFAULT_SCHEME_READ_BYTES
     finally:
         engine.dispose()
 
 
-def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_paths(tmp_path):
+@pytest.mark.parametrize('package_budget', [140_000, 220_000])
+def test_serialized_metadata_and_generation_prompt_fit_with_many_tiny_long_paths(tmp_path, monkeypatch, package_budget):
     from backend.app.integrations.codex import scheme
 
+    monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '80000')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', str(package_budget))
     repo = repository(tmp_path)
     (repo / 'pyproject.toml').write_text('[project.scripts]\nlaunch="zzz:main"\n')
     (repo / 'zzz.py').write_text('def main(): pass\n')
-    area = repo / ('features_' + 'x' * 80)
+    area = repo / ('features_' + 'x' * 150)
     area.mkdir()
     for index in range(450):
-        (area / (f'feature_{index:03}_' + 'y' * 60 + '.py')).write_text(f'class Feature{index}: pass\n')
+        (area / (f'feature_{index:03}_' + 'y' * 100 + '.py')).write_text(f'class Feature{index}: pass\n')
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -301,8 +330,11 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
         assert result['coverage']['inspection_stopped'] is None
         payload = {key: result[key] for key in ('sources', 'dependencies', 'tree', 'coverage', 'knowledge_context')}
         payload['coverage'] = {key: value for key, value in payload['coverage'].items() if key != 'file_omissions'}
-        assert len(json.dumps(payload, ensure_ascii=False)) <= evidence._MAX_PACKAGE_CHARS
+        assert len(json.dumps(payload, ensure_ascii=False)) <= package_budget
         assert result['diagnostics']['package_chars'] == len(json.dumps(payload, ensure_ascii=False))
+        assert result['coverage']['inspection_policy']['max_package_chars'] == package_budget
+        if package_budget == 220_000:
+            assert result['diagnostics']['package_chars'] > 160_000
         assert result['coverage']['omitted_reason_counts']['package_output_budget'] > 0
         assert 'zzz.py' in source_paths(result)
         allowed = {source['id'] for source in result['sources']}
@@ -326,15 +358,14 @@ def test_serialized_metadata_and_real_generation_prompt_fit_with_many_tiny_long_
         engine.dispose()
 
 
-def test_package_trimming_preserves_whole_priority_source_and_dependency_references(monkeypatch):
-    monkeypatch.setattr(evidence, '_MAX_PACKAGE_CHARS', 2000)
+def test_package_trimming_preserves_whole_priority_source_and_dependency_references():
     priority = evidence._source('priority', 'Entrypoint', 'class Main: pass', 'observed in code')
     low_priority = evidence._source('later', 'Later helper', 'x' * 5000, 'observed in code')
     result = {'sources': [priority, low_priority],
               'dependencies': [{'id': 'package', 'source_ids': ['later']}], 'tree': [],
               'coverage': {'partial': False, 'limitations': [], 'omitted_reason_counts': {},
                            'conversation_excerpts': 0}}
-    assert evidence._bound_package(result) <= evidence._MAX_PACKAGE_CHARS
+    assert evidence._bound_package(result, 2000) <= 2000
     assert result['sources'] == [priority]
     assert result['sources'][0]['text'] == 'class Main: pass'
     assert result['dependencies'] == []

@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Advanced Scheme settings for the local file read limit and final evidence package limit. Saved Coverage records the values used for each result.
+
 - Scheme excerpt budget in Settings with 40,000, 60,000, and 80,000 character presets. Coverage points to this setting when the excerpt cap leaves out files.
 
 - List skipped Scheme files with their individual omission reasons in coverage details.

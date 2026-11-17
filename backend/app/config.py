@@ -21,7 +21,15 @@ DEFAULT_EXTRACTION_WORKERS = 10
 MAX_EXTRACTION_WORKERS = 2_147_483_647
 SCHEME_SOURCE_CHARS_OPTIONS = (40_000, 60_000, 80_000)
 DEFAULT_SCHEME_SOURCE_CHARS = SCHEME_SOURCE_CHARS_OPTIONS[0]
-_SCHEME_SOURCE_CHARS_ENV = 'PROJECTHUB_SCHEME_SOURCE_CHARS'
+SCHEME_READ_BYTES_OPTIONS = (2 * 1024**2, 4 * 1024**2, 8 * 1024**2)
+DEFAULT_SCHEME_READ_BYTES = SCHEME_READ_BYTES_OPTIONS[0]
+SCHEME_PACKAGE_CHARS_OPTIONS = (140_000, 180_000, 220_000)
+DEFAULT_SCHEME_PACKAGE_CHARS = SCHEME_PACKAGE_CHARS_OPTIONS[0]
+_SCHEME_SETTINGS = {
+    'scheme_source_chars': ('PROJECTHUB_SCHEME_SOURCE_CHARS', SCHEME_SOURCE_CHARS_OPTIONS),
+    'scheme_read_bytes': ('PROJECTHUB_SCHEME_READ_BYTES', SCHEME_READ_BYTES_OPTIONS),
+    'scheme_package_chars': ('PROJECTHUB_SCHEME_PACKAGE_CHARS', SCHEME_PACKAGE_CHARS_OPTIONS),
+}
 
 
 _settings_write_lock = threading.Lock()
@@ -43,6 +51,9 @@ extraction_workers = {DEFAULT_EXTRACTION_WORKERS}
 generation_profile = "quality"
 # Total source excerpt characters available to Scheme.
 scheme_source_chars = {DEFAULT_SCHEME_SOURCE_CHARS}
+# Advanced Scheme limits for local file reads and the serialized evidence package.
+scheme_read_bytes = {DEFAULT_SCHEME_READ_BYTES}
+scheme_package_chars = {DEFAULT_SCHEME_PACKAGE_CHARS}
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 
@@ -64,19 +75,23 @@ class Settings:
     extraction_workers: int = DEFAULT_EXTRACTION_WORKERS
     generation_profile: str = 'quality'
     scheme_source_chars: int = DEFAULT_SCHEME_SOURCE_CHARS
+    scheme_read_bytes: int = DEFAULT_SCHEME_READ_BYTES
+    scheme_package_chars: int = DEFAULT_SCHEME_PACKAGE_CHARS
 
     def apply_environment(self):
         workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
         budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
         profile = _profile(self.generation_profile)
-        scheme_chars = _scheme_source_chars(self.scheme_source_chars)
+        scheme_environment = {env: str(_scheme_preset(name, getattr(self, name)))
+                              for name, (env, _) in _SCHEME_SETTINGS.items()}
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
         os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(budget)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
         os.environ['PROJECTHUB_GENERATION_PROFILE'] = profile
-        os.environ[_SCHEME_SOURCE_CHARS_ENV] = str(scheme_chars)
+        with _settings_write_lock:
+            os.environ.update(scheme_environment)
         os.environ['PROJECTHUB_HISTORY_AUTO_SYNC'] = str(self.history_auto_sync).lower()
         os.environ['PROJECTHUB_HISTORY_SYNC_INTERVAL'] = str(self.history_sync_interval)
         if self.codex_home is not None:
@@ -128,18 +143,29 @@ def _profile(value):
         raise ConfigError('ai.generation_profile must be quality, balanced or economy.') from exc
 
 
-def _scheme_source_chars(value):
-    if isinstance(value, str) and value in {str(option) for option in SCHEME_SOURCE_CHARS_OPTIONS}:
+def _scheme_preset(name, value):
+    _, options = _SCHEME_SETTINGS[name]
+    if isinstance(value, str) and value in {str(option) for option in options}:
         value = int(value)
-    if type(value) is not int or value not in SCHEME_SOURCE_CHARS_OPTIONS:
-        raise ConfigError('ai.scheme_source_chars must be 40000, 60000 or 80000.')
+    if type(value) is not int or value not in options:
+        choices = ', '.join(str(option) for option in options[:-1]) + f' or {options[-1]}'
+        raise ConfigError(f'ai.{name} must be {choices}.')
     return value
 
 
+def scheme_inspection_limits():
+    """Read excerpt characters, local read bytes and package characters together."""
+    with _settings_write_lock:
+        overrides = {name: os.environ.get(env) for name, (env, _) in _SCHEME_SETTINGS.items()}
+        if all(value is not None for value in overrides.values()):
+            return tuple(_scheme_preset(name, value) for name, value in overrides.items())
+        configured = load_settings()
+        return configured.scheme_source_chars, configured.scheme_read_bytes, configured.scheme_package_chars
+
+
 def scheme_source_chars():
-    """Read the effective excerpt budget for a new Scheme inspection."""
-    override = os.environ.get(_SCHEME_SOURCE_CHARS_ENV)
-    return _scheme_source_chars(override) if override is not None else load_settings().scheme_source_chars
+    """Read the effective excerpt budget for callers that only need this limit."""
+    return scheme_inspection_limits()[0]
 
 
 def load_settings(environ: Mapping[str, str] | None = None):
@@ -154,7 +180,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         data = {}
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
-    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile', 'scheme_source_chars'},
+    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile', *_SCHEME_SETTINGS},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -178,12 +204,12 @@ def load_settings(environ: Mapping[str, str] | None = None):
         extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS)),
                                     'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS),
         generation_profile=_profile(env.get('PROJECTHUB_GENERATION_PROFILE', ai.get('generation_profile', 'quality'))),
-        scheme_source_chars=_scheme_source_chars(env.get(_SCHEME_SOURCE_CHARS_ENV,
-                                                         ai.get('scheme_source_chars', DEFAULT_SCHEME_SOURCE_CHARS))),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
         history_sync_interval=_integer(env.get('PROJECTHUB_HISTORY_SYNC_INTERVAL', history.get('sync_interval', 60)),
                                        'history.sync_interval', 30, 3600),
+        **{name: _scheme_preset(name, env.get(key, ai.get(name, options[0])))
+           for name, (key, options) in _SCHEME_SETTINGS.items()},
     )
 
 
@@ -199,7 +225,7 @@ def create_config(environ: Mapping[str, str] | None = None):
     return path
 
 
-def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, scheme_chars=None):
+def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, scheme_changes=None):
     effective_workers = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers)
                                  if workers is None else workers,
                                  'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
@@ -207,9 +233,7 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
                                  if profile is None else profile)
     effective_budget = _integer(os.environ.get('PROJECTHUB_GENERATION_BUDGET', configured.generation_budget)
                                 if budget is None else budget, 'ai.generation_budget', 30, 7200)
-    effective_scheme_chars = _scheme_source_chars(os.environ.get(_SCHEME_SOURCE_CHARS_ENV, configured.scheme_source_chars)
-                                                  if scheme_chars is None else scheme_chars)
-    return {'extraction_workers': effective_workers,
+    result = {'extraction_workers': effective_workers,
             'configured_extraction_workers': configured.extraction_workers,
             'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
             'generation_profile': effective_profile,
@@ -217,10 +241,14 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
             'generation_profiles': list_generation_profiles(),
             'generation_budget': effective_budget,
             'configured_generation_budget': configured.generation_budget,
-            'min_generation_budget': 30, 'max_generation_budget': 7200,
-            'scheme_source_chars': effective_scheme_chars,
-            'configured_scheme_source_chars': configured.scheme_source_chars,
-            'scheme_source_chars_options': list(SCHEME_SOURCE_CHARS_OPTIONS)}
+            'min_generation_budget': 30, 'max_generation_budget': 7200}
+    scheme_changes = scheme_changes or {}
+    for name, (env, options) in _SCHEME_SETTINGS.items():
+        value = getattr(configured, name)
+        result[name] = _scheme_preset(name, scheme_changes.get(name, os.environ.get(env, value)))
+        result[f'configured_{name}'] = value
+        result[f'{name}_options'] = list(options)
+    return result
 
 
 def ai_worker_settings():
@@ -228,7 +256,7 @@ def ai_worker_settings():
     with _settings_write_lock:
         configured_env = dict(os.environ)
         for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET',
-                    _SCHEME_SOURCE_CHARS_ENV):
+                    *(env for env, _ in _SCHEME_SETTINGS.values())):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
 
@@ -246,7 +274,7 @@ def _ai_config_text(original, changes):
 
 def _ai_scalar_text(original, name, value):
     """Edit an application-owned scalar; comparison protects unsupported layouts."""
-    if name not in ('extraction_workers', 'generation_profile', 'generation_budget', 'scheme_source_chars'):
+    if name not in ('extraction_workers', 'generation_profile', 'generation_budget', *_SCHEME_SETTINGS):
         raise ConfigError('Unsupported AI setting.')
     encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
@@ -295,7 +323,7 @@ def save_ai_worker_settings(workers):
 
 
 def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET,
-                     scheme_source_chars=_UNSET):
+                     scheme_source_chars=_UNSET, scheme_read_bytes=_UNSET, scheme_package_chars=_UNSET):
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
@@ -304,8 +332,10 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
         changes['generation_profile'] = _profile(generation_profile)
     if generation_budget is not _UNSET:
         changes['generation_budget'] = _integer(generation_budget, 'ai.generation_budget', 30, 7200)
-    if scheme_source_chars is not _UNSET:
-        changes['scheme_source_chars'] = _scheme_source_chars(scheme_source_chars)
+    for name, value in (('scheme_source_chars', scheme_source_chars), ('scheme_read_bytes', scheme_read_bytes),
+                        ('scheme_package_chars', scheme_package_chars)):
+        if value is not _UNSET:
+            changes[name] = _scheme_preset(name, value)
     if not changes:
         raise ConfigError('Provide an AI setting to update.')
     with _settings_write_lock:
@@ -341,7 +371,7 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
             # Validate unmodified runtime overrides before changing the file too.
             result = _ai_settings_response(configured, workers=changes.get('extraction_workers'),
                                            profile=changes.get('generation_profile'), budget=changes.get('generation_budget'),
-                                           scheme_chars=changes.get('scheme_source_chars'))
+                                           scheme_changes=changes)
             if path.is_symlink() or (path.exists() != existed):
                 raise ConfigError('Settings changed while saving; reload and try again.')
             if existed and not stat.S_ISREG(path.stat().st_mode):
@@ -355,8 +385,9 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
                 os.environ['PROJECTHUB_GENERATION_PROFILE'] = changes['generation_profile']
             if 'generation_budget' in changes:
                 os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(changes['generation_budget'])
-            if 'scheme_source_chars' in changes:
-                os.environ[_SCHEME_SOURCE_CHARS_ENV] = str(changes['scheme_source_chars'])
+            for name, (env, _) in _SCHEME_SETTINGS.items():
+                if name in changes:
+                    os.environ[env] = str(changes[name])
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

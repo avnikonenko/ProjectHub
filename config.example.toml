@@ -14,6 +14,9 @@ extraction_workers = 10
 generation_profile = "quality"
 # Total source excerpt characters available to Scheme.
 scheme_source_chars = 40000
+# Advanced Scheme limits for local file reads and the serialized evidence package.
+scheme_read_bytes = 2097152
+scheme_package_chars = 140000
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 

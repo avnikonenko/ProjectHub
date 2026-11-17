@@ -3,7 +3,7 @@ import { api, patch } from './api';
 import { ErrorBox } from './ui';
 import { Feedback } from './Feedback';
 import { SettingsHelp } from './SettingsHelp';
-import { generationProfilePatch, parseGenerationProfileSettings, parseSchemeSourceSettings, type GenerationProfileSettings } from './generationDiagnostics';
+import { generationProfilePatch, parseAdvancedSchemeSettings, parseGenerationProfileSettings, parseSchemeSourceSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
 type WorkerSettings = {
   extraction_workers: number;
@@ -13,7 +13,24 @@ type WorkerSettings = {
   profileSettings?: GenerationProfileSettings | null;
   budgetSettings?: { value: number; configured: number; min: number; max: number } | null;
   schemeSourceSettings?: ReturnType<typeof parseSchemeSourceSettings>;
+  advancedSchemeSettings: ReturnType<typeof parseAdvancedSchemeSettings>;
 };
+
+const advancedSchemeFields = [
+  {
+    name: 'scheme_read_bytes',
+    label: 'Local file read limit',
+    format: (value: number) => `${value / (1024 * 1024)} MiB`,
+    help: 'Limits total repository data read from disk for Scheme. A higher limit can increase inspection time.',
+  },
+  {
+    name: 'scheme_package_chars',
+    label: 'Final evidence package limit',
+    format: (value: number) => `${value.toLocaleString()} characters`,
+    help: 'Limits the serialized Scheme evidence, including excerpts, dependencies, and the file tree. Larger packages may use more AI tokens.',
+  },
+] as const;
+type AdvancedSchemeField = typeof advancedSchemeFields[number]['name'];
 
 function settingsResponse(value: unknown): WorkerSettings {
   const settings = value as Partial<WorkerSettings> | null;
@@ -41,13 +58,14 @@ function settingsResponse(value: unknown): WorkerSettings {
     budgetSettings = { value: Number(effective), configured: Number(configured), min: Number(min), max: Number(max) };
   }
   return { ...settings, profileSettings: parseGenerationProfileSettings(value), budgetSettings,
-    schemeSourceSettings: parseSchemeSourceSettings(value) } as WorkerSettings;
+    schemeSourceSettings: parseSchemeSourceSettings(value), advancedSchemeSettings: parseAdvancedSchemeSettings(value) } as WorkerSettings;
 }
 
 export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const helpId = useId();
   const budgetHelpId = useId();
   const schemeHelpId = useId();
+  const advancedSchemeHelpId = useId();
   const [settings, setSettings] = useState<WorkerSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -55,7 +73,8 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const [profileDraft, setProfileDraft] = useState('');
   const [budgetDraft, setBudgetDraft] = useState('');
   const [schemeDraft, setSchemeDraft] = useState('');
-  const [savedField, setSavedField] = useState<'workers' | 'profile' | 'budget' | 'scheme'>('workers');
+  const [advancedSchemeDraft, setAdvancedSchemeDraft] = useState<Partial<Record<AdvancedSchemeField, number>>>({});
+  const [savedField, setSavedField] = useState<'workers' | 'profile' | 'budget' | 'scheme' | 'advancedScheme'>('workers');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [reload, setReload] = useState(0);
@@ -85,6 +104,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
           setProfileDraft(result.profileSettings?.generation_profile ?? '');
           setBudgetDraft(result.budgetSettings ? String(result.budgetSettings.value) : '');
           setSchemeDraft(result.schemeSourceSettings ? String(result.schemeSourceSettings.value) : '');
+          setAdvancedSchemeDraft({});
         }
       })
       .catch((failure: unknown) => {
@@ -198,6 +218,30 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     }
   }
 
+  async function saveAdvancedScheme() {
+    if (savingRef.current || !Object.keys(advancedSchemeChanges).length) return;
+    savingRef.current = true;
+    setSavedField('advancedScheme');
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const result = settingsResponse(await patch('/settings/ai', advancedSchemeChanges));
+      if (advancedSchemeFields.some(({ name }) => name in advancedSchemeChanges && !result.advancedSchemeSettings[name])) {
+        throw new Error('The server did not return the saved advanced Scheme settings.');
+      }
+      if (mounted.current) {
+        ++loadVersion.current;
+        setSettings(result);
+        setAdvancedSchemeDraft({});
+        setSaved(true);
+      }
+    } catch (failure: unknown) {
+      if (mounted.current) setError(failure instanceof Error ? failure.message : 'Could not save advanced Scheme settings.');
+    } finally {
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  }
+
   const profileSettings = settings?.profileSettings;
   const profile = profileSettings?.generation_profiles.find((value) => value.id === profileDraft);
   const unchangedProfile = profileDraft === profileSettings?.generation_profile
@@ -213,9 +257,18 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const schemeBudget = settings?.schemeSourceSettings;
   const schemeCharacters = Number(schemeDraft);
   const unchangedScheme = schemeCharacters === schemeBudget?.value && schemeCharacters === schemeBudget?.configured;
+  const advancedScheme = settings?.advancedSchemeSettings;
+  const advancedSchemeChanges: Partial<Record<AdvancedSchemeField, number>> = {};
+  for (const { name } of advancedSchemeFields) {
+    const setting = advancedScheme?.[name];
+    const value = advancedSchemeDraft[name];
+    if (setting && value !== undefined && setting.options.includes(value)
+      && (value !== setting.value || value !== setting.configured)) advancedSchemeChanges[name] = value;
+  }
   const savedMessage = {
     workers: 'Thread count saved.', profile: 'Generation profile saved.',
     budget: 'Overall time budget saved.', scheme: 'Scheme excerpt budget saved.',
+    advancedScheme: 'Advanced Scheme settings saved.',
   }[savedField];
   const saveFeedback = <>
     <ErrorBox error={error} />
@@ -311,7 +364,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       </label>
       <SettingsHelp title="About the Scheme excerpt budget" id={schemeHelpId}>
         <p>Maximum text selected from code and other sources for the next Scheme generation. For larger projects, try 60,000 characters. Try 80,000 if useful files are still skipped because of this budget. Larger inputs can use more tokens and take longer.</p>
-        <p>Scheme also has a separate 2 MiB limit for local file reads and a cap on the final evidence package.</p>
+        <p>Local file reads and the final evidence package have their own limits.</p>
       </SettingsHelp>
       <div className="actions left">
         <button type="button" className="secondary"
@@ -322,5 +375,36 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       {schemeBudget.value !== schemeBudget.configured
         && <p><small>Startup environment overrides the saved excerpt budget ({schemeBudget.configured.toLocaleString()} characters).</small></p>}
     </>}
+    {advancedScheme && advancedSchemeFields.some(({ name }) => advancedScheme[name]) && <SettingsHelp title="Advanced Scheme settings">
+      <p id={advancedSchemeHelpId}>These limits apply to the next Scheme inspection. The excerpt budget still controls how much source text Scheme selects.</p>
+      {advancedSchemeFields.map(({ name, label, format, help }) => {
+        const setting = advancedScheme[name];
+        if (!setting) return null;
+        return <div key={name}>
+          <label>
+            {label}
+            <select aria-describedby={advancedSchemeHelpId} value={advancedSchemeDraft[name] ?? setting.value}
+              disabled={loading || saving} onChange={(event) => {
+                const value = Number(event.target.value);
+                setAdvancedSchemeDraft(previous => ({ ...previous, [name]: value }));
+                setSaved(false);
+              }}>
+              {setting.options.map((option, index) => <option key={option} value={option}>
+                {format(option)}{index === 0 ? ' (default)' : ''}
+              </option>)}
+            </select>
+          </label>
+          <p><small>{help}</small></p>
+          {setting.value !== setting.configured
+            && <p><small>Startup environment overrides the saved limit ({format(setting.configured)}).</small></p>}
+        </div>;
+      })}
+      <div className="actions left">
+        <button type="button" className="secondary"
+          disabled={loading || saving || !Object.keys(advancedSchemeChanges).length}
+          onClick={() => void saveAdvancedScheme()}>Save advanced Scheme settings</button>
+      </div>
+      {savedField === 'advancedScheme' && !loading && saveFeedback}
+    </SettingsHelp>}
   </div>;
 }

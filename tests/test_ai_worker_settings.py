@@ -21,7 +21,8 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     for name in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE',
-                 'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_SCHEME_SOURCE_CHARS'):
+                 'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_SCHEME_SOURCE_CHARS',
+                 'PROJECTHUB_SCHEME_READ_BYTES', 'PROJECTHUB_SCHEME_PACKAGE_CHARS'):
         # Track an originally absent key before removing it: the settings API
         # writes os.environ directly, outside pytest's monkeypatch operations.
         monkeypatch.setenv(name, os.environ.get(name, ''))
@@ -46,6 +47,10 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
         'min_generation_budget': 30, 'max_generation_budget': 7200,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
+        'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
+        'scheme_read_bytes_options': [2_097_152, 4_194_304, 8_388_608],
+        'scheme_package_chars': 140_000, 'configured_scheme_package_chars': 140_000,
+        'scheme_package_chars_options': [140_000, 180_000, 220_000],
     }
     assert path.read_bytes() == original
     assert client.get('/api/projects').json() == []
@@ -198,6 +203,10 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
         'min_generation_budget': 30, 'max_generation_budget': 7200,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
+        'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
+        'scheme_read_bytes_options': [2_097_152, 4_194_304, 8_388_608],
+        'scheme_package_chars': 140_000, 'configured_scheme_package_chars': 140_000,
+        'scheme_package_chars_options': [140_000, 180_000, 220_000],
     }
     assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
     assert client.get('/api/settings/ai').json() == response.json()
@@ -226,6 +235,44 @@ def test_scheme_budget_controls_effective_and_restarted_inspections(settings_cli
     monkeypatch.delenv(override)
     assert config.scheme_source_chars() == 60_000
     assert client.get('/api/settings/ai').json() == result
+
+
+def test_advanced_scheme_budgets_apply_together_and_persist(settings_client, monkeypatch):
+    client, path = settings_client
+    read_override = 'PROJECTHUB_SCHEME_READ_BYTES'
+    package_override = 'PROJECTHUB_SCHEME_PACKAGE_CHARS'
+    before = tomllib.loads(path.read_text())
+    monkeypatch.setenv(read_override, '8388608')
+    monkeypatch.setenv(package_override, '220000')
+    result = client.get('/api/settings/ai').json()
+    assert result['scheme_read_bytes'] == 8_388_608
+    assert result['configured_scheme_read_bytes'] == 2_097_152
+    assert result['scheme_package_chars'] == 220_000
+    assert result['configured_scheme_package_chars'] == 140_000
+    assert config.scheme_inspection_limits() == (40_000, 8_388_608, 220_000)
+
+    response = client.patch('/api/settings/ai', json={'scheme_read_bytes': 4_194_304, 'scheme_package_chars': 180_000})
+    assert response.status_code == 200, response.text
+    expected = (40_000, 4_194_304, 180_000)
+    assert config.scheme_inspection_limits() == expected
+    before['ai'].update(scheme_read_bytes=4_194_304, scheme_package_chars=180_000)
+    assert tomllib.loads(path.read_text()) == before
+    monkeypatch.delenv(read_override)
+    monkeypatch.delenv(package_override)
+    assert config.scheme_inspection_limits() == expected
+    assert client.get('/api/settings/ai').json() == response.json()
+
+
+@pytest.mark.parametrize('field,invalid', [
+    ('scheme_read_bytes', 1), ('scheme_read_bytes', '4194304'), ('scheme_read_bytes', True),
+    ('scheme_package_chars', 220_001), ('scheme_package_chars', 180_000.0), ('scheme_package_chars', None),
+])
+def test_invalid_advanced_scheme_settings_do_not_partially_apply(settings_client, field, invalid):
+    client, path = settings_client
+    original = path.read_bytes()
+    assert client.patch('/api/settings/ai', json={'scheme_source_chars': 80_000, field: invalid}).status_code == 422
+    assert path.read_bytes() == original
+    assert config.scheme_inspection_limits() == (40_000, 2_097_152, 140_000)
 
 
 @pytest.mark.parametrize('value', [55_000, 100_000, 40_000.0, '40000', True, None])

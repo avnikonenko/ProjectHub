@@ -101,13 +101,16 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
                     'generation_timeout = 120\nscheme_source_chars = 80000\n')
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '60000')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '4194304')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '180000')
     for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
     calls = []
     class Config:
         def __init__(self, app_factory, **kwargs):
             calls.append((callable(app_factory), kwargs, os.environ['PROJECTHUB_DATA_DIR'],
-                          os.environ['PROJECTHUB_GENERATION_TIMEOUT'], os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS']))
+                          os.environ['PROJECTHUB_GENERATION_TIMEOUT'], os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'],
+                          os.environ['PROJECTHUB_SCHEME_READ_BYTES'], os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS']))
     class Server:
         def __init__(self, config):
             pass
@@ -118,7 +121,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     assert cli.main(['start']) == 0
     assert calls == [(True, {
         'factory': True, 'host': '127.0.0.1', 'port': 8888,
-    }, str(tmp_path / 'data'), '120', '60000')]
+    }, str(tmp_path / 'data'), '120', '60000', '4194304', '180000')]
     assert capsys.readouterr().out.strip() == 'ProjectHub: http://127.0.0.1:8888'
 
 
@@ -186,9 +189,13 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
                  'PROJECTHUB_HISTORY_AUTO_SYNC', 'PROJECTHUB_HISTORY_SYNC_INTERVAL'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '80000')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '8388608')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '220000')
     loaded.apply_environment()
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '4'
     assert os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'] == '40000'
+    assert os.environ['PROJECTHUB_SCHEME_READ_BYTES'] == '2097152'
+    assert os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'] == '140000'
 
 
 @pytest.mark.parametrize('value', [True, 0, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])

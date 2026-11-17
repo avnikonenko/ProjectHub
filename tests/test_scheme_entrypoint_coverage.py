@@ -40,7 +40,7 @@ def test_multiple_setup_entrypoints_survive_crowded_package_and_cache(tmp_path, 
     assert paths['setup.py']['provenance'] == 'observed in code'
     assert 'MUST_NOT_EXECUTE' not in json.dumps(first)
     assert first['coverage']['files_inspected'] > 24
-    assert first['diagnostics']['bytes_read'] <= evidence._MAX_INSPECTION_BYTES
+    assert first['diagnostics']['bytes_read'] <= evidence.DEFAULT_SCHEME_READ_BYTES
     monkeypatch.setattr(evidence, '_read', lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError('Cache reread')))
     cached = evidence.collect_evidence(engine, 1)
     assert cached['diagnostics']['cache_hits'] == 1
@@ -63,7 +63,7 @@ def test_pyproject_entrypoints_survive_source_budget_and_keep_whole_excerpts(tmp
     result = evidence.collect_evidence(engine, 1)
     paths = {source.get('path'): source for source in result['sources']}
     assert {'sample/zeta_prepare.py', 'sample/zeta_report.py', 'pyproject.toml'} <= paths.keys()
-    assert sum(len(source['text']) for source in result['sources']) <= evidence.scheme_source_chars()
+    assert sum(len(source['text']) for source in result['sources']) <= evidence.scheme_inspection_limits()[0]
     assert any(source['id'].startswith('note:') for source in result['sources'])
     assert all(len(source['text']) == 5900 for source in result['sources'] if source['id'].startswith('note:'))
     assert any('source excerpt budget' in value for value in result['coverage']['limitations'])

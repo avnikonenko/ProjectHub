@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { diagnosticCount, generationProfilePatch, parseGenerationDiagnostics, parseGenerationProfileSettings,
+import { diagnosticCount, generationProfilePatch, parseAdvancedSchemeSettings, parseGenerationDiagnostics, parseGenerationProfileSettings,
   parseSchemeSourceSettings } from '../src/generationDiagnostics.ts';
 
 test('Scheme excerpt settings accept known presets and preserve older Settings responses', () => {
@@ -11,6 +11,26 @@ test('Scheme excerpt settings accept known presets and preserve older Settings r
   assert.throws(() => parseSchemeSourceSettings({ ...saved, scheme_source_chars: 70_000 }), /unsupported Scheme excerpt budget/);
   assert.throws(() => parseSchemeSourceSettings({ ...saved, scheme_source_chars_options: [40_000, 40_000, 80_000] }), /unsupported Scheme excerpt budget/);
   assert.throws(() => parseSchemeSourceSettings({ scheme_source_chars: 40_000 }), /unsupported Scheme excerpt budget/);
+});
+
+test('advanced Scheme settings keep local bytes and package characters independent', () => {
+  const mib = 1024 * 1024;
+  const readOptions = [2 * mib, 4 * mib, 8 * mib];
+  const packageOptions = [140_000, 180_000, 220_000];
+  const raw = {
+    scheme_read_bytes: 4 * mib, configured_scheme_read_bytes: 2 * mib, scheme_read_bytes_options: readOptions,
+    scheme_package_chars: 180_000, configured_scheme_package_chars: 180_000, scheme_package_chars_options: packageOptions,
+  };
+  assert.deepEqual(parseAdvancedSchemeSettings(raw), {
+    scheme_read_bytes: { value: 4 * mib, configured: 2 * mib, options: readOptions },
+    scheme_package_chars: { value: 180_000, configured: 180_000, options: packageOptions },
+  });
+  assert.deepEqual(parseAdvancedSchemeSettings({ scheme_source_chars: 40_000 }), {
+    scheme_read_bytes: null, scheme_package_chars: null,
+  });
+  assert.throws(() => parseAdvancedSchemeSettings({ ...raw, scheme_read_bytes: 4 }), /unsupported Scheme local read limit/);
+  assert.throws(() => parseAdvancedSchemeSettings({ ...raw, scheme_package_chars: '180000' }), /unsupported Scheme evidence package limit/);
+  assert.throws(() => parseAdvancedSchemeSettings({ scheme_read_bytes: 4 * mib }), /unsupported Scheme local read limit/);
 });
 import { parseKnowledgePreview } from '../src/knowledge.ts';
 import { knowledgePreviewExport } from '../src/knowledgePreviewRecovery.ts';

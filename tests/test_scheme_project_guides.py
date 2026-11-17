@@ -83,7 +83,7 @@ def test_command_guides_survive_output_budget_before_peripheral_guides(tmp_path,
         (repo / 'docs' / f'aaa_{index}.md').write_text('# Supporting guide\n\n' + 'Peripheral information. ' * 30)
     (repo / 'docs' / 'zz_analysis.md').write_text(
         '# Analysis\n\nUse `compare` to compare observed binding modes.\n')
-    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 1200)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (1200, 2 * 1024 * 1024, 140_000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)
@@ -104,7 +104,7 @@ def test_historical_manifests_do_not_exhaust_current_evidence_or_dependency_slot
         f'  - archived-package-{index:03d}=1.0\n' for index in range(130)))
     (repo / 'application' / 'env.yml').write_text('dependencies:\n  - current-engine=2.0\n')
     (repo / 'application' / 'main.py').write_text('def run(): return prepare()\n')
-    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 1200)
+    monkeypatch.setattr(evidence, 'scheme_inspection_limits', lambda: (1200, 2 * 1024 * 1024, 140_000))
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)

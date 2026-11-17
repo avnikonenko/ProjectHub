@@ -47,6 +47,8 @@ class AIWorkerSettingsInput(Input):
     generation_profile: Literal['quality', 'balanced', 'economy'] | None = None
     generation_budget: int | None = Field(default=None, strict=True, ge=30, le=7200)
     scheme_source_chars: int | None = Field(default=None, strict=True)
+    scheme_read_bytes: int | None = Field(default=None, strict=True)
+    scheme_package_chars: int | None = Field(default=None, strict=True)
 
     @model_validator(mode='after')
     def nonempty_settings(self):
