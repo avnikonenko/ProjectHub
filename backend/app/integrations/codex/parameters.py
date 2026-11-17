@@ -245,7 +245,7 @@ def refresh_parameters(engine, project_id, manager):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
-        progress.begin(project_id, 'parameters')
+        progress.begin(project_id, 'parameters', engine=engine)
         progress.update(project_id, stage='Inspecting implementation choices and usage sites')
         evidence = collect_parameter_evidence(engine, project_id)
         _evidence(evidence, project_id)
@@ -286,7 +286,7 @@ def refresh_parameters(engine, project_id, manager):
             if db.get(Project, project_id) is None:
                 raise CodexError('Project not found.')
             save_revision(db, project_id, 'parameters', snapshot)
-            progress.complete(project_id, db.commit)
+            progress.complete(project_id, db.commit, db=db)
         return snapshot
     except Exception as exc:
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)

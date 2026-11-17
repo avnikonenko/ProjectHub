@@ -455,7 +455,7 @@ def publish_pair(engine, project_id, candidate, brief, expected_manifest, *, rep
         db.flush()
         save_revision(db, project_id, 'knowledge', published)
         if guarded:
-            progress.complete(project_id, db.commit)
+            progress.complete(project_id, db.commit, db=db)
         else:
             db.commit()
     return published
@@ -539,7 +539,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             profile = get_generation_profile(settings['generation_profile'])
         except (ConfigError, ValueError) as exc:
             raise CodexError('Could not read the knowledge generation profile and worker settings.') from exc
-        progress.begin(project_id, 'knowledge')
+        progress.begin(project_id, 'knowledge', engine=engine, saves_result=publish)
         with ExitStack() as scope:
             scope.enter_context(collect_generation_metrics(metrics))
             scope.enter_context(use_knowledge_profile(profile, settings['extraction_workers']))
@@ -609,7 +609,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
             if not publish:
                 with Session(engine) as db:
                     stage_knowledge_preview(db, project_id, result)
-                    progress.complete(project_id, db.commit)
+                    progress.complete(project_id, db.commit, db=db)
             progress.finish(project_id)
             return result
     except Exception as exc:

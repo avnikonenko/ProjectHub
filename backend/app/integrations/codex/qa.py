@@ -521,7 +521,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                 **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
 
     try:
-        progress.begin(project_id, 'qa')
+        progress.begin(project_id, 'qa', engine=engine)
         transport_scope.enter_context(collect_generation_metrics(metrics))
         transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
@@ -577,7 +577,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                               'diagnostics': run_diagnostics, 'coverage': list(coverage)}
             db.flush()
             save_revision(db, project_id, 'qa', read_qa(db, project_id))
-            progress.complete(project_id, db.commit)
+            progress.complete(project_id, db.commit, db=db)
             progress.finish(project_id)
             return read_qa(db, project_id)
     except Exception as exc:

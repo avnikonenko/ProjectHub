@@ -212,7 +212,7 @@ def refresh_scheme(engine, project_id, manager):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
-        progress.begin(project_id, 'scheme')
+        progress.begin(project_id, 'scheme', engine=engine)
         progress.update(project_id, stage='Collecting Scheme evidence')
         evidence = collect_evidence(engine, project_id)
         if not evidence['sources']:
@@ -335,7 +335,7 @@ def refresh_scheme(engine, project_id, manager):
             else:
                 row.snapshot = snapshot
             save_revision(db, project_id, 'scheme', snapshot)
-            progress.complete(project_id, db.commit)
+            progress.complete(project_id, db.commit, db=db)
         progress.finish(project_id)
         return snapshot
     except Exception as exc:

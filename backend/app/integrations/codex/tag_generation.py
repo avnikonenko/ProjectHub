@@ -58,7 +58,7 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     try:
-        progress.begin(project_id, 'tags')
+        progress.begin(project_id, 'tags', engine=engine)
         with ExitStack() as scope:
             try:
                 settings = ai_worker_settings()
@@ -97,26 +97,23 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
             grouping = group_records(engine, project_id, manager, records, previous=previous, **grouping_options)
             progress.check_cancelled()
 
-            def save():
-                with Session(engine) as db:
-                    db.execute(text('BEGIN IMMEDIATE'))
-                    row, current = _selected(db, project_id, target, publication_id, generated_at)
-                    current_token = row.snapshot if target != 'qa' else current
-                    if current_token != token or (row_id is not None and row.id != row_id):
-                        raise TagGenerationConflict('The selected saved result changed during tag generation. Previous tags are preserved; retry.')
-                    if target == 'qa':
-                        row.generation = {**(row.generation or {}), **deepcopy(grouping)}
-                    elif target == 'knowledge_preview':
-                        snapshot = deepcopy(row.snapshot)
-                        snapshot['result']['knowledge'].update(deepcopy(grouping))
-                        row.snapshot = snapshot
-                    else:
-                        row.snapshot = {**deepcopy(row.snapshot), **deepcopy(grouping)}
-                    db.commit()
-                return {'target': target, **grouping, **(
-                    {'generated_at': generated_at} if target == 'qa' else {'publication_id': publication_id})}
-
-            return progress.complete(project_id, save)
+            with Session(engine) as db:
+                db.execute(text('BEGIN IMMEDIATE'))
+                row, current = _selected(db, project_id, target, publication_id, generated_at)
+                current_token = row.snapshot if target != 'qa' else current
+                if current_token != token or (row_id is not None and row.id != row_id):
+                    raise TagGenerationConflict('The selected saved result changed during tag generation. Previous tags are preserved; retry.')
+                if target == 'qa':
+                    row.generation = {**(row.generation or {}), **deepcopy(grouping)}
+                elif target == 'knowledge_preview':
+                    snapshot = deepcopy(row.snapshot)
+                    snapshot['result']['knowledge'].update(deepcopy(grouping))
+                    row.snapshot = snapshot
+                else:
+                    row.snapshot = {**deepcopy(row.snapshot), **deepcopy(grouping)}
+                progress.complete(project_id, db.commit, db=db)
+            return {'target': target, **grouping, **(
+                {'generated_at': generated_at} if target == 'qa' else {'publication_id': publication_id})}
     except Exception as exc:
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)
                         else 'Tag generation failed. Previous saved tags are preserved.')

@@ -279,7 +279,7 @@ def refresh_brief(engine, project_id, manager):
                 **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
 
     try:
-        progress.begin(project_id, 'brief')
+        progress.begin(project_id, 'brief', engine=engine)
         transport_scope.enter_context(collect_generation_metrics(metrics))
         transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
@@ -477,7 +477,7 @@ def refresh_brief(engine, project_id, manager):
             )}
             db.flush()
             save_revision(db, project_id, 'brief', read_brief(db, project_id))
-            progress.complete(project_id, db.commit)
+            progress.complete(project_id, db.commit, db=db)
             progress.finish(project_id)
             return read_brief(db, project_id)
     except Exception as exc:

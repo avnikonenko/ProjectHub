@@ -6,6 +6,9 @@ import threading
 import time
 import os
 import logging
+import weakref
+
+from sqlalchemy.orm import Session
 
 from ...models import utcnow
 from .protocol import CodexError
@@ -18,6 +21,8 @@ _events = {}
 _clocks = {}
 _stage_clocks = {}
 _run_locks = {}
+# Weak references avoid retaining disposed test/application engines with snapshots.
+_stores = {}
 log = logging.getLogger('uvicorn.error')
 _current = ContextVar('projecthub_active_generation', default=None)
 _abort = ContextVar('projecthub_extraction_abort', default=None)
@@ -63,7 +68,7 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
-def begin(project_id, kind):
+def begin(project_id, kind, engine=None, *, saves_result=True):
     budget = _budget()
     key = (project_id, kind)
     # The caller holds a lease for this project/view through finish().
@@ -78,6 +83,16 @@ def begin(project_id, kind):
         _run_locks[key] = threading.Lock()
         _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation', 'started_at': utcnow(), 'budget_seconds': budget}
         _current.set((project_id, kind, event))
+        _stores[key] = weakref.ref(engine) if engine is not None else None
+    if engine is not None:
+        try:
+            from .generation_attempts import start
+            start(engine, project_id, kind, _snapshots[key]['started_at'], saves_result=saves_result)
+        except Exception as exc:
+            with _lock:
+                if _active.get(key) is event:
+                    _finish_locked(project_id, 'Could not save generation attempt status. No generation was started.')
+            raise CodexError('Could not save generation attempt status. No generation was started.') from exc
 
 
 def current_cancel_event():
@@ -189,6 +204,27 @@ def _finish_locked(project_id, error=None):
         _current.set(None)
 
 
+def _persistence_record(project_id):
+    # Caller owns the run lock; never keep the map mutex during database IO.
+    with _lock:
+        key = _owned_key(project_id)
+        if key is None:
+            return None
+        reference = _stores.get(key)
+        engine = reference() if reference is not None else None
+        return key, engine, _snapshots[key]['started_at'], _events[key].is_set()
+
+
+def _persist_terminal(record, *, error=None, db=None, finished_at=None):
+    if record is None or record[1] is None:
+        return
+    key, engine, started_at, cancelled = record
+    from .generation_attempts import finish as finish_attempt
+    finish_attempt(engine, key[0], key[1], started_at,
+                   state='cancelled' if cancelled else 'failed' if error is not None else 'completed',
+                   error=None if cancelled else error, finished_at=finished_at or utcnow(), db=db)
+
+
 def finish(project_id, error=None):
     run_lock = _owned_run_lock(project_id)
     if run_lock is None:
@@ -196,21 +232,24 @@ def finish(project_id, error=None):
             _finish_locked(project_id, error)
     else:
         with run_lock:
-            with _lock:
-                _finish_locked(project_id, error)
+            record = _persistence_record(project_id)
+            try:
+                _persist_terminal(record, error=error)
+            finally:
+                with _lock:
+                    _finish_locked(project_id, error)
 
 
-def complete(project_id, save):
+def complete(project_id, save, *, db=None):
     """Atomically save this run or accept its earlier cancellation.
 
-    The save callback must not call back into progress. A cancellation cannot
-    report success between the final cancellation check and the database commit.
+    A supplied output Session stages successful attempt status in the SAME
+    transaction as the artifact before save() commits. Never hold the global
+    progress mutex across database IO; sibling SQLite writers must make progress.
     """
     run_lock = _owned_run_lock(project_id)
     if run_lock is None:
         raise CodexError('This AI generation is no longer running.')
-    # Never hold the global progress mutex across database IO. Another view
-    # may already hold a SQLite writer transaction before entering complete().
     with run_lock:
         with _lock:
             key = _owned_key(project_id)
@@ -219,16 +258,60 @@ def complete(project_id, save):
             if _events[key].is_set():
                 raise GenerationCancelled()
             _check_budget(key)
+        record = _persistence_record(project_id)
+        if db is not None:
+            _persist_terminal(record, db=db)
         result = save()
+        if db is None:
+            _persist_terminal(record)
         with _lock:
             _finish_locked(project_id)
         return result
 
 
-def read(project_id, kind):
+def _stored_progress(engine, project_id, kind):
+    from .generation_attempts import read_latest
+    with Session(engine) as db:
+        attempt = read_latest(db, project_id, kind)
+    if attempt is None:
+        return _idle()
+    state = attempt['state']
+    legacy_state = state if state in ('running', 'completed', 'failed', 'cancelled') else 'failed' if state in ('interrupted', 'skipped') else 'idle'
+    stages = {'running': 'Generating', 'completed': 'Completed', 'failed': 'Failed',
+              'cancelled': 'Cancelled', 'interrupted': 'Interrupted',
+              'waiting': 'Waiting for Knowledge', 'skipped': 'Skipped'}
+    return {**_idle(), 'state': legacy_state, 'stage': stages.get(state, ''),
+            'started_at': attempt['started_at'], 'error': attempt.get('error'),
+            'latest_attempt': attempt,
+            **({'elapsed_seconds': attempt['elapsed_seconds']} if attempt.get('elapsed_seconds') is not None else {})}
+
+def read(project_id, kind, engine=None):
     key = (project_id, kind)
     with _lock:
-        result = deepcopy(_snapshots.get(key, _idle()))
-        if key in _active:
+        reference = _stores.get(key)
+        owner = reference() if reference is not None else None
+        # Calls without an engine retain the historical in-memory interface.
+        # API reads for a different database must never inherit its snapshots.
+        available = key in _snapshots and (engine is None or owner is engine
+                     or (key in _active and reference is None))
+        result = deepcopy(_snapshots[key]) if available else None
+        active = key in _active
+        if result is not None and active:
             result['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[key][0]), 3)
-        return result
+    if engine is None:
+        return result if result is not None else _idle()
+    stored = _stored_progress(engine, project_id, kind)
+    if result is None:
+        return stored
+    if not active and not stored.get('latest_attempt'):
+        # Project deletion cascades its durable attempts. SQLite may reuse that
+        # numeric project ID; its new owner must not inherit terminal memory.
+        return stored
+    if (not active and stored.get('latest_attempt')
+            and stored['latest_attempt']['started_at'] > result.get('started_at', '')):
+        # A server-owned dependency can be queued after an older live snapshot.
+        # That durable attempt is newer than this completed in-memory result.
+        return stored
+    if 'latest_attempt' in stored:
+        result['latest_attempt'] = stored['latest_attempt']
+    return result

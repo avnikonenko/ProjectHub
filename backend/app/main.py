@@ -32,6 +32,8 @@ def db_dependency(request: Request):
 def create_app(data_dir=None, restart_controller=None):
     app = FastAPI(title='ProjectHub', version=VERSION)
     engine, directory = initialize(data_dir or default_data_dir())
+    from .integrations.codex.generation_attempts import interrupt_running
+    interrupt_running(engine)
     app.state.engine, app.state.data_dir = engine, directory
     db_dep = Depends(db_dependency)
     from .restart import install_restart
