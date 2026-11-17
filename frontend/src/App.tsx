@@ -1229,6 +1229,7 @@ function useSettingsDismiss() {
 function AppSettings() {
   const panel = useSettingsDismiss();
   const [open, setOpen] = useState(false);
+  const [aiSettingsVersion, setAISettingsVersion] = useState(0);
   const [addingProfile, setAddingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   return (
@@ -1242,7 +1243,7 @@ function AppSettings() {
           <SettingsHelp title="About appearance">
             <p>Colour palette, light or dark mode, and text size can be adjusted independently. Your choices are saved in this browser.</p>
           </SettingsHelp>
-          <ExtractionWorkersControl active={open} />
+          <ExtractionWorkersControl active={open} refreshVersion={aiSettingsVersion} />
           <button type="button" className="secondary"
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
             Add Codex profile
@@ -1251,7 +1252,7 @@ function AppSettings() {
             <p>Register an existing Codex sign-in directory, then choose the profile in project AI settings. ProjectHub checks its login without copying credentials.</p>
           </SettingsHelp>
           <Feedback tone="success">{profileMessage}</Feedback>
-          <RestartControl active={open} />
+          <RestartControl active={open} onRestarted={() => setAISettingsVersion(version => version + 1)} />
         </div>
       </details>
       {addingProfile && <Form

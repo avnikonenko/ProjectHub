@@ -3,7 +3,7 @@ import { Feedback } from './Feedback';
 import { ErrorBox } from './ui';
 import { readRestartStatus, restartProjectHub, type RestartStatus } from './restart';
 
-export function RestartControl({ active }: { active: boolean }) {
+export function RestartControl({ active, onRestarted }: { active: boolean; onRestarted?: () => void }) {
   const [status, setStatus] = useState<RestartStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -49,6 +49,7 @@ export function RestartControl({ active }: { active: boolean }) {
       if (controller.signal.aborted) return;
       setStatus(ready);
       setConnected(true);
+      onRestarted?.();
     } catch (failure) {
       if (!controller.signal.aborted) {
         setError(failure instanceof Error ? failure.message : 'Could not restart ProjectHub.');

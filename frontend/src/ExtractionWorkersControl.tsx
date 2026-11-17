@@ -101,7 +101,7 @@ function settingValue(setting: Setting | null | undefined, draft: string) {
     ? value : undefined;
 }
 
-export function ExtractionWorkersControl({ active }: { active: boolean }) {
+export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { active: boolean; refreshVersion?: number }) {
   const helpId = useId();
   const budgetHelpId = useId();
   const schemeHelpId = useId();
@@ -150,7 +150,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
       })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [active, reload]);
+  }, [active, refreshVersion, reload]);
 
   function enqueueSave(edit: SettingEdit) {
     const { field, draft } = edit;
@@ -334,7 +334,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
         && <p><small>Startup environment overrides the saved excerpt budget ({schemeBudget.configured.toLocaleString()} characters).</small></p>}
     </>}
     {advancedScheme && advancedSchemeFields.some(({ name }) => advancedScheme[name]) && <SettingsHelp title="Advanced Scheme settings">
-      <p id={advancedSchemeHelpId}>These limits apply to the next Scheme inspection. The excerpt budget still controls how much source text Scheme selects.</p>
+      <p id={advancedSchemeHelpId}>Saved limits apply to the next Scheme inspection. The excerpt budget still controls how much source text Scheme selects.</p>
       {advancedSchemeFields.map(({ name, label, format, help }) => {
         const setting = advancedScheme[name];
         if (!setting) return null;
