@@ -302,7 +302,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       </button>} />
     <p>Consequential limits, filters, fallbacks and processing choices found in code, with their consequences and usage locations. These are not values verified in a particular run.</p>
     <details><summary>How this works</summary>
-      <p>Finds file caps, skipped inputs and fallback rules, explains their consequences, and links to their definitions and usage. Generation sends selected code to OpenAI through Codex.</p>
+      <p>Explains implementation choices and limits, their practical consequences, and where they are defined and used in the code. Generation sends selected code to OpenAI through Codex.</p>
     </details>
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
     {loading && <Feedback>Loading saved implementation choices…</Feedback>}
