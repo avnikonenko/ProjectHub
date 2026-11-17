@@ -175,6 +175,20 @@ def _legacy_knowledge_time(db, pid):
 
 
 def generation_summary(db, pid, *, live=None):
+    # SQLite's legacy driver mode does not begin a physical transaction for
+    # SELECTs. Keep artifact timestamps, archive metadata and attempt outcomes
+    # on one snapshot so an atomic save cannot look like a completed job with
+    # no result while this lightweight summary is being assembled. A scoped
+    # savepoint ends a new read snapshot without ending a caller's transaction;
+    # begin_nested also flushes caller changes before the savepoint is created.
+    connection = db.connection().connection.driver_connection
+    if connection.in_transaction:
+        return _generation_summary(db, pid, live=live)
+    with db.begin_nested():
+        return _generation_summary(db, pid, live=live)
+
+
+def _generation_summary(db, pid, *, live=None):
     require_project(db, pid)
     saved, present = saved_times(db, pid, with_presence=True)
     history_at = None if present['knowledge'] else _legacy_knowledge_time(db, pid)

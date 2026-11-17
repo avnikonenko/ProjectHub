@@ -627,9 +627,15 @@ class CodexManager:
         finally:
             _generation_transport.reset(token)
             scope['closed'] = True
-            if scope['client'] is not None:
-                scope['client'].close()
-                scope['client'] = None
+            client, scope['client'] = scope['client'], None
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    # Cleanup is not part of the model outcome. It must neither
+                    # turn an already committed result into an API failure nor
+                    # replace an original generation exception during unwinding.
+                    log.warning('Could not close generation transport.', exc_info=True)
 
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None, verify_connectors=False):
         """Generate in a separate ephemeral thread with inherited tools disabled.

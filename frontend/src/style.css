@@ -428,6 +428,12 @@ main {
 .ai-result-header {
   align-items: flex-start;
 }
+.section-title.ai-result-header > button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
 .search-result-filters {
   display: flex;
   flex-wrap: wrap;
@@ -1077,6 +1083,9 @@ a:focus-visible {
     display: flex;
     flex-direction: row;
     overflow-x: auto;
+  }
+  .project-list > .project-row {
+    flex: 0 0 auto;
   }
   .project-option {
     white-space: nowrap;

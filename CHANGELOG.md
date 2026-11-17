@@ -56,7 +56,11 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Fixed
 
-- Prevent generation-result labels, statuses and dates from overlapping at larger text sizes or in narrow panels.
+- Keep generation summaries consistent during concurrent saves, include older Knowledge in unfinished retries, retain open history after a new result saves, and avoid reporting failure after a successful save when transport cleanup fails.
+
+- Inset the generation-results panel and group dates beneath statuses for clearer row separation at larger text sizes and in narrow panels.
+
+- Keep mobile project names separate from pin icons and wrap long AI-result action buttons within narrow panels.
 
 - Parameter inspection now filters credential accessors, sensitive match patterns and credential comment continuations, and preserves exception/loop/match/context-manager conditions. Returning from parameter history rechecks source freshness instead of reusing an old verdict.
 

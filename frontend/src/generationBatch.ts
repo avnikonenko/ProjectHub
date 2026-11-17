@@ -28,7 +28,7 @@ export type GenerationRetryView = {
   showing_previous?: boolean;
 };
 const unfinishedGenerationStates = new Set([
-  'not_generated', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped',
+  'not_generated', 'earlier_result', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped',
 ]);
 
 /** Only unfinished views are retried. A successful view is never refreshed here. */

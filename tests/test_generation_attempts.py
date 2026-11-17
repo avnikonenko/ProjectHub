@@ -334,3 +334,58 @@ def test_legacy_saved_artifact_without_timestamp_is_not_missing(engine):
     with Session(engine) as db:
         knowledge = next(row for row in attempts.generation_summary(db, 1)['views'] if row['kind'] == 'knowledge')
         assert knowledge['state'] == 'timed_out' and knowledge['showing_previous']
+
+
+def test_summary_does_not_mix_an_artifact_read_with_a_later_completed_attempt(engine):
+    with engine.connect() as connection:
+        connection.exec_driver_sql('PRAGMA journal_mode=WAL')
+    committed = False
+
+    def save_between_queries(connection, cursor, statement, parameters, context, many):
+        nonlocal committed
+        if committed or 'FROM project_scheme' not in statement:
+            return
+        assert connection.connection.driver_connection.in_transaction
+        committed = True
+        with Session(engine) as writer:
+            writer.add(ProjectKnowledge(project_id=1, snapshot={
+                'project_id': 1, 'generated_at': NEXT, 'publication_id': 'new-version', 'items': []}))
+            writer.add(ProjectGenerationAttempt(project_id=1, kind='knowledge',
+                started_at=START, finished_at=NEXT, state='completed', saves_result=True))
+            writer.commit()
+
+    event.listen(engine, 'before_cursor_execute', save_between_queries)
+    try:
+        with Session(engine) as reader:
+            before = knowledge_view(reader)
+            assert committed
+            assert before['state'] == 'not_generated' and before['latest_attempt'] is None
+            assert before['saved_at'] is None
+            # The scoped snapshot must end at return, even if the HTTP caller
+            # or another reader reuses its Session for a later status check.
+            after = knowledge_view(reader)
+            assert after['state'] == 'saved' and after['saved_at'] == NEXT
+            assert after['latest_attempt']['state'] == 'completed'
+    finally:
+        event.remove(engine, 'before_cursor_execute', save_between_queries)
+
+
+def test_summary_does_not_commit_a_callers_pending_artifact(engine):
+    with Session(engine) as writer:
+        writer.add(ProjectKnowledge(project_id=1, snapshot={
+            'project_id': 1, 'generated_at': NEXT, 'items': []}))
+        assert knowledge_view(writer)['state'] == 'saved'
+        assert writer.connection().connection.driver_connection.in_transaction
+        with Session(engine) as observer:
+            assert observer.get(ProjectKnowledge, 1) is None
+        writer.rollback()
+    with Session(engine) as observer:
+        assert observer.get(ProjectKnowledge, 1) is None
+
+
+def test_summary_preserves_an_existing_physical_read_transaction(engine):
+    with Session(engine) as reader:
+        reader.connection().exec_driver_sql('BEGIN')
+        assert knowledge_view(reader)['state'] == 'not_generated'
+        assert reader.connection().connection.driver_connection.in_transaction
+        reader.rollback()

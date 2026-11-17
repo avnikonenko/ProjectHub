@@ -93,6 +93,24 @@ test('Retry unfinished retries Scheme alone when Knowledge was saved, and chains
   });
 });
 
+test('Retry unfinished regenerates Knowledge when only an earlier result exists before dependent Scheme', async () => {
+  const { planRetryProjectGeneration } = await import('../src/generationBatch.ts');
+  const views = projectGenerationKinds.map(kind => ({ kind, state: 'saved', saved_at: 'saved' as string | null, retryable: false }));
+  Object.assign(views.find(view => view.kind === 'knowledge')!, {
+    state: 'earlier_result', saved_at: null, retryable: true,
+  });
+  assert.deepEqual(planRetryProjectGeneration(views, {}), {
+    start: ['knowledge'], waitForKnowledge: false, schemeSkippedForKnowledge: false,
+  });
+  Object.assign(views.find(view => view.kind === 'scheme')!, { state: 'failed', retryable: true });
+  assert.deepEqual(planRetryProjectGeneration(views, {}), {
+    start: ['knowledge'], waitForKnowledge: true, schemeSkippedForKnowledge: false,
+  });
+  assert.deepEqual(planRetryProjectGeneration(views, { knowledge: true }), {
+    start: [], waitForKnowledge: false, schemeSkippedForKnowledge: true,
+  });
+});
+
 test('Retry unfinished never starts Scheme while Knowledge is running or trusts an incorrectly retryable saved view', async () => {
   const { planRetryProjectGeneration } = await import('../src/generationBatch.ts');
   const views = projectGenerationKinds.map(kind => ({ kind, state: 'saved', saved_at: 'saved', retryable: true }));
