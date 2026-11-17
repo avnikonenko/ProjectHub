@@ -1679,11 +1679,15 @@ a:focus-visible {
 .repository-facts { margin-block: .4rem .75rem; }
 .repository-facts > div {
   display: grid;
-  grid-template-columns: minmax(0, 30%) minmax(0, 1fr);
+  grid-template-columns: minmax(0, var(--repository-label-width, 30%)) minmax(0, 1fr);
   align-items: baseline;
   gap: .2rem .7rem;
   padding-block: .35rem;
   border-block-end: 1px solid var(--border);
+}
+.repository-facts > .repository-location {
+  --repository-label-width: 3.5rem;
+  column-gap: .4rem;
 }
 .repository-facts :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
 .repository-facts dt { color: var(--muted); }

@@ -117,8 +117,8 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
     <div className="repository-overview">
       <h4>Git repository</h4>
       <dl className="repository-facts">
-        <div><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
-        {remote && <div>
+        <div className="repository-location"><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
+        {remote && <div className="repository-location">
           <dt title={remote.name || undefined}>Remote</dt>
           <dd><code className="repository">{remote.web_url
             ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
