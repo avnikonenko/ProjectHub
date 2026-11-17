@@ -378,7 +378,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           setRevisionId(id);
         }} />
     </details>
-    {result && <SchemeResultCoverage snapshot={snapshot} current={result.inspection} showCurrent={revisionId === null} />}
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {(['Architecture', 'Workflow', 'Dependencies'] as const).map((name) =>
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
@@ -411,5 +410,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         <li key={source.id}>[{index + 1}] {label(source.provenance)}{source.path ? ' · ' + source.path : ''}
           {source.revision ? ' · revision ' + source.revision.slice(0, 12) : ''}{source.date ? ' · ' + source.date : ''}</li>)}</ul></details>
     </details>}
+    {result && <SchemeResultCoverage snapshot={snapshot} current={result.inspection} showCurrent={revisionId === null} />}
   </section>;
 }
