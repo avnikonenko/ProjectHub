@@ -3,6 +3,14 @@ import { useEffect, useState } from 'react';
 import { api } from './api';
 import { ErrorBox, PagedItems } from './ui';
 
+type CommitTip = { hash: string; committed_at?: string };
+type RepositoryUpstream = {
+  branch: string;
+  is_remote: boolean;
+  ahead: number | null;
+  behind: number | null;
+  commit: CommitTip | null;
+};
 type RepositoryStatus = {
   branch: string | null;
   dirty: boolean;
@@ -10,11 +18,49 @@ type RepositoryStatus = {
   branches_limited?: boolean;
   remote_branches?: string[];
   remote_branches_limited?: boolean;
+  remote_repository?: { name: string; address: string; web_url?: string | null } | null;
+  tracked_files?: number | null;
   tracked_changes?: number;
   untracked_files?: number;
+  upstream?: RepositoryUpstream | null;
+  upstream_unavailable?: boolean;
   github_issues_url?: string | null;
-  commits: { hash: string; subject: string; committed_at?: string }[];
+  commits: (CommitTip & { subject: string })[];
 };
+
+function commitTip(commit: CommitTip | null | undefined, unavailable: string) {
+  if (!commit) return unavailable;
+  const timestamp = commit.committed_at && Number.isFinite(Date.parse(commit.committed_at)) ? commit.committed_at : null;
+  return <><code>{commit.hash}</code>{timestamp && <> · <time dateTime={timestamp}>{new Date(timestamp).toLocaleString()}</time></>}</>;
+}
+
+function BranchSync({ status }: { status: RepositoryStatus }) {
+  const upstream = status.upstream;
+  const localCommit = status.commits[0];
+  const countsUnavailable = upstream?.commit && (upstream.ahead === null || upstream.behind === null);
+  let summary = 'No upstream configured';
+  if (status.branch === null) summary = 'Detached HEAD';
+  else if (status.upstream_unavailable) summary = 'Upstream check unavailable';
+  else if (upstream) {
+    if (!upstream.commit) summary = 'Upstream commit unavailable';
+    else if (upstream.ahead === null || upstream.behind === null) summary = !localCommit ? 'Commit comparison unavailable'
+      : localCommit.hash === upstream.commit.hash ? 'Latest commits match' : 'Latest commits differ';
+    else if (upstream.ahead || upstream.behind) {
+      summary = `${upstream.ahead.toLocaleString()} ahead · ${upstream.behind.toLocaleString()} behind`;
+    } else summary = upstream.is_remote ? 'Matches saved remote' : 'Matches upstream';
+  }
+  return <details className="repository-branches repository-sync">
+    <summary>Branch sync · {summary}</summary>
+    <dl>
+      {upstream && <><dt>Upstream</dt><dd><code>{upstream.branch}</code></dd></>}
+      <dt>Latest local commit</dt><dd>{commitTip(localCommit, 'No commit yet')}</dd>
+      {upstream && <><dt>{upstream.is_remote ? 'Latest saved remote commit' : 'Latest upstream commit'}</dt>
+        <dd>{commitTip(upstream.commit, 'Unavailable')}</dd></>}
+    </dl>
+    {countsUnavailable && <p className="muted"><small>Ahead and behind counts are unavailable.</small></p>}
+    {upstream?.is_remote && <p className="muted"><small>Comparison uses the remote branch state saved in local Git.</small></p>}
+  </details>;
+}
 
 export function useRepositoryOverview(base: string, path: string | null) {
   const [snapshot, setSnapshot] = useState<{
@@ -55,16 +101,25 @@ export function useRepositoryOverview(base: string, path: string | null) {
 export function RepositoryOverview({ path, status, error, loading, reload }: {
   path: string;
 } & ReturnType<typeof useRepositoryOverview>) {
+  const remote = status?.remote_repository;
   return (
     <div>
       <h4>Git repository</h4>
       <code className="repository">{path}</code>
+      {remote && <div className="repository-remote">
+        <small>Remote repository{remote.name && ` · ${remote.name}`}</small>
+        <code className="repository">{remote.web_url
+          ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
+          : remote.address}</code>
+      </div>}
       <div aria-busy={loading}>
         {loading && <Feedback>Reading repository…</Feedback>}
         <ErrorBox error={error} />
         {status && (
           <p>
             {status.branch === null ? 'Detached HEAD' : <>Branch: <code>{status.branch}</code></>}
+            {typeof status.tracked_files === 'number' && ` · ${status.tracked_files.toLocaleString()} tracked file${status.tracked_files === 1 ? '' : 's'}`}
+            {status.tracked_files === null && ' · Tracked file count unavailable'}
             {' · '}{!status.dirty ? 'Clean working tree' : status.tracked_changes === undefined || status.untracked_files === undefined
               ? 'Uncommitted changes'
               : <>
@@ -75,6 +130,7 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
           </p>
         )}
       </div>
+      {status && (status.upstream !== undefined || status.upstream_unavailable) && <BranchSync status={status} />}
       {!!status?.branches?.length && <details className="repository-branches">
         <summary>Local branches ({status.branches.length}{status.branches_limited ? '+' : ''})</summary>
         <PagedItems label="Local branch pages" listClass="repository-branch-list" pageSize={10}>

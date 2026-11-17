@@ -372,7 +372,9 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     p = project(client, repository_path=str(repo))
     url = f"/api/projects/{p['id']}/repository"
     assert client.get(url).json() == {'branch': 'work', 'dirty': False, 'commits': [],
-                                     'tracked_changes': 0, 'untracked_files': 0, 'github_issues_url': None,
+                                     'tracked_files': 0, 'tracked_changes': 0, 'untracked_files': 0,
+                                     'upstream': None, 'github_issues_url': None,
+                                     'remote_repository': None,
                                      'branches': ['work'], 'branches_limited': False,
                                      'remote_branches': [], 'remote_branches_limited': False}
     assert client.get(f"/api/projects/{project(client, 'Other')['id']}/repository").status_code == 404
@@ -398,7 +400,8 @@ def test_repository_snapshot_is_scoped_and_read_only(client, tmp_path, monkeypat
     result = response.json()
     assert result['branch'] is None and result['dirty'] is True
     assert result['branches'] == ['work'] and result['branches_limited'] is False
-    assert result['tracked_changes'] == 1 and result['untracked_files'] == 0
+    assert result['tracked_files'] == 2 and result['tracked_changes'] == 1 and result['untracked_files'] == 0
+    assert result['upstream'] is None
     assert [commit['subject'] for commit in result['commits']] == ['Change 3', 'Change 2', 'Change 1']
     assert [commit['committed_at'] for commit in result['commits']] == [
         '2025-01-02T03:04:03+05:30', '2025-01-02T03:04:02+05:30', '2025-01-02T03:04:01+05:30',
@@ -425,12 +428,13 @@ def test_repository_snapshot_counts_tracked_and_untracked_files(client, tmp_path
     linked = project(client, repository_path=str(repo))
     url = f"/api/projects/{linked['id']}/repository"
 
-    def counts(tracked, untracked):
+    def counts(tracked, untracked, total=2):
         response = client.get(url)
         assert response.status_code == 200, response.text
         status = response.json()
         assert status['tracked_changes'] == tracked
         assert status['untracked_files'] == untracked
+        assert status['tracked_files'] == total
         assert status['dirty'] is bool(tracked or untracked)
 
     counts(0, 0)
@@ -445,7 +449,113 @@ def test_repository_snapshot_counts_tracked_and_untracked_files(client, tmp_path
     git('mv', 'rename.txt', 'renamed\nfile.txt')
     counts(2, 2)
     git('add', 'new directory')
-    counts(4, 0)
+    counts(4, 0, total=4)
+
+
+def test_repository_snapshot_compares_saved_upstream_tips(client, tmp_path, monkeypatch):
+    repo = tmp_path / 'upstream'
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(['git', '-C', str(repo), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    def commit(subject, date, *parents):
+        monkeypatch.setenv('GIT_COMMITTER_DATE', date)
+        return git('commit-tree', 'HEAD^{tree}', *parents, '-m', subject)
+
+    git('init', '-b', 'main')
+    git('config', 'user.name', 'Example')
+    git('config', 'user.email', 'example@example.test')
+    git('commit', '--allow-empty', '-m', 'Initial')
+    base = git('rev-parse', 'HEAD')
+    git('remote', 'add', 'origin', str(tmp_path / 'not-accessible'))
+    project_id = project(client, repository_path=str(repo))['id']
+    url = f'/api/projects/{project_id}/repository'
+    assert client.get(url).json()['upstream'] is None
+    git('config', 'branch.main.remote', 'origin')
+    git('config', 'branch.main.merge', 'refs/heads/main')
+    expected = {'branch': 'origin/main', 'is_remote': True, 'ahead': None, 'behind': None, 'commit': None}
+    assert client.get(url).json()['upstream'] == expected
+
+    git('update-ref', 'refs/remotes/origin/main', base)
+    snapshot = client.get(url).json()
+    assert (snapshot['upstream']['ahead'], snapshot['upstream']['behind']) == (0, 0)
+    assert snapshot['upstream']['commit']['hash'] == snapshot['commits'][0]['hash']
+    remote_date = '2025-02-03T04:05:06+05:30'
+    remote_tip = commit('Remote work', remote_date, '-p', base)
+    git('update-ref', 'refs/remotes/origin/main', remote_tip)
+    snapshot = client.get(url).json()
+    assert (snapshot['upstream']['ahead'], snapshot['upstream']['behind']) == (0, 1)
+    assert snapshot['upstream']['commit'] == {'hash': git('rev-parse', '--short', remote_tip), 'committed_at': remote_date}
+    local_tip = commit('Local work', '2025-02-04T04:05:06+05:30', '-p', base)
+    git('update-ref', 'refs/heads/main', local_tip)
+    snapshot = client.get(url).json()
+    assert (snapshot['upstream']['ahead'], snapshot['upstream']['behind']) == (1, 1)
+    assert snapshot['commits'][0]['committed_at'] == '2025-02-04T04:05:06+05:30'
+    git('update-ref', 'refs/remotes/origin/main', base)
+    snapshot = client.get(url).json()
+    assert (snapshot['upstream']['ahead'], snapshot['upstream']['behind']) == (1, 0)
+
+    (repo / '.git/shallow').write_text(base + '\n')
+    upstream = client.get(url).json()['upstream']
+    assert upstream['commit'] is not None and upstream['ahead'] is None and upstream['behind'] is None
+
+
+def test_repository_snapshot_deduplicates_conflicted_index_paths(client, tmp_path):
+    repo = tmp_path / 'conflicted-index'
+    repo.mkdir()
+
+    def git(*args, input=None):
+        return subprocess.run(['git', '-C', str(repo), *args], input=input, check=True,
+                              capture_output=True).stdout.strip()
+
+    git('init', '-b', 'main')
+    blob = git('hash-object', '-w', '--stdin', input=b'file contents\n')
+    conflict = b'with\na-newline'
+    paths = [(0, b'invalid-utf8-\xff'), (0, b'invalid-utf8-\xfe'), (2, conflict), (3, conflict)]
+    git('update-index', '-z', '--index-info', input=b''.join(
+        b'100644 ' + blob + b' ' + str(stage).encode() + b'\t' + path + b'\0' for stage, path in paths))
+    project_id = project(client, repository_path=str(repo))['id']
+    response = client.get(f'/api/projects/{project_id}/repository')
+    assert response.status_code == 200, response.text
+    assert response.json()['tracked_files'] == 3
+
+
+def test_repository_snapshot_sanitizes_remote_addresses_and_prefers_the_upstream(client, tmp_path):
+    repo = tmp_path / 'remote-addresses'
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(['git', '-C', str(repo), *args], check=True, capture_output=True)
+
+    git('init', '-b', 'main')
+    git('-c', 'user.name=Example', '-c', 'user.email=example@example.test', 'commit', '--allow-empty', '-m', 'Initial')
+    git('remote', 'add', 'origin', 'https://user:hidden-password@github.com/owner/repo.git?token=hidden-query#hidden-fragment')
+    git('remote', 'add', 'upstream', 'hidden-login@git.example.com:team/repo.git')
+    project_id = project(client, repository_path=str(repo), git_remote='https://fallback.example/team/repo.git')['id']
+    url = f'/api/projects/{project_id}/repository'
+
+    def remote():
+        response = client.get(url)
+        assert response.status_code == 200, response.text
+        assert 'hidden-' not in response.text
+        return response.json()['remote_repository']
+
+    assert remote() == {'name': 'origin', 'address': 'https://github.com/owner/repo.git',
+                        'web_url': 'https://github.com/owner/repo'}
+    git('config', 'branch.main.remote', 'upstream')
+    git('config', 'branch.main.merge', 'refs/heads/main')
+    assert remote() == {'name': 'upstream', 'address': 'git.example.com:team/repo.git'}
+    git('remote', 'set-url', 'upstream', 'ssh://hidden-user:hidden-ssh@git.example.com:2222/team/repo.git#hidden-fragment')
+    assert remote() == {'name': 'upstream', 'address': 'ssh://git.example.com:2222/team/repo.git'}
+
+    for malformed in ('https://user:hidden-password@host@attacker.example/team/repo', 'https:hidden-token',
+                      'https://attacker.example/team/hidden-user%40nested', 'ext::hidden-command'):
+        git('remote', 'set-url', 'upstream', malformed)
+        git('remote', 'set-url', 'origin', malformed)
+        assert remote() == {'name': 'project', 'address': 'https://fallback.example/team/repo.git',
+                            'web_url': 'https://fallback.example/team/repo.git'}
 
 
 

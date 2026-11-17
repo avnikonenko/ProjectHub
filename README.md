@@ -17,7 +17,7 @@ Use it for software, research, or other projects with a growing conversation his
 - **See how the project works.** Select **Scheme** in the **Generation** tab to generate architecture and workflow diagrams. The Scheme tab shows diagrams, dependencies and code structure. Diagrams distinguish observed, proposed and uncertain components.
 - **Keep frequent projects close.** Pin projects in the sidebar to keep them at the top.
 - **Find information and keep follow-ups.** Search conversations, notes, tasks, and generated information. Save useful passages as Markdown notes; bulk-add, pin, complete, or mark TODOs as not planned.
-- **Connect the history to the code.** Link a local Git repository to inspect local and remote-tracking branches, recent commits, tracked changes, and untracked files. View public GitHub issues. Repository inspection is read-only.
+- **Connect the history to the code.** Link a local Git repository to see its remote address, local and remote-tracking branches, tracked and untracked file counts, and recent commits. Compare the current branch with its saved upstream. View public GitHub issues. Repository inspection is read-only.
 - **Continue with context.** Review project questions and prepare a context preview to send to a Codex session after confirmation.
 
 Choose the Codex account, model, reasoning effort, and response instructions for each project. In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.

@@ -1675,3 +1675,9 @@ a:focus-visible {
 
 .repository-branches { margin-block: .75rem; }
 .repository-branches li { overflow-wrap: anywhere; }
+.repository-remote { margin-block: .3rem .5rem; }
+.repository-remote a { color: inherit; }
+.repository-sync dl { margin-block: .4rem; }
+.repository-sync dt { color: var(--muted); }
+.repository-sync dd { margin: 0 0 .35rem; overflow-wrap: anywhere; }
+.repository-sync p { margin-bottom: .35rem; }

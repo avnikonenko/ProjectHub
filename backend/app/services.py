@@ -1,7 +1,9 @@
 import os
+import re
 import subprocess
 from types import SimpleNamespace
 from pathlib import Path
+from urllib.parse import urlsplit
 from fastapi import HTTPException
 from sqlalchemy import select, text
 from .integrations.github_issues import github_repository, issues_url
@@ -84,25 +86,127 @@ def repository_github_target(remote, path=None, *, validated=False):
     return github_repository(output.decode('utf-8', errors='replace')) if code == 0 else None
 
 
+_REMOTE_HOST = r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?'
+
+
+def _safe_remote_address(name, raw):
+    value = raw.strip()
+    if not value or '\\' in value or any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return None
+    if '://' in value:
+        try:
+            remote = urlsplit(value)
+            host, port = remote.hostname, remote.port
+        except ValueError:
+            return None
+        if (remote.scheme not in ('https', 'http', 'ssh') or not host
+                or remote.netloc.count('@') > 1 or port == 0):
+            return None
+        # urlsplit validates bracketed IPv6. Keep only clear host and path
+        # characters so the reconstructed URL cannot reinterpret credentials.
+        host_pattern = r'[a-f0-9:.]+' if ':' in host else _REMOTE_HOST
+        if not re.fullmatch(host_pattern, host) or '..' in host:
+            return None
+        path = remote.path
+        host_display = f'[{host}]' if ':' in host else host
+        port_suffix = f':{port}' if port is not None else ''
+        address = f'{remote.scheme}://{host_display}{port_suffix}{path}'
+        web_url = address if remote.scheme == 'https' else None
+    else:
+        # SCP-style SSH paths are relative to the remote account by default.
+        # Preserve that syntax while removing the login name and URL suffixes.
+        match = re.fullmatch(r'(?:[a-zA-Z0-9._-]+@)?([a-zA-Z0-9.-]+):([^?#]+)(?:[?#].*)?', value)
+        if match is None:
+            return None
+        host, path = match.groups()
+        host = host.lower()
+        if (not re.fullmatch(_REMOTE_HOST, host) or '..' in host
+                or host in ('https', 'http', 'ssh', 'git', 'file')):
+            return None
+        address, port, web_url = f'{host}:{path}', None, None
+    if (not re.fullmatch(r'/?[a-zA-Z0-9._~/-]+', path) or '//' in path
+            or not path.strip('/') or any(piece in ('.', '..') for piece in path.split('/'))):
+        return None
+    if host == 'github.com' and port is None:
+        github = github_repository(f'https://github.com/{path.lstrip("/")}')
+        if github:
+            web_url = f'https://github.com/{github}'
+    return {'name': name, 'address': address, **({'web_url': web_url} if web_url else {})}
+
+
+def _repository_remote_address(git, upstream_remote, registered_remote):
+    for name in dict.fromkeys((upstream_remote, 'origin')):
+        if not name or not re.fullmatch(r'[a-zA-Z0-9._/-]+', name):
+            continue
+        configured = git('config', '--local', '--no-includes', '--null', '--get',
+                         f'remote.{name}.url', optional=True, limit=8192)
+        if configured is not None:
+            address = _safe_remote_address(name, configured.stdout.removesuffix('\0'))
+            if address is not None:
+                return address
+    return _safe_remote_address('project', registered_remote)
+
+
+def _repository_upstream(git, current_ref, head):
+    if not current_ref:
+        return None, False, None
+    tracked = git('for-each-ref', '--count=1', '--format=%(refname)%09%(upstream)%09%(upstream:remotename)',
+                  os.fsdecode(current_ref), optional=True, raw=True)
+    if tracked is None:
+        return None, True, None
+    current, _, data = tracked.stdout.rstrip(b'\n').partition(b'\t')
+    upstream_ref, _, upstream_remote = data.partition(b'\t')
+    if current != current_ref or not upstream_ref:
+        return None, False, None
+
+    name = upstream_ref.removeprefix(b'refs/remotes/').removeprefix(b'refs/heads/')
+    remote = upstream_remote.decode('utf-8', errors='replace') if upstream_remote and upstream_remote != b'.' else None
+    upstream = {'branch': name.decode('utf-8', errors='replace'),
+                'is_remote': remote is not None,
+                'ahead': None, 'behind': None, 'commit': None}
+    tip = git('rev-parse', '--quiet', '--verify', '--end-of-options',
+              os.fsdecode(upstream_ref) + '^{commit}', optional=True)
+    if tip is None:
+        return upstream, False, remote
+    upstream_hash = tip.stdout.strip()
+    commit = git('log', '-1', '--no-show-signature', '--format=%h%x09%cI', upstream_hash, '--', optional=True)
+    if commit is not None:
+        commit_hash, _, committed_at = commit.stdout.rstrip('\n').partition('\t')
+        if commit_hash and committed_at:
+            upstream['commit'] = {'hash': commit_hash, 'committed_at': committed_at}
+    shallow = git('rev-parse', '--is-shallow-repository', optional=True)
+    if head and shallow is not None and shallow.stdout.strip() == 'false':
+        relation = git('rev-list', '--left-right', '--count', f'{head}...{upstream_hash}', '--', optional=True)
+        if relation is not None:
+            counts = relation.stdout.split()
+            if len(counts) == 2 and all(count.isascii() and count.isdecimal() for count in counts):
+                upstream['ahead'], upstream['behind'] = map(int, counts)
+    return upstream, False, remote
+
+
 def repository_snapshot(value, remote=''):
     if not value:
         raise HTTPException(404, 'No repository is linked to this project')
     env = _repository_env()
     path = validate_repository(value, env=env)
-    def git(*args, allowed=(0,), overrides=()):
+    def git(*args, allowed=(0,), overrides=(), optional=False, raw=False, limit=None):
         # Reuse the evidence inspector's byte/deadline bounds and safe process
         # cleanup instead of buffering arbitrary Git output in subprocess.run.
         from .project_evidence import _git, EvidenceReadError
         try:
-            output, code = _git(path, *args, allowed=allowed, overrides=overrides)
+            bounds = {} if limit is None else {'limit': limit}
+            output, code = _git(path, *args, allowed=allowed, overrides=overrides, **bounds)
         except EvidenceReadError as exc:
+            if optional:
+                return None
             raise HTTPException(503, 'Repository inspection failed or exceeded its byte/time limit.') from exc
-        return SimpleNamespace(stdout=output.decode('utf-8', errors='replace'), returncode=code)
+        return SimpleNamespace(stdout=output if raw else output.decode('utf-8', errors='replace'), returncode=code)
 
-    branch = git('symbolic-ref', '--quiet', '--short', 'HEAD', allowed=(0, 1))
-    current_branch = branch.stdout.strip() if branch.returncode == 0 else None
-    branch_names = git('for-each-ref', '--format=%(refname:short)', '--sort=refname',
-                       '--count=301', 'refs/heads').stdout.splitlines()
+    branch = git('symbolic-ref', '--quiet', 'HEAD', allowed=(0, 1), raw=True)
+    current_ref = branch.stdout.rstrip(b'\n') if branch.returncode == 0 else None
+    current_branch = current_ref.removeprefix(b'refs/heads/').decode('utf-8', errors='replace') if current_ref else None
+    branch_names = [name.removeprefix('refs/heads/') for name in git(
+        'for-each-ref', '--format=%(refname)', '--sort=refname', '--count=301', 'refs/heads').stdout.split('\n') if name]
     branches_limited = len(branch_names) > 300
     branches = branch_names[:300]
     # An unborn current branch has no refs/heads entry yet. Also keep the current
@@ -124,10 +228,11 @@ def repository_snapshot(value, remote=''):
         if refname.startswith('refs/remotes/') and not target:
             remote_branches.append(refname.removeprefix('refs/remotes/'))
     remote_branches_limited = len(remote_branches) > 300 or len(remote_refs) == remote_ref_limit
-    head = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
+    head_result = git('rev-parse', '--quiet', '--verify', 'HEAD', allowed=(0, 1))
+    head = head_result.stdout.strip() if head_result.returncode == 0 else None
     commits = []
-    if head.returncode == 0:
-        for line in git('log', '-3', '--no-show-signature', '--format=%h%x09%cI%x09%s', 'HEAD', '--').stdout.split('\n'):
+    if head:
+        for line in git('log', '-3', '--no-show-signature', '--format=%h%x09%cI%x09%s', head, '--').stdout.split('\n'):
             fields = line.split('\t', 2)
             if len(fields) == 3:
                 commit, committed_at, subject = fields
@@ -161,10 +266,15 @@ def repository_snapshot(value, remote=''):
             if not next(entries, None):
                 raise HTTPException(503, 'Unable to parse repository status')
     target = repository_github_target(remote, path, validated=True)
+    index_paths = git('ls-files', '--cached', '-z', optional=True, raw=True)
+    tracked_files = None if index_paths is None else len(set(filter(None, index_paths.stdout.split(b'\0'))))
+    upstream, upstream_unavailable, upstream_remote = _repository_upstream(git, current_ref, head)
     return {'branch': current_branch, 'branches': branches, 'branches_limited': branches_limited,
             'remote_branches': remote_branches[:300], 'remote_branches_limited': remote_branches_limited,
             'dirty': bool(status.stdout), 'commits': commits,
-            'tracked_changes': tracked_changes, 'untracked_files': untracked_files,
+            'tracked_files': tracked_files, 'tracked_changes': tracked_changes, 'untracked_files': untracked_files,
+            'upstream': upstream, **({'upstream_unavailable': True} if upstream_unavailable else {}),
+            'remote_repository': _repository_remote_address(git, upstream_remote, remote),
             'github_issues_url': issues_url(target) if target else None}
 
 
