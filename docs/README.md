@@ -1,17 +1,21 @@
-# Documentation
+# ProjectHub
 
-Start with the user guides for setup and everyday use. Developer references cover
-implementation, tests, and deployment boundaries.
+ProjectHub is a local workspace for keeping project context across Codex sessions,
+ChatGPT conversations, and Git repositories. Search past decisions, ask questions
+with source citations, and track follow-up tasks. Generate project summaries and
+architecture diagrams when you need to get back up to speed.
+
+![ProjectHub overview with example data](images/projecthub-dashboard.png)
 
 ## Use and configuration
 
-- [Install and run](../README.md#install-and-run)
-- [Configuration example](../config.example.toml)
+- [Install and run](GETTING_STARTED.md)
 - [AI generation, settings, and troubleshooting](AI_GENERATION.md)
 - [Project evidence and freshness](PROJECT_EVIDENCE.md)
 - [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md)
 - [Scheme](SCHEME.md)
 - [Terminal-agent context and reading](TERMINAL_AGENTS.md)
+- [Configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)
 
 ## For contributors
 
@@ -27,6 +31,18 @@ TypeScript checks, and the production build.
 - [Security and deployment boundaries](SECURITY_REVIEW.md)
 - [Engineering decisions](DECISIONS.md)
 - [Scheme implementation reference](scheme-implementation.md)
+
+### Preview the documentation
+
+From the repository root, install the documentation tools in a separate Python
+virtual environment and start the preview server.
+
+```bash
+python -m pip install -r docs/requirements.txt
+python -m mkdocs serve
+```
+
+Run `python -m mkdocs build --strict` to check for documentation build warnings.
 
 ### Build a wheel
 

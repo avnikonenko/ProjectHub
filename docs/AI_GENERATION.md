@@ -63,7 +63,7 @@ requests. Start with the default or lower it if you hit resource or account limi
 Settings save automatically and apply to the next generation. Dropdowns save
 on selection. Number fields save after a short pause, on Enter, or when you leave
 the field. Startup environment overrides can take precedence after restart.
-See the [configuration example](../config.example.toml). Scheme has its own
+See the [configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml). Scheme has its own
 [inspection and excerpt settings](SCHEME.md#freshness-and-coverage).
 
 ## Check coverage and costs
@@ -88,7 +88,7 @@ ProjectHub checks linked Codex history locally about once a minute by default.
 Use **Pause automatic sync** in **Sources** for a session that is unavailable.
 Use **History** for a manual refresh. Imported ChatGPT shares remain saved snapshots.
 This sync runs locally without generating an AI result. The interval and default
-sync behavior are available in the [configuration example](../config.example.toml).
+sync behavior are available in the [configuration example](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml).
 
 Contributors can find extraction, synthesis and diagnostic details in the
 [Knowledge pipeline reference](KNOWLEDGE_PIPELINE.md).
