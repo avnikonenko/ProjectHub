@@ -60,7 +60,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Replace Scheme's 24-file inspection cap with bounded bytes and time. Keep entrypoint priorities, separate the directory-display limit from inspection, report budget omissions, and prevent oversized evidence packages.
 
-- Use 10 parallel AI workers by default, based on controlled Example Runner timing and memory measurements. Existing explicit settings remain supported.
+- Use 10 parallel AI workers by default, based on controlled timing and memory measurements. Existing explicit settings remain supported.
 
 ### Fixed
 
@@ -384,7 +384,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Maintenance
 
-- Added documented Example Research reference cases and live knowledge-pilot evaluations, including incremental updates and cache reuse. Formal human verification remains pending; the pilot stays opt-in.
+- Added reference cases and live knowledge-pilot evaluations for incremental updates and cache reuse. Formal human verification remains pending; the pilot stays opt-in.
 - Preserved existing project briefs through the additive knowledge-storage migration.
 - Publication setup includes an MIT license, a shorter illustrated README, installation tooling, and editable private configuration using existing Codex sign-in profiles.
 

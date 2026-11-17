@@ -2,19 +2,19 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { filterKnowledge, importantKnowledge, knowledgePassageGroups, visibleKnowledgeGroups,
   type KnowledgeItem, type KnowledgeSnapshot } from '../src/knowledge.ts';
-const revision = 'b5a50449f253f69e0b422f8f32227daa7ff90949b4d10135e9068b6b4fa45a28';
+const revision = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const preference = (id: string, changes: Partial<KnowledgeItem> = {}): KnowledgeItem => ({
-  id, project_id: 2, statement: 'Prefer validated tools for the preparation workflow.',
+  id, project_id: 2, statement: 'Prefer licensed tools for imports.',
   category: 'REQUIREMENT', design_status: 'AGREED', scope: 'Tool selection',
   agreement_basis: 'direct_user', source_state: 'valid', evidence: [
-    { source_id: 'chatgpt:note:5:m:7:p:1', role: 'user', excerpt: 'can we rather use validated tools?', revision },
+    { source_id: 'example:message:1', role: 'user', excerpt: 'could we use licensed tools?', revision },
   ], ...changes,
 });
 const snapshot = (items: KnowledgeItem[]): KnowledgeSnapshot => ({ project_id: 2, items, sources: [] });
 const pair = () => [preference('a'), preference('b', {
-  statement: 'Use scientifically validated tools for Example Research.',
+  statement: 'Use audited licensed tools for invoice imports.',
   evidence: [...preference('a').evidence,
-    { source_id: 'heading', role: 'assistant', excerpt: 'Choosing scientifically validated tools', revision }],
+    { source_id: 'heading', role: 'assistant', excerpt: 'Verify tool licenses', revision }],
 })];
 test('same-passage preference display preserves all original statements, IDs and evidence', () => {
   const data = snapshot(pair()); const before = structuredClone(data);
@@ -24,8 +24,8 @@ test('same-passage preference display preserves all original statements, IDs and
   assert.deepEqual(groups[0].related, [data.items[1]]);
   assert.deepEqual(data, before);
   assert.deepEqual(importantKnowledge(data).map(item => item.id), ['a']);
-  assert.equal(filterKnowledge(data.items, 'validated tools', 'AGREED', 'REQUIREMENT', 'Tool selection').length, 2);
-  const onlySecond = filterKnowledge(data.items, 'scientifically');
+  assert.equal(filterKnowledge(data.items, 'licensed tools', 'AGREED', 'REQUIREMENT', 'Tool selection').length, 2);
+  const onlySecond = filterKnowledge(data.items, 'audited');
   assert.equal(knowledgePassageGroups(data, onlySecond)[0].primary.id, 'b');
 });
 test('different statuses, scopes, categories, projects and agreement bases remain independent', () => {
@@ -45,7 +45,7 @@ test('different statuses, scopes, categories, projects and agreement bases remai
 test('incoming relationships and invalid or different user evidence prevent grouping', () => {
   for (const change of [
     { revision: undefined }, { revision: '' }, { revision: 'invalid' }, { revision: 'a'.repeat(64) },
-    { source_id: 'different' }, { excerpt: 'Can we rather use validated tools?' },
+    { source_id: 'different' }, { excerpt: 'Could we use licensed tools?' },
   ]) {
     const data = snapshot([preference('a'), preference('b', {
       evidence: [{ ...preference('a').evidence[0], ...change }],

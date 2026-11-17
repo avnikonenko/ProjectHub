@@ -64,7 +64,7 @@ Later: manual overrides, copying/export, advanced navigation. No external indexi
 
 ## Capability and dependency regression check — 2026-11-17
 
-The prior Example Runner result emphasized CLI entrypoints and generic simulation artifacts.
+An earlier evaluation emphasized CLI entrypoints and generic workflow artifacts.
 Inspection recognized requirements files but omitted Conda environment declarations,
 and did not select most project guides. Backup modules could also compete with current
 application code. These were evidence-selection and presentation problems, not a
@@ -78,23 +78,16 @@ Conda/pip environment declarations retain variant-specific constraints and sourc
 unsupported YAML is reported rather than interpreted. Diagram instructions prefer
 domain capabilities and reserve command/module details for descriptions and paths.
 
-Validation used a SQLite backup of project 4, Example Runner checkout `218f871`, and real
-Codex generation with `gpt-6.1-sol`, medium reasoning. Production results and the
-registered repository were not modified. The final run took 167.845 seconds, made
-one model request (46,081 input and 8,186 output tokens), and produced 14 architecture
-nodes, 17 workflow nodes and 89 dependency declarations from 35 retained sources.
-All generated references passed validation. The result includes observed binding-mode
-and contact maps with current ProLIF-guide evidence, interaction fingerprints,
-convergence analysis and binding free-energy estimates. Proposed extensions remain
-distinct. CPU/GPU GROMACS build constraints and scientific environment dependencies
-including AmberTools, RDKit, MDAnalysis, ProLIF and gmx-MMPBSA are retained.
+An isolated end-to-end Codex check retained documented analysis capabilities and
+environment-specific dependency constraints. Proposed extensions remained distinct
+from supported observations, and all generated references passed validation.
 
 The full backend regression suite passed: 1,627 tests. Focused additions cover guide
 selection beyond prefixes, command-guide retention under output limits, archive
 priorities, environment parsing/security, variant provenance, cache invalidation and
 CI/docs/build categorization. No frontend changes were needed. This is one real
 generation and static declaration validation, not proof of exhaustive architecture
-recall, installed dependencies or successful execution of Example Runner workflows. Existing
+recall, installed dependencies or successful execution of project workflows. Existing
 inspection/text budgets and the 100-declaration ceiling still apply with coverage
 limitations recorded. Saved Schemes require explicit regeneration to use the fix.
 
@@ -125,15 +118,9 @@ supported. Invalid data and a publication change during inspection discard the
 Knowledge context with a limitation rather than mixing versions. No migrations,
 dependencies, new extraction pipeline or additional model calls were introduced.
 
-A real `gpt-6.1-sol`/medium run used an isolated SQLite backup with Example Runner's saved
-preview staged as published in that copy only. It selected 16 of 1,772 records and
-18 original quotations, retained 89 dependency declarations, and produced 15
-architecture nodes and 20 workflow nodes in 188.289 seconds. One model request
-reported 55,986 input and 9,076 output tokens. Proposed binding-mode operations cite
-original passages supplied through Knowledge and remain proposed; observed
-simulation/analysis branches retain repository evidence. All references validated.
-The evidence collection took 0.612 seconds; a later cached inspection took 0.283
-seconds. Production data and its unpublished previews were not changed.
+A live check on isolated data confirmed that proposed operations cited original
+passages supplied through Knowledge, while observed operations used repository
+evidence. All references validated, and a later inspection reused its cache.
 
 Regression cases cover project isolation, preview exclusion, publication-aware
 freshness without model calls, original-source ownership, evidence closure at both

@@ -59,7 +59,8 @@ def test_published_items_keep_separate_original_quotes_and_historical_metadata(t
     try:
         original = publish(engine)
         with Session(engine) as db:
-            db.execute(text("UPDATE notes SET reference='https://chatgpt.com/share/00000000-0000-4000-8000-000000000905' WHERE project_id=1 AND id=1"))
+            db.execute(text("UPDATE notes SET reference=:reference WHERE project_id=1 AND id=1"),
+                       {'reference': 'https://chatgpt.com/share/11111111-1111-1111-1111-111111111111'})
             db.commit()
         result = collect(engine)
         assert result['metadata']['publication_id'] == 'pub1'

@@ -85,17 +85,13 @@ def test_question_context_and_explicit_adoption_are_not_merged():
     assert all(not item['supersedes'] and not item['superseded_by'] for item in reconciled)
 
 
-def test_original_excerpt_annotations_do_not_claim_human_confirmation():
-    assert REFERENCE['annotation_status'] == 'agent_source_checked_pending_human_confirmation'
-    originals = [case for case in REFERENCE['cases'] if case['origin'] == 'original_excerpt']
-    assert {case['id'] for case in originals} == {
-        'polite_preference_with_separate_concern', 'tentative_component_separation',
-        'independent_reproducibility_policy'}
-    assert all(len(case['original_source_revision']) == 64 for case in originals)
-    assert all(case['expected']['excerpt'] in case['sources'][0]['text'] for case in originals)
-    preference = next(case for case in originals if case['id'] == 'polite_preference_with_separate_concern')
+def test_synthetic_annotations_keep_preferences_and_proposals_distinct():
+    assert REFERENCE['annotation_status'] == 'synthetic_test_cases'
+    cases = {case['id']: case for case in REFERENCE['cases']}
+    assert all(case['origin'] == 'synthetic' for case in cases.values())
+    preference = cases['polite_preference_with_separate_concern']
     assert preference['expected']['category'] == 'REQUIREMENT'
     assert preference['expected']['design_status'] == 'AGREED'
     assert preference['expected']['agreement_basis'] == 'direct_user'
-    assert all(case['expected']['design_status'] == 'PROPOSED'
-               for case in originals if case is not preference)
+    for name in ('tentative_component_separation', 'independent_reproducibility_policy'):
+        assert cases[name]['expected']['design_status'] == 'PROPOSED'

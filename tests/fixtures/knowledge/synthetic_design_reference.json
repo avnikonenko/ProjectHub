@@ -1,0 +1,422 @@
+{
+  "schema_version": 1,
+  "project": "Synthetic Structure Lab",
+  "annotation_status": "synthetic_fixture",
+  "provenance": "Handwritten fictional messages and metadata for deterministic regression tests.",
+  "offset_convention": "Zero-based Unicode code-point offsets; end is exclusive.",
+  "sources": [
+    {
+      "id": "synthetic:source:A",
+      "title": "Synthetic scope discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000001",
+      "content_sha256": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5",
+      "message_count": 9
+    },
+    {
+      "id": "synthetic:source:B",
+      "title": "Synthetic toolkit discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000002",
+      "content_sha256": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1",
+      "message_count": 5
+    },
+    {
+      "id": "synthetic:source:C",
+      "title": "Synthetic filtering discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000003",
+      "content_sha256": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+      "message_count": 3
+    },
+    {
+      "id": "synthetic:source:D",
+      "title": "Synthetic validation discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000004",
+      "content_sha256": "7aeace3a3f4d1eb740b82f0e7aa1fccaa5fe1312735145bf916481d7ac7d8152",
+      "message_count": 2
+    }
+  ],
+  "cases": [
+    {
+      "id": "scope_docking_md_first_export",
+      "statement": "Use docking and short molecular dynamics runs, with Acorn Runner as the first export target.",
+      "evaluation_scope": "project scope",
+      "expected": {
+        "category": "DECISION",
+        "design_status": "AGREED",
+        "scope": "project scope",
+        "rationale_notes": "The reply accepts the two numbered options.",
+        "prohibited_design_statuses": [],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 1,
+          "role": "assistant",
+          "excerpt": "1. Support docking and short molecular dynamics runs.\n2. Try Acorn Runner as the first export target.",
+          "transcript_start": 9,
+          "transcript_end": 110,
+          "message_start": 0,
+          "message_end": 101,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        },
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 2,
+          "role": "user",
+          "excerpt": "Yes to both numbered options.",
+          "transcript_start": 118,
+          "transcript_end": 147,
+          "message_start": 0,
+          "message_end": 29,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "routine_automation_review",
+      "statement": "Automate standard inputs and pause for review if input labels conflict.",
+      "evaluation_scope": "input handling",
+      "expected": {
+        "category": "DECISION",
+        "design_status": "AGREED",
+        "scope": "input handling",
+        "rationale_notes": "The user accepts the proposed workflow.",
+        "prohibited_design_statuses": [],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 3,
+          "role": "assistant",
+          "excerpt": "May we automate standard inputs and pause for review when input labels conflict?",
+          "transcript_start": 158,
+          "transcript_end": 238,
+          "message_start": 0,
+          "message_end": 80,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        },
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 4,
+          "role": "user",
+          "excerpt": "Yes, let us use that workflow.",
+          "transcript_start": 246,
+          "transcript_end": 276,
+          "message_start": 0,
+          "message_end": 30,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "prefer_established_tools",
+      "statement": "Prefer established conversion tools where practical.",
+      "evaluation_scope": "tooling",
+      "expected": {
+        "category": "REQUIREMENT",
+        "design_status": "AGREED",
+        "scope": "tooling",
+        "rationale_notes": "The user states a preference directly.",
+        "prohibited_design_statuses": [],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 5,
+          "role": "user",
+          "excerpt": "Use established conversion tools where possible.",
+          "transcript_start": 284,
+          "transcript_end": 332,
+          "message_start": 0,
+          "message_end": 48,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "toolkit_skepticism_not_rejection",
+      "statement": "Whether Birch Toolkit would be suitable remains unresolved.",
+      "evaluation_scope": "tooling",
+      "expected": {
+        "category": "OPEN_QUESTION",
+        "design_status": "UNRESOLVED",
+        "scope": "tooling",
+        "rationale_notes": "The question indicates uncertainty about support without rejecting the tool.",
+        "prohibited_design_statuses": [
+          "REJECTED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 1,
+          "role": "user",
+          "excerpt": "Would Birch Toolkit be suitable for this test? I have not evaluated its support.",
+          "transcript_start": 6,
+          "transcript_end": 86,
+          "message_start": 0,
+          "message_end": 80,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "mvp_loop_metal_proposal",
+      "statement": "Consider inspecting a single structure first and postponing loop reconstruction and automatic metal-site processing.",
+      "evaluation_scope": "first demo proposal",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "scope": "first demo proposal",
+        "rationale_notes": "The assistant offered possible exclusions and the user has yet to commit.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 6,
+          "role": "assistant",
+          "excerpt": "For an initial demo, we could leave loop reconstruction out.",
+          "transcript_start": 343,
+          "transcript_end": 403,
+          "message_start": 0,
+          "message_end": 60,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        },
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 7,
+          "role": "assistant",
+          "excerpt": "I suggest postponing automatic metal-site processing as well.",
+          "transcript_start": 414,
+          "transcript_end": 475,
+          "message_start": 0,
+          "message_end": 61,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        },
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 8,
+          "role": "assistant",
+          "excerpt": "A first demo could focus on inspecting a single structure.",
+          "transcript_start": 486,
+          "transcript_end": 544,
+          "message_start": 0,
+          "message_end": 58,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        },
+        {
+          "source_id": "synthetic:source:A",
+          "message_ordinal": 9,
+          "role": "user",
+          "excerpt": "I am still considering what should go into that demo.",
+          "transcript_start": 552,
+          "transcript_end": 605,
+          "message_start": 0,
+          "message_end": 53,
+          "source_revision": "5c1cf113ccd8b29ef16639e178e8b18f0819186273a464d898784f124114bde5"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "tentative_component_separation",
+      "statement": "Consider separating proteins, small molecules, and ions.",
+      "evaluation_scope": "candidate component rule",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "scope": "candidate component rule",
+        "rationale_notes": "Tentative language leaves component separation undecided.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 1,
+          "role": "user",
+          "excerpt": "Maybe we should separate proteins, small molecules, and ions.",
+          "transcript_start": 6,
+          "transcript_end": 67,
+          "message_start": 0,
+          "message_end": 61,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "mw_optional_not_primary_rule",
+      "statement": "Consider an optional molecular-weight filter for the display.",
+      "evaluation_scope": "candidate filter",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "scope": "candidate filter",
+        "rationale_notes": "The user asks about an optional filter without committing to it.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 2,
+          "role": "user",
+          "excerpt": "Would an optional molecular-weight filter let users narrow the display?",
+          "transcript_start": 128,
+          "transcript_end": 199,
+          "message_start": 0,
+          "message_end": 71,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "reader_rationale_acceptance_unverified",
+      "statement": "Larch Reader might preserve original record names.",
+      "evaluation_scope": "possible tool benefit",
+      "expected": {
+        "category": "FINDING",
+        "design_status": "UNKNOWN",
+        "scope": "possible tool benefit",
+        "rationale_notes": "The conversation describes potential capability but does not confirm adoption.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 2,
+          "role": "user",
+          "excerpt": "What would Larch Reader offer us for this export?",
+          "transcript_start": 94,
+          "transcript_end": 143,
+          "message_start": 0,
+          "message_end": 49,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1"
+        },
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 3,
+          "role": "assistant",
+          "excerpt": "Larch Reader could preserve the original record names in the example format.",
+          "transcript_start": 154,
+          "transcript_end": 230,
+          "message_start": 0,
+          "message_end": 76,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "backend_adapters_assistant_plan",
+      "statement": "Consider an independent adapter for each export format.",
+      "evaluation_scope": "candidate format integration",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "scope": "candidate format integration",
+        "rationale_notes": "The user asks for options and the assistant proposes the adapters.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 4,
+          "role": "user",
+          "excerpt": "How could we add other formats in a future version?",
+          "transcript_start": 238,
+          "transcript_end": 289,
+          "message_start": 0,
+          "message_end": 51,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1"
+        },
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 5,
+          "role": "assistant",
+          "excerpt": "We could add an independent adapter for each export format.",
+          "transcript_start": 300,
+          "transcript_end": 359,
+          "message_start": 0,
+          "message_end": 59,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "tentative_script_reuse_not_bundled_with_firm_plan",
+      "statement": "Consider reusing existing conversion scripts as a separate proposal.",
+      "evaluation_scope": "candidate code reuse",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "scope": "candidate code reuse",
+        "rationale_notes": "The optional reuse idea is independent of the component and dataset decisions.",
+        "prohibited_design_statuses": [
+          "AGREED"
+        ],
+        "implementation_evidence": "NOT_INSPECTED",
+        "validation_evidence": "NOT_EVALUATED"
+      },
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 1,
+          "role": "user",
+          "excerpt": "We might also reuse our existing conversion scripts.",
+          "transcript_start": 68,
+          "transcript_end": 120,
+          "message_start": 62,
+          "message_end": 114,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8"
+        },
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 3,
+          "role": "user",
+          "excerpt": "For our first dataset, use the linked fixture.",
+          "transcript_start": 207,
+          "transcript_end": 253,
+          "message_start": 0,
+          "message_end": 46,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    }
+  ],
+  "contains_full_transcripts": false
+}

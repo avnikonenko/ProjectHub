@@ -317,3 +317,237 @@ def test_context_only_speaker_change_invalidates_acceptance():
     updated = k.reconcile({'items': [old]}, [], bundle([{**context, 'role': 'user'}, acceptance]), 'v1')[0]
     assert updated['source_state'] == 'stale'
     assert updated['design_status'] == 'AGREED'
+
+
+def test_extraction_instruction_version_keeps_old_cache_and_reextracts(tmp_path, monkeypatch):
+    db_engine = engine(tmp_path)
+    class Manager:
+        calls = 0
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            return json.dumps({'items': [item()]})
+    manager = Manager()
+    with monkeypatch.context() as old:
+        old.setattr(k, 'PROMPT_VERSION', 4)
+        baseline = k.build_candidate(db_engine, 1, manager, bundle())
+    updated = k.build_candidate(db_engine, 1, manager, bundle(), previous=baseline)
+    assert updated['extraction_version'] != baseline['extraction_version']
+    assert manager.calls == 2
+    assert updated['diagnostics']['ai_requests'] == 1
+    assert updated['items'][0]['statement'] == baseline['items'][0]['statement']
+    assert updated['items'][0]['design_status'] == 'AGREED'
+    assert updated['items'][0]['rationale'] == baseline['items'][0]['rationale']
+    replay = k.build_candidate(db_engine, 1, manager, bundle(), previous=updated)
+    assert replay['diagnostics']['cache_hits'] == 1 and manager.calls == 2
+    with Session(db_engine) as db:
+        assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 2
+    db_engine.dispose()
+
+
+def test_new_conversation_preserves_accepted_reasons_and_independent_proposal(tmp_path):
+    db_engine = engine(tmp_path)
+    old_refs = window()['sources']
+    new_ref = source('experiment:1', 'Consider comparing exported structures in an isolated experiment.',
+                     order=1, conversation='experiment')
+    new_item = item([new_ref], statement='Compare exported structures in an isolated experiment.',
+                    category='PROPOSAL', design_status='PROPOSED', agreement_basis='none',
+                    scope='isolated experiment', rationale='Check export integrity.')
+    class Manager:
+        calls = 0
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            return json.dumps({'items': [new_item if 'experiment:1' in prompt else item()]})
+    manager = Manager()
+    baseline = k.build_candidate(db_engine, 1, manager, bundle())
+    original = deepcopy(baseline)
+    added = bundle([*old_refs, new_ref])
+    added['manifest']['entries'].append({'source_key': 'experiment', 'availability': 'available'})
+    updated = k.build_candidate(db_engine, 1, manager, added, previous=baseline)
+    retained = next(value for value in updated['items'] if value['id'] == baseline['items'][0]['id'])
+    assert retained['design_status'] == 'AGREED' and retained['rationale'] == 'Preserve metadata.'
+    proposed = next(value for value in updated['items'] if value['scope'] == 'isolated experiment')
+    assert proposed['design_status'] == 'PROPOSED'
+    assert proposed['rationale'] == 'Check export integrity.'
+    assert not retained['superseded_by'] and not proposed['supersedes']
+    assert updated['diagnostics']['cache_hits'] == 1 and updated['diagnostics']['ai_requests'] == 1
+    assert baseline == original
+    db_engine.dispose()
+
+
+def test_source_pinned_scientific_cases_keep_independent_statuses_through_cache(tmp_path):
+    from pathlib import Path
+    reference = json.loads((Path('tests/fixtures/knowledge/synthetic_scientific_recall.json')).read_text())
+    refs, outputs = [], []
+    for index, case in enumerate(reference['cases']):
+        original = case['evidence'][0]
+        ref = source(original['fragment_ids'][0], original['excerpt'], original['role'],
+                     index, original['message_id'])
+        refs.append(ref)
+        outputs.append(item([ref], statement=case['statement'], category=case['expected']['category'],
+                            design_status=case['expected']['design_status'], agreement_basis=case['expected'].get('agreement_basis', 'none'),
+                            scope=case['id'], rationale=case['expected']['rationale_notes'][:800]))
+    # Multiple exact reference excerpts can come from one source fragment.
+    # Reconstruct a small snippet pack, retaining each fixture quotation.
+    unique = {}
+    for ref in refs:
+        if ref['id'] in unique:
+            combined = unique[ref['id']]['text'] + '\n…\n' + ref['text']
+            unique[ref['id']] = {**ref, 'text': combined, 'revision': hashlib.sha256(combined.encode()).hexdigest()}
+        else:
+            unique[ref['id']] = ref
+    refs = list(unique.values())
+    db_engine = engine(tmp_path)
+    class Manager:
+        calls = 0
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            # This is an attribution/persistence regression, not a simulated
+            # claim that a live model must return the expected interpretations.
+            values = [value for value in outputs if value['evidence'][0]['source_id'] in prompt]
+            return json.dumps({'items': values})
+    manager = Manager()
+    evidence = bundle(refs)
+    evidence['manifest']['entries'] = [dict(source_key=ref['source_key'], availability='available') for ref in refs]
+    candidate = k.build_candidate(db_engine, 1, manager, evidence)
+    for case in reference['cases']:
+        found = next(value for value in candidate['items'] if value['scope'] == case['id'])
+        assert found['statement'] == case['statement']
+        assert found['category'] == case['expected']['category']
+        assert found['design_status'] == case['expected']['design_status']
+        assert found['evidence'][0]['excerpt'] == case['evidence'][0]['excerpt']
+        assert found['source_state'] == 'valid'
+    replay = k.build_candidate(db_engine, 1, manager, evidence, previous=candidate)
+    assert manager.calls == len(refs)
+    assert replay['diagnostics']['ai_requests'] == 0
+    assert len(replay['items']) == len(reference['cases'])
+    db_engine.dispose()
+
+
+def test_schema_sized_response_above_old_raw_cap_is_accepted():
+    refs = [source(f'user:{i}', f'Original passage {i}. ' + 'x' * (1600 - len(f'Original passage {i}. ')))
+            for i in range(6)]
+    values = [item(refs, statement=f'Independent source-supported choice {i}.') for i in range(k.MAX_ITEMS)]
+    raw = json.dumps({'items': values})
+    assert len(raw) > 120_000
+    assert len(values) == k.OUTPUT_SCHEMA['properties']['items']['maxItems']
+    assert all(len(ref['text']) == 1600 for ref in refs)
+    validated = k.validate_extraction(raw, window(refs), 1, 'v1')
+    assert len(validated) == k.MAX_ITEMS
+    assert len({value['id'] for value in validated}) == k.MAX_ITEMS
+    assert all(len(value['evidence']) == 6 for value in validated)
+    assert validated[-1]['evidence'][-1]['excerpt'] == refs[-1]['text']
+
+
+def test_identical_evidence_is_deduplicated_without_losing_distinct_snippets():
+    refs = [source('user:1', 'Choose Gemmi. Preserve deposited metadata.')]
+    first = {'source_id': refs[0]['id'], 'role': 'user', 'excerpt': 'Choose Gemmi.'}
+    second = {**first, 'excerpt': 'Preserve deposited metadata.'}
+    value = item(refs, evidence=[first, deepcopy(first), second, deepcopy(second), deepcopy(first)])
+    actual = validate(value, refs)
+    assert [(ref['source_id'], ref['role'], ref['excerpt']) for ref in actual['evidence']] == [
+        ('user:1', 'user', 'Choose Gemmi.'),
+        ('user:1', 'user', 'Preserve deposited metadata.'),
+    ]
+    # Original model output remains available to the caller/cache untouched.
+    assert len(value['evidence']) == 5
+
+
+@pytest.mark.parametrize('change,match', [
+    ({'role': 'assistant'}, 'speaker'),
+    ({'excerpt': 'Not present in the original.'}, 'excerpt'),
+    ({'source_id': 'foreign'}, 'foreign'),
+])
+def test_evidence_deduplication_cannot_hide_invalid_reference(change, match):
+    value = item()
+    value['evidence'].append({**value['evidence'][0], **change})
+    with pytest.raises(CodexError, match=match):
+        validate(value)
+
+
+def test_extraction_response_size_limit_has_explicit_error():
+    raw = ' ' * (k.MAX_RESPONSE_CHARS + 1)
+    with pytest.raises(CodexError, match='size limit'):
+        k.validate_extraction(raw, window(), 1, 'v1')
+
+
+def test_compact_extraction_payload_preserves_sources_and_cache_identity(tmp_path):
+    db_engine = engine(tmp_path)
+    ref = source('user:compact', '  Use Gemmi for ingestion.\n\tKeep  two spaces and café.\n',
+                 order=7, conversation='conversation:é')
+    ref.update(partial_message=True, message_revision='message-hash', message_order=3,
+               offset_start=42, offset_end=42 + len(ref['text']))
+    current_window = window([ref])
+    before = deepcopy(current_window)
+    expected = {'sources': [{key: ref.get(key) for key in (
+        'id', 'role', 'text', 'revision', 'conversation_id', 'order', 'partial_message',
+        'message_revision', 'message_order', 'offset_start', 'offset_end')}],
+        'primary_ids': current_window['primary_ids']}
+
+    class Manager:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            assert prompt.startswith(k.PROMPT)
+            serialized = prompt[len(k.PROMPT):]
+            assert json.loads(serialized) == expected
+            assert serialized == json.dumps(expected, ensure_ascii=False, separators=(',', ':'))
+            assert len(serialized) < len(json.dumps(expected, ensure_ascii=False))
+            assert json.loads(serialized)['sources'][0]['text'] == ref['text']
+            return json.dumps({'items': [item([ref])]})
+
+    manager = Manager()
+    configuration = k.extraction_configuration(manager)
+    first, hit = k.extract_batch(db_engine, 1, manager, current_window, configuration)
+    assert not hit
+    replay, hit = k.extract_batch(db_engine, 1, manager, current_window, configuration)
+    assert hit and replay == first and manager.calls == 1
+    assert replay[0]['evidence'][0]['excerpt'] == ref['text']
+    assert current_window == before
+    db_engine.dispose()
+
+
+
+def test_parameter_values_scopes_and_tradeoffs_survive_candidate_and_cache(tmp_path):
+    """Mocked transport verifies preservation, not model semantic accuracy."""
+    refs = [
+        source('default', 'Use evidence_chars=12000 characters as the default for conversation extraction. '
+               'This bounds processing time but may omit relevant passages.'),
+        source('override', 'The local trial uses evidence_chars=18000 characters for project Atlas only.',
+               order=2),
+        source('proposal', 'Could we try evidence_chars=24000 characters for Atlas?', order=3),
+    ]
+    values = [
+        item([refs[0]], statement='Conversation extraction defaults to evidence_chars=12000 characters.',
+             scope='conversation extraction:default', rationale='Bound processing time.',
+             alternatives='', limitations='Relevant passages may be omitted.'),
+        item([refs[1]], statement='The Atlas local trial reports evidence_chars=18000 characters.',
+             category='FINDING', design_status='UNKNOWN', agreement_basis='none',
+             scope='Atlas:local trial', rationale='', alternatives='', limitations=''),
+        item([refs[2]], statement='Try evidence_chars=24000 characters for Atlas.',
+             category='PROPOSAL', design_status='PROPOSED', agreement_basis='none',
+             scope='Atlas:proposed trial', rationale='', alternatives='', limitations=''),
+    ]
+    class Manager:
+        calls = 0
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            assert k.PARAMETER_GUIDANCE in prompt
+            return json.dumps({'items': values})
+    manager = Manager()
+    db_engine = engine(tmp_path)
+    try:
+        original = bundle(refs)
+        first = k.build_candidate(db_engine, 1, manager, original)
+        replay = k.build_candidate(db_engine, 1, manager, original, previous=first)
+        assert replay['diagnostics']['cache_hits'] == 1 and manager.calls == 1
+        retained = {entry['scope']: entry for entry in replay['items']}
+        for expected in values:
+            actual = retained[expected['scope']]
+            for field in ('statement', 'category', 'design_status', 'rationale', 'limitations'):
+                assert actual[field] == expected[field]
+            assert actual['evidence'][0]['excerpt'] == expected['evidence'][0]['excerpt']
+            assert actual['source_state'] == 'valid'
+        assert len(retained) == 3
+    finally:
+        db_engine.dispose()

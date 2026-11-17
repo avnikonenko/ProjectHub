@@ -1,0 +1,389 @@
+{
+  "schema_version": 1,
+  "project": "Synthetic Structure Lab",
+  "annotation_status": "synthetic_fixture",
+  "provenance": "Handwritten fictional messages and metadata for deterministic regression tests.",
+  "offset_convention": "Zero-based Unicode code-point offsets; end is exclusive.",
+  "sources": [
+    {
+      "id": "synthetic:source:B",
+      "title": "Synthetic toolkit discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000002",
+      "content_sha256": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1",
+      "message_count": 5
+    },
+    {
+      "id": "synthetic:source:C",
+      "title": "Synthetic filtering discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000003",
+      "content_sha256": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+      "message_count": 3
+    },
+    {
+      "id": "synthetic:source:D",
+      "title": "Synthetic validation discussion",
+      "url": "https://chatgpt.com/share/00000000-0000-4000-8000-000000000004",
+      "content_sha256": "7aeace3a3f4d1eb740b82f0e7aa1fccaa5fe1312735145bf916481d7ac7d8152",
+      "message_count": 2
+    }
+  ],
+  "cases": [
+    {
+      "id": "waters_as_preparation_context",
+      "statement": "Consider waters when reviewing preparation inputs.",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "PROPOSAL",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "REQUIREMENT",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "FINDING",
+            "design_status": "UNKNOWN"
+          }
+        ],
+        "rationale_notes": "An assistant proposal to consider waters does not establish a retention rule."
+      },
+      "topic_patterns": [
+        "\\bwaters?\\b"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:D",
+          "message_ordinal": 1,
+          "role": "assistant",
+          "excerpt": "Consider whether waters should be reviewed alongside the other preparation inputs.",
+          "transcript_start": 9,
+          "transcript_end": 91,
+          "message_start": 0,
+          "message_end": 82,
+          "source_revision": "7aeace3a3f4d1eb740b82f0e7aa1fccaa5fe1312735145bf916481d7ac7d8152",
+          "message_id": "synthetic:note:D:m:1",
+          "fragment_ids": [
+            "synthetic:note:D:m:1:p:1"
+          ],
+          "excerpt_sha256": "f26e9d782035203e2c0061857cd8f9e6f346d11189264c3147f938950b9c0114"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "configurable_water_retention",
+      "statement": "Consider a configurable retention policy for crystallographic waters.",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "PROPOSAL",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "REQUIREMENT",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "FINDING",
+            "design_status": "UNKNOWN"
+          }
+        ],
+        "rationale_notes": "Preserve the configurability qualifier as an independent proposal."
+      },
+      "topic_patterns": [
+        "\\bwaters?\\b",
+        "\\bcrystallographic\\b|\\bcrystal[- ]waters?\\b",
+        "retain|retention|keep|remov",
+        "configur|optional|selectable|user[- ]defined"
+      ],
+      "structured_detail_patterns": [
+        "\\bwaters?\\b",
+        "\\bwaters?\\s+(?:retention|removal)\\b|\\bretention\\s+(?:of\\s+)?(?:crystallographic\\s+)?waters?\\b|\\b(?:retain|keep|remove)\\s+(?:crystallographic\\s+)?waters?\\b",
+        "configur|optional|selectable|user[- ]defined"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:D",
+          "message_ordinal": 1,
+          "role": "assistant",
+          "excerpt": "A configurable retention policy for crystallographic waters could be useful.",
+          "transcript_start": 92,
+          "transcript_end": 168,
+          "message_start": 83,
+          "message_end": 159,
+          "source_revision": "7aeace3a3f4d1eb740b82f0e7aa1fccaa5fe1312735145bf916481d7ac7d8152",
+          "message_id": "synthetic:note:D:m:1",
+          "fragment_ids": [
+            "synthetic:note:D:m:1:p:1"
+          ],
+          "excerpt_sha256": "0a27798997694ec50dddb46625b4f68148e72012e72d12861c12feca2c3eae4f"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "optional_mw_filter",
+      "statement": "Consider an optional molecular-weight filter for the display.",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "PROPOSAL",
+            "design_status": "PROPOSED"
+          }
+        ],
+        "rationale_notes": "The question proposes an optional filter rather than committing to it."
+      },
+      "topic_patterns": [
+        "molecular[ -]weight|\\bmw\\b"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 2,
+          "role": "user",
+          "excerpt": "Would an optional molecular-weight filter let users narrow the display?",
+          "transcript_start": 128,
+          "transcript_end": 199,
+          "message_start": 0,
+          "message_end": 71,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+          "message_id": "synthetic:note:C:m:2",
+          "fragment_ids": [
+            "synthetic:note:C:m:2:p:1"
+          ],
+          "excerpt_sha256": "fe9d6c1f7c0dd16d1d87275a865b32552a9d0d2f8e8faaa5bb054bbe84d2398e"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "tentative_component_separation",
+      "statement": "Consider separating proteins, small molecules, and ions.",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "PROPOSAL",
+            "design_status": "PROPOSED"
+          }
+        ],
+        "rationale_notes": "The adjacent suggestion to reuse scripts is a separate proposal."
+      },
+      "topic_patterns": [
+        "separat|split",
+        "protein|component|molecul|ion"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 1,
+          "role": "user",
+          "excerpt": "Maybe we should separate proteins, small molecules, and ions.",
+          "transcript_start": 6,
+          "transcript_end": 67,
+          "message_start": 0,
+          "message_end": 61,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+          "message_id": "synthetic:note:C:m:1",
+          "fragment_ids": [
+            "synthetic:note:C:m:1:p:1"
+          ],
+          "excerpt_sha256": "8a351342bb44636b6bd8d9aba0df132d23a2a712935a81d6f77a225e6e09973f"
+        }
+      ],
+      "annotation_status": "synthetic_fixture",
+      "independent_claim_checks": [
+        {
+          "all_patterns": [
+            "\\bscripts?\\b",
+            "reuse|re-use|combin|integrat"
+          ]
+        }
+      ],
+      "independence_context": {
+        "annotation_status": "synthetic_fixture",
+        "evidence": [
+          {
+            "source_id": "synthetic:source:C",
+            "message_ordinal": 1,
+            "role": "user",
+            "excerpt": "We might also reuse our existing conversion scripts.",
+            "transcript_start": 68,
+            "transcript_end": 120,
+            "message_start": 62,
+            "message_end": 114,
+            "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+            "message_id": "synthetic:note:C:m:1",
+            "fragment_ids": [
+              "synthetic:note:C:m:1:p:1"
+            ],
+            "excerpt_sha256": "2e5466107d0489b62e8c122fd994d3a412553e3094535124bf4e9564d9f1e315"
+          }
+        ]
+      }
+    },
+    {
+      "id": "toolkit_suitability_concern",
+      "statement": "The user questions Birch Toolkit’s suitability.",
+      "expected": {
+        "category": "OPEN_QUESTION",
+        "design_status": "UNRESOLVED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "OPEN_QUESTION",
+            "design_status": "UNRESOLVED"
+          },
+          {
+            "category": "FINDING",
+            "design_status": "UNKNOWN"
+          }
+        ],
+        "rationale_notes": "Uncertain suitability is neither endorsement nor rejection."
+      },
+      "topic_patterns": [
+        "\\bbirch toolkit\\b"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:B",
+          "message_ordinal": 1,
+          "role": "user",
+          "excerpt": "Would Birch Toolkit be suitable for this test? I have not evaluated its support.",
+          "transcript_start": 6,
+          "transcript_end": 86,
+          "message_start": 0,
+          "message_end": 80,
+          "source_revision": "8e90f471e79b5f9907e463c08d11e14a8988674fd998ef191b474e68158acfe1",
+          "message_id": "synthetic:note:B:m:1",
+          "fragment_ids": [
+            "synthetic:note:B:m:1:p:1"
+          ],
+          "excerpt_sha256": "b2c77952b1343a72bca369d8adf2e6ed292275c219dc8ced950ca6761ba8d6d8"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "stereochemistry_inspection",
+      "statement": "Inspect connectivity, ligand bond orders and stereochemistry before repairs.",
+      "expected": {
+        "category": "PROPOSAL",
+        "design_status": "PROPOSED",
+        "prohibited_design_statuses": [
+          "AGREED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "PROPOSAL",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "REQUIREMENT",
+            "design_status": "PROPOSED"
+          },
+          {
+            "category": "FINDING",
+            "design_status": "UNKNOWN"
+          }
+        ],
+        "rationale_notes": "Coherent inspection checks can share a single proposed validation step."
+      },
+      "topic_patterns": [
+        "stereochem|chiral"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:D",
+          "message_ordinal": 2,
+          "role": "assistant",
+          "excerpt": "Inspect connectivity, stereochemistry and ligand bond orders as a single validation step before changing a file.",
+          "transcript_start": 179,
+          "transcript_end": 291,
+          "message_start": 0,
+          "message_end": 112,
+          "source_revision": "7aeace3a3f4d1eb740b82f0e7aa1fccaa5fe1312735145bf916481d7ac7d8152",
+          "message_id": "synthetic:note:D:m:2",
+          "fragment_ids": [
+            "synthetic:note:D:m:2:p:1"
+          ],
+          "excerpt_sha256": "f2ae7c00128faf6851d01b543dfe93bedeec57f33320c1bf098c62719c2de90c"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    },
+    {
+      "id": "initial_dataset_direct_selection",
+      "statement": "Use the linked fixture as the first dataset.",
+      "expected": {
+        "category": "DECISION",
+        "design_status": "AGREED",
+        "prohibited_design_statuses": [
+          "PROPOSED",
+          "REJECTED"
+        ],
+        "allowed_classifications": [
+          {
+            "category": "DECISION",
+            "design_status": "AGREED"
+          }
+        ],
+        "agreement_basis": "direct_user",
+        "rationale_notes": "The user directly selects the dataset even though other nearby ideas are speculative."
+      },
+      "topic_patterns": [
+        "\\bdataset\\b",
+        "first|initial|linked"
+      ],
+      "evidence": [
+        {
+          "source_id": "synthetic:source:C",
+          "message_ordinal": 3,
+          "role": "user",
+          "excerpt": "For our first dataset, use the linked fixture.",
+          "transcript_start": 207,
+          "transcript_end": 253,
+          "message_start": 0,
+          "message_end": 46,
+          "source_revision": "712aa1dc9815fe2a939c0572b0203a91f66e819c1d6692ec4e8186ec86c924a8",
+          "message_id": "synthetic:note:C:m:3",
+          "fragment_ids": [
+            "synthetic:note:C:m:3:p:1"
+          ],
+          "excerpt_sha256": "d0df682125ed5dc6554b94699baeb041c1925ea61f2fe44870f49e504e490554"
+        }
+      ],
+      "annotation_status": "synthetic_fixture"
+    }
+  ],
+  "contains_full_transcripts": false,
+  "project_id_at_annotation": 2
+}

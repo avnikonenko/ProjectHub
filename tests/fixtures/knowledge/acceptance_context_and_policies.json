@@ -1,0 +1,49 @@
+{
+  "annotation_status": "synthetic_test_cases",
+  "evaluation_limit": "Expected labels are reference annotations. Mocked extraction tests verify data flow and classification preservation, not model semantic accuracy.",
+  "cases": [
+    {
+      "id": "reference_table_followed_by_question",
+      "origin": "synthetic",
+      "sources": [
+        {"id": "table:proposal", "role": "assistant", "text": "Possible components:\n| Tool | Intended responsibility |\n| Alpha | Input parsing |\n| Beta | Geometry analysis |"},
+        {"id": "table:question", "role": "user", "text": "Possible components:\n| Tool | Intended responsibility |\n| Alpha | Input parsing |\n| Beta | Geometry analysis |\n\nWhy did we decide to use Alpha?"}
+      ],
+      "expected": {"statement": "Use Beta for geometry analysis.", "category": "PROPOSAL", "design_status": "PROPOSED", "scope": "Geometry analysis", "agreement_basis": "none", "excerpt": "| Beta | Geometry analysis |", "source_id": "table:question"},
+      "limitation": "UNKNOWN would also be conservative. This case does not establish adoption or rejection of Beta."
+    },
+    {
+      "id": "explicit_own_adoption_of_table",
+      "origin": "synthetic",
+      "sources": [
+        {"id": "table:adoption", "role": "user", "text": "Use the following components as our chosen implementation plan:\n| Tool | Intended responsibility |\n| Alpha | Input parsing |\n| Beta | Geometry analysis |"}
+      ],
+      "expected": {"statement": "Use Beta for geometry analysis.", "category": "DECISION", "design_status": "AGREED", "scope": "Geometry analysis", "agreement_basis": "direct_user", "excerpt": "Use the following components as our chosen implementation plan:\n| Tool | Intended responsibility |\n| Alpha | Input parsing |\n| Beta | Geometry analysis |", "source_id": "table:adoption"}
+    },
+    {
+      "id": "polite_preference_with_separate_concern",
+      "origin": "synthetic",
+      "sources": [
+        {"id": "example:preference", "role": "user", "text": "Could we stick to licensed tools? I am unsure whether BlueCart is still maintained."}
+      ],
+      "expected": {"statement": "Prefer licensed tools.", "category": "REQUIREMENT", "design_status": "AGREED", "scope": "Tool-selection preference", "agreement_basis": "direct_user", "excerpt": "Could we stick to licensed tools?", "source_id": "example:preference"},
+      "limitation": "The licensing preference is clear. Maintenance uncertainty does not establish rejection of BlueCart."
+    },
+    {
+      "id": "tentative_component_separation",
+      "origin": "synthetic",
+      "sources": [
+        {"id": "example:separation", "role": "user", "text": "Maybe split archived invoices from active invoices."}
+      ],
+      "expected": {"statement": "Consider separating active and archived invoices.", "category": "PROPOSAL", "design_status": "PROPOSED", "scope": "Component separation", "agreement_basis": "none", "excerpt": "Maybe split archived invoices from active invoices.", "source_id": "example:separation"}
+    },
+    {
+      "id": "independent_reproducibility_policy",
+      "origin": "synthetic",
+      "sources": [
+        {"id": "example:recording", "role": "assistant", "text": "Record the import format and parser version for each batch."}
+      ],
+      "expected": {"statement": "Record every modification, backend, parameter, and software version.", "category": "REQUIREMENT", "design_status": "PROPOSED", "scope": "Import provenance", "agreement_basis": "none", "excerpt": "Record the import format and parser version for each batch.", "source_id": "example:recording"}
+    }
+  ]
+}
