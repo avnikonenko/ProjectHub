@@ -8,9 +8,9 @@
 
 **Keep the context of a project across long AI conversations.**
 
-**When work is spread across several Codex sessions and ChatGPT chats, returning to a project means remembering what you tried, which approach you chose, and what still needs doing. ProjectHub collects that history in one local workspace and helps turn it into a useful project overview, searchable explanations, and diagrams.**
+When work is spread across several Codex sessions and ChatGPT chats, returning to a project means remembering what you tried, which approach you chose, and what still needs doing. ProjectHub collects that history in **one local workspace** and helps turn it into a useful project overview, searchable explanations, and diagrams.
 
-**Use it for software, research, or other projects with a growing conversation history.**
+Use it for software, research, or other projects with a growing conversation history.
 
 ## What you can do
 
