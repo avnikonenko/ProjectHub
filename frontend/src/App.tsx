@@ -1021,7 +1021,7 @@ function ProjectWorkspace({
               <>
                 <Codex base={base} onError={setError}
                   targetSessionId={searchTarget?.kind === 'sessions' ? searchTarget.id : undefined}
-                  importControl={<ChatGPTShares base={base} notes={notes} onImported={load} showHistory={false} compact />} />
+                  notes={notes} onImported={load} />
                 <ChatGPTShares base={base} notes={notes} showHistory={false} />
               </>
             )}
@@ -1720,10 +1720,6 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
 }) {
   const [adding, setAdding] = useState(false);
   const [page, setPage] = useState(0);
-  const shares = notes.filter(isChatGPTShare).sort((a, b) => b.id - a.id);
-  const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
-  const currentPage = Math.min(page, pageCount - 1);
-  const start = currentPage * HISTORY_PAGE_SIZE;
   const importForm = adding && onImported && (
         <Form title="Import shared chat"
           fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
@@ -1738,10 +1734,13 @@ function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNot
   if (compact) return (
     <div className="source-import">
       <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
-      <small>{shares.length ? `${shares.length} shared chats saved · Browse in History` : 'No shared chats yet.'}</small>
       {importForm}
     </div>
   );
+  const shares = notes.filter(isChatGPTShare).sort((a, b) => b.id - a.id);
+  const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount - 1);
+  const start = currentPage * HISTORY_PAGE_SIZE;
   if (!shares.length) return onImported ? (
     <div className="source-import">
       <span className="muted">No shared chats yet.</span>
@@ -2138,16 +2137,17 @@ function SavedHistory({
   );
 }
 
-function Codex({ base, onError, importControl, targetSessionId }: {
+function Codex({ base, onError, notes, onImported, targetSessionId }: {
   base: string;
   onError: (message: string) => void;
-  importControl?: ReactNode;
+  notes: RecordData[];
+  onImported: () => Promise<void>;
   targetSessionId?: number;
 }) {
   const [status, setStatus] = useState<any>(null);
-  const [sessions, setSessions] = useState<RecordData[]>([]);
+  const [sessionRows, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
-  useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessions]);
+  useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessionRows]);
   const [threadId, setThreadId] = useState('');
   const [linkTitle, setLinkTitle] = useState('');
   const [sessionFilter, setSessionFilter] = useState('all');
@@ -2159,6 +2159,8 @@ function Codex({ base, onError, importControl, targetSessionId }: {
   const available = Boolean(
     status?.installed && status?.app_server && status?.authenticated,
   );
+  const sessions = sessionRows ?? [];
+  const chatCount = notes.filter(isChatGPTShare).length;
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
   const filteredSessions = [...sessions].filter((session) => {
@@ -2209,11 +2211,17 @@ function Codex({ base, onError, importControl, targetSessionId }: {
       <div>
         <section className="card">
           <div className="section-title">
-            <h2>Project sessions</h2>
+            <div>
+              <h2>Project sessions</h2>
+              <small>
+                {sessionRows && `${sessions.length.toLocaleString()} linked Codex session${sessions.length === 1 ? '' : 's'} · `}
+                {chatCount.toLocaleString()} imported ChatGPT conversation{chatCount === 1 ? '' : 's'}
+              </small>
+            </div>
             <Badge value={available ? 'available' : status ? 'unavailable' : 'checking'} />
           </div>
           <div className="source-toolbar">
-            {importControl}
+            <ChatGPTShares base={base} notes={notes} onImported={onImported} compact />
             <details className="source-link">
               <summary className="button secondary">Add session</summary>
           <label>
@@ -2305,7 +2313,7 @@ function Codex({ base, onError, importControl, targetSessionId }: {
               </article>
             ))}
           </PagedItems>
-          {!filteredSessions.length && <Empty>{sessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
+          {sessionRows && !filteredSessions.length && <Empty>{sessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
           {renaming && (
             <Form title="Edit session" fields={[{ ...titleField, maxLength: 200 },
               { name: 'topic', label: 'Topic (optional)', maxLength: 80 }]} initial={renaming}
