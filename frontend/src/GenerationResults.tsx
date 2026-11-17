@@ -151,7 +151,7 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
         <button className="secondary" onClick={onRegenerateSelected}
           disabled={regenerateDisabled || current.loading || !!current.error || !onRegenerateSelected}>Regenerate selected</button>
         <button className="quiet" disabled={current.loading || !!current.error || !onSelectionChange}
-          onClick={() => onSelectionChange?.(selectableGenerationKinds(current.data!, busy))}>Select all idle</button>
+          onClick={() => onSelectionChange?.(selectableGenerationKinds(current.data!, busy))}>Select all</button>
         <button className="quiet" disabled={!selected.length || !onSelectionChange}
           onClick={() => onSelectionChange?.([])}>Clear selection</button>
       </div>

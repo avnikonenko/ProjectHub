@@ -191,7 +191,7 @@ batch caches are reused, but a single interrupted model request cannot resume.
 In **Generation results**, select **Overview**, **Knowledge**, **Scheme**, **Q&A**
 or **Implementation Choices & Limits**, then click **Regenerate selected**.
 The same controls generate a first result or refresh an existing result.
-Unfinished views are selected initially. **Select all idle** selects idle views, and
+Unfinished views are selected initially. **Select all** selects available views, and
 running/waiting jobs cannot be selected for duplicate generation. Selecting only
 Scheme uses saved Knowledge; selecting both keeps Knowledge before Scheme.
 Attempt tracking starts with this version; outcomes already lost before tracking
