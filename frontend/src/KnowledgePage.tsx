@@ -13,12 +13,11 @@ import { Empty, ErrorBox } from './ui';
 import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } from './GenerationStatus';
 import type { Brief } from './BriefContent';
 import { generateAndSaveKnowledge, knowledgePreviewExport, recoverPublishedKnowledge, type KnowledgePreview } from './knowledgePreviewRecovery';
-import { activateKnowledgeResult } from './knowledgePublication';
 import { readPublishedKnowledge, subscribePublishedKnowledge, updatePublishedKnowledge } from './publishedKnowledge';
 
 type LoadState = { base: string; key: string; loading: boolean; data: KnowledgeResponse | null; error: string };
 type PreviewState = { base: string; busy: boolean; result: KnowledgePreview | null; error: string; started: number; loading?: boolean; cancelled?: boolean };
-type ActivationState = { base: string; busy: boolean; error: string; notice: string };
+type NoticeState = { base: string; error: string; notice: string };
 type Props = {
   base: string;
   generation: { model: string; effort: string };
@@ -43,7 +42,7 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   const summary = snapshot.summary && matchesPublication(snapshot, snapshot.project_id,
     snapshot.summary.project_state?.publication_id) ? snapshot.summary : null;
   const summaryError = snapshot.summary_error || (snapshot.summary && !summary
-    ? 'The saved Knowledge Summary does not match this Knowledge publication. Records remain available.' : '');
+    ? 'The saved Knowledge Summary does not match this Knowledge version. Records remain available.' : '');
   return <section className="card knowledge-summary" aria-label="Saved Knowledge Summary">
     <div className="section-title"><div><h2>Knowledge Summary</h2>
       <small>Saved separately from Project Overview</small></div></div>
@@ -53,23 +52,50 @@ export function PublishedKnowledgeSummary({ snapshot, renderBrief }: {
   </section>;
 }
 
+/** Earlier results are read-only references; generation saves the current result automatically. */
+export function EarlierKnowledgeResult({ result, renderBrief, onDownload }: {
+  result: KnowledgePreview;
+  renderBrief: Props['renderBrief'];
+  onDownload: () => void;
+}) {
+  const [view, setView] = useState<'summary' | 'knowledge'>('summary');
+  return <details className="card knowledge-preview" aria-label="Earlier Knowledge Summary">
+    <summary className="source-disclosure">Earlier Knowledge Summary</summary>
+    <div className="section-title"><div><h3>Knowledge Summary</h3>
+      <small>Saved result · {new Date(result.brief.generated_at).toLocaleString()}</small></div></div>
+    <p>Earlier version kept for reference.</p>
+    <button className="secondary" onClick={onDownload}>Download JSON</button>
+    <div className="tabs scheme-tabs" role="tablist" aria-label="Earlier Knowledge version">
+      <button type="button" role="tab" aria-selected={view === 'summary'} className={view === 'summary' ? 'active' : ''}
+        onClick={() => setView('summary')}>Summary</button>
+      <button type="button" role="tab" aria-selected={view === 'knowledge'} className={view === 'knowledge' ? 'active' : ''}
+        onClick={() => setView('knowledge')}>Knowledge records</button>
+    </div>
+    <div role="tabpanel" aria-label="Earlier Knowledge Summary" hidden={view !== 'summary'}>
+      {renderBrief({ ...result.brief, diagnostics: result.brief.diagnostics ?? result.diagnostics }, 'preview')}
+    </div>
+    <div role="tabpanel" aria-label="Knowledge records" hidden={view !== 'knowledge'}>
+      <KnowledgeItems snapshot={result.knowledge} />
+      <CoverageDetails savedAt={result.knowledge.generated_at} sourceCount={result.knowledge.sources.length}
+        coverage={result.knowledge.coverage} diagnostics={result.knowledge.diagnostics ?? result.diagnostics} />
+    </div>
+  </details>;
+}
+
 export function KnowledgePage({ base, generation, link, renderBrief, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
   const loadKey = JSON.stringify([base, publicationKey]);
   const [publishedTagsBusy, setPublishedTagsBusy] = useState(false);
-  const [previewTagsBusy, setPreviewTagsBusy] = useState(false);
-  const tagsBusy = publishedTagsBusy || previewTagsBusy;
-  const [previewView, setPreviewView] = useState<'summary' | 'knowledge'>('summary');
+  const tagsBusy = publishedTagsBusy;
   const [retry, setRetry] = useState(0);
   const [recoveryAttempt, setRecoveryAttempt] = useState(0);
   const [load, setLoad] = useState<LoadState>({ base, key: loadKey, loading: true, data: null, error: '' });
   const [preview, setPreview] = useState<PreviewState>({ base, busy: false, result: null, error: '', started: 0 });
-  const [activation, setActivation] = useState<ActivationState>({ base, busy: false, error: '', notice: '' });
+  const [notice, setNotice] = useState<NoticeState>({ base, error: '', notice: '' });
   const [dismissedLink, setDismissedLink] = useState('');
   const active = useRef<{ base: string; controller: AbortController } | null>(null);
-  const activating = useRef<{ base: string; controller: AbortController } | null>(null);
   const recovery = useRef<AbortController | null>(null);
   const previewRequestVersion = useRef(0);
   const lastProgressStartedAt = useRef<string | undefined>(undefined);
@@ -86,15 +112,10 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
   const currentPreview = preview.base === base ? preview : null;
-  const currentActivation = activation.base === base ? activation : null;
+  const currentNotice = notice.base === base ? notice : null;
   const busy = !!currentPreview?.busy;
-  const publishing = !!currentActivation?.busy;
   const candidate = currentPreview?.result && currentPreview.result.knowledge.publication_id !== snapshot?.publication_id
     ? currentPreview.result : null;
-  const publishedAt = Date.parse(snapshot?.generated_at ?? '');
-  const candidateAt = Date.parse(candidate?.brief.generated_at ?? '');
-  const staleCandidate = !!candidate && Number.isFinite(publishedAt) && Number.isFinite(candidateAt) && publishedAt > candidateAt;
-  const PreviewContainer = 'details';
   const requestKey = `${base}:${projectLink?.publicationId ?? ''}:${projectLink?.itemId ?? ''}`;
   const expectedPublication = dismissedLink === requestKey ? undefined : projectLink?.publicationId;
   const mismatch = !!snapshot && !!expectedPublication
@@ -116,19 +137,17 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   useEffect(() => () => {
     active.current?.controller.abort();
     active.current = null;
-    activating.current?.controller.abort();
-    activating.current = null;
     recoveryHandoff.current = undefined;
     lastProgressStartedAt.current = undefined;
     pendingOutcome.current = null;
   }, [base]);
 
   useEffect(() => {
-    if ((!visible && !refreshRequest && !busy) || active.current?.base === base || activating.current?.base === base) return;
+    if ((!visible && !refreshRequest && !busy) || active.current?.base === base) return;
     const controller = new AbortController();
     recovery.current = controller;
     const version = ++previewRequestVersion.current;
-    const canApply = () => !controller.signal.aborted && !active.current && !activating.current
+    const canApply = () => !controller.signal.aborted && !active.current
       && version === previewRequestVersion.current;
     setPreview((previous) => previous.base === base ? { ...previous, loading: true }
       : { base, busy: false, result: null, error: '', started: 0, loading: true });
@@ -179,7 +198,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
   }, [base, projectId, retry, visible, loadKey, recoveryAttempt, refreshRequest]);
 
   async function generateKnowledge() {
-    if (externalBusy || active.current || activating.current || busy || tagsBusy) return;
+    if (externalBusy || active.current || busy || tagsBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
     const controller = new AbortController();
@@ -188,7 +207,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
     pendingOutcome.current = { base, request: refreshRequest,
       baselinePublicationId: snapshot?.publication_id ?? null, schemeRequested: generateSchemeAfter };
     active.current = run;
-    setActivation({ base, busy: false, error: '', notice: '' });
+    setNotice({ base, error: '', notice: '' });
     setPreview((previous) => ({ base, busy: true, result: previous.base === base ? previous.result : null,
       error: '', started: Date.now(), loading: false }));
     try {
@@ -197,7 +216,7 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         updatePublishedKnowledge(base, () => ({ snapshot: result.knowledge, paired_with_current_brief: false,
           current_evidence_availability: {}, coverage: result.knowledge.coverage || {} }));
         setPreview({ base, busy: false, result: null, error: '', started: 0 });
-        setActivation({ base, busy: false, error: '', notice: 'Knowledge Summary and records saved. Project Overview is unchanged.' });
+        setNotice({ base, error: '', notice: 'Knowledge Summary and records saved. Project Overview is unchanged.' });
         reportOutcome('saved', result.knowledge.publication_id, result.schemeRequested === true);
         onPublished?.();
       }
@@ -216,33 +235,6 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       }
     } finally {
       if (active.current === run) active.current = null;
-    }
-  }
-
-  async function useResult() {
-    if (!candidate || staleCandidate || externalBusy || active.current || activating.current || busy || tagsBusy) return;
-    previewRequestVersion.current++;
-    recovery.current?.abort();
-    const controller = new AbortController();
-    const run = { base, controller };
-    activating.current = run;
-    setActivation({ base, busy: true, error: '', notice: '' });
-    try {
-      const result = await activateKnowledgeResult(base, projectId, candidate.knowledge.publication_id!, controller.signal);
-      if (!controller.signal.aborted && activating.current === run) {
-        updatePublishedKnowledge(base, () => ({
-          snapshot: result.knowledge, paired_with_current_brief: false,
-          current_evidence_availability: {}, coverage: result.knowledge.coverage || {},
-        }));
-        setActivation({ base, busy: false, error: '', notice: 'Knowledge Summary and records saved. Project Overview is unchanged.' });
-        onPublished?.();
-        setRetry(value => value + 1);
-      }
-    } catch (error) {
-      if (!controller.signal.aborted && activating.current === run)
-        setActivation({ base, busy: false, error: (error as Error).message, notice: '' });
-    } finally {
-      if (activating.current === run) activating.current = null;
     }
   }
 
@@ -269,36 +261,32 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
         setPreview(previous => ({ ...(previous.base === base ? previous : { base, busy: false, error: '', started: 0 }), result }));
       }
     }).catch((error: Error) => {
-      if (!controller.signal.aborted) setActivation(previous => ({ ...previous, base, error: error.message }));
+      if (!controller.signal.aborted) setNotice(previous => ({ ...previous, base, error: error.message }));
     });
     return () => controller.abort();
   }, [base, projectId, legacyOpen]);
 
   const isLoading = load.key !== loadKey || load.loading;
   const error = load.key === loadKey ? load.error : '';
-  const blocked = !!(externalBusy || tagsBusy || busy || publishing || currentPreview?.loading || isLoading);
+  const blocked = !!(externalBusy || tagsBusy || busy || currentPreview?.loading || isLoading);
   useEffect(() => { onBusyChange?.({ busy: blocked, running: busy }); }, [blocked, busy, onBusyChange]);
-  useEffect(() => {
-    setPreviewView('summary');
-  }, [showRecords, candidate?.knowledge.publication_id]);
-  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || publishing ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled);
+  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled);
   const feedback = <>
     <ErrorBox error={error} />
-    <ErrorBox error={currentActivation?.error || ''} />
+    <ErrorBox error={currentNotice?.error || ''} />
     <ErrorBox error={currentPreview?.error || ''} />
-    {publishing && <Feedback>Saving Knowledge Summary and records…</Feedback>}
-    <Feedback tone="success">{currentActivation?.notice}</Feedback>
+    <Feedback tone="success">{currentNotice?.notice}</Feedback>
     {currentPreview?.cancelled && <Feedback>{cancelledGenerationMessage}</Feedback>}
     {busy && visible && <GenerationStatus key={`${base}:${currentPreview?.started}`} base={base}
       kind="knowledge" label="Knowledge Summary" />}
   </>;
-  const hasFeedback = !!(error || currentActivation?.error || currentPreview?.error || publishing
-    || currentActivation?.notice || currentPreview?.cancelled || busy);
+  const hasFeedback = !!(error || currentNotice?.error || currentPreview?.error
+    || currentNotice?.notice || currentPreview?.cancelled || busy);
   const absentItem = snapshot && selectedItemId && !snapshot.items.some((item) => item.id === selectedItemId);
   return <section className="knowledge-page">
     {showRecords && snapshot && !mismatch && <PublishedKnowledgeSummary snapshot={snapshot} renderBrief={renderBrief} />}
     {!showRecords && hasFeedback && <section className="card" aria-label="Project analysis status">{feedback}</section>}
-    <section className="card" hidden={!showRecords} aria-busy={isLoading || publishing}>
+    <section className="card" hidden={!showRecords} aria-busy={isLoading}>
       <div className="section-title">
         <div><h2>Project Knowledge</h2><small>Project #{projectId}</small></div>
         <button disabled={blocked} onClick={generateKnowledge}>
@@ -310,20 +298,20 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       {showRecords && feedback}
       {(isLoading || currentPreview?.loading) && !snapshot && !candidate && <Feedback>Loading saved knowledge…</Feedback>}
       {!isLoading && !currentPreview?.loading && !error && !currentPreview?.error && !snapshot && !candidate
-        && <Empty>No saved knowledge yet. Generate a result to get started.</Empty>}
+        && <Empty>No current Knowledge result. Generate to create one.</Empty>}
       {!isLoading && !snapshot && expectedPublication
         && <Feedback>The linked knowledge version is not currently available.</Feedback>}
       {snapshot && <>
         <small>Current knowledge{snapshot.generated_at && ` · ${new Date(snapshot.generated_at).toLocaleString()}`}</small>
         <TagGeneration key={`${base}:tags:${snapshot.publication_id}`} base={base} visible={visible} target="knowledge"
           publicationId={snapshot.publication_id} itemIds={snapshot.items.map(item => item.id)}
-          generation={generation} hasTags={!!snapshot.topic_groups?.length} disabled={externalBusy || busy || publishing || !snapshot.publication_id}
+          generation={generation} hasTags={!!snapshot.topic_groups?.length} disabled={externalBusy || busy || !snapshot.publication_id}
           onBusyChange={setPublishedTagsBusy} onRecovered={() => setRetry(value => value + 1)}
           onResult={result => updatePublishedKnowledge(base, current => current && current.snapshot && current.snapshot.publication_id === result.publication_id
             ? { ...current, snapshot: { ...current.snapshot,
               topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } : current)} />
         {mismatch ? <Feedback>
-          <p>This link references another Knowledge publication. Its selected record is not being substituted with the current version.</p>
+          <p>This link references another Knowledge version. Its selected record is not being substituted with the current version.</p>
           <button className="secondary" onClick={() => setDismissedLink(requestKey)}>Explore current knowledge</button>
         </Feedback> : <>
           {!!absentItem && <Feedback>The requested item is not in this version. Other current records are shown below.</Feedback>}
@@ -350,44 +338,11 @@ export function KnowledgePage({ base, generation, link, renderBrief, visible = t
       </>}
     </section>
     <details className="knowledge-legacy-previews" onToggle={event => setLegacyOpen(event.currentTarget.open)}>
-      <summary>Earlier unsaved results</summary>
-      <p>New generations save automatically. Older previews remain available here.</p>
-      {legacyOpen && !candidate && <p>No separate unsaved result is available.</p>}
-    {candidate && <PreviewContainer className="card knowledge-preview" aria-label={staleCandidate ? "Older unpublished Knowledge Summary" : "Unpublished Knowledge Summary"}>
-      <summary className="source-disclosure">Earlier unpublished Knowledge Summary</summary>
-      <div className="section-title">
-        <div><h3>Knowledge Summary</h3><small>Unpublished preview</small>
-          <small>{new Date(candidate.brief.generated_at).toLocaleString()}</small></div>
-        <button disabled={staleCandidate || externalBusy || tagsBusy || busy || publishing || isLoading || currentPreview?.loading} onClick={useResult}>
-          {publishing ? 'Saving…' : 'Save Knowledge Summary'}
-        </button>
-      </div>
-      <p>Project choices, their reasons, trade-offs, and open questions.</p>
-      {staleCandidate ? <p>A newer Knowledge Summary is already saved. Refresh Knowledge Summary to prepare a current replacement.</p>
-        : <p>Saving updates the Knowledge Summary and records. Project Overview stays unchanged.</p>}
-      <button className="secondary" onClick={downloadPreview}>Download JSON</button>
-      <div className="tabs scheme-tabs" role="tablist" aria-label="Knowledge Summary preview">
-        <button type="button" role="tab" aria-selected={previewView === 'summary'} className={previewView === 'summary' ? 'active' : ''}
-          onClick={() => setPreviewView('summary')}>Knowledge Summary</button>
-        <button type="button" role="tab" aria-selected={previewView === 'knowledge'} className={previewView === 'knowledge' ? 'active' : ''}
-          onClick={() => setPreviewView('knowledge')}>Knowledge records</button>
-      </div>
-      <div role="tabpanel" aria-label="Knowledge Summary preview" hidden={previewView !== 'summary'}>
-        {renderBrief({ ...candidate.brief, diagnostics: candidate.brief.diagnostics ?? candidate.diagnostics }, 'preview')}
-      </div>
-      <div role="tabpanel" aria-label="Knowledge records" hidden={previewView !== 'knowledge'}>
-      <TagGeneration key={`${base}:preview-tags:${candidate.knowledge.publication_id}`} base={base} visible={visible && previewView === 'knowledge' && !staleCandidate} target="knowledge_preview"
-        publicationId={candidate.knowledge.publication_id} itemIds={candidate.knowledge.items.map(item => item.id)}
-        generation={generation} hasTags={!!candidate.knowledge.topic_groups?.length} disabled={staleCandidate || externalBusy || busy || publishing || !candidate.knowledge.publication_id}
-        onBusyChange={setPreviewTagsBusy} onRecovered={() => setRetry(value => value + 1)}
-        onResult={result => setPreview(previous => previous.base === base && previous.result && previous.result.knowledge.publication_id === result.publication_id
-          ? { ...previous, result: { ...previous.result, knowledge: { ...previous.result.knowledge,
-            topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } } } : previous)} />
-      <KnowledgeItems key={`${base}:preview:${candidate.knowledge.publication_id}`} snapshot={candidate.knowledge} />
-      <CoverageDetails savedAt={candidate.knowledge.generated_at} sourceCount={candidate.knowledge.sources.length}
-        coverage={candidate.knowledge.coverage} diagnostics={candidate.knowledge.diagnostics ?? candidate.diagnostics} />
-      </div>
-    </PreviewContainer>}
+      <summary>Earlier saved versions</summary>
+      <p>New generations save automatically. Earlier versions remain available for reference.</p>
+      {legacyOpen && !candidate && <p>No earlier saved version is available.</p>}
+      {candidate && <EarlierKnowledgeResult key={`${base}:${candidate.knowledge.publication_id}`}
+        result={candidate} renderBrief={renderBrief} onDownload={downloadPreview} />}
     </details>
   </section>;
 }

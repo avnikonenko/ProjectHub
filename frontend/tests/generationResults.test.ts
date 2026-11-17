@@ -113,3 +113,59 @@ test('waiting, interrupted and missing results are distinct from an API failure 
   assert.match(html, /No saved result yet/);
   assert.throws(() => parseGenerationResults({ detail: 'status unavailable' }, 2), /incomplete/);
 });
+
+test('an earlier Knowledge result stays accessible without claiming it is current', () => {
+  const raw = fixture();
+  Object.assign(raw.views[1], { state: 'earlier_result', saved_at: null,
+    history_at: '2026-11-17T12:15:00Z', latest_attempt: null, retryable: true });
+  const data = parseGenerationResults(raw, 2);
+  assert.equal(data.views[1].saved_at, null);
+  assert.equal(data.views[1].history_at, '2026-11-17T12:15:00Z');
+  assert.deepEqual(initializeGenerationSelection(null, data).selected, ['knowledge']);
+  assert(selectableGenerationKinds(data).includes('knowledge'));
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data, onToggle: () => {} }));
+  const knowledge = html.split('<li>').find(part => part.includes('Select Knowledge')) ?? '';
+  assert.match(knowledge, /<strong>Earlier result available<\/strong>/);
+  assert.match(knowledge, /Earlier saved version ·/);
+  assert.doesNotMatch(knowledge, /No saved result yet|<small>Saved|disabled|[Pp]ublished|[Pp]review/);
+});
+
+test('failed generation retains its failure alongside an earlier saved result', () => {
+  const raw = fixture();
+  Object.assign(raw.views[1], { state: 'failed', saved_at: null,
+    history_at: '2026-11-17T12:15:00Z', showing_previous: false, retryable: true,
+    latest_attempt: { state: 'failed', started_at: '2026-11-17T12:20:00Z',
+      finished_at: '2026-11-17T12:25:00Z', error: 'Generation unavailable.' } });
+  const data = parseGenerationResults(raw, 2);
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data }));
+  assert.match(html, /<strong>Failed<\/strong>/);
+  assert.match(html, /Earlier saved version ·/);
+  assert.match(html, /Generation unavailable/);
+  assert.deepEqual(initializeGenerationSelection(null, data).selected, ['knowledge']);
+});
+
+test('a current saved result takes display precedence over older history', () => {
+  const raw = fixture();
+  Object.assign(raw.views[1], { history_at: '2026-11-17T11:00:00Z' });
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data: parseGenerationResults(raw, 2) }));
+  assert.doesNotMatch(html, /Earlier saved version|Earlier result available/);
+  assert.equal((html.match(/<strong>Saved<\/strong>/g) ?? []).length, 5);
+});
+
+test('old summary responses stay compatible while invalid or misplaced history is rejected', () => {
+  assert.equal(parseGenerationResults(fixture(), 2).views[1].history_at, null);
+  for (const history_at of [false, 42, {}, '', 'not a date', '<script>bad</script>']) {
+    const raw = fixture();
+    Object.assign(raw.views[1], { history_at });
+    assert.throws(() => parseGenerationResults(raw, 2), /earlier generation result is invalid/);
+  }
+  const otherKind = fixture();
+  Object.assign(otherKind.views[0], { history_at: '2026-11-17T12:15:00Z' });
+  assert.throws(() => parseGenerationResults(otherKind, 2), /earlier generation result is invalid/);
+  for (const changes of [{ saved_at: null }, { history_at: '2026-11-17T12:15:00Z' },
+    { saved_at: null, history_at: '2026-11-17T12:15:00Z', showing_previous: true }]) {
+    const raw = fixture();
+    Object.assign(raw.views[1], { state: 'earlier_result', ...changes });
+    assert.throws(() => parseGenerationResults(raw, 2), /earlier generation result is invalid/);
+  }
+});

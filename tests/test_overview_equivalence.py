@@ -68,7 +68,7 @@ def test_equivalence_prompt_change_reuses_all_leaf_caches_without_changing_knowl
     monkeypatch.setattr(pilot, 'EQUIVALENCE_GUIDANCE', '')
     before = _stored(staged_state.engine)
     initial = StagedModel()
-    first = pilot.generate_knowledge_brief(staged_state.engine, 1, initial)
+    first = pilot.generate_knowledge_brief(staged_state.engine, 1, initial, publish=False)
     assert len(initial.calls) == 17
     assert not any(source.get('kind') == 'staged_interpretation'
                    for payload in initial.calls[:16] for source in payload['sources'])
@@ -79,7 +79,7 @@ def test_equivalence_prompt_change_reuses_all_leaf_caches_without_changing_knowl
 
     monkeypatch.setattr(pilot, 'EQUIVALENCE_GUIDANCE', guidance)
     retry = StagedModel()
-    second = pilot.generate_knowledge_brief(staged_state.engine, 1, retry)
+    second = pilot.generate_knowledge_brief(staged_state.engine, 1, retry, publish=False)
 
     assert second['diagnostics']['synthesis_cache_hits'] == 16
     assert second['diagnostics']['synthesis_requests'] == len(retry.calls) == 1

@@ -39,19 +39,21 @@ It excludes generic textbook caveats. These records come from conversations,
 including quoted code/configuration; they do not independently verify runtime
 values. Repository inspection informs summary synthesis, not conversation Knowledge extraction.
 Missing defaults or reasons are not guessed. New extraction guidance takes effect
-on the next requested analysis; existing published records remain unchanged.
+on the next requested analysis; existing saved records remain unchanged.
 
 Normal Knowledge generation validates and saves its summary and records together
-under one publication ID, without changing Project Overview. No separate approval
-or publication button is required. Failed or cancelled generation preserves the
+under one version ID, without changing Project Overview. No separate save or
+publish step is required. Failed or cancelled generation preserves the
 previous saved result, revisions and completed extraction caches. Browsing saved
-results makes no AI calls. Earlier unsaved previews remain available in a collapsed
-legacy section; they are not part of the normal generation workflow.
+results makes no AI calls. Earlier stored results remain available as read-only
+history; they are not silently made current when their sources have changed.
 
 The UI uses `POST /projects/{id}/codex/knowledge/brief` with
-`confirmed:true,publish:true`. Explicit preview/activation endpoints remain
-compatible for older clients. `GET /projects/{id}/codex/knowledge` reads the saved
-publication; progress recovery never resends generation. General Overview retains
+`confirmed:true`. All public Knowledge generation routes save automatically,
+including the legacy `/analysis/preview` alias. The old `publish` field is still
+accepted but cannot disable saving. Existing activation aliases remain available
+for older clients. `GET /projects/{id}/codex/knowledge` reads the current saved
+result; progress recovery never resends generation. General Overview retains
 its independent `/codex/brief` action and saved revisions.
 
 Generation status includes elapsed time and completed-stage durations
@@ -175,7 +177,7 @@ Tags remain a separate action. A server crash can still interrupt in-memory work
 saved results and successful extraction caches remain durable.
 
 The project shows the latest outcome for each generated view independently of its
-saved result: Saved, Not generated, Running, Waiting for Knowledge, Timed out,
+saved result: Saved, Earlier result available, Not generated, Running, Waiting for Knowledge, Timed out,
 Failed, Cancelled, Interrupted or Skipped. A failed latest attempt can therefore
 show an earlier saved result without implying that the refresh succeeded. Attempt
 details retain start/end times and the reported error, not prompts or responses.

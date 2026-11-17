@@ -132,7 +132,7 @@ def test_oversized_refresh_processes_every_source_and_preserves_originals(staged
     before = _stored(staged_state.engine)
     other_before = _stored(staged_state.engine, 2)
     manager = StagedModel()
-    result = pilot.generate_knowledge_brief(staged_state.engine, 1, manager)
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, manager, publish=False)
     assert len(manager.calls) > 1
     assert manager.seen == {f'SOURCE_1_{index}' for index in range(520)}
     assert any('CODE_ORIGINAL' in json.dumps(payload) for payload in manager.calls)
@@ -165,7 +165,7 @@ def test_failed_stage_preserves_preview_pair_and_reuses_completed_cache(staged_s
     assert _stage_rows(staged_state.engine), 'Earlier successful stage cache was lost.'
     assert progress.read(1, 'knowledge')['state'] == ('cancelled' if failure == 'cancel' else 'failed')
     retry = StagedModel()
-    result = pilot.generate_knowledge_brief(staged_state.engine, 1, retry)
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, retry, publish=False)
     assert result['published'] is False
     assert len(retry.calls) > 0
     assert result['diagnostics']['synthesis_cache_hits'] >= 1
@@ -175,13 +175,13 @@ def test_failed_stage_preserves_preview_pair_and_reuses_completed_cache(staged_s
 
 def test_stage_cache_is_project_and_model_scoped(staged_state, monkeypatch):
     initial = StagedModel()
-    pilot.generate_knowledge_brief(staged_state.engine, 1, initial)
+    pilot.generate_knowledge_brief(staged_state.engine, 1, initial, publish=False)
     first_cache = len(_stage_rows(staged_state.engine))
     cached = StagedModel()
-    pilot.generate_knowledge_brief(staged_state.engine, 1, cached)
+    pilot.generate_knowledge_brief(staged_state.engine, 1, cached, publish=False)
     assert len(cached.calls) < len(initial.calls)
     alternate = StagedModel(model='model-b')
-    pilot.generate_knowledge_brief(staged_state.engine, 1, alternate)
+    pilot.generate_knowledge_brief(staged_state.engine, 1, alternate, publish=False)
     assert len(alternate.calls) == len(initial.calls)
     assert len(_stage_rows(staged_state.engine)) > first_cache
     # Keep the wire evidence identical so project isolation cannot pass merely
@@ -197,14 +197,14 @@ def test_stage_cache_is_project_and_model_scoped(staged_state, monkeypatch):
     monkeypatch.setattr(pilot, 'load_sources', lambda engine, pid, **kw:
                         deepcopy(other_bundle if pid == 2 else staged_state.bundles[1]))
     foreign = StagedModel(project_id=2)
-    pilot.generate_knowledge_brief(staged_state.engine, 2, foreign)
+    pilot.generate_knowledge_brief(staged_state.engine, 2, foreign, publish=False)
     assert len(foreign.calls) == len(initial.calls)
     assert _stage_rows(staged_state.engine, 2)
 
 
 @pytest.mark.parametrize('corruption', ['malformed', 'foreign_reference'])
 def test_invalid_cached_stage_is_rejected_without_replacing_saved_results(staged_state, corruption):
-    pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel(fail_at=999))
+    pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel(fail_at=999), publish=False)
     before, preview = _stored(staged_state.engine), _saved_preview(staged_state.engine)
     rows = _stage_rows(staged_state.engine)
     assert rows
@@ -218,7 +218,7 @@ def test_invalid_cached_stage_is_rejected_without_replacing_saved_results(staged
             row.evidence = [{'stage_response': raw}]
         db.commit()
     with pytest.raises(CodexError):
-        pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel())
+        pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel(), publish=False)
     assert _stored(staged_state.engine) == before
     assert _saved_preview(staged_state.engine) == preview
 
@@ -230,7 +230,7 @@ def test_indivisible_oversized_source_fails_without_altering_saved_results(stage
     before, preview = _stored(staged_state.engine), _saved_preview(staged_state.engine)
     manager = StagedModel()
     with pytest.raises(CodexError, match='(?i)(limit|large|size|shrink)'):
-        pilot.generate_knowledge_brief(staged_state.engine, 1, manager)
+        pilot.generate_knowledge_brief(staged_state.engine, 1, manager, publish=False)
     assert _stored(staged_state.engine) == before
     assert _saved_preview(staged_state.engine) == preview
     assert huge['items'][0]['statement'] == 'A single indivisible source. ' * 20_000
@@ -257,7 +257,7 @@ def test_expanding_intermediate_responses_fail_finitely_without_data_loss(staged
 
     manager = ExpandingModel()
     with pytest.raises(CodexError, match='(?i)(limit|large|size|shrink|reduce|converg|stage|bound)'):
-        pilot.generate_knowledge_brief(staged_state.engine, 1, manager)
+        pilot.generate_knowledge_brief(staged_state.engine, 1, manager, publish=False)
     assert len(manager.calls) <= 100
     assert _stored(staged_state.engine) == before
     assert _saved_preview(staged_state.engine) == preview
@@ -297,7 +297,7 @@ def test_stages_keep_acceptance_proposal_pair_as_original_citations(staged_state
         for source in (proposal, acceptance)]
     candidate['items'][1]['evidence'] = [deepcopy(first['evidence'][1])]
     monkeypatch.setattr(pilot, 'build_candidate', lambda *a, **kw: deepcopy(candidate))
-    result = pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel())
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, StagedModel(), publish=False)
     citations = result['brief']['sections']['overview'][0]['source_ids']
     assert proposal['id'] in citations and acceptance['id'] in citations
     originals = {source['id']: source for source in result['brief']['sources']}
@@ -336,7 +336,7 @@ def test_later_context_uses_exact_excerpt_records_across_stages(staged_state, mo
             return json.dumps(response)
 
     manager = CiteContext()
-    result = pilot.generate_knowledge_brief(staged_state.engine, 1, manager)
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, manager, publish=False)
     assert manager.context_seen
     assert reply['id'] in result['brief']['sections']['overview'][0]['source_ids']
     stored = next(source for source in result['brief']['sources'] if source['id'] == reply['id'])

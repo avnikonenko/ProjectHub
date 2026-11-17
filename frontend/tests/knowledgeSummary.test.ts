@@ -65,10 +65,11 @@ test('saving a result returns its durable matching summary through the existing 
 
 let server: ViteDevServer;
 let PublishedKnowledgeSummary: any;
+let EarlierKnowledgeResult: any;
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, entries: [] },
     server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-  PublishedKnowledgeSummary = (await server.ssrLoadModule('/src/KnowledgePage.tsx')).PublishedKnowledgeSummary;
+  ({ PublishedKnowledgeSummary, EarlierKnowledgeResult } = await server.ssrLoadModule('/src/KnowledgePage.tsx'));
 });
 after(async () => { await server?.close(); });
 
@@ -94,6 +95,38 @@ test('legacy and mismatched summary displays never render unrelated content', ()
   assert.equal(renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: legacy, renderBrief })), '');
   const mismatched = snapshot(brief('other-publication'));
   const html = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: mismatched, renderBrief }));
-  assert.match(html, /does not match this Knowledge publication/);
+  assert.match(html, /does not match this Knowledge version/);
   assert.doesNotMatch(html, /Detailed chemical requirements/);
+});
+
+test('earlier saved Knowledge retains content, sources and coverage as a read-only version', () => {
+  const result = { published: false, publication_id: 'knowledge-one',
+    knowledge: { ...snapshot(), generated_at: brief().generated_at, coverage: { limitations: ['Earlier bounded extraction.'] } },
+    brief: brief(), diagnostics: { duration_seconds: 5 }, baseline_brief: null };
+  const before = structuredClone(result);
+  let downloads = 0;
+  const contexts: string[] = [];
+  const html = renderToStaticMarkup(createElement(EarlierKnowledgeResult, {
+    result, onDownload: () => { downloads++; },
+    renderBrief: (value: ReturnType<typeof brief>, context: string) => {
+      contexts.push(context);
+      return createElement('blockquote', null, value.sources[0].text);
+    },
+  }));
+  assert.match(html, /Earlier Knowledge Summary/);
+  assert.match(html, /Saved result/);
+  assert.match(html, /Download JSON/);
+  assert.match(html, /role="tab"[^>]*>Summary/);
+  assert.match(html, /Knowledge records/);
+  assert.match(html, /Retain the molecular graph/);
+  assert.match(html, /Preserve chemistry/);
+  assert.match(html, /Earlier bounded extraction/);
+  assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /[Pp]ublished|[Uu]npublished|[Pp]review|Save Knowledge Summary|Use this result/);
+  assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
+  const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map(match => match[1].replace(/<[^>]*>/g, ' '));
+  assert(buttons.includes('Download JSON') && buttons.includes('Summary') && buttons.includes('Knowledge records'));
+  assert(buttons.every(label => !/Save|Use this|Generate|Delete|Remove/i.test(label)));
+  assert.deepEqual(contexts, ['preview']); // Internal renderer compatibility is unchanged.
+  assert.equal(downloads, 0);
+  assert.deepEqual(result, before);
 });

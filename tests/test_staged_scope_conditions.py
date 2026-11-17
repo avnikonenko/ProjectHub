@@ -25,7 +25,7 @@ class ScopeInspect(StagedModel):
 
 def test_combination_guidance_does_not_change_or_repeat_original_source_stages(staged_state, monkeypatch):
     first = ScopeInspect()
-    pilot.generate_knowledge_brief(staged_state.engine, 1, first)
+    pilot.generate_knowledge_brief(staged_state.engine, 1, first, publish=False)
     leaf_calls = sum(not _combining(payload) for payload in first.calls)
     assert leaf_calls > 1
     original_synthesize = pilot._synthesize
@@ -48,7 +48,7 @@ def test_combination_guidance_does_not_change_or_repeat_original_source_stages(s
 
     monkeypatch.setattr(pilot, '_synthesize', revised)
     second = ScopeInspect()
-    result = pilot.generate_knowledge_brief(staged_state.engine, 1, second)
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, second, publish=False)
     assert second.calls and all(_combining(payload) for payload in second.calls)
     assert result['diagnostics']['synthesis_cache_hits'] == leaf_calls
     assert result['diagnostics']['synthesis_requests'] == len(second.calls)

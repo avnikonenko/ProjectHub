@@ -32,7 +32,7 @@ def _latest(engine, project_id=1):
 
 def test_successful_preview_is_recoverable_without_changing_published_pair(prepared):
     before = _stored(prepared.engine)
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     assert _latest(prepared.engine) == result
     assert _stored(prepared.engine) == before
     assert _latest(prepared.engine, 2) is None
@@ -42,18 +42,18 @@ def test_successful_preview_is_recoverable_without_changing_published_pair(prepa
 
 
 def test_synthesis_failure_preserves_last_successful_preview(prepared):
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     before = _stored(prepared.engine)
     manager = FakeSynthesis()
     manager.fail = True
     with pytest.raises(CodexError, match='Mock synthesis unavailable'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, manager)
+        pilot.generate_knowledge_brief(prepared.engine, 1, manager, publish=False)
     assert _latest(prepared.engine) == previous
     assert _stored(prepared.engine) == before
 
 
 def test_cancellation_before_preview_commit_preserves_previous_preview(prepared, monkeypatch):
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     before = _stored(prepared.engine)
     original = pilot.stage_knowledge_preview
 
@@ -63,7 +63,7 @@ def test_cancellation_before_preview_commit_preserves_previous_preview(prepared,
 
     monkeypatch.setattr(pilot, 'stage_knowledge_preview', cancelling_stage)
     with pytest.raises(progress.GenerationCancelled):
-        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     assert _latest(prepared.engine) == previous
     assert _stored(prepared.engine) == before
     with Session(prepared.engine) as db:
@@ -71,20 +71,20 @@ def test_cancellation_before_preview_commit_preserves_previous_preview(prepared,
 
 
 def test_preview_commit_failure_preserves_previous_preview_and_published_pair(prepared):
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     before = _stored(prepared.engine)
     with prepared.engine.begin() as connection:
         connection.execute(text("CREATE TRIGGER fail_preview BEFORE INSERT ON generation_revisions "
                                 "WHEN NEW.kind='knowledge_preview' "
                                 "BEGIN SELECT RAISE(ABORT, 'injected preview failure'); END"))
     with pytest.raises(IntegrityError, match='injected preview failure'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     assert _latest(prepared.engine) == previous
     assert _stored(prepared.engine) == before
 
 
 def test_changed_sources_do_not_replace_last_successful_preview(prepared, monkeypatch):
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     before = _stored(prepared.engine)
     original = pilot.load_sources
     calls = 0
@@ -99,7 +99,7 @@ def test_changed_sources_do_not_replace_last_successful_preview(prepared, monkey
 
     monkeypatch.setattr(pilot, 'load_sources', changing_sources)
     with pytest.raises(CodexError, match='Sources changed during preview'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     assert _latest(prepared.engine) == previous
     assert _stored(prepared.engine) == before
 

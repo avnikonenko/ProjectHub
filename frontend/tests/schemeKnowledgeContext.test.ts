@@ -12,30 +12,30 @@ before(async () => {
 });
 after(async () => { await server?.close(); });
 
-test('published Knowledge metadata is recorded inside a closed disclosure', () => {
+test('saved Knowledge metadata uses version terminology inside a closed disclosure', () => {
   const html = renderToStaticMarkup(createElement(SchemeKnowledgeContext, { context: {
     status: 'published', publication_id: 'published-version-one', available_items: 69,
     included_items: 8, omitted_items: 61,
   } }));
-  assert.match(html, /^<details[^>]*><summary>Published Knowledge context<\/summary>/);
+  assert.match(html, /^<details[^>]*><summary>Saved Knowledge context<\/summary>/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
-  assert.match(html, /Knowledge publication<\/dt><dd>published-version-one/);
-  assert.match(html, /Items available in publication<\/dt><dd>69/);
+  assert.match(html, /Knowledge version<\/dt><dd>published-version-one/);
+  assert.match(html, /Items available in this version<\/dt><dd>69/);
   assert.match(html, /Items included in Scheme evidence<\/dt><dd>8/);
   assert.match(html, /Items omitted from Scheme evidence<\/dt><dd>61/);
-  assert.match(html, /unpublished previews stay separate/);
+  assert.doesNotMatch(html, /Published Knowledge context|unpublished previews/);
   assert.match(html, /Browsing saved details makes no AI requests/);
 });
 
 test('missing, absent and unavailable contexts do not invent a publication', () => {
   const missing = renderToStaticMarkup(createElement(SchemeKnowledgeContext));
   assert.match(missing, /not recorded for this saved Scheme/);
-  assert.doesNotMatch(missing, /Items available in publication|<dd>0<\/dd>/);
+  assert.doesNotMatch(missing, /Items available in this version|<dd>0<\/dd>/);
   const absent = renderToStaticMarkup(createElement(SchemeKnowledgeContext, { context: { status: 'absent' } }));
-  assert.match(absent, /No published Knowledge was available when this Scheme was generated/);
+  assert.match(absent, /No saved Knowledge was available when this Scheme was generated/);
   const unavailable = renderToStaticMarkup(createElement(SchemeKnowledgeContext, { context: { status: 'unavailable' } }));
-  assert.match(unavailable, /could not be read for this saved Scheme/);
-  assert.doesNotMatch(unavailable, /Knowledge publication<\/dt>/);
+  assert.match(unavailable, /could not be read for this Scheme/);
+  assert.doesNotMatch(unavailable, /Knowledge version<\/dt>/);
 });
 
 test('malformed metadata is safe and counts are never fabricated', () => {

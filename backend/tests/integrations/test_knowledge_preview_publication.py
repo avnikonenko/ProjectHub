@@ -23,7 +23,7 @@ from backend.tests.integrations.test_knowledge_brief import prepared, FakeSynthe
 def saved(prepared):
     # This primary source stands behind FakeSynthesis's fixture interpretation.
     prepared.bundle['sources'] = [{'id': 'source-one', 'role': 'user', 'text': 'Use SQLite.'}]
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     return prepared, result
 
 
@@ -120,7 +120,7 @@ def test_activation_retry_rejects_unexplained_changes_within_same_publication(sa
 def test_newer_preview_prevents_activating_an_older_result(saved):
     state, _ = saved
     before = _stored(state.engine)
-    pilot.generate_knowledge_brief(state.engine, 1, FakeSynthesis())
+    pilot.generate_knowledge_brief(state.engine, 1, FakeSynthesis(), publish=False)
     with pytest.raises(KnowledgePreviewConflict, match='selected saved result'):
         activate(saved)
     assert _stored(state.engine) == before
@@ -250,7 +250,7 @@ def test_repository_signature_required_and_checked(prepared, monkeypatch):
         db.commit()
     repository = {'sources': [], 'coverage': ['Fixture repository inspection']}
     monkeypatch.setattr(pilot, 'collect_repository_code', lambda path: deepcopy(repository))
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     before = _stored(prepared.engine)
     repository['coverage'].append('Changed repository')
     with pytest.raises(KnowledgePreviewConflict, match='Repository evidence changed'):

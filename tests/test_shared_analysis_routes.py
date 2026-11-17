@@ -71,7 +71,7 @@ def api(tmp_path, monkeypatch):
     engine.dispose()
 
 
-def test_canonical_preview_requires_confirmation_and_cannot_publish(api):
+def test_legacy_generation_alias_requires_confirmation_and_saves_automatically(api):
     client, calls = api.client, api.calls
     path = '/api/projects/1/codex/analysis/preview'
     assert client.post(path, json={}).status_code == 422
@@ -81,8 +81,8 @@ def test_canonical_preview_requires_confirmation_and_cannot_publish(api):
     assert calls == []
     response = client.post(path, json={'confirmed': True, 'model': 'selected-model', 'effort': 'high'})
     assert response.status_code == 200, response.text
-    assert response.json() == result(1)
-    assert calls == [('manager', 1), ('selection', 'selected-model', 'high'), ('generate', 1, True, False)]
+    assert response.json() == result(1, published=True)
+    assert calls == [('manager', 1), ('selection', 'selected-model', 'high'), ('generate', 1, True, True)]
     assert 'Only project 1 preferences.' not in ai_instructions()
 
 

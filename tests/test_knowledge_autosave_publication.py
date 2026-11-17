@@ -20,7 +20,7 @@ def test_autosave_publishes_current_records_and_summary_without_preview_or_activ
     monkeypatch.setattr(pilot, 'publish_saved_knowledge_preview',
                         lambda *args: pytest.fail('Normal auto-save needed a separate activation'))
 
-    response = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=True)
+    response = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
     saved, overview, revisions = _stored(prepared.engine)
     assert response['published'] is True
     assert saved == response['knowledge']

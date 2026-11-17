@@ -764,7 +764,7 @@ function ProjectWorkspace({
               generateSchemeAfter={bulkScheme === 'waiting'}
               renderBrief={(candidate, context) => <BriefPreview brief={candidate as Brief}
                 prefix={`${projectId}-knowledge-${context ?? 'preview'}-${candidate.project_state?.publication_id ?? 'legacy'}`}
-                perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Preview sources'} />} />
+                perspective="knowledge" sourceLabel={context === 'published' ? 'Knowledge Summary sources' : 'Earlier version sources'} />} />
             </div>
             {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
               <ProjectParameters base={base} generation={generation}

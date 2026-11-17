@@ -1,7 +1,8 @@
 """Small durable execution outcomes; never duplicates model output or prompts."""
 import re
+from datetime import datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
@@ -12,6 +13,9 @@ from ...services import require_project
 KINDS = ('brief', 'knowledge', 'scheme', 'qa', 'parameters')
 _STATES = {'running', 'waiting', 'completed', 'failed', 'cancelled', 'interrupted', 'skipped'}
 _TIMEOUT = re.compile(r'timed?\s*out|timeout|deadline|exceeded.{0,50}time\s*budget|did not finish generation within', re.I)
+_HISTORY_TIMESTAMP = re.compile(
+    r'[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]'
+    r'(?:\.[0-9]{1,9})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])?')
 
 
 def _metadata(row):
@@ -121,9 +125,59 @@ def saved_times(db, pid, *, with_presence=False):
     return (times, present) if with_presence else times
 
 
+def _legacy_knowledge_time(db, pid):
+    """Read identity scalars for a legacy result, never its large source bodies.
+
+    Existence in revision history is separate from current Knowledge. It neither
+    activates old evidence nor establishes that it could safely be saved today.
+    Full validation remains the historical result reader's responsibility.
+    """
+    snapshot = GenerationRevision.snapshot
+    row = db.execute(select(
+        GenerationRevision.generated_at.label('stored_at'),
+        func.json_extract(snapshot, '$.generated_at').label('snapshot_at'),
+        func.json_extract(snapshot, '$.result.publication_id').label('publication'),
+        func.json_extract(snapshot, '$.result.knowledge.project_id').label('project_id'),
+        func.json_extract(snapshot, '$.result.knowledge.publication_id').label('knowledge_publication'),
+        func.json_extract(snapshot, '$.result.knowledge.generated_at').label('knowledge_at'),
+        func.json_extract(snapshot, '$.result.brief.project_state.publication_id').label('brief_publication'),
+        func.json_extract(snapshot, '$.result.brief.generated_at').label('brief_at'),
+        func.json_type(snapshot, '$.result').label('result_type'),
+        func.json_type(snapshot, '$.result.knowledge').label('knowledge_type'),
+        func.json_type(snapshot, '$.result.brief').label('brief_type'),
+        func.json_type(snapshot, '$.result.published').label('published_type'),
+        func.json_type(snapshot, '$.result.knowledge.project_id').label('project_type'),
+        func.json_type(snapshot, '$.result.baseline_brief').label('baseline_type'),
+        func.json_type(snapshot, '$.result.diagnostics').label('diagnostics_type'),
+    ).where(GenerationRevision.project_id == pid, GenerationRevision.kind == 'knowledge_preview')
+        .order_by(GenerationRevision.id.desc()).limit(1)).mappings().first()
+    if row is None:
+        return None
+    timestamp, publication = row['stored_at'], row['publication']
+    if (row['result_type'] != 'object' or row['knowledge_type'] != 'object'
+            or row['brief_type'] != 'object' or row['published_type'] != 'false'
+            or row['project_type'] != 'integer' or row['project_id'] != pid
+            or row['baseline_type'] is None or row['diagnostics_type'] is None
+            or not isinstance(timestamp, str) or not timestamp.strip() or len(timestamp) > 100
+            or not isinstance(publication, str) or not publication.strip() or len(publication) > 200
+            or row['knowledge_publication'] != publication or row['brief_publication'] != publication
+            or any(row[key] != timestamp for key in ('snapshot_at', 'knowledge_at', 'brief_at'))):
+        return None
+    # Summary dates must also be readable by browser Date.parse. Restrict the
+    # legacy scalar to the extended ISO shape emitted by this application.
+    if not _HISTORY_TIMESTAMP.fullmatch(timestamp):
+        return None
+    try:
+        datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return timestamp
+
+
 def generation_summary(db, pid, *, live=None):
     require_project(db, pid)
     saved, present = saved_times(db, pid, with_presence=True)
+    history_at = None if present['knowledge'] else _legacy_knowledge_time(db, pid)
     views = []
     for kind in KINDS:
         attempt = read_latest(db, pid, kind)
@@ -143,13 +197,15 @@ def generation_summary(db, pid, *, live=None):
         if status.get('state') == 'running':
             state = 'running'
         elif attempt is None or (attempt['state'] == 'completed'):
-            state = 'saved' if present[kind] else 'not_generated'
+            state = ('saved' if present[kind] else 'earlier_result'
+                     if kind == 'knowledge' and history_at else 'not_generated')
         elif attempt['state'] == 'failed' and attempt['error_category'] == 'timeout':
             state = 'timed_out'
         else:
             state = attempt['state']
         views.append({'kind': kind, 'state': state, 'saved_at': saved[kind],
+                      'history_at': history_at if kind == 'knowledge' else None,
                       'latest_attempt': attempt,
                       'showing_previous': bool(present[kind] and state != 'saved'),
-                      'retryable': state in {'not_generated', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped'}})
+                      'retryable': state in {'not_generated', 'earlier_result', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped'}})
     return {'project_id': pid, 'views': views}

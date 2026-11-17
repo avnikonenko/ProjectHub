@@ -77,7 +77,7 @@ budget; selection and evidence-size limits still make the result partial.
 
 ## Use
 
-Open a project and select **Knowledge**. Published knowledge loads when that view
+Open a project and select **Knowledge**. Saved Knowledge loads when that view
 opens; returning to it refreshes the read-only snapshot. Use the single project-wide
 search bar to find saved knowledge and its evidence alongside other project records.
 Within Knowledge, text search includes the original scope. Use status, category, and
@@ -122,8 +122,8 @@ cancellation keeps the previous saved result and completed extraction caches.
 Choices, then starts Scheme only after Knowledge saves successfully. The server
 owns this follow-up, so changing the selected project does not discard it.
 Knowledge failure/cancellation skips Scheme. Single-view Scheme generation still
-uses the currently saved Knowledge. Earlier unsaved previews remain available in
-a collapsed historical section, with the legacy source and publication guards.
+uses the currently saved Knowledge. Earlier stored results remain available as
+read-only history. They are not silently made current when their sources have changed.
 
 The Overview tab has its own **Refresh Project Overview** action. Its general
 summary and revision history are separate from Knowledge Summary. Older detailed
@@ -131,8 +131,8 @@ summaries can be recovered from a matching saved publication/revision without
 rewriting the general Overview. Before replacing that Overview or deleting a
 backing revision, the legacy summary is copied into the existing Knowledge snapshot
 in the same transaction, preserving its publication identity and tags.
-Knowledge Summary appears on the Knowledge tab;
-an unpublished preview is labeled separately from the saved summary.
+Knowledge Summary appears on the Knowledge tab, with earlier versions available
+for reading. There are no manual publication controls.
 
 Successful generated results remain in existing project-scoped revisions and
 recover after refresh/restart. Returning to Knowledge refreshes saved results.

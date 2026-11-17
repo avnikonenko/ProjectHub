@@ -84,15 +84,24 @@ def test_scheme_followup_uses_committed_knowledge_and_a_fresh_manager(api):
         assert db.get(ProjectScheme, 2) is None and db.get(ProjectKnowledge, 2) is None
 
 
-def test_scheme_followup_is_explicit_and_never_attached_to_preview(api):
+def test_scheme_followup_is_explicit(api):
     response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(generate_scheme=False))
     assert response.status_code == 200 and 'scheme_requested' not in response.json()
     assert api.calls == [('knowledge', True)] and len(api.choices) == 1
-    api.calls.clear()
-    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(publish=False))
-    assert response.status_code == 422 and api.calls == []
+
+
+@pytest.mark.parametrize('legacy_publish', [None, False])
+def test_scheme_followup_uses_autosaved_knowledge_even_for_legacy_save_flag(api, legacy_publish):
+    payload = body(publish=legacy_publish)
+    if legacy_publish is None:
+        payload.pop('publish')
+    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json()['published'] is True
+    assert api.calls == [('knowledge', True), ('scheme', 'new-knowledge')]
+    before = list(api.calls)
     response = api.client.post('/api/projects/1/codex/analysis/preview', json=body())
-    assert response.status_code == 422 and api.calls == []
+    assert response.status_code == 422 and api.calls == before
     assert api.client.post('/api/projects/999/codex/knowledge/brief', json=body()).status_code == 404
 
 

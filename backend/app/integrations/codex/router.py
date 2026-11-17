@@ -101,14 +101,9 @@ class GenerationInput(ModelInput):
 
 
 class KnowledgeGenerationInput(GenerationInput):
-    publish: bool = Field(default=False, strict=True)
+    # Retained for older clients; public generation always saves its result.
+    publish: bool = Field(default=True, strict=True)
     generate_scheme: bool = Field(default=False, strict=True)
-
-    @model_validator(mode='after')
-    def followup_requires_saved_knowledge(self):
-        if self.generate_scheme and not self.publish:
-            raise ValueError('Scheme follow-up requires publishing the generated Knowledge.')
-        return self
 
 
 class KnowledgePublicationInput(Input):
@@ -493,7 +488,7 @@ def get_knowledge_preview(project_id: int, db: DB):
 def generate_analysis_preview(project_id: int, body: GenerationInput, request: Request, db: DB,
                               background_tasks: BackgroundTasks):
     return knowledge_brief(project_id,
-        KnowledgeGenerationInput(**body.model_dump(), publish=False), request, db, background_tasks)
+        KnowledgeGenerationInput(**body.model_dump()), request, db, background_tasks)
 
 
 def _record_scheme_followup_failure(engine, project_id, previous_started_at, error):
@@ -566,7 +561,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         if body.generate_scheme:
             dependency_token = attempts.queue_dependency(request.app.state.engine, project_id)
         with use_project_instructions(instructions):
-            result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=body.publish)
+            result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:
             if result.get('published') is not True:
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')

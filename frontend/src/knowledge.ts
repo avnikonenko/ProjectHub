@@ -78,7 +78,7 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
     let summaryError: string | undefined;
     if (rawSummary !== undefined && rawSummary !== null) {
       try { summary = parseKnowledgeSummary(rawSummary, projectId, value.publication_id); }
-      catch { summaryError = 'The saved Knowledge Summary is unavailable or does not match this Knowledge publication. Records remain available.'; }
+      catch { summaryError = 'The saved Knowledge Summary is unavailable or does not match this Knowledge version. Records remain available.'; }
     }
     const diagnostics = parseGenerationDiagnostics(rawDiagnostics);
     snapshot = { ...stored, coverage: coverage(value.coverage),

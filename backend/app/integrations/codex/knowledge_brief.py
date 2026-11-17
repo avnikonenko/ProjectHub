@@ -514,7 +514,7 @@ def publish_saved_knowledge_preview(engine, project_id, publication_id):
         job_lock.release()
 
 
-def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
+def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
     job_lock = generation_lock.for_job(project_id, 'knowledge')
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')

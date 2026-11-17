@@ -11,7 +11,7 @@ from backend.app.integrations.codex import router as routes
 from backend.app.models import Project
 
 
-def test_preview_is_opt_in_and_general_overview_route_is_independent(tmp_path, monkeypatch):
+def test_knowledge_saves_automatically_and_general_overview_route_is_independent(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add(Project(name='One'))
@@ -39,10 +39,11 @@ def test_preview_is_opt_in_and_general_overview_route_is_independent(tmp_path, m
         assert calls == [('overview',)]
         assert client.post('/api/projects/1/codex/knowledge/brief', json={}).status_code == 422
         body = {'confirmed': True, 'model': 'mock', 'effort': 'low'}
-        assert client.post('/api/projects/1/codex/knowledge/brief', json=body).json()['published'] is False
+        assert client.post('/api/projects/1/codex/knowledge/brief', json=body).json()['published'] is True
         assert client.post('/api/projects/1/codex/knowledge/brief', json={**body, 'publish': True}).json()['published'] is True
+        assert client.post('/api/projects/1/codex/knowledge/brief', json={**body, 'publish': False}).json()['published'] is True
         assert client.post('/api/projects/2/codex/knowledge/brief', json=body).status_code == 404
-        assert calls == [('overview',), ('pilot', False), ('pilot', True)]
+        assert calls == [('overview',), ('pilot', True), ('pilot', True), ('pilot', True)]
         assert client.get('/api/projects/1/codex/generation/status?kind=knowledge').status_code == 200
     engine.dispose()
 

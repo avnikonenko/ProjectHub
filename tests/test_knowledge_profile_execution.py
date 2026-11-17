@@ -135,7 +135,7 @@ def settings(monkeypatch, profile='quality'):
 def test_saved_preview_run_diagnostics_are_detached_and_do_not_change_published_pair(prepared, monkeypatch):
     settings(monkeypatch)
     before = _stored(prepared.engine)
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     expected = deepcopy(result['diagnostics'])
     expected_records = deepcopy(result['knowledge']['diagnostics'])
     assert expected_records['evidence_coverage']['repository']['status'] == 'not_used'
@@ -161,12 +161,12 @@ def test_saved_preview_run_diagnostics_are_detached_and_do_not_change_published_
 
 def test_failed_run_keeps_usage_diagnostics_and_previous_preview(prepared, monkeypatch):
     settings(monkeypatch)
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     before = _stored(prepared.engine)
     manager = RecordedSynthesis()
     manager.fail = True
     with pytest.raises(CodexError, match='Mock synthesis unavailable'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, manager)
+        pilot.generate_knowledge_brief(prepared.engine, 1, manager, publish=False)
     state = progress.read(1, 'knowledge')
     assert state['state'] == 'failed'
     assert state['diagnostics']['model_requests'] == 1
@@ -178,7 +178,7 @@ def test_failed_run_keeps_usage_diagnostics_and_previous_preview(prepared, monke
 
 def test_late_save_failure_reports_current_duration_not_earlier_candidate_duration(prepared, monkeypatch):
     settings(monkeypatch)
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     clock = {'now': 100.0}
     monkeypatch.setattr(pilot.time, 'monotonic', lambda: clock['now'])
     original = pilot.stage_knowledge_preview
@@ -191,7 +191,7 @@ def test_late_save_failure_reports_current_duration_not_earlier_candidate_durati
 
     monkeypatch.setattr(pilot, 'stage_knowledge_preview', fail_after_staging)
     with pytest.raises(CodexError, match='Late preview save failed'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     assert progress.read(1, 'knowledge')['diagnostics']['duration_seconds'] == 5
     with Session(prepared.engine) as db:
         assert read_knowledge_preview(db, 1) == previous
@@ -199,7 +199,7 @@ def test_late_save_failure_reports_current_duration_not_earlier_candidate_durati
 
 def test_cancellation_keeps_diagnostics_and_cannot_save_a_replacement(prepared, monkeypatch):
     settings(monkeypatch)
-    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+    previous = pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     before = _stored(prepared.engine)
     original = pilot.stage_knowledge_preview
 
@@ -209,7 +209,7 @@ def test_cancellation_keeps_diagnostics_and_cannot_save_a_replacement(prepared, 
 
     monkeypatch.setattr(pilot, 'stage_knowledge_preview', cancel_before_commit)
     with pytest.raises(progress.GenerationCancelled):
-        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     state = progress.read(1, 'knowledge')
     assert state['state'] == 'cancelled'
     assert state['diagnostics']['token_usage']['total_tokens'] == 120
@@ -240,7 +240,7 @@ def test_bad_profile_does_not_mutate_published_data_or_leave_generation_locked(p
     state = settings(monkeypatch, 'unsupported-profile')
     before = _stored(prepared.engine)
     with pytest.raises(CodexError, match='profile and worker settings'):
-        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())
+        pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)
     assert _stored(prepared.engine) == before
     state['generation_profile'] = 'quality'
-    assert pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis())['published'] is False
+    assert pilot.generate_knowledge_brief(prepared.engine, 1, RecordedSynthesis(), publish=False)['published'] is False

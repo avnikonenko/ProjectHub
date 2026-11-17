@@ -5,9 +5,10 @@ import { projectGenerationKinds, type GenerationRetryView, type ProjectGeneratio
 import './generationResults.css';
 
 export type GenerationResultState = 'saved' | 'not_generated' | 'running' | 'waiting' | 'failed'
-  | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped';
+  | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped' | 'earlier_result';
 export type GenerationResultView = GenerationRetryView & {
   state: GenerationResultState;
+  history_at?: string | null;
   showing_previous: boolean;
   latest_attempt: { state: string; started_at?: string | null; finished_at?: string | null; error?: string | null; saves_result?: boolean } | null;
 };
@@ -23,6 +24,7 @@ const labels: Record<ProjectGenerationKind, string> = {
 const states: Record<GenerationResultState, string> = {
   saved: 'Saved', not_generated: 'Not generated', running: 'Running', waiting: 'Waiting for Knowledge',
   failed: 'Failed', timed_out: 'Timed out', cancelled: 'Cancelled', interrupted: 'Interrupted', skipped: 'Skipped',
+  earlier_result: 'Earlier result available',
 };
 
 export function initializeGenerationSelection(previous: GenerationSelection | null, data: GenerationResultsData): GenerationSelection {
@@ -47,6 +49,12 @@ export function parseGenerationResults(raw: unknown, projectId: number): Generat
         || typeof value.showing_previous !== 'boolean' || typeof value.retryable !== 'boolean')
       throw new Error('Generation status contains an invalid or duplicate view.');
     seen.add(String(value.kind));
+    const historyAt = value.history_at ?? null;
+    if ((historyAt !== null && (value.kind !== 'knowledge' || !text(historyAt, 100)
+        || !historyAt.trim() || !Number.isFinite(Date.parse(historyAt))))
+        || (value.state === 'earlier_result' && (value.kind !== 'knowledge' || historyAt === null
+          || value.saved_at !== null || value.showing_previous)))
+      throw new Error('The earlier generation result is invalid.');
     const attempt = value.latest_attempt;
     if (attempt !== null && (!object(attempt) || !text(attempt.state, 100)
         || (attempt.project_id !== undefined && attempt.project_id !== projectId)
@@ -54,7 +62,7 @@ export function parseGenerationResults(raw: unknown, projectId: number): Generat
         || !nullableText(attempt.started_at) || !nullableText(attempt.finished_at) || !nullableText(attempt.error)
         || (attempt.saves_result !== undefined && typeof attempt.saves_result !== 'boolean')))
       throw new Error('The latest generation attempt is invalid.');
-    return { kind: value.kind, state: value.state, saved_at: value.saved_at,
+    return { kind: value.kind, state: value.state, saved_at: value.saved_at, history_at: historyAt,
       showing_previous: value.showing_previous, retryable: value.retryable, latest_attempt: attempt } as GenerationResultView;
   });
   return { project_id: projectId, views: projectGenerationKinds.map(kind => views.find(view => view.kind === kind)!) };
@@ -89,6 +97,7 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
     <div className="generation-result-description">
       {view.showing_previous ? <small>Showing the earlier saved result{dateLabel(view.saved_at) ? ` · ${dateLabel(view.saved_at)}` : ''}.</small>
         : view.saved_at ? <small>Saved {dateLabel(view.saved_at) ?? 'result available'}.</small>
+          : view.history_at ? <small>Earlier saved version · {dateLabel(view.history_at)}.</small>
           : view.state !== 'saved' && <small>No saved result yet.</small>}
       {view.latest_attempt && view.state !== 'saved' && view.state !== 'running' && view.state !== 'waiting' &&
         <details><summary>Attempt details</summary>

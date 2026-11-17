@@ -34,7 +34,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
-- Knowledge generation now validates and saves its summary and records automatically, with no separate Use/Save step. Previous results survive failures and cancellations; revisions remain available. Scheme follow-up is server-owned and is skipped if Knowledge fails. Historical unsaved previews remain collapsed and legacy preview APIs stay compatible.
+- Knowledge generation always validates and saves its summary and records automatically, including legacy generation aliases, with no manual publication controls. Previous results survive failures and cancellations; older stored results remain read-only history with their availability shown separately from current Knowledge. Scheme follow-up is server-owned and is skipped if Knowledge fails.
 
 - Refocus Parameters & Trade-offs as Implementation Choices & Limits: surface code-backed caps, filters, fallbacks and unsupported paths with separate definition and usage locations. Keep ordinary defaults and older saved results available; code links open saved evidence without losing project navigation.
 

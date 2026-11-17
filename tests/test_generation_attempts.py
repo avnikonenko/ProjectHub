@@ -16,6 +16,117 @@ START = '2026-11-17T00:00:00+00:00'
 NEXT = '2026-11-17T01:00:00+00:00'
 
 
+def add_legacy_knowledge(db, pid=1, timestamp=START, change=None, payload=''):
+    publication = f'legacy-{pid}'
+    snapshot = {'generated_at': timestamp, 'result': {
+        'published': False, 'publication_id': publication,
+        'knowledge': {'project_id': pid, 'publication_id': publication,
+                      'generated_at': timestamp, 'items': [], 'payload': payload},
+        'brief': {'generated_at': timestamp, 'project_state': {'publication_id': publication}},
+        'baseline_brief': None, 'diagnostics': {},
+    }}
+    if change:
+        change(snapshot)
+    db.add(GenerationRevision(project_id=pid, kind='knowledge_preview',
+                              generated_at=timestamp, snapshot=snapshot))
+    db.commit()
+
+
+def knowledge_view(db, pid=1, **kwargs):
+    return next(row for row in attempts.generation_summary(db, pid, **kwargs)['views']
+                if row['kind'] == 'knowledge')
+
+
+def test_legacy_knowledge_is_earlier_history_not_current_and_survives_restart(engine):
+    with Session(engine) as db:
+        add_legacy_knowledge(db)
+        view = knowledge_view(db)
+        assert view['state'] == 'earlier_result' and view['history_at'] == START
+        assert view['saved_at'] is None and not view['showing_previous'] and view['retryable']
+        assert db.get(ProjectKnowledge, 1) is None
+        assert all(row['history_at'] is None for row in attempts.generation_summary(db, 1)['views']
+                   if row['kind'] != 'knowledge')
+        assert knowledge_view(db, 2)['state'] == 'not_generated'
+    engine.dispose()
+    with Session(engine) as db:
+        assert knowledge_view(db)['history_at'] == START
+        assert db.get(ProjectKnowledge, 1) is None
+
+
+def test_current_knowledge_takes_precedence_over_legacy_history_even_without_timestamp(engine):
+    with Session(engine) as db:
+        add_legacy_knowledge(db)
+        db.add(ProjectKnowledge(project_id=1, snapshot={'project_id': 1, 'items': []}))
+        db.commit()
+        view = knowledge_view(db)
+        assert view['state'] == 'saved' and view['history_at'] is None
+        assert not view['retryable']
+
+
+@pytest.mark.parametrize('state,error,expected', [
+    ('completed', None, 'earlier_result'), ('failed', 'Source changed', 'failed'),
+    ('failed', 'Request timed out', 'timed_out'), ('cancelled', None, 'cancelled'),
+    ('interrupted', None, 'interrupted'), ('skipped', None, 'skipped'),
+])
+def test_legacy_history_does_not_hide_latest_attempt_outcome(engine, state, error, expected):
+    with Session(engine) as db:
+        add_legacy_knowledge(db)
+    attempts.start(engine, 1, 'knowledge', NEXT)
+    attempts.finish(engine, 1, 'knowledge', NEXT, state=state, error=error)
+    with Session(engine) as db:
+        view = knowledge_view(db)
+        assert view['state'] == expected and view['history_at'] == START
+        assert view['saved_at'] is None
+        assert knowledge_view(db, live={'knowledge': {'state': 'running'}})['state'] == 'running'
+
+
+@pytest.mark.parametrize('change', [
+    lambda s: s['result'].update(published=True),
+    lambda s: s['result'].update(published=0),
+    lambda s: s['result']['knowledge'].update(project_id=2),
+    lambda s: s['result']['knowledge'].update(project_id=True),
+    lambda s: s['result']['knowledge'].update(publication_id='foreign'),
+    lambda s: s['result']['brief']['project_state'].update(publication_id='foreign'),
+    lambda s: s['result']['brief'].update(generated_at=NEXT),
+    lambda s: s.update(generated_at=NEXT),
+    lambda s: s['result'].pop('diagnostics'),
+    lambda s: s.update(result=[]),
+])
+def test_incoherent_legacy_result_does_not_claim_available_history(engine, change):
+    with Session(engine) as db:
+        add_legacy_knowledge(db, change=change)
+        view = knowledge_view(db)
+        assert view['state'] == 'not_generated' and view['history_at'] is None
+
+
+@pytest.mark.parametrize('timestamp', ['not-a-date', '2026-99-99T00:00:00Z', '20261117T000000', '',
+                                       '2026-11-17T00:00:00+00:99', '2026-11-17T00:00:00+24:00'])
+def test_invalid_legacy_history_timestamp_does_not_break_summary_dates(engine, timestamp):
+    with Session(engine) as db:
+        add_legacy_knowledge(db, timestamp=timestamp)
+        assert knowledge_view(db)['history_at'] is None
+
+
+def test_legacy_summary_reads_only_scalar_metadata_and_never_activates_or_returns_payload(engine):
+    huge = 'PRIVATE_HISTORY_BODY ' * 100000
+    with Session(engine) as db:
+        add_legacy_knowledge(db, payload=huge)
+    statements = []
+    def observed(connection, cursor, statement, *args):
+        statements.append(statement)
+    event.listen(engine, 'before_cursor_execute', observed)
+    try:
+        with Session(engine) as db:
+            view = knowledge_view(db)
+            assert view['state'] == 'earlier_result'
+            assert db.get(ProjectKnowledge, 1) is None
+    finally:
+        event.remove(engine, 'before_cursor_execute', observed)
+    assert not any(sql.startswith(('INSERT', 'UPDATE', 'DELETE')) for sql in statements)
+    assert not any('generation_revisions.snapshot \n' in sql for sql in statements)
+    assert huge not in str(view)
+
+
 @pytest.fixture
 def engine(tmp_path):
     engine, _ = initialize(tmp_path)

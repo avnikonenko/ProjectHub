@@ -114,7 +114,7 @@ class FakeSynthesis:
 
 def test_preview_preserves_published_pair_but_keeps_successful_extraction(prepared):
     before = _stored(prepared.engine)
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)
     assert result['published'] is False
     assert result['knowledge']['publication_id'] == result['brief']['project_state']['publication_id'] == result['publication_id']
     assert _stored(prepared.engine) == before
@@ -197,7 +197,7 @@ def test_final_generation_failure_preserves_pair_and_completed_cache(prepared):
     with Session(prepared.engine) as db:
         assert db.get(ProjectHistoryBatch, (1, 'successful-extraction')) is not None
     # A failed run must release its shared lock so the next request can proceed.
-    assert pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis())['published'] is False
+    assert pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)['published'] is False
 
 
 @pytest.mark.parametrize('change', [
@@ -261,7 +261,7 @@ def test_unavailable_historical_choices_are_retained_with_visible_coverage(prepa
             for name in ('overview', 'architecture', 'current_status'):
                 sections[name] = [{'text': 'Source evidence needs checking.', 'source_ids': sources, 'classification': 'reported'}]
             return json.dumps({'sections': sections, 'project_map': {'nodes': [], 'edges': []}})
-    result = pilot.generate_knowledge_brief(prepared.engine, 1, Synthesis())
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, Synthesis(), publish=False)
     assert result['knowledge']['items'][0]['design_status'] == 'AGREED'
     assert any('need rechecking' in line for line in result['brief']['coverage'])
 

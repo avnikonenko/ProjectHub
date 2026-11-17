@@ -122,7 +122,7 @@ def test_old_or_malformed_optional_metadata_is_not_invented(tmp_path, metadata, 
 def test_knowledge_preview_and_separate_published_summary_keep_same_recorded_run(prepared):
     manager = FakeSynthesis()
     original_metadata = deepcopy(manager.generation_metadata)
-    result = knowledge_brief.generate_knowledge_brief(prepared.engine, 1, manager)
+    result = knowledge_brief.generate_knowledge_brief(prepared.engine, 1, manager, publish=False)
     assert result['brief']['diagnostics'] == result['diagnostics']
     recorded = result['knowledge']['diagnostics']
     assert {key: value for key, value in recorded.items() if key != 'evidence_coverage'} == {
