@@ -14,15 +14,12 @@ Use it for software, research, or other projects with a growing conversation his
 
 ## What you can do
 
-- **Connect your project history.** Link terminal Codex sessions and import public ChatGPT shared conversations. Browse saved messages; inherited messages in forked sessions are collapsed without deleting the originals.
-- **Understand where the project stands.** Project Overview gives the general picture. Knowledge Summary explains extracted choices, requirements and their reasons. Open the **Generation** tab to select what to refresh. Validated results save automatically, with links to original sources and previous versions.
-- **Remember choices and their reasons.** Extract requirements, approaches, and decisions discussed in conversations into searchable Knowledge and AI Q&A. Knowledge retains documented parameter defaults, reported overrides, and project-specific trade-offs. Ask questions such as “Why did we choose this approach?” or “What have we already tried?”
-- **Browse by topic.** Use **Generate AI tags** to organize saved Knowledge or Q&A independently of main generation. Type a tag or browse descriptions and item counts to filter saved results. Browsing tags makes no AI request; tags organize records without changing their content or evidence.
-- **See how the project works.** Select **Scheme** in the **Generation** tab to generate architecture and workflow diagrams. The Scheme tab shows diagrams, dependencies and code structure. Diagrams distinguish observed, proposed and uncertain components.
-- **Keep frequent projects close.** Pin projects in the sidebar to keep them at the top.
-- **Find information and keep follow-ups.** Search conversations, notes, tasks, and generated information. Save useful passages as Markdown notes; bulk-add, pin, complete, or mark TODOs as not planned.
-- **Connect the history to the code.** Link a local Git repository to see its remote address, local and remote-tracking branches, tracked and untracked file counts, and recent commits. Compare the current branch with its saved upstream. View public GitHub issues. Repository inspection is read-only.
-- **Continue with context.** Review project questions and prepare a context preview to send to a Codex session after confirmation.
+- **Connect conversations.** Link terminal Codex sessions, import public ChatGPT chats, and browse saved messages with inherited duplicates collapsed.
+- **Get up to speed.** Read the Project Overview for a quick update. Browse decisions, rationale, and trade-offs in Knowledge and generated answers in AI Q&A.
+- **Generate and organize.** Refresh selected views from **Generation**. Saved results retain source links and previous versions. Generate AI tags separately to filter Knowledge and Q&A.
+- **Explore the code.** Use Scheme to see architecture, workflows, and dependencies. Link a Git repository for read-only branch comparisons, recent commits, and public GitHub issues.
+- **Keep track of work.** Pin projects, search saved content, capture Markdown notes, and manage TODOs.
+- **Continue with context.** Use Ask Project for follow-up questions, or preview project context before sending it to a Codex session.
 
 Choose the Codex account, model, reasoning effort, and response instructions for each project. In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.
 
