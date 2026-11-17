@@ -1,7 +1,7 @@
 # ProjectHub
 
 [![CI status](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/avnikonenko/ProjectHub/actions/workflows/ci.yml)
-[![Docs: Guides](https://img.shields.io/badge/docs-guides-2f7d5a)](docs/README.md)
+[![Docs: Guides](https://img.shields.io/badge/docs-guides-2f7d5a)](https://projecthub.readthedocs.io/en/latest/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-007ec6)](LICENSE)
 
 <img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
@@ -126,6 +126,6 @@ See the [terminal-agent guide](docs/TERMINAL_AGENTS.md) for installation options
 
 Settings default to `~/.config/projecthub/config.toml`; project data to `~/.local/share/projecthub`. Back up the data directory to preserve saved history, notes, and tasks.
 
-[User guides and developer documentation](docs/README.md) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
+[User guides and developer documentation](https://projecthub.readthedocs.io/en/latest/) · [Changelog](CHANGELOG.md) · [MIT license](LICENSE)
 
 Made with Codex :)
