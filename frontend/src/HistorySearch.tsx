@@ -71,7 +71,10 @@ export function HistorySearch({
   }
 
   return (
-    <section className="card history-search" aria-busy={!!busy}>
+    <details className="card history-search source-diagnostics" aria-busy={!!busy}>
+      <summary className="source-disclosure">Source details
+        {(syncError || error) ? ' · Needs attention' : indexing ? ' · Refreshing…' : ''}
+      </summary>
       <div className="section-title">
         <h2>Conversation index</h2>
         <button className="secondary" disabled={!!busy} onClick={refreshIndex}>
@@ -89,6 +92,6 @@ export function HistorySearch({
       </p>
       <Feedback tone="error">{syncError}</Feedback>
       <Feedback tone="error">{error}</Feedback>
-    </section>
+    </details>
   );
 }

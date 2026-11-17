@@ -1801,7 +1801,7 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, sessionTitle, onClos
         <button className="secondary" onClick={onClose}>Browse recent turns</button>
       </div>
       <ErrorBox error={error} />
-      {error && <p>Use Index Codex history or Refresh Codex index above to include newly saved turns, then this link will retry.</p>}
+      {error && <p>Open Source details above and refresh the Codex index to include newly saved turns, then this link will retry.</p>}
       {loading && <Feedback>Loading the requested turn…</Feedback>}
       {turn && (
         <>

@@ -24,6 +24,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Changed
 
+- Collapse conversation index status and manual refresh into Source details in History. Automatic sync continues, with a compact attention indicator when a sync or refresh fails.
+
 - Keep Scheme diagrams focused on project capabilities rather than CLI wrappers and storage details. Read feature guides and preserve their original purpose, prioritize current application evidence over backups, and include source-linked Conda/pip environment dependencies with CPU/GPU constraints. Separate CI, build and documentation requirements from runtime declarations.
 
 - Replace Scheme's 24-file inspection cap with bounded bytes and time. Keep entrypoint priorities, separate the directory-display limit from inspection, report budget omissions, and prevent oversized evidence packages.
