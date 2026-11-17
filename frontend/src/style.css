@@ -1686,15 +1686,10 @@ a:focus-visible {
   border-block-end: 1px solid var(--border);
 }
 .repository-locations {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  column-gap: .4rem;
   margin-block-end: 0;
 }
 .repository-locations > div {
-  grid-column: 1 / -1;
-  grid-template-columns: subgrid;
-  column-gap: inherit;
+  grid-template-columns: minmax(0, 1fr);
 }
 .repository-locations + .repository-facts { margin-block-start: 0; }
 .repository-facts :is(dt, dd) { margin: 0; overflow-wrap: anywhere; }
@@ -1703,5 +1698,5 @@ a:focus-visible {
 .repository-sync summary { cursor: pointer; }
 .repository-sync p { margin-bottom: .35rem; }
 @container (max-width: 14rem) {
-  .repository-facts > div, .repository-locations { grid-template-columns: minmax(0, 1fr); }
+  .repository-facts > div { grid-template-columns: minmax(0, 1fr); }
 }

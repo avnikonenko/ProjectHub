@@ -42,11 +42,12 @@ test('an unavailable comparison is distinct from a matching remote', () => {
   assert.doesNotMatch(render({}), /Branch sync/);
 });
 
-test('the remote code address appears below the local path', () => {
+test('the remote address comes first, followed by the local path and branch details', () => {
   const address = 'https://github.com/example/repository';
   const html = render({ remote_repository: { name: 'origin', address, web_url: address } });
   assert.match(html, /<dt>Local<\/dt><dd><code class="repository">\/example/);
   assert.match(html, /<dt title="origin">Remote<\/dt>/);
+  assert.match(html, /<dt title="origin">Remote<\/dt>[\s\S]*<dt>Local<\/dt>[\s\S]*<dt>Branch<\/dt>/);
   assert.match(html, /href="https:\/\/github\.com\/example\/repository" target="_blank" rel="noopener noreferrer"/);
   assert.doesNotMatch(render({ remote_repository: { name: 'origin', address: 'ssh://example.test/code.git' } }), /<a\b/);
 });

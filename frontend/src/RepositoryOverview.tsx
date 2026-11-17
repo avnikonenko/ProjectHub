@@ -117,13 +117,13 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
     <div className="repository-overview">
       <h4>Git repository</h4>
       <dl className="repository-facts repository-locations">
-        <div><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
         {remote && <div>
           <dt title={remote.name || undefined}>Remote</dt>
           <dd><code className="repository">{remote.web_url
             ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
             : remote.address}</code></dd>
         </div>}
+        <div><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
       </dl>
       {status && <dl className="repository-facts">
           <div><dt>Branch</dt><dd>{status.branch === null ? 'Detached HEAD' : <code>{status.branch}</code>}</dd></div>
