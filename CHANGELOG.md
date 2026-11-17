@@ -6,6 +6,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ### Added
 
+- Scheme excerpt budget in Settings with 40,000, 60,000, and 80,000 character presets. Coverage points to this setting when the excerpt cap leaves out files.
+
 - List skipped Scheme files with their individual omission reasons in coverage details.
 
 - Persistent generation results distinguish failed, timed-out, cancelled, interrupted and dependency-skipped attempts from earlier saved output. Checkboxes and Regenerate selected let users choose individual views; Retry unfinished runs only unsuccessful or missing views, reusing caches and preserving Knowledge-before-Scheme ordering. Abandoned work is marked Interrupted after restart. Reloading while Scheme waits for Knowledge continues tracking the queued job and reloads its saved result on completion.

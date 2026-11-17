@@ -19,6 +19,9 @@ class ConfigError(ValueError):
 
 DEFAULT_EXTRACTION_WORKERS = 10
 MAX_EXTRACTION_WORKERS = 2_147_483_647
+SCHEME_SOURCE_CHARS_OPTIONS = (40_000, 60_000, 80_000)
+DEFAULT_SCHEME_SOURCE_CHARS = SCHEME_SOURCE_CHARS_OPTIONS[0]
+_SCHEME_SOURCE_CHARS_ENV = 'PROJECTHUB_SCHEME_SOURCE_CHARS'
 
 
 _settings_write_lock = threading.Lock()
@@ -38,6 +41,8 @@ generation_budget = 900
 extraction_workers = {DEFAULT_EXTRACTION_WORKERS}
 # Knowledge-generation quality/cost trade-off: quality, balanced, or economy.
 generation_profile = "quality"
+# Total source excerpt characters available to Scheme.
+scheme_source_chars = {DEFAULT_SCHEME_SOURCE_CHARS}
 # Select an existing Codex sign-in directory; ProjectHub never copies credentials.
 # codex_home = "/absolute/path/to/existing/codex-home"
 
@@ -58,17 +63,20 @@ class Settings:
     history_sync_interval: int = 60
     extraction_workers: int = DEFAULT_EXTRACTION_WORKERS
     generation_profile: str = 'quality'
+    scheme_source_chars: int = DEFAULT_SCHEME_SOURCE_CHARS
 
     def apply_environment(self):
         workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
         budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
         profile = _profile(self.generation_profile)
+        scheme_chars = _scheme_source_chars(self.scheme_source_chars)
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
         os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(budget)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
         os.environ['PROJECTHUB_GENERATION_PROFILE'] = profile
+        os.environ[_SCHEME_SOURCE_CHARS_ENV] = str(scheme_chars)
         os.environ['PROJECTHUB_HISTORY_AUTO_SYNC'] = str(self.history_auto_sync).lower()
         os.environ['PROJECTHUB_HISTORY_SYNC_INTERVAL'] = str(self.history_sync_interval)
         if self.codex_home is not None:
@@ -120,6 +128,20 @@ def _profile(value):
         raise ConfigError('ai.generation_profile must be quality, balanced or economy.') from exc
 
 
+def _scheme_source_chars(value):
+    if isinstance(value, str) and value in {str(option) for option in SCHEME_SOURCE_CHARS_OPTIONS}:
+        value = int(value)
+    if type(value) is not int or value not in SCHEME_SOURCE_CHARS_OPTIONS:
+        raise ConfigError('ai.scheme_source_chars must be 40000, 60000 or 80000.')
+    return value
+
+
+def scheme_source_chars():
+    """Read the effective excerpt budget for a new Scheme inspection."""
+    override = os.environ.get(_SCHEME_SOURCE_CHARS_ENV)
+    return _scheme_source_chars(override) if override is not None else load_settings().scheme_source_chars
+
+
 def load_settings(environ: Mapping[str, str] | None = None):
     env = os.environ if environ is None else environ
     path = config_path(env)
@@ -132,7 +154,7 @@ def load_settings(environ: Mapping[str, str] | None = None):
         data = {}
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
-    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile'},
+    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile', 'scheme_source_chars'},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -156,6 +178,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
         extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS)),
                                     'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS),
         generation_profile=_profile(env.get('PROJECTHUB_GENERATION_PROFILE', ai.get('generation_profile', 'quality'))),
+        scheme_source_chars=_scheme_source_chars(env.get(_SCHEME_SOURCE_CHARS_ENV,
+                                                         ai.get('scheme_source_chars', DEFAULT_SCHEME_SOURCE_CHARS))),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
         history_sync_interval=_integer(env.get('PROJECTHUB_HISTORY_SYNC_INTERVAL', history.get('sync_interval', 60)),
@@ -175,7 +199,7 @@ def create_config(environ: Mapping[str, str] | None = None):
     return path
 
 
-def _ai_settings_response(configured, *, workers=None, profile=None, budget=None):
+def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, scheme_chars=None):
     effective_workers = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers)
                                  if workers is None else workers,
                                  'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
@@ -183,6 +207,8 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
                                  if profile is None else profile)
     effective_budget = _integer(os.environ.get('PROJECTHUB_GENERATION_BUDGET', configured.generation_budget)
                                 if budget is None else budget, 'ai.generation_budget', 30, 7200)
+    effective_scheme_chars = _scheme_source_chars(os.environ.get(_SCHEME_SOURCE_CHARS_ENV, configured.scheme_source_chars)
+                                                  if scheme_chars is None else scheme_chars)
     return {'extraction_workers': effective_workers,
             'configured_extraction_workers': configured.extraction_workers,
             'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
@@ -191,14 +217,18 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
             'generation_profiles': list_generation_profiles(),
             'generation_budget': effective_budget,
             'configured_generation_budget': configured.generation_budget,
-            'min_generation_budget': 30, 'max_generation_budget': 7200}
+            'min_generation_budget': 30, 'max_generation_budget': 7200,
+            'scheme_source_chars': effective_scheme_chars,
+            'configured_scheme_source_chars': configured.scheme_source_chars,
+            'scheme_source_chars_options': list(SCHEME_SOURCE_CHARS_OPTIONS)}
 
 
 def ai_worker_settings():
     """Expose only non-secret AI settings, without creating a config file."""
     with _settings_write_lock:
         configured_env = dict(os.environ)
-        for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET'):
+        for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET',
+                    _SCHEME_SOURCE_CHARS_ENV):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
 
@@ -216,7 +246,7 @@ def _ai_config_text(original, changes):
 
 def _ai_scalar_text(original, name, value):
     """Edit an application-owned scalar; comparison protects unsupported layouts."""
-    if name not in ('extraction_workers', 'generation_profile', 'generation_budget'):
+    if name not in ('extraction_workers', 'generation_profile', 'generation_budget', 'scheme_source_chars'):
         raise ConfigError('Unsupported AI setting.')
     encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
@@ -264,7 +294,8 @@ def save_ai_worker_settings(workers):
     return save_ai_settings(extraction_workers=workers)
 
 
-def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET):
+def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET,
+                     scheme_source_chars=_UNSET):
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
@@ -273,8 +304,10 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
         changes['generation_profile'] = _profile(generation_profile)
     if generation_budget is not _UNSET:
         changes['generation_budget'] = _integer(generation_budget, 'ai.generation_budget', 30, 7200)
+    if scheme_source_chars is not _UNSET:
+        changes['scheme_source_chars'] = _scheme_source_chars(scheme_source_chars)
     if not changes:
-        raise ConfigError('Provide extraction_workers, generation_profile or generation_budget.')
+        raise ConfigError('Provide an AI setting to update.')
     with _settings_write_lock:
         path = config_path()
         if any(p.is_symlink() for p in (path, *path.parents)):
@@ -307,7 +340,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
             configured = load_settings({'PROJECTHUB_CONFIG': temporary})
             # Validate unmodified runtime overrides before changing the file too.
             result = _ai_settings_response(configured, workers=changes.get('extraction_workers'),
-                                           profile=changes.get('generation_profile'), budget=changes.get('generation_budget'))
+                                           profile=changes.get('generation_profile'), budget=changes.get('generation_budget'),
+                                           scheme_chars=changes.get('scheme_source_chars'))
             if path.is_symlink() or (path.exists() != existed):
                 raise ConfigError('Settings changed while saving; reload and try again.')
             if existed and not stat.S_ISREG(path.stat().st_mode):
@@ -321,6 +355,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
                 os.environ['PROJECTHUB_GENERATION_PROFILE'] = changes['generation_profile']
             if 'generation_budget' in changes:
                 os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(changes['generation_budget'])
+            if 'scheme_source_chars' in changes:
+                os.environ[_SCHEME_SOURCE_CHARS_ENV] = str(changes['scheme_source_chars'])
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)

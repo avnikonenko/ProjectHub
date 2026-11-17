@@ -96,13 +96,17 @@ declared commands take priority over peripheral documentation. Backup and archiv
 paths do not displace current application evidence, but remain in the inventory.
 
 Source inspection uses a 2 MiB read budget and a cooperative 5-second deadline,
-rather than a fixed number of files. Individual source reads remain limited to
-64 KiB, and the evidence sent to AI has separate text and serialized-size limits.
+rather than a fixed number of files. Individual source reads are limited to
+64 KiB. In **Settings**, the **Scheme excerpt budget** controls how much source
+text enters the AI input. It defaults to 40,000 characters. For larger projects,
+try 60,000, then 80,000 if useful files are still being skipped. This can increase
+token use and generation time. The 140,000-character serialized evidence package
+limit still applies.
 Code structure displays at most 300 paths; that display limit does not restrict
 which files can be inspected. Coverage reports distinguish budget-stopped reading
 from inspected material omitted from the final AI input.
 
-Expand **Code structure → How ProjectHub inspected this repository** for saved
+Expand **Coverage → Detailed coverage → File accounting and scope** for saved
 counts: Git-listed paths, exclusions, eligible candidates, attempted and successful
 reads, prefix-only reads, and files represented in the final AI evidence package.
 The same disclosure records the limits and selection trade-offs. Counts describe
@@ -110,7 +114,7 @@ processing coverage, not the percentage of project functionality understood.
 Ignored untracked files are outside the Git listing and are not counted.
 
 Counts belong to the saved generation and remain attached to its revisions.
-At the bottom of Scheme, **Coverage & technical details → Skipped files**
+At the bottom of Scheme, **Coverage → Files used and missed**
 lists up to 100 eligible paths left out of the AI input and the reason for each.
 Earlier generations may only record aggregate reasons. A file can contribute
 multiple excerpts, so aggregate omission counts can differ from file counts.

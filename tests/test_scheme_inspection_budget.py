@@ -157,7 +157,7 @@ def test_output_budget_is_distinct_from_inspection_budget(tmp_path, monkeypatch)
     repo = repository(tmp_path)
     for index in range(30):
         (repo / f'feature_{index:02}.py').write_text('class Feature: pass\n' * 3)
-    monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 400)
+    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 400)
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)

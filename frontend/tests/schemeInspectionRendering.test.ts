@@ -71,6 +71,7 @@ test('skipped file details use saved paths and distinguish file counts from exce
   assert.ok(html.indexOf('src/worker.py') < html.indexOf('Detailed coverage'));
   assert.match(html, /Showing 2 of 15 skipped files/);
   assert.match(html, /src\/worker.py<\/code> · Source excerpt budget reached/);
+  assert.match(html, /<p class="muted"><small>For larger projects, a higher Scheme excerpt budget in Settings/);
   assert.match(html, /src\/extra.py<\/code> · No usable excerpt produced/);
   assert.doesNotMatch(html, /current-only.py/);
   const earlier = renderToStaticMarkup(createElement(details, { coverage, saved: true }));
@@ -85,6 +86,7 @@ test('latest Scheme with saved counts but missing filenames can disclose the cur
   assert.match(latest, /<summary>Current repository file selection<\/summary>/);
   assert.match(latest, /missed-now\.py/);
   assert.match(latest, /selected-now\.py/);
+  assert.doesNotMatch(latest, /higher Scheme excerpt budget/);
   const historical = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current }));
   assert.match(historical, /saved.py/);
   assert.doesNotMatch(historical, /missed-now.py|selected-now.py/);

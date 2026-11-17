@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { diagnosticCount, generationProfilePatch, parseGenerationDiagnostics, parseGenerationProfileSettings } from '../src/generationDiagnostics.ts';
+import { diagnosticCount, generationProfilePatch, parseGenerationDiagnostics, parseGenerationProfileSettings,
+  parseSchemeSourceSettings } from '../src/generationDiagnostics.ts';
+
+test('Scheme excerpt settings accept known presets and preserve older Settings responses', () => {
+  const options = [40_000, 60_000, 80_000];
+  const saved = { scheme_source_chars: 60_000, configured_scheme_source_chars: 80_000, scheme_source_chars_options: options };
+  assert.deepEqual(parseSchemeSourceSettings(saved), { value: 60_000, configured: 80_000, options });
+  assert.equal(parseSchemeSourceSettings({ extraction_workers: 10 }), null);
+  assert.throws(() => parseSchemeSourceSettings({ ...saved, scheme_source_chars: 70_000 }), /unsupported Scheme excerpt budget/);
+  assert.throws(() => parseSchemeSourceSettings({ ...saved, scheme_source_chars_options: [40_000, 40_000, 80_000] }), /unsupported Scheme excerpt budget/);
+  assert.throws(() => parseSchemeSourceSettings({ scheme_source_chars: 40_000 }), /unsupported Scheme excerpt budget/);
+});
 import { parseKnowledgePreview } from '../src/knowledge.ts';
 import { knowledgePreviewExport } from '../src/knowledgePreviewRecovery.ts';
 

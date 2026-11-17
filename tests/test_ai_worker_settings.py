@@ -21,7 +21,7 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     for name in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE',
-                 'PROJECTHUB_GENERATION_BUDGET'):
+                 'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_SCHEME_SOURCE_CHARS'):
         # Track an originally absent key before removing it: the settings API
         # writes os.environ directly, outside pytest's monkeypatch operations.
         monkeypatch.setenv(name, os.environ.get(name, ''))
@@ -44,6 +44,8 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
         'min_generation_budget': 30, 'max_generation_budget': 7200,
+        'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
+        'scheme_source_chars_options': [40_000, 60_000, 80_000],
     }
     assert path.read_bytes() == original
     assert client.get('/api/projects').json() == []
@@ -194,9 +196,49 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
         'min_generation_budget': 30, 'max_generation_budget': 7200,
+        'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
+        'scheme_source_chars_options': [40_000, 60_000, 80_000],
     }
     assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
     assert client.get('/api/settings/ai').json() == response.json()
+
+
+def test_scheme_budget_controls_effective_and_restarted_inspections(settings_client, monkeypatch):
+    client, path = settings_client
+    override = 'PROJECTHUB_SCHEME_SOURCE_CHARS'
+    original = path.read_bytes()
+    assert config.scheme_source_chars() == 40_000
+    monkeypatch.setenv(override, '80000')
+    result = client.get('/api/settings/ai').json()
+    assert result['scheme_source_chars'] == config.scheme_source_chars() == 80_000
+    assert result['configured_scheme_source_chars'] == 40_000
+    assert path.read_bytes() == original
+
+    response = client.patch('/api/settings/ai', json={'scheme_source_chars': 60_000})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result['scheme_source_chars'] == result['configured_scheme_source_chars'] == 60_000
+    assert config.scheme_source_chars() == 60_000
+    expected = tomllib.loads(original.decode())
+    expected['ai']['scheme_source_chars'] = 60_000
+    assert tomllib.loads(path.read_text()) == expected
+
+    monkeypatch.delenv(override)
+    assert config.scheme_source_chars() == 60_000
+    assert client.get('/api/settings/ai').json() == result
+
+
+@pytest.mark.parametrize('value', [55_000, 100_000, 40_000.0, '40000', True, None])
+def test_invalid_scheme_budget_does_not_change_settings(settings_client, value):
+    client, path = settings_client
+    original = path.read_bytes()
+    response = client.patch('/api/settings/ai', json={
+        'scheme_source_chars': value, 'extraction_workers': 8,
+    })
+    assert response.status_code == 422
+    assert path.read_bytes() == original
+    assert 'PROJECTHUB_SCHEME_SOURCE_CHARS' not in os.environ
+    assert 'PROJECTHUB_EXTRACTION_WORKERS' not in os.environ
 
 
 def test_budget_read_separates_environment_override_without_creating_or_editing_config(settings_client, monkeypatch):

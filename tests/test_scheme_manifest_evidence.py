@@ -40,7 +40,7 @@ def test_omitted_manifest_chunks_cannot_leave_dangling_dependency_records(tmp_pa
     repo = repository(tmp_path)
     (repo / 'requirements.txt').write_text('\n'.join(
         f'package-with-a-deliberately-long-name-{index:03d}==1.0' for index in range(90)))
-    monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 3300)
+    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 3300)
     engine = setup(tmp_path, repo)
     try:
         result = evidence.collect_evidence(engine, 1)

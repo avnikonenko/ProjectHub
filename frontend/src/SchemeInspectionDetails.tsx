@@ -84,6 +84,9 @@ function SkippedFiles({ omissions }: { omissions: NonNullable<SchemeCoverage['fi
     {omissions.total > omissions.files.length && <p>Showing {omissions.files.length} of {omissions.total} skipped files.</p>}
     <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
       <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+    {omissions.files.some(({ reason }) => reason === 'source_output_budget') && <p className="muted"><small>
+      For larger projects, a higher Scheme excerpt budget in Settings can fit more source excerpts on the next generation.
+    </small></p>}
   </>;
 }
 const countRows: [keyof Omit<SchemeFileCounts, 'listing_complete'>, string][] = [

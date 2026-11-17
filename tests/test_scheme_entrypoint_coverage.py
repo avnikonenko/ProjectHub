@@ -63,7 +63,7 @@ def test_pyproject_entrypoints_survive_source_budget_and_keep_whole_excerpts(tmp
     result = evidence.collect_evidence(engine, 1)
     paths = {source.get('path'): source for source in result['sources']}
     assert {'sample/zeta_prepare.py', 'sample/zeta_report.py', 'pyproject.toml'} <= paths.keys()
-    assert sum(len(source['text']) for source in result['sources']) <= evidence._MAX_SOURCES_CHARS
+    assert sum(len(source['text']) for source in result['sources']) <= evidence.scheme_source_chars()
     assert any(source['id'].startswith('note:') for source in result['sources'])
     assert all(len(source['text']) == 5900 for source in result['sources'] if source['id'].startswith('note:'))
     assert any('source excerpt budget' in value for value in result['coverage']['limitations'])

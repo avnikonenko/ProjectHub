@@ -3,7 +3,7 @@ import { api, patch } from './api';
 import { ErrorBox } from './ui';
 import { Feedback } from './Feedback';
 import { SettingsHelp } from './SettingsHelp';
-import { generationProfilePatch, parseGenerationProfileSettings, type GenerationProfileSettings } from './generationDiagnostics';
+import { generationProfilePatch, parseGenerationProfileSettings, parseSchemeSourceSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
 type WorkerSettings = {
   extraction_workers: number;
@@ -12,6 +12,7 @@ type WorkerSettings = {
   max_extraction_workers: number;
   profileSettings?: GenerationProfileSettings | null;
   budgetSettings?: { value: number; configured: number; min: number; max: number } | null;
+  schemeSourceSettings?: ReturnType<typeof parseSchemeSourceSettings>;
 };
 
 function settingsResponse(value: unknown): WorkerSettings {
@@ -39,19 +40,22 @@ function settingsResponse(value: unknown): WorkerSettings {
     }
     budgetSettings = { value: Number(effective), configured: Number(configured), min: Number(min), max: Number(max) };
   }
-  return { ...settings, profileSettings: parseGenerationProfileSettings(value), budgetSettings } as WorkerSettings;
+  return { ...settings, profileSettings: parseGenerationProfileSettings(value), budgetSettings,
+    schemeSourceSettings: parseSchemeSourceSettings(value) } as WorkerSettings;
 }
 
 export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const helpId = useId();
   const budgetHelpId = useId();
+  const schemeHelpId = useId();
   const [settings, setSettings] = useState<WorkerSettings | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState('');
   const [profileDraft, setProfileDraft] = useState('');
   const [budgetDraft, setBudgetDraft] = useState('');
-  const [savedField, setSavedField] = useState<'workers' | 'profile' | 'budget'>('workers');
+  const [schemeDraft, setSchemeDraft] = useState('');
+  const [savedField, setSavedField] = useState<'workers' | 'profile' | 'budget' | 'scheme'>('workers');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState(false);
   const [reload, setReload] = useState(0);
@@ -80,6 +84,7 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
           setDraft(String(result.extraction_workers));
           setProfileDraft(result.profileSettings?.generation_profile ?? '');
           setBudgetDraft(result.budgetSettings ? String(result.budgetSettings.value) : '');
+          setSchemeDraft(result.schemeSourceSettings ? String(result.schemeSourceSettings.value) : '');
         }
       })
       .catch((failure: unknown) => {
@@ -170,6 +175,29 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     }
   }
 
+  async function saveSchemeBudget() {
+    const characters = Number(schemeDraft);
+    if (savingRef.current || !settings?.schemeSourceSettings?.options.includes(characters)) return;
+    savingRef.current = true;
+    setSavedField('scheme');
+    setSaving(true); setError(''); setSaved(false);
+    try {
+      const result = settingsResponse(await patch('/settings/ai', { scheme_source_chars: characters }));
+      if (!result.schemeSourceSettings) throw new Error('The server did not return the saved Scheme excerpt budget.');
+      if (mounted.current) {
+        ++loadVersion.current;
+        setSettings(result);
+        setSchemeDraft(String(result.schemeSourceSettings.value));
+        setSaved(true);
+      }
+    } catch (failure: unknown) {
+      if (mounted.current) setError(failure instanceof Error ? failure.message : 'Could not save the Scheme excerpt budget.');
+    } finally {
+      savingRef.current = false;
+      if (mounted.current) setSaving(false);
+    }
+  }
+
   const profileSettings = settings?.profileSettings;
   const profile = profileSettings?.generation_profiles.find((value) => value.id === profileDraft);
   const unchangedProfile = profileDraft === profileSettings?.generation_profile
@@ -182,13 +210,20 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
   const seconds = Number(budgetDraft);
   const validBudget = !!budget && Number.isSafeInteger(seconds) && seconds >= budget.min && seconds <= budget.max;
   const unchangedBudget = seconds === budget?.value && seconds === budget?.configured;
+  const schemeBudget = settings?.schemeSourceSettings;
+  const schemeCharacters = Number(schemeDraft);
+  const unchangedScheme = schemeCharacters === schemeBudget?.value && schemeCharacters === schemeBudget?.configured;
+  const savedMessage = {
+    workers: 'Thread count saved.', profile: 'Generation profile saved.',
+    budget: 'Overall time budget saved.', scheme: 'Scheme excerpt budget saved.',
+  }[savedField];
   const saveFeedback = <>
     <ErrorBox error={error} />
     {error && !saving && <button type="button" className="secondary" onClick={() => setReload((value) => value + 1)}>
       Reload setting
     </button>}
     {(loading || saving || saved) && <Feedback tone={saved && !saving && !loading ? 'success' : 'info'}>
-      {saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedField === 'profile' ? 'Generation profile saved.' : savedField === 'budget' ? 'Overall time budget saved.' : 'Thread count saved.'}
+      {saving ? 'Saving…' : loading ? 'Loading AI settings…' : savedMessage}
     </Feedback>}
   </>;
   return <div>
@@ -264,5 +299,28 @@ export function ExtractionWorkersControl({ active }: { active: boolean }) {
     </SettingsHelp>
     {budget && budget.value !== budget.configured
       && <p><small>Startup environment overrides the saved time budget ({budget.configured} seconds).</small></p>}
+    {schemeBudget && <>
+      <label>
+        Scheme excerpt budget
+        <select aria-describedby={schemeHelpId} value={schemeDraft} disabled={loading || saving}
+          onChange={(event) => { setSchemeDraft(event.target.value); setSaved(false); }}>
+          {schemeBudget.options.map(option => <option key={option} value={option}>
+            {option.toLocaleString()} characters{option === 40_000 ? ' (default)' : ''}
+          </option>)}
+        </select>
+      </label>
+      <SettingsHelp title="About the Scheme excerpt budget" id={schemeHelpId}>
+        <p>Maximum text selected from code and other sources for the next Scheme generation. For larger projects, try 60,000 characters. Try 80,000 if useful files are still skipped because of this budget. Larger inputs can use more tokens and take longer.</p>
+        <p>Scheme also has a separate 2 MiB limit for local file reads and a cap on the final evidence package.</p>
+      </SettingsHelp>
+      <div className="actions left">
+        <button type="button" className="secondary"
+          disabled={loading || saving || !schemeBudget.options.includes(schemeCharacters) || unchangedScheme}
+          onClick={() => void saveSchemeBudget()}>Save Scheme excerpt budget</button>
+      </div>
+      {savedField === 'scheme' && !loading && saveFeedback}
+      {schemeBudget.value !== schemeBudget.configured
+        && <p><small>Startup environment overrides the saved excerpt budget ({schemeBudget.configured.toLocaleString()} characters).</small></p>}
+    </>}
   </div>;
 }

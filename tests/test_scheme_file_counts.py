@@ -173,7 +173,7 @@ def test_declared_package_entrypoint_expands_initial_candidate_set_safely(tmp_pa
 def test_source_text_budget_omissions_are_successful_reads(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'main.py').write_text('class Main: pass\n')
-    monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 0)
+    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 0)
     result = inspect(tmp_path, repo)
     value = counts(result)
     assert value['read_files'] == value['read_not_in_evidence'] == 1
@@ -182,10 +182,39 @@ def test_source_text_budget_omissions_are_successful_reads(tmp_path, monkeypatch
     assert omissions(result) == {'main.py': 'source_output_budget'}
 
 
+def test_configured_excerpt_budget_expands_file_coverage_and_scopes_the_cache(tmp_path, monkeypatch):
+    repo = repository(tmp_path)
+    (repo / 'docs').mkdir()
+    for index in range(55):
+        (repo / 'docs' / f'feature{index:02}.md').write_text(
+            f'# Feature {index}\n\n' + 'Describe the application workflow and output files.\n' * 28)
+    engine = setup(tmp_path, repo)
+    try:
+        monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '40000')
+        baseline = evidence.collect_evidence(engine, 1)
+        assert baseline['coverage']['inspection_policy']['max_source_chars'] == 40_000
+        assert 'source_output_budget' in omissions(baseline).values()
+        assert evidence.collect_evidence(engine, 1)['diagnostics']['cache_hits'] == 1
+
+        monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '80000')
+        expanded = evidence.collect_evidence(engine, 1)
+        assert expanded['coverage']['inspection_policy']['max_source_chars'] == 80_000
+        assert expanded['diagnostics']['cache_hits'] == 0
+        assert counts(expanded)['evidence_files'] > counts(baseline)['evidence_files']
+        assert 40_000 < expanded['diagnostics']['input_chars'] <= 80_000
+        assert expanded['diagnostics']['package_chars'] <= evidence._MAX_PACKAGE_CHARS
+        assert (expanded['coverage']['inspection_policy']['max_read_bytes']
+                == baseline['coverage']['inspection_policy']['max_read_bytes'])
+        assert expanded['fingerprint'] != baseline['fingerprint']
+        assert evidence.collect_evidence(engine, 1)['diagnostics']['cache_hits'] == 1
+    finally:
+        engine.dispose()
+
+
 def test_manifest_with_one_retained_excerpt_is_not_a_skipped_file(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'requirements.txt').write_text(''.join(f'package{i:03}{"x" * 100}==1.0\n' for i in range(60)))
-    monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 3300)
+    monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 3300)
     result = inspect(tmp_path, repo)
     value = counts(result)
     assert value['eligible_files'] == value['evidence_files'] == 1

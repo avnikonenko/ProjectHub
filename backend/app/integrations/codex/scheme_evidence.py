@@ -15,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
+from ...config import scheme_source_chars
 from ...models import ProjectHistoryBatch
 from ...project_evidence import (
     EvidenceReadError, _CODE_PRIVATE, _code_category, _code_order, _digest,
@@ -33,7 +34,6 @@ _MAX_METADATA_BYTES = 1024 * 1024
 _METADATA_SECONDS = 5.0
 _MAX_EXCERPT = 1600
 _MAX_DEPENDENCIES = 100
-_MAX_SOURCES_CHARS = 40_000
 _MAX_PACKAGE_CHARS = 140_000
 _MAX_RECORDED_FILE_OMISSIONS = 100
 _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
@@ -911,6 +911,7 @@ def _records(db, project):
 def collect_evidence(engine, project_id):
     """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
     started = time.monotonic()
+    source_budget = scheme_source_chars()
     limitations = set()
     freshness_unknown = False
     with Session(engine) as db:
@@ -944,7 +945,7 @@ def collect_evidence(engine, project_id):
                                'eligible_files', 'policy_omitted_paths'))
     inventory['listing_complete'] = False
     policy = {'max_read_bytes': _MAX_INSPECTION_BYTES, 'max_inspection_seconds': _INSPECTION_SECONDS,
-              'max_file_bytes': _MAX_BYTES, 'max_source_chars': _MAX_SOURCES_CHARS,
+              'max_file_bytes': _MAX_BYTES, 'max_source_chars': source_budget,
               'max_package_chars': _MAX_PACKAGE_CHARS, 'max_tree_paths': _MAX_PATHS,
               'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
     try:
@@ -1153,13 +1154,13 @@ def collect_evidence(engine, project_id):
             source.get('path') not in command_guides))
         # Reserve half for repository evidence when both kinds are present. Keep
         # whole excerpts and return any unused repository allowance to records.
-        repository_reserve = min(_MAX_SOURCES_CHARS // 2, sum(len(s['text']) for s in repository_sources))
+        repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))
         deferred = []
         for source in records:
-            if not add_source(source, _MAX_SOURCES_CHARS - repository_reserve):
+            if not add_source(source, source_budget - repository_reserve):
                 deferred.append(source)
         for source in [*repository_sources, *deferred]:
-            if not add_source(source, _MAX_SOURCES_CHARS):
+            if not add_source(source, source_budget):
                 omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1
                 limitations.add('The source excerpt budget was reached; some evidence was omitted.')
                 continue

@@ -103,6 +103,21 @@ export function generationProfilePatch(id: unknown) {
   return { generation_profile: id };
 }
 
+export function parseSchemeSourceSettings(raw: unknown) {
+  if (!object(raw)) throw new Error('AI settings returned an invalid Scheme excerpt budget.');
+  const fields = ['scheme_source_chars', 'configured_scheme_source_chars', 'scheme_source_chars_options'];
+  if (fields.every(field => !(field in raw))) return null;
+  const options = raw.scheme_source_chars_options;
+  const value = raw.scheme_source_chars;
+  const configured = raw.configured_scheme_source_chars;
+  if (!Array.isArray(options) || options.length !== 3
+    || ![40_000, 60_000, 80_000].every(option => options.includes(option))
+    || !count(value) || !options.includes(value) || !count(configured) || !options.includes(configured)) {
+    throw new Error('AI settings returned an unsupported Scheme excerpt budget.');
+  }
+  return { value, configured, options: options as number[] };
+}
+
 /** Diagnostics never invalidate an otherwise valid legacy preview or invent unavailable measurements. */
 export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics | undefined {
   if (!object(raw)) return undefined;

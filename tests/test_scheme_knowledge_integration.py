@@ -67,7 +67,7 @@ def test_text_budget_does_not_orphan_knowledge_or_hide_publication_identity(tmp_
     engine = setup(tmp_path)
     try:
         publish(engine)
-        monkeypatch.setattr(evidence, '_MAX_SOURCES_CHARS', 70)
+        monkeypatch.setattr(evidence, 'scheme_source_chars', lambda: 70)
         first = evidence.collect_evidence(engine, 1)
         assert first['knowledge_context']['publication_id'] == 'publication-one'
         assert first['knowledge_context']['included_items'] == 0
