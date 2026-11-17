@@ -3,7 +3,6 @@ from copy import deepcopy
 from contextlib import ExitStack
 import json
 import re
-import threading
 import time
 
 from sqlalchemy import select, text
@@ -15,6 +14,7 @@ from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
+from .generation_jobs import generation_lock
 
 SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates', 'since_last_brief',
                  'current_status', 'implemented', 'work_in_progress', 'unresolved_problems', 'validation', 'next_steps')
@@ -24,7 +24,6 @@ MAX_POINT_CHARS = 420
 MAP_LABEL_LIMIT = 100
 SECTION_TEXT_LIMITS = {name: (1000 if name == 'overview' else 600 if name in ('architecture', 'current_status') else MAX_POINT_CHARS)
                        for name in SECTION_NAMES}
-generation_lock = threading.Lock()
 
 SECTION_ROLE_GUIDANCE = (
     'Use section roles consistently. Architecture describes the main components, their responsibilities '
@@ -267,8 +266,9 @@ def deduplicate_brief_changes(sections, previous):
 
 
 def refresh_brief(engine, project_id, manager):
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('A project brief is already being generated. Retry after it finishes.')
+    job_lock = generation_lock.for_job(project_id, 'brief')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     transport_scope = ExitStack()
     started = time.monotonic()
     metrics = GenerationMetrics()
@@ -488,4 +488,4 @@ def refresh_brief(engine, project_id, manager):
         try:
             transport_scope.close()
         finally:
-            generation_lock.release()
+            job_lock.release()

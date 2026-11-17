@@ -509,8 +509,9 @@ def consolidate_items(manager, items, max_items, project_id=None):
 
 
 def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('A brief or Q&A refresh is already running. Try again when it finishes.')
+    job_lock = generation_lock.for_job(project_id, 'qa')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     transport_scope = ExitStack()
     started = time.monotonic()
     metrics = GenerationMetrics()
@@ -587,4 +588,4 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         try:
             transport_scope.close()
         finally:
-            generation_lock.release()
+            job_lock.release()

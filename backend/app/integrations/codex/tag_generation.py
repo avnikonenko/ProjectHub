@@ -54,8 +54,9 @@ def _selected(db, project_id, target, publication_id, generated_at):
 def generate_tags(engine, project_id, manager, *, target, publication_id=None, generated_at=None):
     if target not in ('knowledge', 'knowledge_preview', 'qa'):
         raise CodexError('Unknown tag generation target.')
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('Another AI generation is running.')
+    job_lock = generation_lock.for_job(project_id, 'tags')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     try:
         progress.begin(project_id, 'tags')
         with ExitStack() as scope:
@@ -121,4 +122,4 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                         else 'Tag generation failed. Previous saved tags are preserved.')
         raise
     finally:
-        generation_lock.release()
+        job_lock.release()

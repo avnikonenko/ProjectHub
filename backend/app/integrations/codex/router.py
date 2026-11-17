@@ -430,7 +430,7 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -484,7 +484,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         raise HTTPException(422, 'Confirm sending project evidence to Codex to refresh the project analysis.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -534,7 +534,7 @@ def generate_scheme(project_id: int, body: GenerationInput, request: Request, db
         raise HTTPException(422, 'Confirm sending selected project evidence to Codex before generating Scheme.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -568,7 +568,7 @@ def generate_parameters(project_id: int, body: GenerationInput, request: Request
         raise HTTPException(422, 'Confirm sending inspected parameter evidence to Codex before generation.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -636,7 +636,7 @@ def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
         raise HTTPException(422, 'Explicitly confirm AI generation before generating tags.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -655,7 +655,7 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -675,12 +675,13 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     db.rollback()
     if not sources:
         return answer_project(None, body.question, sources)
-    if not generation_lock.acquire(blocking=False):
-        raise HTTPException(409, 'Another AI generation is running. Try again when it finishes.')
+    job_lock = generation_lock.for_job(project_id, 'ask')
+    if not job_lock.acquire(blocking=False):
+        raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
     try:
         progress.begin(project_id, 'ask')
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort else manager
+        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -695,7 +696,7 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
         progress.finish(project_id, error='Project answer generation failed.')
         raise
     finally:
-        generation_lock.release()
+        job_lock.release()
 
 
 @router.get('/sessions')

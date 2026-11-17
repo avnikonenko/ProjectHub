@@ -207,8 +207,9 @@ def render_mermaid(graph):
 
 
 def refresh_scheme(engine, project_id, manager):
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('Another AI generation is running. Try again when it finishes.')
+    job_lock = generation_lock.for_job(project_id, 'scheme')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
         progress.begin(project_id, 'scheme')
@@ -342,4 +343,4 @@ def refresh_scheme(engine, project_id, manager):
                         else 'Scheme generation failed. The previous saved scheme is preserved.')
         raise
     finally:
-        generation_lock.release()
+        job_lock.release()

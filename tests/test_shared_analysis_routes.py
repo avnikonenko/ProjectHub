@@ -94,7 +94,8 @@ def test_brief_post_generates_only_general_overview(api):
     response = client.post(path, json={'confirmed': True})
     assert response.status_code == 200, response.text
     assert response.json() == {'generated_at': 'general', 'sections': {'overview': []}}
-    assert ('overview', 1, False) in api.calls
+    assert ('selection', None, None) in api.calls
+    assert ('overview', 1, True) in api.calls
     assert all(call[0] != 'generate' for call in api.calls)
     assert 'knowledge' not in response.json() and 'published' not in response.json()
 

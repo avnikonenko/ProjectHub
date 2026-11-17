@@ -491,8 +491,9 @@ def _validate_saved_publication(candidate, brief, bundle, project_id):
 
 def publish_saved_knowledge_preview(engine, project_id, publication_id):
     """Activate a reviewed saved result without model calls or regeneration."""
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('Another AI generation is running. Wait before using this result.')
+    job_lock = generation_lock.for_job(project_id, 'knowledge')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active. Wait before using this result.')
     try:
         with Session(engine) as db:
             result = read_knowledge_preview(db, project_id)
@@ -510,12 +511,13 @@ def publish_saved_knowledge_preview(engine, project_id, publication_id):
             raise
         raise KnowledgePreviewConflict(str(exc)) from exc
     finally:
-        generation_lock.release()
+        job_lock.release()
 
 
 def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('Another AI generation is running.')
+    job_lock = generation_lock.for_job(project_id, 'knowledge')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     metrics = GenerationMetrics()
     profile_info = None
@@ -616,4 +618,4 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=False):
                         else 'Knowledge generation failed. The last published pair is preserved.')
         raise
     finally:
-        generation_lock.release()
+        job_lock.release()

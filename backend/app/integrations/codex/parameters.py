@@ -240,8 +240,9 @@ def validate_output(raw, evidence):
 
 
 def refresh_parameters(engine, project_id, manager):
-    if not generation_lock.acquire(blocking=False):
-        raise BriefBusy('Another AI generation is running. Try again when it finishes.')
+    job_lock = generation_lock.for_job(project_id, 'parameters')
+    if not job_lock.acquire(blocking=False):
+        raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
         progress.begin(project_id, 'parameters')
@@ -292,4 +293,4 @@ def refresh_parameters(engine, project_id, manager):
                         else 'Parameter generation failed. The saved result is unchanged.')
         raise
     finally:
-        generation_lock.release()
+        job_lock.release()

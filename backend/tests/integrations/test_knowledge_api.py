@@ -21,7 +21,7 @@ def test_preview_is_opt_in_and_general_overview_route_is_independent(tmp_path, m
     monkeypatch.setattr(routes, 'manager_for', lambda *args: manager)
     calls = []
     def general(engine_arg, pid, chosen):
-        assert engine_arg is engine and pid == 1 and chosen is manager
+        assert engine_arg is engine and pid == 1 and chosen is selected
         calls.append(('overview',))
         return {'pipeline': 'general'}
     def pilot(engine_arg, pid, chosen, *, publish):
