@@ -116,15 +116,16 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
   return (
     <div className="repository-overview">
       <h4>Git repository</h4>
-      <dl className="repository-facts">
-        <div className="repository-location"><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
-        {remote && <div className="repository-location">
+      <dl className="repository-facts repository-locations">
+        <div><dt>Local</dt><dd><code className="repository">{path}</code></dd></div>
+        {remote && <div>
           <dt title={remote.name || undefined}>Remote</dt>
           <dd><code className="repository">{remote.web_url
             ? <a href={remote.web_url} target="_blank" rel="noopener noreferrer">{remote.address}</a>
             : remote.address}</code></dd>
         </div>}
-        {status && <>
+      </dl>
+      {status && <dl className="repository-facts">
           <div><dt>Branch</dt><dd>{status.branch === null ? 'Detached HEAD' : <code>{status.branch}</code>}</dd></div>
           <div><dt>Files</dt><dd>
             {typeof status.tracked_files === 'number' && `${status.tracked_files.toLocaleString()} tracked · `}
@@ -136,8 +137,7 @@ export function RepositoryOverview({ path, status, error, loading, reload }: {
                 {status.untracked_files > 0 && `${status.untracked_files} untracked`}
               </>}
           </dd></div>
-        </>}
-      </dl>
+      </dl>}
       <div aria-busy={loading}>
         {loading && <Feedback>Reading repository…</Feedback>}
         <ErrorBox error={error} />
