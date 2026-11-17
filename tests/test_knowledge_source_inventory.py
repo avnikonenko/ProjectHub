@@ -12,6 +12,26 @@ from backend.app.integrations.codex.evidence_coverage import conversation_covera
 from backend.tests.integrations.test_knowledge_sources import setup, insert_turn, URL
 
 
+def test_turn_limit_marks_source_partial_even_when_earlier_turns_are_empty(tmp_path, monkeypatch):
+    engine = setup(tmp_path)
+    monkeypatch.setattr(sources, 'MAX_MESSAGES', 1)
+    try:
+        with Session(engine) as db:
+            for turn in ('empty-1', 'empty-2'):
+                insert_turn(db, turn=turn)
+            db.execute(text("UPDATE codex_history_turns SET messages='[]' WHERE project_id=1"))
+            insert_turn(db, turn='omitted', messages=[{'role': 'user', 'text': 'Important late decision.'}])
+            db.commit()
+        result = sources.load_sources(engine, 1)
+        parent = result['manifest']['entries'][0]
+        assert result['source_inventory']['omission_reasons']['turn_limit_turns'] == 1
+        assert not result['sources']
+        assert parent.get('partial') is True
+        assert parent['source_key'] in result['coverage']['unprocessed']
+    finally:
+        engine.dispose()
+
+
 def test_registered_inventory_counts_sources_beyond_parent_caps_without_body_reads(tmp_path):
     engine = setup(tmp_path)
     try:

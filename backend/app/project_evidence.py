@@ -278,6 +278,14 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measur
             reasons.append('utf8_boundary')
 
         def finish(excerpt, omissions):
+            # The initial size is only meaningful for these bytes if the file
+            # stayed unchanged while being read and its excerpt was prepared.
+            # A growing/shrinking file can otherwise report impossible byte
+            # counts or a complete excerpt assembled from different revisions.
+            current = os.fstat(fd)
+            identity = ('st_dev', 'st_ino', 'st_size', 'st_mtime_ns', 'st_ctime_ns')
+            if any(getattr(current, key) != getattr(metadata, key) for key in identity):
+                raise OSError('Repository file changed during inspection')
             if measurements is not None:
                 measurements.update(path=relative, file_bytes=metadata.st_size,
                                     bytes_read=len(data), excerpt_chars=len(excerpt),
@@ -448,7 +456,7 @@ def collect_repository_code(repository_path):
         if limited:
             inspection['notes'].append('Representative selection and excerpt limits restrict this inspection; see the unselected-file and partial-read counts. This is not a complete code review.')
         if failed:
-            inspection['notes'].append('Some selected files could not be used: unreadable, symlinked, binary or non-UTF-8 content.')
+            inspection['notes'].append('Some selected files could not be used: unreadable, symlinked, binary, non-UTF-8 or changed during inspection.')
     except (EvidenceReadError, OSError) as exc:
         diagnostic = str(exc) if isinstance(exc, EvidenceReadError) else 'Repository code is unavailable.'
         # A failed collection returns no excerpts. Never claim partial local reads

@@ -122,12 +122,21 @@ export function parseEvidenceCoverage(raw: unknown): EvidenceCoverage | undefine
       const category = categories[key];
       if (!object(category)) return [];
       const parsed = counts(category, ['eligible_files', 'read_files', 'full_files', 'partial_files']);
-      if ((count(parsed.eligible_files) && count(parsed.read_files) && parsed.read_files > parsed.eligible_files)
+      const exceedsRepository = (['eligible_files', 'read_files', 'full_files', 'partial_files'] as const)
+        .some(field => count(parsed[field]) && count(value[field]) && parsed[field] > value[field]);
+      if (exceedsRepository || (count(parsed.eligible_files) && count(parsed.read_files) && parsed.read_files > parsed.eligible_files)
         || (count(parsed.read_files) && [parsed.full_files, parsed.partial_files].some(number => count(number) && number > parsed.read_files))
         || (count(parsed.read_files) && count(parsed.full_files) && count(parsed.partial_files)
           && parsed.full_files + parsed.partial_files !== parsed.read_files)) return [];
       return [[key, parsed]];
     }));
+    if (value.by_category && (['eligible_files', 'read_files', 'full_files', 'partial_files'] as const)
+      .some(field => count(value[field]) && Object.values(value.by_category!)
+        .reduce((sum, category) => sum + (category[field] ?? 0), 0) > value[field])) {
+      // These categories partition the repository. If only their combined total
+      // conflicts, no individual category can safely be chosen as authoritative.
+      value.by_category = {};
+    }
     if (object(repo.limits)) value.limits = Object.fromEntries(Object.entries(repo.limits)
       .filter(([key, entry]) => key.length <= 100 && count(entry)).slice(0, 20)) as Record<string, number>;
     const total = value.total_files, eligible = value.eligible_files, read = value.read_files;

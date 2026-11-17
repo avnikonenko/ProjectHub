@@ -38,6 +38,9 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
   const validItems = overview?.selected_items !== undefined && overview.available_items !== undefined
     && overview.selected_items <= overview.available_items;
   const fmt = (value: number) => value.toLocaleString('en-US');
+  const detailedPaths = new Set(repo?.file_details?.map(detail => detail.path) ?? []);
+  const fallbackPaths = (key: 'read' | 'partial' | 'not_selected' | 'failed' | 'empty') =>
+    repo?.paths?.[key]?.filter(path => !(key === 'read' || key === 'partial') || !detailedPaths.has(path)) ?? [];
   return <>
     {repo ? <section>
       <h4>Repository files</h4>
@@ -85,9 +88,9 @@ function InputCoverage({ measured, hasCustomCoverage }: { measured?: GenerationD
           {repo.file_details_truncated && <p>Per-file details are shortened; the aggregate counts above are unchanged.</p>}
         </> : <p>Per-file read sizes and AI excerpt lengths were not recorded for this result.</p>}
         {(['read', 'partial', 'not_selected', 'failed', 'empty'] as const).map(key =>
-          !!repo.paths?.[key]?.length && (!(key === 'read' || key === 'partial') || !repo.file_details?.length) && <section key={key}>
+          !!fallbackPaths(key).length && <section key={key}>
           <h4>{{ read: 'Read files', partial: 'Partly supplied files', not_selected: 'Eligible files not selected', failed: 'Read failures', empty: 'Files without usable text' }[key]}</h4>
-          <ul>{repo.paths[key]!.map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>
+          <ul>{fallbackPaths(key).map((path, index) => <li key={index}><code>{path}</code></li>)}</ul>
         </section>)}
         {repo.paths_truncated && <p>File lists are shortened; the recorded counts above include the full inspected inventory.</p>}
       </details>}

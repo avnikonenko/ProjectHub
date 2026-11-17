@@ -5,6 +5,8 @@ import json
 import os
 import time
 
+import pytest
+
 from backend.app import project_evidence as evidence
 from backend.app.integrations.codex.evidence_coverage import knowledge_coverage, repository_coverage
 from backend.app.integrations.codex.knowledge_brief import _repository_signature
@@ -157,6 +159,40 @@ def test_multibyte_prefix_boundary_preserves_exact_local_byte_measurements(tmp_p
     assert measured['excerpt_chars'] == 2
     assert measured['local_read_complete'] is False and measured['excerpt_complete'] is False
     assert measured['omission_reasons'] == ['byte_limit', 'utf8_boundary']
+
+
+@pytest.mark.parametrize('replacement', [b'extended contents\n', b'x', b'NEW\n'])
+def test_files_changed_during_read_are_failed_not_complete_excerpts(tmp_path, monkeypatch, replacement):
+    repo = repository(tmp_path)
+    target = repo / 'changing.py'
+    target.write_bytes(b'old\n')
+    git(repo, 'add', 'changing.py')
+    initial = target.stat()
+    original_read = os.read
+    changed = False
+
+    def mutate_after_read(fd, maximum):
+        nonlocal changed
+        data = original_read(fd, maximum)
+        opened = os.fstat(fd)
+        if not changed and opened.st_dev == initial.st_dev and opened.st_ino == initial.st_ino:
+            changed = True
+            target.write_bytes(replacement)
+            # Force a distinct timestamp even on a filesystem with coarser
+            # timestamp resolution, including the same-size replacement case.
+            os.utime(target, ns=(initial.st_atime_ns, initial.st_mtime_ns + 1_000_000_000))
+        return data
+
+    monkeypatch.setattr(evidence.os, 'read', mutate_after_read)
+    result = evidence.collect_repository_code(str(repo))
+    measured = result['inspection']
+    assert changed
+    assert measured['status'] == 'available'
+    assert measured['failed_files'] == 1
+    assert measured['paths']['failed'] == ['changing.py']
+    assert all(source['path'] != 'changing.py' for source in result['sources'])
+    assert all(detail['path'] != 'changing.py' for detail in measured['file_details'])
+    assert measured['read_files'] + measured['not_selected_files'] + measured['failed_files'] + measured['empty_files'] == measured['eligible_files']
 
 
 def test_record_coverage_does_not_claim_summary_code_was_used_for_knowledge():

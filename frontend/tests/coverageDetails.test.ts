@@ -77,6 +77,16 @@ test('unknown inventory and conversation-only Knowledge do not imply full code c
   assert.doesNotMatch(knowledge, /0 of|100%|full coverage/);
 });
 
+test('a contradictory code category cannot inflate the displayed repository coverage', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, {
+    diagnostics: { evidence_coverage: { repository: { ...repository,
+      by_category: { code: { eligible_files: 100, read_files: 100, full_files: 100, partial_files: 0 } },
+    } } },
+  }));
+  assert.match(html, /5 file excerpts supplied from 20 tracked paths/);
+  assert.doesNotMatch(html, /100 of 100|Code files:/);
+});
+
 test('archive coverage distinguishes linked sessions, deduplicated and unfinished turns', () => {
   const html = renderToStaticMarkup(createElement(CoverageDetails, { diagnostics: {
     archive_conversations: { scope: 'linked_codex_sessions', linked_sessions: 3, read_sessions: 2,
@@ -136,6 +146,21 @@ test('per-file table separates a complete disk read from a sparse AI excerpt', (
   }));
   assert.match(legacy, /Per-file read sizes and AI excerpt lengths were not recorded/);
   assert.doesNotMatch(legacy, /<caption>Local file reads/);
+});
+
+test('missing or invalid per-file details do not hide other recorded read paths', () => {
+  const html = renderToStaticMarkup(createElement(CoverageDetails, { diagnostics: { evidence_coverage: {
+    repository: { ...repository, paths: { read: ['src/app.py', 'src/missing.py'], partial: ['src/missing.py'] },
+      file_details: [{ path: 'src/app.py', file_bytes: 5000, bytes_read: 5000,
+        excerpt_chars: 300, local_read_complete: true, excerpt_complete: false,
+        omission_reasons: ['declaration_selection'] },
+      { path: 'src/missing.py', file_bytes: 5, bytes_read: 10, excerpt_chars: 10,
+        local_read_complete: true, excerpt_complete: true, omission_reasons: [] }] },
+  } } }));
+  assert.match(html, /Local file reads and supplied AI excerpts/);
+  assert.match(html, /<h4>Read files<\/h4><ul><li><code>src\/missing.py<\/code><\/li><\/ul>/);
+  assert.match(html, /<h4>Partly supplied files<\/h4><ul><li><code>src\/missing.py<\/code><\/li><\/ul>/);
+  assert.equal((html.match(/src\/app.py/g) ?? []).length, 1);
 });
 
 test('registered conversation totals reveal sources beyond the saved bounded manifest', () => {

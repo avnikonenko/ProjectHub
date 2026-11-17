@@ -231,6 +231,7 @@ def load_sources(engine, project_id, previous_manifest=None):
                     coverage['unavailable'].append(parent)
             if total_turns > considered_turns:
                 omitted('turn_limit_turns', total_turns - considered_turns)
+                coverage['unprocessed'].append(parent)
             entry['revision'] = _hash(hashes)
             if not had_rows:
                 omitted('empty_sessions')

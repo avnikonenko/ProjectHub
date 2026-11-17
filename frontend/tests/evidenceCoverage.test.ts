@@ -36,6 +36,21 @@ test('paths and notes are bounded while complete counts remain intact', () => {
   assert.equal(parsed.total_files, 10);
 });
 
+test('category measurements cannot exceed repository totals or inflate their partition', () => {
+  const validDocs = { eligible_files: 1, read_files: 1, full_files: 1, partial_files: 0 };
+  const parsed = parseEvidenceCoverage({ repository: { ...repo, by_category: {
+    docs: validDocs, code: { eligible_files: 100, read_files: 100, full_files: 100, partial_files: 0 },
+  } } })!.repository!;
+  assert.deepEqual(parsed.by_category, { docs: validDocs });
+  assert.equal(parsed.total_files, 10);
+  // Both rows fit alone, but cannot simultaneously partition three read files.
+  const combined = parseEvidenceCoverage({ repository: { ...repo, by_category: {
+    docs: { eligible_files: 5, read_files: 2 }, code: { eligible_files: 5, read_files: 2 },
+  } } })!.repository!;
+  assert.deepEqual(combined.by_category, {});
+  assert.equal(combined.read_files, 3);
+});
+
 test('archive totals and scoped source counts reject contradictory inputs', () => {
   assert.equal(parseArchiveConversations({ scope: 'all_conversations' }), undefined);
   assert.equal(parseArchiveConversations({ scope: 'linked_codex_sessions', linked_sessions: 2, read_sessions: 3 }), undefined);
