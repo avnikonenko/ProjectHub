@@ -24,11 +24,11 @@ PROMPT_VERSION = 18
 _extraction_run = ContextVar('projecthub_extraction_run', default=None)
 
 
-def _record_extraction_retry(kind):
+def _record_extraction_count(kind, count=1):
     run = _extraction_run.get()
     if run is not None:
         with run['lock']:
-            run[kind] += 1
+            run[kind] += count
 
 
 class EvidenceExcerptError(CodexError):
@@ -424,7 +424,7 @@ def _validate_agreement(item, evidence, indexed):
         raise EvidenceAgreementError('A short acceptance requires proposal context, not direct agreement.')
 
 
-def validate_extraction(raw, window, project_id, extraction_version):
+def validate_extraction(raw, window, project_id, extraction_version, *, omitted_agreements=None):
     if not isinstance(raw, str):
         raise CodexError('Knowledge extraction returned invalid JSON.')
     if len(raw) > MAX_RESPONSE_CHARS:
@@ -494,6 +494,11 @@ def validate_extraction(raw, window, project_id, extraction_version):
         try:
             _validate_agreement(item, evidence, indexed)
         except EvidenceAgreementError as exc:
+            if omitted_agreements is not None:
+                # The repair can discard unsupported claims, but malformed
+                # citations and inexact excerpts still fail the whole batch.
+                omitted_agreements.append(str(exc))
+                continue
             if agreement_error is None:
                 agreement_error = exc
         if excerpt_error is not None or agreement_error is not None:
@@ -578,7 +583,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
     def generate(prompt, contract):
         return request_knowledge_json(manager, prompt, contract, extraction=True,
-                                      on_retry=lambda: _record_extraction_retry('formatting'))
+                                      on_retry=lambda: _record_extraction_count('formatting'))
 
     continuation_instruction = (
         'A context_view marked heading-continuation-v1 is the exact next paragraph of the same '
@@ -597,7 +602,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
         progress.check_cancelled()
         retry_payload, retry_schema, catalog = prepare_quote_selection(payload, schema)
         progress.check_cancelled()
-        _record_extraction_retry('quote')
+        _record_extraction_count('quote')
         selected_raw = generate(
             PROMPT + continuation_instruction + QUOTE_SELECTION_INSTRUCTIONS
             + ('The previous extraction failed agreement validation. Check every AGREED or REJECTED '
@@ -608,7 +613,13 @@ def extract_batch(engine, project_id, manager, window, configuration):
                if isinstance(exc, EvidenceAgreementError) else '')
             + json.dumps(retry_payload, ensure_ascii=False, separators=(',', ':')), retry_schema)
         raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS)
-        items = validate_extraction(raw, window, project_id, version)
+        omitted_agreements = []
+        items = validate_extraction(raw, window, project_id, version, omitted_agreements=omitted_agreements)
+        if omitted_agreements:
+            # Publish the validated remainder with a coverage limitation. Keep
+            # this window eligible for fresh extraction on a later run.
+            _record_extraction_count('unsupported_agreement_items', len(omitted_agreements))
+            return items, False
         quote_selection = True
     cached_raw, adjustments = _cache_response(raw, window)
     envelope = {'raw': cached_raw, 'generation_mode': getattr(manager, 'extraction_generation_mode', 'full-schema')}
@@ -958,7 +969,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
     legacy = _legacy_extraction_configurations(engine, manager, configuration)
-    run = {'quote': 0, 'formatting': 0, 'lock': threading.Lock(), 'legacy': legacy}
+    run = {'quote': 0, 'formatting': 0, 'unsupported_agreement_items': 0, 'lock': threading.Lock(), 'legacy': legacy}
     token = _extraction_run.set(run)
     try:
         extracted, hits, requests, workers, timings = _extract_windows(
@@ -966,6 +977,13 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     finally:
         _extraction_run.reset(token)
     requests += run['quote'] + run['formatting']
+    omitted = run['unsupported_agreement_items']
+    if omitted:
+        coverage = deepcopy(coverage)
+        claims = 'claim' if omitted == 1 else 'claims'
+        coverage.setdefault('limitations', []).append(
+            f'Omitted {omitted} candidate agreement or rejection {claims} after retry because the cited '
+            'evidence did not establish a user decision. A future generation can retry the affected batches.')
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version,
                       compatible_versions={_digest(settings) for settings in legacy})
@@ -994,6 +1012,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
                             **({'quote_selector_retries': run['quote']} if run['quote'] else {}),
                             **({'formatting_retries': run['formatting']} if run['formatting'] else {}),
+                            **({'unsupported_agreement_items': omitted} if omitted else {}),
                             'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default',
                             'source_selection': selection}}

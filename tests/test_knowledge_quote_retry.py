@@ -371,14 +371,81 @@ def test_unsupported_agreement_gets_one_shared_repair_and_canonical_cache(quote_
 
 
 @pytest.mark.parametrize('first_error', ['agreement', 'quote'])
-def test_second_unsupported_agreement_fails_without_more_retries_or_cache(quote_batch, first_error):
+@pytest.mark.parametrize('status', ['AGREED', 'REJECTED'])
+def test_second_unsupported_agreement_is_omitted_without_more_retries_or_cache(quote_batch, first_error, status):
     engine, window, item = quote_batch
     unsupported = deepcopy(item)
-    unsupported.update(design_status='AGREED', agreement_basis='direct_user')
+    unsupported.update(design_status=status, agreement_basis='direct_user')
     first = response(unsupported) if first_error == 'agreement' else corrupted(item)
     manager = Responses([first, selected(unsupported)])
-    with pytest.raises(knowledge.EvidenceAgreementError):
+    items, hit = knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert items == [] and not hit
+    assert len(manager.calls) == 2 and rows(engine) == []
+
+
+def test_missing_same_conversation_proposal_preserves_valid_items_and_clean_window_cache(quote_batch, monkeypatch):
+    engine, window, item = quote_batch
+    proposal, observation = window['sources']
+    acceptance = {**proposal, 'id': 'source:acceptance', 'role': 'user', 'text': 'Yes.',
+                  'conversation_id': 'other-conversation', 'source_key': 'other-conversation', 'order': 3}
+    acceptance['revision'] = hashlib.sha256(acceptance['text'].encode()).hexdigest()
+    window = {'sources': [proposal, acceptance], 'primary_ids': [proposal['id'], acceptance['id']],
+              'context_ids': []}
+    clean_window = {'sources': [observation], 'primary_ids': [observation['id']], 'context_ids': []}
+    select_test_windows(monkeypatch, [window, clean_window])
+    unsupported = {**deepcopy(item), 'statement': 'The user accepted the expression.',
+                   'design_status': 'AGREED', 'agreement_basis': 'proposal_acceptance'}
+    unsupported['evidence'].append({'source_id': acceptance['id'], 'role': 'user', 'excerpt': acceptance['text']})
+    clean_item = {**deepcopy(item), 'statement': observation['text'], 'evidence': [
+        {'source_id': observation['id'], 'role': 'assistant', 'excerpt': observation['text']}]}
+
+    def repair(prompt, schema):
+        payload = json.loads(prompt.rsplit('\n', 1)[1])
+        selectors = {source['id']: source['literal_quotes'][0]['id'] for source in payload['sources']}
+        repaired = deepcopy([unsupported, item])
+        for candidate in repaired:
+            for ref in candidate['evidence']:
+                ref['excerpt'] = selectors[ref.pop('source_id')]
+        return {'items': repaired}
+
+    manager = Responses([{'items': [unsupported, item]}, repair, response(clean_item), response(item)])
+    bundle = candidate_bundle([proposal, acceptance, observation])
+    candidate = knowledge.build_candidate(engine, 1, manager, bundle)
+
+    assert {value['statement'] for value in candidate['items']} == {item['statement'], clean_item['statement']}
+    assert all(value['design_status'] == 'PROPOSED' for value in candidate['items'])
+    assert any('1' in note and 'agreement' in note.lower() for note in candidate['coverage']['limitations'])
+    assert candidate['diagnostics']['unsupported_agreement_items'] == 1
+    assert candidate['diagnostics']['ai_requests'] == 3
+    assert candidate['diagnostics']['cache_hits'] == 0
+    assert len(rows(engine)) == 1
+
+    replay = knowledge.build_candidate(engine, 1, manager, bundle, previous=candidate)
+    assert replay['diagnostics']['ai_requests'] == 1
+    assert replay['diagnostics']['cache_hits'] == 1
+    assert replay['coverage']['limitations'] == []
+    assert not replay['diagnostics'].get('unsupported_agreement_items')
+    assert len(rows(engine)) == 2
+    assert len(manager.calls) == 4
+
+
+@pytest.mark.parametrize('hard_error', ['selector', 'role', 'shape'])
+def test_unsupported_agreement_cannot_mask_later_hard_error_in_repair(quote_batch, hard_error):
+    engine, window, item = quote_batch
+    unsupported = {**deepcopy(item), 'design_status': 'AGREED', 'agreement_basis': 'direct_user'}
+
+    def repair(prompt, schema):
+        repaired = selected(unsupported)(prompt, schema)
+        invalid = selected(item, bad_selector=hard_error == 'selector', wrong_role=hard_error == 'role')(prompt, schema)
+        if hard_error == 'shape':
+            invalid['items'][0].pop('scope')
+        repaired['items'].extend(invalid['items'])
+        return repaired
+
+    manager = Responses([response(unsupported), repair])
+    with pytest.raises(CodexError) as error:
         knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert not isinstance(error.value, knowledge.EvidenceAgreementError)
     assert len(manager.calls) == 2 and rows(engine) == []
 
 

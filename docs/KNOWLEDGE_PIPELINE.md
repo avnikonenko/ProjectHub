@@ -216,7 +216,10 @@ be selected as evidence. Canonical extraction validation runs again before save.
 The retry stores the same canonical schema with literal excerpts. The cache envelope records
 `quote_selection_mode` when used. `ai_requests` includes the extra reading request,
 `quote_selector_retries` records it, and model/token metrics cover both calls when
-usage is reported. A second failure preserves previous results and completed caches.
+usage is reported. If the retry still cites insufficient evidence for an agreement
+or rejection, the run keeps the valid records and reports how many claims it
+omitted under Coverage. Batches with omitted claims can be retried in a future
+generation. Invalid citations and excerpt errors still fail the run.
 
 ### Scope checks when combining Overview stages
 
