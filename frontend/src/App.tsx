@@ -1073,7 +1073,13 @@ function ProjectWorkspace({
               <>
                 <Codex base={base} onError={setError}
                   targetSessionId={searchTarget?.kind === 'sessions' ? searchTarget.id : undefined}
-                  notes={notes} onImported={load} />
+                  notes={notes} onImported={load}
+                  onUnlinked={(sessionId) => {
+                    setSearchTarget((current) => current?.kind === 'sessions' && current.id === sessionId ? null : current);
+                    setGenerationResultsVersion((version) => version + 1);
+                    return load();
+                  }}
+                  onOpenGeneration={() => setView('Generation')} />
                 <ChatGPTShares base={base} notes={notes} showHistory={false} />
               </>
             )}
@@ -2146,11 +2152,13 @@ function SavedHistory({
   );
 }
 
-function Codex({ base, onError, notes, onImported, targetSessionId }: {
+function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration, targetSessionId }: {
   base: string;
   onError: (message: string) => void;
   notes: RecordData[];
   onImported: () => Promise<void>;
+  onUnlinked: (sessionId: number) => Promise<void>;
+  onOpenGeneration: () => void;
   targetSessionId?: number;
 }) {
   const [status, setStatus] = useState<any>(null);
@@ -2162,6 +2170,7 @@ function Codex({ base, onError, notes, onImported, targetSessionId }: {
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
+  const [unlinkedSession, setUnlinkedSession] = useState('');
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
   const mounted = useRef(true);
@@ -2203,12 +2212,12 @@ function Codex({ base, onError, notes, onImported, targetSessionId }: {
       mounted.current = false;
     };
   }, [prefix, refresh]);
-  async function action(fn: () => Promise<unknown>) {
+  async function action(fn: () => Promise<unknown>, after?: () => Promise<void>) {
     setBusy(true);
     onError('');
     try {
       await fn();
-      await refresh();
+      await Promise.all([refresh(), after?.()]);
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -2229,6 +2238,10 @@ function Codex({ base, onError, notes, onImported, targetSessionId }: {
             </div>
             <Badge value={available ? 'available' : status ? 'unavailable' : 'checking'} />
           </div>
+          {unlinkedSession && <Feedback tone="success">
+            <p>Unlinked {unlinkedSession}. Use Generation to retry unfinished results with the updated sources.</p>
+            <button type="button" className="secondary" disabled={busy} onClick={onOpenGeneration}>Open Generation</button>
+          </Feedback>}
           <div className="source-toolbar">
             <ChatGPTShares base={base} notes={notes} onImported={onImported} compact />
             <details className="source-link">
@@ -2315,7 +2328,10 @@ function Codex({ base, onError, notes, onImported, targetSessionId }: {
                 {' · '}
                 <button className="quiet" disabled={busy || session.status === 'running'} onClick={() => {
                   if (window.confirm(`Unlink “${session.title || `Session #${session.id}`}”? The Codex thread and saved records will be kept.`)) {
-                    void action(() => patch(`${prefix}/sessions/${session.id}/link`, { linked: false }));
+                    void action(() => patch(`${prefix}/sessions/${session.id}/link`, { linked: false }), () => {
+                      if (mounted.current) setUnlinkedSession(sessionCaption(session));
+                      return onUnlinked(session.id);
+                    });
                   }
                 }}>Unlink</button>
                 </div>
