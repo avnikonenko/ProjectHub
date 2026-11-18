@@ -84,7 +84,9 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None):
         _events[key] = event
         _run_locks[key] = threading.Lock()
         _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation',
-                           'started_at': utcnow(), 'budget_seconds': budget, 'settings': settings}
+                           'started_at': utcnow(), 'budget_seconds': budget}
+        if settings is not None:
+            _snapshots[key]['settings'] = settings
         _current.set((project_id, kind, event))
         _stores[key] = weakref.ref(engine) if engine is not None else None
     if engine is not None:
