@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, DEFAULT_SCHEME_READ_BYTES, scheme_inspection_limits
-from ...models import ProjectHistoryBatch
+from ...models import Project, ProjectHistoryBatch
 from ...project_evidence import (
     EvidenceReadError, _CODE_PRIVATE, _code_category, _code_order, _digest,
     _excluded, _exclusions, _git, _repository_root,
@@ -1241,7 +1241,9 @@ def collect_evidence(engine, project_id):
                 'published_knowledge': knowledge['marker']})
         if inspection_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
-                if db.get(ProjectHistoryBatch, (project_id, key)) is None:
+                db.execute(text('BEGIN IMMEDIATE'))
+                if (db.get(Project, project_id) is not None
+                        and db.get(ProjectHistoryBatch, (project_id, key)) is None):
                     db.add(ProjectHistoryBatch(project_id=project_id, fingerprint=key, evidence=[result]))
                     db.commit()
         return result

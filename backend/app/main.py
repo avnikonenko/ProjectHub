@@ -20,6 +20,7 @@ from .integrations.codex.history_search import search_history
 from .project_search import project_search
 from .project_export import audit_response, project_export_response
 from .models import *
+from .project_removal import ProjectRemovalGate, next_project_id, remove_project, retry_removed_uploads
 from .schemas import *
 from .services import serialize, require_project, scoped, records, question_dict, audit, validate_repository, validate_links, overview, summary, review
 from .services import repository_snapshot, repository_github_target, validate_project_git_remote
@@ -66,8 +67,11 @@ def _create_app(data_dir, restart_controller, ownership):
     engine, directory = initialize(data_dir)
     from .integrations.codex.generation_attempts import interrupt_running
     interrupt_running(engine)
+    with Session(engine) as db:
+        retry_removed_uploads(db, directory)
     app.state.engine, app.state.data_dir = engine, directory
     db_dep = Depends(db_dependency)
+    removal_gate = ProjectRemovalGate()
     install_restart(app, restart_controller)
 
     @app.middleware('http')
@@ -87,7 +91,8 @@ def _create_app(data_dir, restart_controller, ownership):
             except ValueError:
                 allowed = False
             if not allowed: return JSONResponse({'detail':'Cross-origin access denied'},status_code=403)
-        if request.method not in ('GET','HEAD','OPTIONS'):
+        mutating = request.method not in ('GET','HEAD','OPTIONS')
+        if mutating:
             if request.headers.get('sec-fetch-site') == 'cross-site': return JSONResponse({'detail':'Cross-site request denied'},status_code=403)
             # Bound request bytes before JSON or multipart parsing, including chunked input.
             # Note content can originate from a 16 MiB transcript import. JSON
@@ -103,10 +108,12 @@ def _create_app(data_dir, restart_controller, ownership):
                 if size > limit: return JSONResponse({'detail':f'Request exceeds {limit // (1024 * 1024)} MiB'},status_code=413)
                 chunks.append(chunk)
             request._body = b''.join(chunks)
-        if (restart_controller is not None and request.method not in ('GET', 'HEAD', 'OPTIONS')
-                and request.url.path != '/api/settings/restart'):
+        if mutating:
+            removal = request.method == 'DELETE' and re.fullmatch(r'/api/projects/[^/]+', request.url.path) is not None
+            restart_guard = (restart_controller.mutation if restart_controller is not None
+                             and request.url.path != '/api/settings/restart' else nullcontext)
             try:
-                with restart_controller.mutation():
+                with removal_gate.mutation(removal=removal), restart_guard():
                     response = await call_next(request)
             except HTTPException as exc:
                 return JSONResponse({'detail': exc.detail}, status_code=exc.status_code)
@@ -132,10 +139,15 @@ def _create_app(data_dir, restart_controller, ownership):
     def create_project(payload: ProjectCreate,db: Session=db_dep):
         values=payload.model_dump(); values['repository_path']=validate_repository(values['repository_path'])
         values['git_remote'] = validate_project_git_remote(values['git_remote'])
-        p=Project(**values);db.add(p);db.flush();audit(db,p.id,p,'created');db.commit();return serialize(p)
+        p=Project(id=next_project_id(db), **values);db.add(p);db.flush();audit(db,p.id,p,'created');db.commit();return serialize(p)
 
     @app.get('/api/projects/{project_id}')
     def get_project(project_id:int,db:Session=db_dep): return serialize(require_project(db,project_id))
+
+    @app.delete('/api/projects/{project_id}', status_code=204)
+    def delete_project(project_id: int, db: Session = db_dep):
+        remove_project(db, directory, project_id, getattr(app.state, 'codex_manager', None))
+        return Response(status_code=204)
 
     @app.get('/api/projects/{project_id}/agent/context')
     def get_agent_context(project_id: int, db: Session = db_dep,

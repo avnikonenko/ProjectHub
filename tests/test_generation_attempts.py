@@ -299,6 +299,7 @@ def test_schema_upgrade_preserves_existing_saved_results(tmp_path):
     from pathlib import Path
     from alembic import command
     from alembic.config import Config
+    from alembic.script import ScriptDirectory
     from sqlalchemy import create_engine, text
     database = tmp_path / 'projecthub.sqlite3'
     old = create_engine('sqlite:///' + str(database))
@@ -314,7 +315,7 @@ def test_schema_upgrade_preserves_existing_saved_results(tmp_path):
     upgraded, _ = initialize(tmp_path)
     try:
         with Session(upgraded) as db:
-            assert db.scalar(text('SELECT version_num FROM alembic_version')) == '0022'
+            assert db.scalar(text('SELECT version_num FROM alembic_version')) == ScriptDirectory.from_config(cfg).get_current_head()
             assert db.get(ProjectBrief, 1).sections == {'overview': ['Original content']}
             assert attempts.read_latest(db, 1, 'brief') is None
             summary = attempts.generation_summary(db, 1)['views'][0]

@@ -32,6 +32,12 @@ class Project(Stamp, Base):
     architecture_mermaid: Mapped[str] = mapped_column(Text, default='')
 
 
+class RemovedProject(Base):
+    __tablename__ = 'removed_projects'
+    project_id: Mapped[int] = mapped_column(primary_key=True)
+    pending_uploads: Mapped[list] = mapped_column(JSON)
+
+
 class CodexProfile(Base):
     __tablename__ = 'codex_profiles'
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -113,11 +113,14 @@ export default function App() {
   const [error, setError] = useState('');
   const [adding, setAdding] = useState(false);
   const [pinningProject, setPinningProject] = useState<number | null>(null);
+  const [removingProject, setRemovingProject] = useState<number | null>(null);
+  const removedProjects = useRef(new Set<number>());
   const [loading, setLoading] = useState(true);
   const [historyLink, setHistoryLink] = useState(() => readHistoryLink(window.location.hash));
   const [knowledgeLink, setKnowledgeLink] = useState(() => readKnowledgeLink(window.location.hash));
   const fetchProjects = useCallback(async () => {
-    const data = await api<Pick<Project, 'id' | 'name' | 'pinned'>[]>('/projects?compact=true');
+    const response = await api<Pick<Project, 'id' | 'name' | 'pinned'>[]>('/projects?compact=true');
+    const data = response.filter((project) => !removedProjects.current.has(project.id));
     setProjects(data);
     setSelected((current) =>
       current !== null && data.some((p) => p.id === current)
@@ -152,6 +155,34 @@ export default function App() {
       setError((error as Error).message);
     } finally {
       setPinningProject(null);
+    }
+  }
+  async function removeProject(project: Pick<Project, 'id' | 'name'>) {
+    if (removingProject !== null || !window.confirm(
+      `Remove “${project.name}”? This permanently removes the project and its saved data from ProjectHub, including notes, tasks, and generated results.`,
+    )) return;
+    setRemovingProject(project.id);
+    setError('');
+    try {
+      await api(`/projects/${project.id}`, { method: 'DELETE' });
+      removedProjects.current.add(project.id);
+      setProjects((current) => current.filter((entry) => entry.id !== project.id));
+      setSelected((current) => current === project.id ? null : current);
+      const hash = window.location.hash;
+      if ((readHistoryLink(hash)?.projectId ?? readKnowledgeLink(hash)?.projectId) === project.id) {
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+        setHistoryLink(null);
+        setKnowledgeLink(null);
+      }
+      try {
+        if (localStorage.getItem('projecthub.selected-project') === String(project.id)) {
+          localStorage.removeItem('projecthub.selected-project');
+        }
+      } catch { /* Storage is optional. */ }
+    } catch (error) {
+      setError((error as Error).message);
+    } finally {
+      setRemovingProject(null);
     }
   }
   function selectProject(projectId: number) {
@@ -243,6 +274,8 @@ export default function App() {
             knowledgeLink={linkedProjectExists ? knowledgeLink : null}
             onLeaveHistory={() => selectProject(selectedProject)}
             onProjectChanged={fetchProjects}
+            onRemoveProject={removeProject}
+            removingProject={removingProject}
           />
         )}
       </div>
@@ -266,12 +299,16 @@ export default function App() {
 function ProjectWorkspace({
   projectId,
   onProjectChanged,
+  onRemoveProject,
+  removingProject,
   historyLink,
   knowledgeLink,
   onLeaveHistory,
 }: {
   projectId: number;
   onProjectChanged: () => Promise<void>;
+  onRemoveProject: (project: Pick<Project, 'id' | 'name'>) => Promise<void>;
+  removingProject: number | null;
   historyLink: HistoryLink | null;
   knowledgeLink: KnowledgeLink | null;
   onLeaveHistory: () => void;
@@ -654,6 +691,10 @@ function ProjectWorkspace({
             }
           >
             Edit overview
+          </button>
+          <button type="button" className="secondary" disabled={busy || removingProject !== null}
+            onClick={() => void onRemoveProject(project)}>
+            {removingProject === project.id ? 'Removing…' : 'Remove project'}
           </button>
           <GenerationSettings base={base} settings={generationSettings} />
         </div>

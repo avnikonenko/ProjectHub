@@ -15,6 +15,7 @@ Every path below beginning `/{pid}` means `/api/projects/{pid}`.
 - `GET /api/projects`: project array ordered by pin first, then ID. With `compact=true`, returns only `{id,name,pinned}` for each project.
 - `POST /api/projects`: requires `name`. Accepts optional `pinned`, `description`, `goals`, `status`, `repository_path`, `git_remote`, `tags`, and `architecture_mermaid`.
 - `GET /{pid}` and `PATCH /{pid}`: project detail and supported edits.
+- `DELETE /{pid}`: permanently removes the project and its saved ProjectHub records after confirmation in the app. Returns 204 on success, 404 for a missing project, and 409 while conflicting work is active.
 - `GET /{pid}/overview`: `{project,questions,decisions,tasks,notes,sessions,activity}`. Questions include nested `answers`. Tasks are ordered by pin first, then ID. Activity contains up to 50 newest entries.
 - `GET /{pid}/overview?compact=true&note_content=false`: lightweight browser loading; omits retired workflow collections, note content and activity before/after bodies. Note metadata includes `content_loaded:false`. `GET /{pid}/notes/{id}` retrieves full project-scoped content on demand. Existing overview defaults retain full data.
 

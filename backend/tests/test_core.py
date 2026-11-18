@@ -168,7 +168,8 @@ def test_existing_repo_registration_does_not_modify_files(client,tmp_path):
         assert client.post('/api/projects',json={'name':'Unsafe','repository_path':unsafe}).status_code==422
     link=tmp_path/'link';link.symlink_to(repo,target_is_directory=True)
     assert client.post('/api/projects',json={'name':'Unsafe','repository_path':str(link)}).status_code==422
-    assert client.delete(f"/api/projects/{p['id']}").status_code in (404,405);assert repo.exists()
+    assert client.delete(f"/api/projects/{p['id']}").status_code == 204
+    assert snapshot() == before
 
 
 def test_persistence_summary_search_export_backup(tmp_path):
