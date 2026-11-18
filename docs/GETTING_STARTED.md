@@ -1,5 +1,38 @@
 # Install and run
 
+## Install a wheel
+
+For most users, start with the [v0.2.1 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.1/projecthub_local-0.2.1-py3-none-any.whl).
+It includes the interface and migrations and runs on Linux with Python 3.11+.
+Open a terminal in the download directory. Pick pipx or Conda and use the
+filename you downloaded.
+
+### With pipx
+
+[Install pipx](https://pipx.pypa.io/latest/how-to/install-pipx.html) if needed.
+
+```bash
+pipx install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
+```
+
+If the launcher is outside your `PATH`, run `pipx ensurepath` and reopen the
+terminal.
+
+### With Conda
+
+Use this option if you already use Conda.
+
+```bash
+conda create -n projecthub -c conda-forge python=3.12 pip
+conda activate projecthub
+python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
+projecthub
+```
+
+Install Git for repository inspection. Contributors can also
+[build a wheel](README.md#build-a-wheel).
+
 ## Install from source
 
 On Linux, install Python 3.11+ with `venv`, Git, and Node.js 22.18+ with npm.
@@ -12,38 +45,16 @@ projecthub
 
 Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/projecthub`.
 
-## Install a wheel
-
-[Download the v0.2.1 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.1/projecthub_local-0.2.1-py3-none-any.whl)
-or [build one from source](README.md#build-a-wheel). The wheel includes the
-interface and migrations and runs on Linux with Python 3.11+.
-
-### With pipx
-
-```bash
-pipx install ./projecthub_local-0.2.1-py3-none-any.whl
-projecthub
-```
-
-If the launcher is outside your `PATH`, run `pipx ensurepath` and reopen the
-terminal.
-
-### With Conda
-
-```bash
-conda create -n projecthub -c conda-forge python=3.12 pip
-conda activate projecthub
-python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
-projecthub
-```
-
-Use your downloaded wheel's filename. Install Git for repository inspection.
-
 ## Start a project
+
+For Codex sessions or AI generation, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+and run `codex login` before linking a session or requesting generation. Local
+notes and browsing work without Codex.
 
 1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
 2. In **Sources**, link a Codex session or import a public ChatGPT share.
-3. For AI generation, install Codex and run `codex login`. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
+3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
+4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
 Press Ctrl+C in the terminal to stop ProjectHub.
 

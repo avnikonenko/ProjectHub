@@ -29,26 +29,14 @@ Choose the Codex account, model, reasoning effort, and response instructions for
 
 ## Install and run
 
-### Install from a source checkout
+### Install a wheel
 
-Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**.
-From a cloned or downloaded checkout:
+For most users, start with the [v0.2.1 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.1/projecthub_local-0.2.1-py3-none-any.whl).
+It runs on Linux with **Python 3.11+** and includes the interface and database
+migrations. Open a terminal in the download directory. Pick pipx or Conda and use
+the filename you downloaded. [Other releases](https://github.com/avnikonenko/ProjectHub/releases)
 
-```bash
-bash scripts/install.sh
-projecthub
-```
-
-Keep the checkout for this installation. If its launcher is outside your PATH,
-run `bash scripts/projecthub` from the checkout.
-
-### Optional: install a wheel
-
-Check [GitHub Releases](https://github.com/avnikonenko/ProjectHub/releases) for
-a wheel, or [build one from source](docs/README.md#build-a-wheel). The wheel
-runs on Linux with **Python 3.11+** and bundles the built interface and database migrations.
-
-**With pipx**
+**With pipx** ([install pipx](https://pipx.pypa.io/latest/how-to/install-pipx.html) if needed)
 
 ```bash
 pipx install ./projecthub_local-0.2.1-py3-none-any.whl
@@ -59,7 +47,7 @@ If the launcher is outside your PATH, run `pipx ensurepath` and reopen the termi
 If you already have a source launcher named `projecthub`, you can try the wheel
 in a separate Conda environment.
 
-**With Conda**
+**With Conda**, if you already use it
 
 ```bash
 conda create -n projecthub -c conda-forge python=3.12 pip
@@ -68,22 +56,39 @@ python -m pip install ./projecthub_local-0.2.1-py3-none-any.whl
 projecthub
 ```
 
-Use the wheel filename you downloaded. Install Git for repository inspection and
-Codex for AI features. Source and wheel installations use the same [saved data directory](#your-data).
+Install Git for repository inspection.
 
-Open **http://127.0.0.1:8766** after starting ProjectHub. Stop with Ctrl+C.
+### Install from a source checkout
+
+Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**.
+Run these commands from your checkout:
+
+```bash
+bash scripts/install.sh
+projecthub
+```
+
+Keep the checkout for this installation. If `projecthub` is outside your PATH,
+run `bash scripts/projecthub` from the checkout. See [Build a wheel](docs/README.md#build-a-wheel)
+to package your own build.
+
+Both routes use the same [saved data directory](#your-data). Open
+[ProjectHub](http://127.0.0.1:8766) after starting it. Stop with Ctrl+C.
 
 ## Example: Get back up to speed on Project X
 
+For Codex sessions or AI generation, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+and run `codex login`. Local notes and browsing work without Codex.
+
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
 2. In **Sources**, link a Codex session about Project X or use **Import shared chat** to add a past discussion.
-3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Read the saved result and follow its citations to the original discussions.
+3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
 4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
 5. In **Generation**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
 
 ## Settings and AI
 
-AI features use your existing **Codex ChatGPT sign-in**. Install Codex separately and run `codex login`. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
+AI features use your existing **Codex ChatGPT sign-in**. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
 
 ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
 
