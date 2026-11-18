@@ -159,11 +159,9 @@ button:disabled {
   line-height: 1.8;
   margin-top: 8px;
 }
-.app-version {
-  display: block;
-  margin-top: 12px;
-}
+.app-version,
 .sidebar-footer .app-copyright {
+  display: block;
   font-size: 0.714286rem;
   margin-top: 12px;
 }
