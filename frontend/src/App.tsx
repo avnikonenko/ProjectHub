@@ -209,6 +209,7 @@ export default function App() {
             Codex requests go to OpenAI.
           </small>
           <span className="app-version">ProjectHub v{version}</span>
+          <small className="app-copyright">(c) 2026 Aleksandra Ivanova</small>
         </div>
       </aside>
       <div className="workspace">
@@ -244,9 +245,6 @@ export default function App() {
             onProjectChanged={fetchProjects}
           />
         )}
-        <footer className="app-footer muted">
-          <small>(c) 2026 Aleksandra Ivanova</small>
-        </footer>
       </div>
       {adding && (
         <Form

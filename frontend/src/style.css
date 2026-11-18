@@ -163,6 +163,10 @@ button:disabled {
   display: block;
   margin-top: 12px;
 }
+.sidebar-footer .app-copyright {
+  font-size: 0.714286rem;
+  margin-top: 12px;
+}
 .local-dot {
   display: inline-block;
   width: 6px;
@@ -176,9 +180,6 @@ button:disabled {
   flex: 1;
   min-width: 0;
   background: #fafbfa;
-}
-.app-footer {
-  padding: 1rem clamp(18px, 3vw, 28px);
 }
 .topbar {
   flex-wrap: wrap;
