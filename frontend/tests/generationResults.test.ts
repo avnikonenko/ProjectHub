@@ -109,7 +109,8 @@ test('attempt details show the failed run settings alongside the earlier saved r
   Object.assign(raw.views[2], { state: 'skipped', retryable: true,
     latest_attempt: { state: 'skipped', error: 'Knowledge failed.', settings: null } });
   const html = renderToStaticMarkup(createElement(GenerationResultRows, { data: parseGenerationResults(raw, 2) }));
-  assert.match(html, /<strong>Settings<\/strong> Luna &lt;team&gt; · GPT-5 · low/);
+  assert.match(html, /<strong>Settings<\/strong> GPT-5 · low/);
+  assert.doesNotMatch(html, /Luna/);
   assert.match(html, /Showing the earlier saved result/);
   assert.match(html, /Usage limit reached/);
   assert.match(html, /Knowledge failed/);

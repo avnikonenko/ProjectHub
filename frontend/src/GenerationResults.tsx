@@ -115,7 +115,7 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
           {dateLabel(view.latest_attempt.started_at) && <p>Started {dateLabel(view.latest_attempt.started_at)}</p>}
           {dateLabel(view.latest_attempt.finished_at) && <p>Finished {dateLabel(view.latest_attempt.finished_at)}</p>}
           {view.latest_attempt.settings && <p><strong>Settings</strong>{' '}
-            {view.latest_attempt.settings.account} · {view.latest_attempt.settings.model} · {view.latest_attempt.settings.effort}
+            {view.latest_attempt.settings.model} · {view.latest_attempt.settings.effort}
           </p>}
           {view.latest_attempt.error && <p>{view.latest_attempt.error}</p>}
         </details>}
