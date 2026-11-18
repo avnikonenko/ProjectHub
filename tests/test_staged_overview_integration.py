@@ -17,7 +17,7 @@ from backend.app.integrations.codex import knowledge_brief as pilot, progress
 from backend.app.integrations.codex.brief import SECTION_NAMES
 from backend.app.integrations.codex.knowledge_previews import read_knowledge_preview, stage_knowledge_preview
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import ProjectHistoryBatch
+from backend.app.models import CodexProfile, ProjectHistoryBatch
 from backend.tests.integrations.test_knowledge_brief import prepared, _candidate, _stored, _topic_reply
 
 
@@ -200,6 +200,54 @@ def test_stage_cache_is_project_and_model_scoped(staged_state, monkeypatch):
     pilot.generate_knowledge_brief(staged_state.engine, 2, foreign, publish=False)
     assert len(foreign.calls) == len(initial.calls)
     assert _stage_rows(staged_state.engine, 2)
+
+
+@pytest.mark.parametrize('legacy', [False, True])
+def test_stage_cache_reuses_matching_settings_across_accounts(staged_state, monkeypatch, tmp_path, legacy):
+    from backend.app.integrations.codex import staged_overview
+
+    class ProfileModel(StagedModel):
+        def __init__(self, identifier, label):
+            super().__init__()
+            home = tmp_path / f'profile-{identifier}'
+            home.mkdir()
+            self.generation_account = str(home.resolve())
+            self.account_key = f'registered:{identifier}'
+            self.generation_metadata['account'] = label
+            with Session(staged_state.engine) as db:
+                db.add(CodexProfile(id=identifier, name=label, directory=self.generation_account))
+                db.commit()
+
+        def for_generation(self, model, effort=None):
+            return self
+
+    initial = ProfileModel(1, 'First account')
+    if legacy:
+        configuration = staged_overview.extraction_configuration
+        with monkeypatch.context() as context:
+            context.setattr(staged_overview, 'extraction_configuration', lambda manager: {
+                **configuration(manager), 'account': manager.generation_account,
+            })
+            first = pilot.generate_knowledge_brief(staged_state.engine, 1, initial, publish=False)
+        with Session(staged_state.engine) as db:
+            for row in _stage_rows(staged_state.engine):
+                db.get(ProjectHistoryBatch, (1, row.fingerprint)).evidence = [
+                    {'stage_response': row.evidence[0]['stage_response']},
+                ]
+            db.commit()
+    else:
+        first = pilot.generate_knowledge_brief(staged_state.engine, 1, initial, publish=False)
+
+    retry = ProfileModel(2, 'Second account')
+    result = pilot.generate_knowledge_brief(staged_state.engine, 1, retry, publish=False)
+
+    assert len(initial.calls) > 1 and retry.calls == []
+    assert result['diagnostics']['synthesis_requests'] == 0
+    assert result['diagnostics']['synthesis_cache_hits'] == len(initial.calls)
+    assert result['brief']['sections'] == first['brief']['sections']
+    assert result['brief']['generation']['account'] == ('Account not recorded' if legacy else 'First account')
+    assert result['brief']['generation']['model'] == 'model-a'
+    assert result['brief']['generation']['effort'] == 'low'
 
 
 @pytest.mark.parametrize('corruption', ['malformed', 'foreign_reference'])

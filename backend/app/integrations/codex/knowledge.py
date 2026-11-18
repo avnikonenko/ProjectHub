@@ -10,6 +10,7 @@ import time
 import re
 
 from sqlalchemy import select, func
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, ProjectKnowledge, GenerationRevision
@@ -20,14 +21,14 @@ from .protocol import CodexError
 
 SCHEMA_VERSION = 3
 PROMPT_VERSION = 18
-_extraction_retry_counter = ContextVar('projecthub_extraction_retry_counter', default=None)
+_extraction_run = ContextVar('projecthub_extraction_run', default=None)
 
 
 def _record_extraction_retry(kind):
-    counter = _extraction_retry_counter.get()
-    if counter is not None:
-        with counter['lock']:
-            counter[kind] += 1
+    run = _extraction_run.get()
+    if run is not None:
+        with run['lock']:
+            run[kind] += 1
 
 
 class EvidenceExcerptError(CodexError):
@@ -280,13 +281,39 @@ def _short_acceptance(text):
 def extraction_configuration(manager):
     from .knowledge_profiles import current_knowledge_profile, profile_cache_settings
     configuration = {'schema': SCHEMA_VERSION, 'prompt': PROMPT_VERSION, 'instructions': ai_instructions(),
-            **{name: str(getattr(manager, 'generation_' + name, None) or
-                          (getattr(manager, 'account_key', None) if name == 'account' else '') or 'default')
-               for name in ('account', 'model', 'effort')}}
+            **{name: str(getattr(manager, 'generation_' + name, None) or 'default')
+               for name in ('model', 'effort')}}
+    # Codex can resolve implicit settings differently for different accounts.
+    if 'default' in (configuration['model'], configuration['effort']):
+        configuration['account'] = _legacy_extraction_account(manager)
     selected = profile_cache_settings(current_knowledge_profile())
     if selected is not None:
         configuration['generation_profile'] = selected
     return configuration
+
+
+def _legacy_extraction_account(manager):
+    return str(getattr(manager, 'generation_account', None) or getattr(manager, 'account_key', None) or 'default')
+
+
+def legacy_generation_accounts(engine):
+    """Known prior cache identities derived without reading account credentials."""
+    from .accounts import launch_home, profile_entries
+    homes = tuple(dict.fromkeys(str(path.resolve()) for _, _, path in profile_entries(engine)))
+    return tuple(dict.fromkeys([
+        ('default', str(launch_home())),
+        *((home, home) for home in homes),
+        *(('default', home) for home in homes),
+    ]))
+
+
+def _legacy_extraction_configurations(engine, manager, configuration):
+    if 'account' in configuration:
+        return ()
+    accounts = dict.fromkeys([
+        _legacy_extraction_account(manager), *(account for account, _ in legacy_generation_accounts(engine)),
+    ])
+    return tuple({**configuration, 'account': account} for account in accounts)
 
 
 def read_knowledge(db, project_id):
@@ -523,14 +550,30 @@ def extract_batch(engine, project_id, manager, window, configuration):
     for value, source in zip(payload['sources'], window['sources']):
         if source.get('context_view'):
             value['context_view'] = source['context_view']
-    key = _digest({'namespace': 'knowledge-extraction-v1', 'project_id': project_id,
-                   'configuration': configuration, 'payload': payload})
+    def fingerprint(settings):
+        return _digest({'namespace': 'knowledge-extraction-v1', 'project_id': project_id,
+                        'configuration': settings, 'payload': payload})
+
+    key = fingerprint(configuration)
     with Session(engine) as db:
         cached = db.get(ProjectHistoryBatch, (project_id, key))
+        if cached is None and 'account' not in configuration:
+            run = _extraction_run.get()
+            legacy = run['legacy'] if run is not None else _legacy_extraction_configurations(engine, manager, configuration)
+            keys = [fingerprint(settings) for settings in legacy]
+            cached = db.scalar(select(ProjectHistoryBatch).where(
+                ProjectHistoryBatch.project_id == project_id, ProjectHistoryBatch.fingerprint.in_(keys),
+            ).order_by(ProjectHistoryBatch.fingerprint).limit(1))
         if cached is not None:
             if not isinstance(cached.evidence, list) or len(cached.evidence) != 1 or not isinstance(cached.evidence[0], dict):
                 raise CodexError('Cached knowledge extraction is invalid.')
-            return validate_extraction(cached.evidence[0].get('raw'), window, project_id, version), True
+            items = validate_extraction(cached.evidence[0].get('raw'), window, project_id, version)
+            if cached.fingerprint != key:
+                db.execute(insert(ProjectHistoryBatch).values(
+                    project_id=project_id, fingerprint=key, evidence=cached.evidence,
+                ).on_conflict_do_nothing(index_elements=['project_id', 'fingerprint']))
+                db.commit()
+            return items, True
     schema = deepcopy(OUTPUT_SCHEMA)
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
     def generate(prompt, contract):
@@ -655,12 +698,14 @@ def _reaches(items, start, target):
     return False
 
 
-def reconcile(previous, extracted, bundle, extraction_version):
+def reconcile(previous, extracted, bundle, extraction_version, *, compatible_versions=()):
     current = {source['id']: source for source in bundle['sources']}
     entries = {entry['source_key']: entry for entry in bundle['manifest']['entries']}
     items = {}
     for old in (previous or {}).get('items', []):
         item = deepcopy(old)
+        if item.get('extraction_version') in compatible_versions:
+            item['extraction_version'] = extraction_version
         item['source_state'] = _source_state(item, current, entries, extraction_version)
         items[item['id']] = item
     fresh_ids = set()
@@ -912,16 +957,18 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     for window in windows:
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
-    retry_counter = {'quote': 0, 'formatting': 0, 'lock': threading.Lock()}
-    retry_token = _extraction_retry_counter.set(retry_counter)
+    legacy = _legacy_extraction_configurations(engine, manager, configuration)
+    run = {'quote': 0, 'formatting': 0, 'lock': threading.Lock(), 'legacy': legacy}
+    token = _extraction_run.set(run)
     try:
         extracted, hits, requests, workers, timings = _extract_windows(
             engine, project_id, manager, windows, configuration)
     finally:
-        _extraction_retry_counter.reset(retry_token)
-    requests += retry_counter['quote'] + retry_counter['formatting']
+        _extraction_run.reset(token)
+    requests += run['quote'] + run['formatting']
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
-    items = reconcile(previous, extracted, full_bundle, version)
+    items = reconcile(previous, extracted, full_bundle, version,
+                      compatible_versions={_digest(settings) for settings in legacy})
     # Store only the exact quotations used, while keeping full originals in their
     # independent index/document source. Historical unavailable excerpts survive.
     compact = {}
@@ -945,8 +992,8 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'fingerprint': bundle['manifest']['fingerprint'], 'coverage': coverage,
             'extraction_version': version,
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
-                            **({'quote_selector_retries': retry_counter['quote']} if retry_counter['quote'] else {}),
-                            **({'formatting_retries': retry_counter['formatting']} if retry_counter['formatting'] else {}),
+                            **({'quote_selector_retries': run['quote']} if run['quote'] else {}),
+                            **({'formatting_retries': run['formatting']} if run['formatting'] else {}),
                             'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default',
                             'source_selection': selection}}

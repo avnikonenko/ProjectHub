@@ -18,8 +18,9 @@ See [AI generation](AI_GENERATION.md) for the user workflow.
   User-supported acceptance needs user evidence; short replies need an earlier proposal.
   These checks establish attribution, not semantic correctness of an AI interpretation.
 - Successful batches commit independently to the existing project-scoped cache.
-  Keys include source/context text and revisions, schema/prompt/instructions, and requested
-  account/model/effort. Whole-document append timestamps do not invalidate unchanged windows.
+  Keys include source and context text, revisions, schema, prompt, instructions, model, and
+  reasoning effort. Account identity is included when the model or effort uses a default.
+  Appending to a conversation preserves cache entries for unchanged windows.
 - When a window ends with an incomplete assistant heading, include the exact next
   paragraph from the same message as bounded context when it fits. This is source
   text, not an intermediate summary. Only affected cache keys change. Heading-only
@@ -92,7 +93,8 @@ an explicit error. The previous saved result and completed stage caches remain
 available.
 
 Stage cache keys include the versioned namespace, project, source inputs,
-requested model and effort, effective account directory and instructions.
+requested model and effort, and instructions. When the model or effort uses a
+default, the key also includes the effective account directory.
 Cache hits are revalidated. Publication uses a guarded transaction after the
 complete result passes validation and freshness checks.
 

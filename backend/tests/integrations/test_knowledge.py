@@ -2,13 +2,14 @@
 from copy import deepcopy
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.models import Project, ProjectHistoryBatch, ProjectKnowledge
+from backend.app.models import CodexProfile, Project, ProjectHistoryBatch, ProjectKnowledge
 from backend.app.integrations.codex import knowledge as k
 from backend.app.integrations.codex.protocol import CodexError
 
@@ -127,6 +128,47 @@ def test_interrupted_extraction_keeps_successful_cache_not_published_knowledge(t
         assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 1
         assert k.read_knowledge(db, 1) is None and k.read_knowledge(db, 2) is None
     db_engine.dispose()
+
+
+def test_explicit_settings_reuse_legacy_and_new_batches_across_accounts(tmp_path):
+    db_engine = engine(tmp_path)
+    old_home = str(tmp_path / 'luna')
+    with Session(db_engine) as db:
+        db.add(CodexProfile(name='Luna', directory=old_home))
+        db.commit()
+    calls = []
+
+    def generate(prompt, schema):
+        calls.append(prompt)
+        return json.dumps({'items': [item()]})
+
+    luna = SimpleNamespace(generation_account=old_home, generation_model='model-a',
+                           generation_effort='low', generate_brief=generate)
+    other = SimpleNamespace(**{**vars(luna), 'generation_account': str(tmp_path / 'other')})
+    current = k.extraction_configuration(other)
+    old_items, hit = k.extract_batch(db_engine, 1, luna, window(), {**current, 'account': old_home})
+    assert not hit and len(calls) == 1
+    items, hit = k.extract_batch(db_engine, 1, other, window(), current)
+    assert hit and len(calls) == 1
+    assert items[0]['id'] == old_items[0]['id']
+    assert items[0]['extraction_version'] == k._digest(current)
+    assert k.extraction_configuration(luna) == current
+    with Session(db_engine) as db:
+        db.query(CodexProfile).delete()
+        db.commit()
+    assert k.extract_batch(db_engine, 1, other, window(), current)[1]
+    assert not k.extract_batch(db_engine, 1, other, window(), {**current, 'effort': 'medium'})[1]
+    assert not k.extract_batch(db_engine, 2, other, window(), current)[1]
+    assert len(calls) == 3
+    db_engine.dispose()
+
+
+@pytest.mark.parametrize('implicit', ['model', 'effort'])
+def test_account_remains_part_of_cache_settings_for_implicit_defaults(implicit):
+    first = {'generation_account': 'luna', 'generation_model': 'model-a', 'generation_effort': 'low',
+             'generation_' + implicit: None}
+    assert k.extraction_configuration(SimpleNamespace(**first))['account'] == 'luna'
+    assert k.extraction_configuration(SimpleNamespace(**{**first, 'generation_account': 'other'}))['account'] == 'other'
 
 
 def test_new_messages_preserve_older_agreement_and_rationale_without_merging_scopes():

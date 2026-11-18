@@ -41,6 +41,10 @@ server restart. A Scheme retry can reuse local inspection results and sends a
 fresh model request. Reload the page to reconnect to a run still active on the
 same server.
 
+Knowledge can reuse completed batches after switching Codex accounts when the
+model and reasoning effort are both explicitly set and the inputs still match.
+Runs with Codex defaults use account-specific caches.
+
 **Settings → Overall time budget (seconds)** allows 30 to 7,200 seconds per run,
 with a default of 900 (15 minutes). Each response also has a separate timeout.
 Raise the overall budget if a run needs more time across stages. For stalled

@@ -12,11 +12,13 @@ import json
 import threading
 import time
 
+from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, utcnow
 from . import progress
-from .knowledge import extraction_configuration, _extraction_workers
+from .knowledge import extraction_configuration, legacy_generation_accounts, _extraction_workers
 from .manager import request_knowledge_json
 from .overview_context import build_overview_companions
 from .protocol import CodexError
@@ -169,24 +171,43 @@ def _summary_sources(result, sources, groups, level, batch, entry_references=Non
 
 
 class _StageManager:
-    def __init__(self, manager, engine, project_id, identity, diagnostics):
+    def __init__(self, manager, engine, project_id, identity, diagnostics, legacy_accounts):
         self.manager, self.engine, self.project_id = manager, engine, project_id
         self.identity, self.diagnostics = identity, diagnostics
+        self.legacy_accounts = legacy_accounts
         self.fingerprint = self.raw = None
-        self.cached = False
+        self.cached = self.legacy_hit = False
+        self.generation = None
 
     def __getattr__(self, name):
         return getattr(self.manager, name)
 
     def generate_brief(self, prompt, schema):
         progress.check_cancelled()
-        self.fingerprint = _digest({'overview_stage_version': CACHE_VERSION, 'project_id': self.project_id,
-                                    'identity': self.identity, 'prompt': prompt, 'schema': schema,
-                                    'configuration': extraction_configuration(self.manager)})
+        configuration = extraction_configuration(self.manager)
+        cache_inputs = {'overview_stage_version': CACHE_VERSION, 'project_id': self.project_id,
+                        'identity': self.identity, 'prompt': prompt, 'schema': schema,
+                        'configuration': configuration}
+        self.fingerprint = _digest(cache_inputs)
         lookup_started = time.monotonic()
         if self.engine is not None:
             with Session(self.engine) as db:
                 cached = db.get(ProjectHistoryBatch, (self.project_id, self.fingerprint))
+                if cached is None and self.legacy_accounts and 'account' not in configuration:
+                    fingerprints = []
+                    for account, home in self.legacy_accounts:
+                        provenance = {**self.identity['provenance'], 'account': account}
+                        if home is not None:
+                            provenance['account_home'] = home
+                        fingerprints.append(_digest({
+                            **cache_inputs, 'identity': {**self.identity, 'provenance': provenance},
+                            'configuration': {**configuration, 'account': account},
+                        }))
+                    cached = db.scalar(select(ProjectHistoryBatch).where(
+                        ProjectHistoryBatch.project_id == self.project_id,
+                        ProjectHistoryBatch.fingerprint.in_(fingerprints),
+                    ).order_by(ProjectHistoryBatch.fingerprint).limit(1))
+                    self.legacy_hit = cached is not None
                 if cached is not None:
                     envelope = cached.evidence
                     if (not isinstance(envelope, list) or len(envelope) != 1
@@ -194,6 +215,13 @@ class _StageManager:
                             or not isinstance(envelope[0].get('stage_response'), str)):
                         raise CodexError('Saved Overview batch cache is invalid; saved results are preserved.')
                     self.raw, self.cached = envelope[0]['stage_response'], True
+                    provenance = self.identity['provenance']
+                    self.generation = {
+                        'account': 'Account not recorded',
+                        'model': provenance['model'] if provenance['model'] != 'default' else 'Codex default',
+                        'effort': provenance['effort'] if provenance['effort'] != 'default' else 'Model default',
+                        **_generation_fields(envelope[0].get('generation')),
+                    }
                     self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
                     return self.raw
         self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
@@ -213,12 +241,24 @@ class _StageManager:
         progress.check_cancelled()
         if self.cached:
             self.diagnostics['synthesis_cache_hits'] += 1
-        elif self.engine is not None:
+        if self.engine is not None and (not self.cached or self.legacy_hit):
+            generation = self.generation
+            if generation is None:
+                from .brief import generation_metadata
+                generation = _generation_fields(generation_metadata(self.manager))
             with Session(self.engine) as db:
-                if db.get(ProjectHistoryBatch, (self.project_id, self.fingerprint)) is None:
-                    db.add(ProjectHistoryBatch(project_id=self.project_id, fingerprint=self.fingerprint,
-                                               evidence=[{'stage_response': self.raw}]))
-                    db.commit()
+                db.execute(insert(ProjectHistoryBatch).values(
+                    project_id=self.project_id, fingerprint=self.fingerprint,
+                    evidence=[{'stage_response': self.raw, 'generation': generation}],
+                ).on_conflict_do_nothing(index_elements=['project_id', 'fingerprint']))
+                db.commit()
+
+
+def _generation_fields(metadata):
+    if not isinstance(metadata, dict):
+        return {}
+    return {key: metadata[key] for key in ('account', 'model', 'effort')
+            if isinstance(metadata.get(key), str) and metadata[key].strip()}
 
 
 def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
@@ -241,6 +281,13 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
     # Reply metadata is observational and may be filled only after a live call;
     # it must never change the identity of an unchanged requested configuration.
     provenance = _requested_provenance(manager)
+    legacy_accounts = ()
+    if 'account' not in extraction_configuration(manager):
+        if engine is not None:
+            legacy_accounts = tuple(dict.fromkeys((
+                (provenance['account'], provenance.get('account_home')), *legacy_generation_accounts(engine),
+            )))
+        provenance = {key: provenance[key] for key in ('model', 'effort')}
     companions, context_groups = build_overview_companions(candidate, sources)
     groups = {**groups, **context_groups}
     units = [[source, *companions.get(source['id'], [])] for source in sources]
@@ -290,7 +337,7 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         progress.check_cancelled()
         local = dict(synthesis_requests=0, synthesis_cache_hits=0,
                      cache_lookup_seconds=0.0, model_seconds=0.0)
-        proxy = _StageManager(selected, engine, project_id, stage_identity, local)
+        proxy = _StageManager(selected, engine, project_id, stage_identity, local, legacy_accounts)
         entry_references = {}
         started = time.monotonic()
         success = False
@@ -302,7 +349,8 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
                                  _groups=stage_groups, _stage=True, _stage_references=entry_references)
             proxy.save_validated()
             success = True
-            return result, entry_references, deepcopy(getattr(selected, 'generation_metadata', {})), proxy.cached
+            metadata = proxy.generation if proxy.cached else getattr(selected, 'generation_metadata', {})
+            return result, entry_references, deepcopy(metadata), proxy.cached
         finally:
             elapsed = time.monotonic() - started
             with completion_lock:
@@ -413,7 +461,10 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         next_size = measure(summaries)
         if next_size <= MAX_SYNTHESIS_CHARS:
             progress.update(project_id, stage='Combining overview batches')
-            return run(prepare(summaries, next_groups, level + 1, 0), manager)[0]
+            result, _, metadata, cached = run(prepare(summaries, next_groups, level + 1, 0), manager)
+            if cached:
+                manager.generation_metadata = metadata
+            return result
         if next_size >= previous_size:
             raise CodexError('Overview stages did not reduce the input enough to continue safely; '
                              'completed stage caches and saved results are preserved.')

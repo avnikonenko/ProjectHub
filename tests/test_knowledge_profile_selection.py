@@ -163,10 +163,12 @@ def test_quality_preserves_legacy_extraction_configuration_and_profile_caches_ar
         assert not hit and manager.calls == 1
         with use_knowledge_profile(get_generation_profile('quality')):
             assert profile_cache_settings(current_knowledge_profile()) is None
-            assert knowledge.extraction_configuration(manager) == legacy
+            shared = {name: value for name, value in legacy.items() if name != 'account'}
+            assert knowledge.extraction_configuration(manager) == shared
             replay, hit = knowledge.extract_batch(engine, 1, manager, batch, knowledge.extraction_configuration(manager))
-            assert hit and replay == old_items and manager.calls == 1
-        versions = {old_items[0]['extraction_version']}
+            upgraded_items = [{**item, 'extraction_version': knowledge._digest(shared)} for item in old_items]
+            assert hit and replay == upgraded_items and manager.calls == 1
+        versions = {upgraded_items[0]['extraction_version']}
         for name in ('balanced', 'economy'):
             with use_knowledge_profile(get_generation_profile(name)):
                 configuration = knowledge.extraction_configuration(manager)
@@ -179,9 +181,9 @@ def test_quality_preserves_legacy_extraction_configuration_and_profile_caches_ar
         assert len(versions) == 3 and manager.calls == 3
         with use_knowledge_profile(get_generation_profile('quality')):
             replay, hit = knowledge.extract_batch(engine, 1, manager, batch, knowledge.extraction_configuration(manager))
-            assert hit and replay == old_items and manager.calls == 3
+            assert hit and replay == upgraded_items and manager.calls == 3
     with Session(engine) as db:
-        assert len(db.scalars(select(ProjectHistoryBatch)).all()) == 3
+        assert len(db.scalars(select(ProjectHistoryBatch)).all()) == 4
     engine.dispose()
 
 
