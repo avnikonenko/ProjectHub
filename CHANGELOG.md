@@ -4,6 +4,30 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.2] - 2026-11-18
+
+### Added
+
+- Remove a project after confirmation. ProjectHub removes its saved data and
+  reserves the old project ID. Registered repository files and original Codex
+  history stay in place.
+
+### Changed
+
+- Move the version into the top bar and keep controls visible at larger text sizes.
+- Lead the quick start with the downloadable wheel and show where to read saved
+  results. Update the API reference, generation retry guidance, and Scheme docs.
+
+### Fixed
+
+- Preserve managed uploads inside registered Git repositories during project
+  removal and during cleanup after restart.
+- Make tag progress polling tests deterministic.
+
+## [0.2.1] - 2026-11-18
+
+First public release. Includes the earlier 0.2.1 development build below.
+
 ### Added
 
 - Optional wheel installation with pipx or pip in a virtual environment. The wheel includes the built interface, database migrations, CLI commands and optional Codex skill installer. The source installer remains available.
@@ -257,13 +281,13 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - History batch totals, per-batch timing and cache reuse in AI generation progress; cooperative cancellation and a configurable overall generation budget preserve previous saved results and completed caches.
 
-## [0.2.1] - 2026-11-10
+### Earlier 0.2.1 development build (2026-11-10)
 
-### Added
+#### Added
 
 - Project Knowledge tab with local search and filters, expandable reasoning and original evidence, source availability, conflicts and supersession. Matching knowledge-generated overviews link to compact important choices; unpublished previews stay separate and opt-in. Dashboard is labelled Overview; Scheme remains separate.
 
-### Changed
+#### Changed
 
 - Notes use document-style Markdown typography with distinct headings, readable spacing, and contained code blocks.
 
@@ -271,7 +295,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Version opt-in knowledge extraction instructions to preserve independently proposed options, concrete scientific checks and clear user selections. Source-pinned recall regressions supplement the existing agreement and cache tests; live quality evaluation remains separate from software checks.
 
-### Fixed
+#### Fixed
 
 - Missing publication identifiers no longer count as a matching brief/knowledge pair.
 
