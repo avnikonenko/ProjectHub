@@ -1180,7 +1180,6 @@ a:focus-visible {
   font-size: inherit;
   font-weight: 500;
   letter-spacing: normal;
-  white-space: nowrap;
 }
 .theme-toggle {
   display: inline-grid;
