@@ -6,29 +6,33 @@
 
 <img src="frontend/src/projecthub-logo.png" alt="ProjectHub logo" width="240" />
 
-**Keep the context of a project across long AI conversations.**
+**Keep your project knowledge organized and accessible across AI conversations and development sessions.**
 
-When work is spread across several Codex sessions and ChatGPT chats, returning to a project means remembering what you tried, which approach you chose, and what still needs doing. **ProjectHub collects that history in one local workspace** and **helps turn it into a useful project overview, searchable explanations, and diagrams**.
+Working on long-running projects often means spreading important information across multiple Codex sessions, ChatGPT conversations, and Git repositories. Decisions get buried, explanations become difficult to find, and returning to a project requires reconstructing its history.
 
-Use it for software, research, or other projects with a growing conversation history.
+**ProjectHub** is a local workspace that brings this information together.
 
 ## What you can do
 
-- **Connect conversations.** Link terminal Codex sessions, import public ChatGPT chats, and browse saved messages with inherited duplicates collapsed.
-- **Inspect a Git repository.** Link a checkout for read-only branch comparisons, recent commits, and public GitHub issues.
-- **Keep track of work.** Pin projects, search saved content, capture Markdown notes, and manage TODOs.
-- **Continue in Codex.** Preview project context before sending it to a session.
+- **Preserve knowledge.** Capture decisions, requirements, reasoning, and unresolved questions with links to original conversations.
+- **Understand your project.** Generate overviews, searchable knowledge, Q&A, and diagrams of architecture, workflows, and dependencies.
+- **Explore previous work.** Search conversations to see why decisions were made. Inspect a linked Git repository to see how features were implemented.
+- **Continue with context.** Preview relevant project knowledge before sending it to a Codex session so you can build on previous work.
+- **Stay organized.** Manage projects, notes, TODOs, and related conversations in one workspace.
+
+Designed for developers, researchers, and anyone working on long-running projects with AI assistance.
 
 ## What AI generates
 
-Open **Generation** and choose what to refresh. Depending on the view, ProjectHub
-uses linked or imported conversations, notes, TODOs, and selected excerpts from
-a linked repository. Follow source links in saved results to check claims.
+Open **Generation** and choose what to make or update. **AI Q&A** uses linked
+Codex sessions and imported ChatGPT chats to create questions and answers.
+**Scheme** can use those conversations and read parts of a linked Git repository
+to make diagrams. Use the links in saved results to see where the information came from.
 
 | Saved result | What you get | When it helps |
 | --- | --- | --- |
 | **Project Overview** | A brief on the project's purpose, architecture, current work, and next steps. | “Where did we leave off?” |
-| **Knowledge** | A summary plus searchable decisions, requirements, proposals, and open questions, with reasons and original evidence. | “Did we agree to validate records before saving them, and why?” |
+| **Knowledge** | A summary plus searchable decisions, requirements, proposals, and open questions, with reasons and original evidence. | “Why did we choose SQLite?” |
 | **AI Q&A** | A set of questions and source-linked answers drawn from earlier project discussions. | “What did we discuss about CSV and JSON exports?” |
 | **Scheme** | Architecture and workflow diagrams with dependencies and supporting evidence. | “How does an imported file become a report?” |
 | **Implementation Choices & Limits** | Code-backed findings about limits, defaults, filters, and fallbacks, with locations for their declarations and use. | “Where is import size capped, and what happens at the limit?” |
