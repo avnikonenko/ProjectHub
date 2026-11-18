@@ -19,6 +19,8 @@ search finds saved records across views.
   evidence.
 - Use **Show more** in long groups and **Reset filters** to start over.
 
+![Example Project Knowledge filters and an expanded decision showing its rationale and original evidence](images/projecthub-knowledge.png)
+
 **Coverage** lists the inputs recorded for the saved result. **Current source
 availability** shows which originals you can check now. Saved excerpts remain
 readable if the original source becomes unavailable.

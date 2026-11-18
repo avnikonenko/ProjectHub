@@ -18,8 +18,16 @@ available to open earlier results.
   status **Saved**. It is skipped while Knowledge is already running or waiting.
 - **Generate AI tags** is a separate action on saved Knowledge and Q&A.
 
+![Example Generation tab with saved Overview and Knowledge, a timed-out Q&A attempt, and retry controls](images/projecthub-generation.png)
+
 See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and
 [Scheme](SCHEME.md) for the individual views.
+
+## Read saved Q&A
+
+Open **AI Q&A** to read answers from saved evidence and follow their citations.
+
+![Example AI Q&A tab with three saved answers and numbered source citations](images/projecthub-qa.png)
 
 ## Progress, cancellation and timeouts
 

@@ -30,6 +30,13 @@ Saved notes and conversations remain eligible.
   observations, reported claims, inferences, and open issues. A missing test
   result means ProjectHub has no recorded result to cite.
 
+## Read saved conversations
+
+Open **History** to expand a saved ChatGPT transcript or select a linked Codex
+session.
+
+![Example History tab with an expanded ChatGPT transcript about how to import field records](images/projecthub-history.png)
+
 ## Shared history in forked sessions
 
 History can collapse matching opening turns from linked forks. Search can still
