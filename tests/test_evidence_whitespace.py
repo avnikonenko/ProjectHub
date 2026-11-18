@@ -60,7 +60,7 @@ def test_exact_existing_quote_is_unchanged_even_with_multiple_occurrences():
 
 
 @pytest.mark.parametrize(('role', 'identifier', 'message'), [
-    ('user', 'original', 'speaker and excerpt'),
+    ('user', 'original', 'speaker does not match the original message'),
     ('assistant', 'foreign', 'foreign evidence'),
 ])
 def test_source_and_speaker_must_match_before_span_resolution(role, identifier, message):

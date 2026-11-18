@@ -482,6 +482,7 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omission
                 raise CodexError('Knowledge extraction returned an invalid speaker.')
             if ref['role'] != source['role']:
                 item_citation_error = EvidenceSpeakerError('Knowledge evidence speaker does not match the original message.')
+                continue
             try:
                 quote = _source_excerpt(ref['excerpt'], source['text'])
             except EvidenceExcerptError as exc:
