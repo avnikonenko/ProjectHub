@@ -69,7 +69,7 @@ projecthub
 ```
 
 Keep the checkout for this installation. If `projecthub` is outside your PATH,
-run `bash scripts/projecthub` from the checkout. See [Build a wheel](docs/README.md#build-a-wheel)
+run `bash scripts/projecthub` from the checkout. See [Build a wheel](docs/DEVELOPER_HOME.md#build-a-wheel)
 to package your own build.
 
 Both routes use the same [saved data directory](#your-data). Open

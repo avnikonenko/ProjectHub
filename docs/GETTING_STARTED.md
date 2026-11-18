@@ -31,7 +31,7 @@ projecthub
 ```
 
 Install Git for repository inspection. Contributors can also
-[build a wheel](README.md#build-a-wheel).
+[build a wheel](DEVELOPER_HOME.md#build-a-wheel).
 
 ## Install from source
 

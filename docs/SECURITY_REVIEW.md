@@ -36,7 +36,7 @@ source attribution rather than correctness.
 
 ## Release checks and limitations
 
-Run the [validation checks](README.md#validate-a-release) against the release commit. Mocked protocol
+Run the [validation checks](DEVELOPER_HOME.md#validate-a-release) against the release commit. Mocked protocol
 tests do not prove effective sandbox permissions or real provider behavior; verify
 those separately with the installed Codex version. Browser and dependency security
 checks also need current execution, not an old report.

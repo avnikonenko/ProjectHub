@@ -25,6 +25,7 @@ nav:
       - Scheme: SCHEME.md
       - Terminal-agent context: TERMINAL_AGENTS.md
   - Developer reference:
+      - Home: DEVELOPER_HOME.md
       - Architecture: ARCHITECTURE.md
       - HTTP API: API_CONTRACT.md
       - Data model: DATA_MODEL.md
