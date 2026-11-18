@@ -1,4 +1,4 @@
-# Developer reference
+# For contributors
 
 - [Architecture](ARCHITECTURE.md), [HTTP API](API_CONTRACT.md), and [data model](DATA_MODEL.md)
 - [Knowledge pipeline](KNOWLEDGE_PIPELINE.md), [Knowledge interface](KNOWLEDGE_UI_INTERNALS.md), and [Scheme implementation](scheme-implementation.md)
