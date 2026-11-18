@@ -2,9 +2,9 @@
 
 ## General rules
 
-All endpoints use JSON except document import and binary backup. Prefix: `/api`. IDs are integers; properties are snake_case; timestamps are UTC ISO-8601. Collection responses are arrays. Errors use FastAPI's `detail` field: 404 for absent or wrong-project objects, 422 for malformed inputs, 409 for incompatible state, 503 for unavailable integration. PATCH accepts only explicitly supported fields and validates related ownership. Required title/name/solution values must be nonblank. String lengths and request sizes are bounded.
+Responses use JSON unless the route returns 204. Document upload uses multipart form data. IDs are integers, properties use snake_case, and timestamps use UTC ISO-8601. Error responses use FastAPI's `detail` field. Common codes are 404 for absent or wrong-project objects, 422 for invalid input, 409 for incompatible state, and 503 for an unavailable integration. PATCH accepts explicitly supported fields and validates related ownership. Required names, titles, and solutions must be nonblank.
 
-Every abbreviated path below beginning `/{pid}` means `/api/projects/{pid}`. Frontend and backend should use precisely these properties and routes; integration-specific schema details are finalized with the Codex engineer.
+Every path below beginning `/{pid}` means `/api/projects/{pid}`.
 
 ## Projects and overview
 
@@ -12,10 +12,10 @@ Every abbreviated path below beginning `/{pid}` means `/api/projects/{pid}`. Fro
 - `POST /api/settings/restart`: accepts `{}` and returns 202 `{status:"restarting",instance_id}` after reserving a graceful restart. Rejects active writes, AI generation, running Codex turns/deliveries and duplicate requests with 409; invalid configuration with 422; unmanaged launches with 503. New writes are blocked once reserved. Reconnect is confirmed only after a different, ready instance ID appears; health response fields remain unchanged.
 
 - `GET /api/health`: availability, without secrets.
-- `GET /api/projects`: project array.
-- `POST /api/projects`: name required; description, goals, status, repository_path, git_remote, tags and architecture_mermaid optional.
+- `GET /api/projects`: project array ordered by pin first, then ID. With `compact=true`, returns only `{id,name,pinned}` for each project.
+- `POST /api/projects`: requires `name`. Accepts optional `pinned`, `description`, `goals`, `status`, `repository_path`, `git_remote`, `tags`, and `architecture_mermaid`.
 - `GET /{pid}` and `PATCH /{pid}`: project detail and supported edits.
-- `GET /{pid}/overview`: `{project, questions, decisions, tasks, notes, sessions, activity}`. Questions include nested `answers`; activity is newest first; other collections are stable ID order.
+- `GET /{pid}/overview`: `{project,questions,decisions,tasks,notes,sessions,activity}`. Questions include nested `answers`. Tasks are ordered by pin first, then ID. Activity contains up to 50 newest entries.
 - `GET /{pid}/overview?compact=true&note_content=false`: lightweight browser loading; omits retired workflow collections, note content and activity before/after bodies. Note metadata includes `content_loaded:false`. `GET /{pid}/notes/{id}` retrieves full project-scoped content on demand. Existing overview defaults retain full data.
 
 ## Resource bounds and exports
@@ -26,9 +26,9 @@ Every abbreviated path below beginning `/{pid}` means `/api/projects/{pid}`. Fro
 - Shared-chat extraction enforces that byte limit after expanding indexed references and includes role labels and separators; the import endpoint validates the final result again before storing it. The note editor sends only changed fields, so existing oversized originals remain readable and can receive metadata edits without truncation. Changed content must fit the current limit.
 - Knowledge source-label search uses a materialized SQLite CTE (SQLite 3.35+). Revision summaries select generation metadata without loading all historical snapshots. Repository inspection enforces both output-byte and time limits and reports failures rather than returning incomplete counts.
 
-Project: `{id,name,description,goals,status,repository_path,git_remote,tags,architecture_mermaid,created_at,updated_at}`.
+Project fields are `{id,name,pinned,codex_account,description,goals,status,repository_path,git_remote,tags,architecture_mermaid,created_at,updated_at}`. Set the account through the Codex account route.
 
-## Questions and answers
+## Legacy questions and answers
 
 - `POST /{pid}/questions`: `{title,description?,category?,priority?,status?}`; returns question with answers.
 - `PATCH /{pid}/questions/{qid}`: title, description, category, priority and compatible nonterminal statuses. Resolving/reopening uses explicit lifecycle endpoints.
@@ -40,53 +40,50 @@ Question: `{id,project_id,title,description,category,priority,status,accepted_an
 
 Answer: `{id,project_id,question_id,solution,explanation,advantages,limitations,evidence,source,status,created_at}`.
 
-## Decisions and tasks
+## Tasks and legacy decisions
 
 - `POST /{pid}/decisions`: `{title,description?,next_step?,rationale?,alternatives?,evidence?,limitations?,status?}`; status defaults to proposed and the optional next step is at most 500 characters.
 - `PATCH /{pid}/decisions/{did}`: editable decision fields/status; always preserves before/after audit history.
 - `POST /{pid}/decisions/{did}/tasks`: `{title?,description?,priority?}`; requires accepted decision, returns linked task.
   Status validation and task creation share a serialized write transaction with acceptance/reopening.
-- `POST /{pid}/tasks`: `{title,description?,priority?,status?,question_id?,decision_id?,session_id?}`.
+- `POST /{pid}/tasks`: `{title,pinned?,description?,priority?,status?,question_id?,decision_id?,session_id?}`.
 - `PATCH /{pid}/tasks/{tid}`: same editable fields.
 
 Decision: `{id,project_id,title,description,next_step,rationale,alternatives,evidence,limitations,status,question_id,answer_id,created_at,updated_at}`.
 
-Task: `{id,project_id,title,description,priority,status,question_id,decision_id,session_id,created_at,updated_at}`.
+Task fields are `{id,project_id,pinned,title,description,priority,status,question_id,decision_id,session_id,created_at,updated_at}`.
 
 ## Knowledge and derived views
 
 - `GET /{pid}/codex/scheme` keeps its saved snapshot and freshness fields; current `inspection` also returns optional `diagnostics`. New `coverage.file_counts` records Git-listed paths, explicit exclusions, safe paths, identified candidates, attempted and decoded reads, prefix-only reads, failed/unattempted reads, and distinct repository files retained in the final evidence package. Unknown listing totals are null; ignored untracked files are not enumerated. `coverage.inspection_policy` saves the numeric limits used. Saved snapshots/revisions retain their own counts; old snapshots are not backfilled from current inspection. Counts do not measure semantic completeness.
 - `POST /{pid}/notes`: `{title,content?,kind?,reference?}`.
 - `PATCH /{pid}/notes/{nid}`: note edits.
-- `POST /{pid}/documents`: bounded document import; exact encoding selected by backend/frontend together. Response is a document-kind note, never executed content.
-- `GET /{pid}/summary`: deterministic structured project summary, with Markdown presentation.
-- `GET /{pid}/review`: deterministic review of incomplete tasks, open questions, missing evidence/validation and recorded limitations. Findings distinguish records from suggestions.
-- `GET /{pid}/search?q=...`: project-scoped FTS5 search results.
-- `GET /{pid}/audit`: append-only activity/revision events.
-- `GET /{pid}/export`: JSON containing only selected-project records and provenance.
-- `POST /api/backup`: consistent SQLite backup in managed data directory; returns backup metadata or download identifier. Exact operational route is coordinator-owned.
-
-Summary/review rendering and upload encoding are integration details to freeze before frontend uses them; they must not require AI access.
+- `POST /{pid}/documents`: multipart `file` with a safe `.txt` or `.md` filename and up to 2 MiB of UTF-8 text. Returns a document-kind note whose `reference` is the managed storage filename.
+- `GET /{pid}/summary`: deterministic `{project_id,source,sections,markdown,generated_at}`.
+- `GET /{pid}/review`: deterministic `{project_id,source,findings,limitations,generated_at,markdown}`. Findings cover incomplete tasks and limitation notes. Each finding includes `category`, `message`, `entity_id`, `status`, `severity`, `title`, and `detail`.
+- `GET /{pid}/search?q=...`: up to 100 project-scoped FTS5 matches with `{entity_type,entity_id,title,snippet}`, ordered by rank, then type and ID.
+- `GET /{pid}/search/all?q=...&kind=all&offset=0`: grouped project search with a `groups` array. Each group has `kind`, `title`, `results`, and `next_offset`.
+- `POST /api/backup`: writes a consistent SQLite copy under the managed data directory and returns `{filename,path}`.
 
 ## Codex interface
 
-Integration router prefix: `/api/projects/{project_id}/codex`; global capability probe may use `/api/codex/status`. Codex engineer coordinates exact payloads and polling/event behavior before frontend wiring.
-
-Required operations: capability/auth availability, list project associations, create a read-only discussion thread, link an existing thread without resuming it, read its saved history, explicitly resume it when sending is required, preview context/task, submit reviewed task, poll status/events, preview decision update, enqueue explicit delivery/retry, and save output as proposed knowledge. Never submit on answer acceptance. Busy/unavailable sessions preserve a local queue and show unverified delivery state. Session and delivery lookups are project scoped.
+- `GET /{pid}/codex/status` reports capability and authentication availability for the project's selected account. Session and delivery lookups are project scoped. Accepting an answer does not send it to Codex.
 
 - `GET /{pid}/codex/brief`: latest saved brief, or `null`. This never requests generation.
-- `GET /{pid}/codex/revisions?kind=brief|qa&offset=0`: ten newest revision summaries and `next_offset`. `GET /{pid}/codex/revisions/{id}` returns the project-scoped `{kind,snapshot}`; wrong-project IDs return 404. Successful generations append snapshots atomically, while failed generations append nothing. Existing latest snapshots are seeded during migration.
+- `GET /{pid}/codex/revisions?kind=brief&offset=0`: `{results,next_offset}` with up to ten newest revision summaries. Supported kinds are `brief`, `qa`, `scheme`, `knowledge`, and `parameters`. `GET /{pid}/codex/revisions/{id}` returns `{kind,snapshot}` for a project-owned revision. Successful generations save revisions atomically.
 - `GET /{pid}/codex/sessions/{sid}/responses?offset=0&limit=3`: completed assistant responses, separately paginated from the raw event log. Returns `{events,total,latest_id}`; each page is oldest-to-newest within a newest-first page window. Limit is 1–50; cross-project sessions return 404. The raw `/events` endpoint retains its 500-event bound.
 - Saved brief/Q&A responses include nullable `generation:{account,model,effort}` metadata for the snapshot. Both generation paths include project-scoped notes and AI notes as untrusted reference sources.
-- `GET /{pid}/codex/generation/status?kind=brief|qa`: process-local progress for that project and kind, with `state`, `stage`, `sessions`, `turns`, `batches`, and nullable `error`. Status resets on restart; successful snapshot metadata persists.
+- `GET /{pid}/codex/generation/status?kind=brief`: progress for `brief`, `qa`, `scheme`, `knowledge`, `ask`, `tags`, or `parameters`. Includes `state`, `stage`, counters, `error`, and `latest_attempt`. Detailed progress is process-local. The latest recorded attempt persists, and running or waiting attempts are marked interrupted at startup.
+- `GET /{pid}/codex/generation/summary`: `{project_id,views}` with saved-result metadata and the latest attempt for each of Overview, Knowledge, Scheme, Q&A, and Implementation Choices.
 - `GET /{pid}/codex/account`: returns the project's selected account key and available local profile labels. `PATCH` with `{account:string|null}` saves the selection; null uses the launch account. Unknown profiles are rejected. Switching while generation or a managed turn is running is rejected.
 - `GET /{pid}/codex/models`: lists visible models and their supported `efforts` from the signed-in Codex account. Brief and Q&A generation, Codex turns, and explicit delivery attempts accept optional `model` and `effort` overrides. Effort requires a selected model. Omitted overrides use Codex defaults for generation or the current session defaults for a discussion.
-- `GET /{pid}/codex/qa`: latest saved Q&A, or `null`. `POST` with `{confirmed:true}` generates a separate snapshot from linked conversation evidence in batches. Returns `{generated_at,items:[{question,answer,source_ids}],sources}`. A failed refresh keeps the prior Q&A.
-- `POST /{pid}/codex/brief`: `{confirmed:true}`; pages through saved text from all linked sessions and summarizes it in bounded, cached batches. The final generation also uses accepted decisions and the saved architecture diagram. Successful generation replaces the saved brief and map; errors keep the previous snapshot.
-- A brief contains `generated_at`, `sections` (overview, architecture, changes, open questions, and unconfirmed decision candidates), `sources`, `coverage`, and `project_map`. Older briefs may lack an architecture section or have a null map. Section entries and map nodes and edges cite original turn, accepted decision, or diagram fragments via `source_ids`. Map edges mark inferred connections. Generating a brief does not create decisions, resume source sessions, or scan the repository.
+- `GET /{pid}/codex/qa`: latest saved Q&A or `null`, with items, sources, and saved generation and topic metadata when available. `POST` with `{confirmed:true}` generates a separate snapshot in batches. A failed refresh keeps the prior Q&A.
+- `POST /{pid}/codex/brief` requires `confirmed:true`. It reads linked history in bounded, cached batches and uses project records and inspected repository evidence when available. ProjectHub inspects the linked repository locally without running its code or tests. Successful generation saves the Overview and its revision. Errors preserve the previous snapshot.
+- An Overview includes `generated_at`, `sections`, `sources`, `coverage`, `project_map`, and `generation`. Current sections are `overview`, `architecture`, `changes`, `since_last_brief`, `current_status`, `implemented`, `unresolved_problems`, `validation`, and `next_steps`. The response retains `open_questions`, `decision_candidates`, and `work_in_progress` for compatibility. Section entries and map elements cite source IDs.
+- For Knowledge routes, see the [Knowledge pipeline reference](KNOWLEDGE_PIPELINE.md#generation-and-publication).
 
 - `POST /{pid}/codex/sessions` without `thread_id`: starts an app-owned read-only discussion session.
-- `POST /{pid}/codex/sessions` with `thread_id`: validates the thread with `thread/read`, stores status `linked`, closes the temporary connection and does not resume or submit anything.
+- `POST /{pid}/codex/sessions` with a new `thread_id`: validates the thread with `thread/read`, stores status `linked`, and closes the temporary connection. Linking requires no resume.
 - `GET /{pid}/codex/sessions/{sid}/history?cursor=...&limit=3`: returns `{turns:[{id,status,messages:[{role,text}]}],next_cursor}` from bounded App Server history pages. The limit is 1–5 (API default 5; the UI uses 3). Only user and assistant display text is returned; tool output is excluded.
 - `POST /{pid}/codex/history/index`: refreshes the local text index of finished turns across linked sessions and returns `{indexed_at,indexed_turns}`. This does not request AI generation. A failed refresh preserves the previous index.
 - `GET /{pid}/codex/history/search?q=...&offset=0`: searches the index and returns `{results,next_offset,indexed_at,indexed_turns}`. Results have `session_id`, `session_title`, `turn_id`, and a plain-text `snippet`.
@@ -94,13 +91,3 @@ Required operations: capability/auth availability, list project associations, cr
 - `POST /{pid}/codex/sessions/{sid}/resume`: explicitly attempts to take ownership for later read-only discussion. Linked sessions reject tasks and decision delivery until this succeeds.
 
 Protocol/API absence is reported as a limitation rather than emulated success. API responses must not include tokens, environment dumps, or raw global config.
-
-## Frozen derived response shapes
-
-- Summary: `{project_id,generated_at,markdown}`.
-- Review: `{project_id,generated_at,findings:[{severity,title,detail}],markdown}`; severity is `info` or `warning`.
-- Search: array of `{entity_type,entity_id,title,snippet}` ordered by rank then stable IDs.
-- Export: `{schema_version:1,project,questions,answers,decisions,tasks,notes,audit,sessions,contexts,deliveries,events}`; only selected-project records.
-- Documents: multipart `file`, maximum 2 MiB, `.txt`/`.md` UTF-8 text only in MVP. Reject binary/invalid UTF-8. Response is document-kind Note; `reference` is a managed storage filename, never arbitrary local path. This limited text import avoids parsing dependencies; richer formats are deferred.
-
-Integration persistence names agreed with backend: `CodexSession` (thread_id, title, status, last_error), `ContextPackage` (content, version as SHA-256 hash), `Delivery` (decision_id, context_id, content, status, error, turn_id), `CodexEvent` (method, payload), each with project/session foreign keys and timestamps as appropriate.

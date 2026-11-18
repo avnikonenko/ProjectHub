@@ -10,9 +10,9 @@ See [AI generation](AI_GENERATION.md) for the user workflow.
   ChatGPT transcript notes. It retains roles, exact text/offsets, stable local IDs,
   hashes, within-conversation order, and separate parent manifests. No remote history
   or model call is made by this adapter. Ordinary notes and TODOs are not acceptance evidence.
-- Messages above 6,000 characters become exact fragments. Extraction windows are
-  bounded to 14,000 serialized characters, with preceding context identified separately.
-  Fragmented distant context can remain incomplete and is reported as a limitation.
+- Messages above 6,000 characters become exact fragments. Extraction windows use
+  the [selected profile's limits](#extraction-and-synthesis) and identify preceding
+  context separately. Fragmentation can leave distant context incomplete.
 - knowledge.py extracts material choices, requirements, proposals, findings, and open
   questions. Evidence quotations must match the supplied original fragment and speaker.
   User-supported acceptance needs user evidence; short replies need an earlier proposal.
@@ -177,8 +177,8 @@ advanced semantic merging remain separate work.
 
 ## Activating a saved result
 
-`POST /api/projects/{id}/codex/knowledge/preview/publish` accepts only a saved
-`publication_id`. It invokes no Codex manager or model request. The existing pair
+For legacy saved previews, `POST /api/projects/{id}/codex/knowledge/preview/publish`
+accepts a saved `publication_id` and makes no model request. The pair
 publication transaction verifies the latest stored result, unchanged Overview
 baseline, source manifest, literal evidence and project ownership before publishing
 both current records and revisions. Exact retries are idempotent. New generated
@@ -188,22 +188,21 @@ regeneration for repository-backed projects. No repository files are modified.
 
 ## Material conditions in extraction
 
-Extraction instruction version 17 requires every action statement to retain its
+Extraction instructions require every action statement to retain its
 material eligibility and state guards, including restrictions supplied in nearby
 numbered policy clauses. A rule preserving records or charges does not establish
 permission to release a reservation. Explicitly enumerated chargeable outcomes
-must not become broader umbrella categories. The schema is unchanged. Earlier
-cache entries remain intact, but their interpretation version is not reused for
-new v17 extraction; the first full refresh must reread sources under that rule.
+remain scoped to those outcomes. The cache key includes the instruction version
+independently of the schema version. A changed policy requires fresh extraction
+for windows without matching cache entries.
 
 ### Bounded quotation-format retry
 
-The normal extraction request remains unchanged. Only a fresh response that fails
-quotation validation can receive one additional request. Before retrying, all
-nonquotation fields, source ownership, speaker and agreement checks must pass.
-Cancellation and the existing overall deadline still apply. Cached corruption,
-foreign references, wrong speakers, invalid JSON and transport errors do not
-trigger this retry.
+A fresh response can receive one additional request after an evidence excerpt or
+agreement validation failure. Agreement retries ask for a supported status and
+actual user evidence. Cancellation and the overall deadline still apply. Cached
+corruption, foreign references, wrong speakers, invalid JSON and transport errors
+do not trigger this retry.
 
 For that retry, application code presents the same original source text once as
 ordered, bounded literal snippets. The model selects snippet IDs instead of
@@ -212,9 +211,7 @@ exact original text, including punctuation and source-code typos; it never uses
 fuzzy matching or repairs the source. Blank snippets remain context but cannot
 be selected as evidence. Canonical extraction validation runs again before save.
 
-This is a lossless wire encoding, not another interpretation pipeline or store.
-The cached JSON retains schema 3 literal excerpts and v17 interpretation policy;
-older valid canonical results remain replayable. The cache envelope records
+The retry stores the same canonical schema with literal excerpts. The cache envelope records
 `quote_selection_mode` when used. `ai_requests` includes the extra reading request,
 `quote_selector_retries` records it, and model/token metrics cover both calls when
 usage is reported. A second failure preserves previous results and completed caches.

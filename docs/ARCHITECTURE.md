@@ -2,9 +2,9 @@
 
 ## Scope and assumptions
 
-ProjectHub is a single-user Ubuntu application. FastAPI serves a React/TypeScript interface and a project-scoped HTTP API from one loopback origin. SQLite is the durable source of project knowledge; Codex is optional. The requested stack authorizes the necessary application dependencies. No unrelated repositories, existing Codex sessions, credentials, or global configuration are edited.
+ProjectHub is a single-user Linux application. FastAPI serves a React/TypeScript interface and a project-scoped HTTP API from one loopback origin. SQLite stores project records and saved results. Codex is optional.
 
-The MVP keeps Codex read-only. A decision acceptance changes knowledge, never execution permissions. A future code-edit mode must have a separate explicit approval workflow.
+ProjectHub runs Codex in read-only mode with tool approvals denied. Accepting a decision through the legacy API updates project records only.
 
 ## Components
 
@@ -56,8 +56,8 @@ Unrelated jobs can run together; a duplicate action is blocked. The lock-compati
 maintenance gate remains exclusive for restart and source/account changes.
 Request-local managers isolate transports and model provenance. Saves retain their
 own SQLite transactions and atomic cancellation checks. Legacy matching summaries remain recoverable.
-Opening a view only reads saved results and lightweight progress/freshness data.
-Q&A and Scheme remain separate generation actions. No checkpoint entities are added.
+Opening a saved view makes no model request. Freshness checks may inspect local
+evidence. Q&A and Scheme remain separate generation actions.
 
 ### Durable generation outcomes
 
@@ -103,23 +103,21 @@ Reopening clears the question's current acceptance and supersedes the previous l
 
 ## Codex boundary
 
-The adapter discovers the executable and interrogates installed protocol capabilities. It uses documented App Server JSON-RPC messages, with an initialization handshake, request correlation, timeouts, event handling, and process cleanup. New ProjectHub sessions use read-only sandbox settings and refuse permission elevation. Existing sessions may be associated only after explicitly selecting and resuming a supported session; the application never rewrites history files.
+The adapter discovers the executable and checks installed protocol capabilities.
+It uses App Server JSON-RPC over stdio, with an initialization handshake,
+request correlation, timeouts, events, and process cleanup. Linking an existing
+thread validates it with `thread/read` and enables history access. To use a
+newly linked thread for discussion or delivery, explicitly resume it in read-only
+mode. ProjectHub leaves Codex history and credential files intact.
 
-Context packages contain project metadata, relevant accepted decisions, unresolved questions, and task data. Their exact bytes and hash are persisted before submission. Decision delivery has separate queued, submitted, completed, and failed states: a local database change is never evidence of delivery. A preview is reviewed before sending, and updates remain queued while the target session is busy or unavailable. AI responses can be saved as proposals and require human verification.
+Review turns store their context package and hash before attempting submission.
+Requests may queue while a session is busy or disconnected. The `sent` state
+records acknowledgement. A completion event records the outcome, and uncertain
+delivery is tracked in the [delivery states](DATA_MODEL.md#enumerations).
+Legacy decision delivery still requires an explicit preview and confirmation.
 
 ## Local security
 
 Bind to `127.0.0.1`. Validate Host and browser Origin to reduce DNS rebinding and cross-origin request risks; serve frontend/API from one origin. No arbitrary shell command endpoint exists. Repository registration resolves an absolute existing directory, validates it with Git using argument vectors and a timeout, and reads metadata without modifying files. Uploaded documents have size/type limits, server-generated storage names, restrictive permissions, and symlink-safe creation. Treat their text as untrusted data in both UI and context packages.
 
 Backups use SQLite's backup API for a consistent snapshot. JSON export contains only the selected project's records. Record deletion never deletes a registered repository.
-
-## Ownership and integration
-
-- Architect: architecture, model, API contract, implementation plan and design decisions.
-- Backend: `backend/app/` except Codex adapter; `backend/tests/` except integration tests.
-- Frontend: `frontend/src/` and `frontend/tests/`.
-- Codex engineer: `backend/app/integrations/codex/` and its tests.
-- Coordinator: shared packaging/configuration, startup, integration and final review.
-- QA: independent integrated tests and security/test reports after implementations converge.
-
-Core interfaces precede dependent implementation. No agent edits another owner's files without coordination. Concurrency is limited to three implementation workers.

@@ -11,10 +11,10 @@ Contributor reference. For everyday use, see [Overview and Knowledge](PROJECT_KN
   `publish` cannot disable saving. Optional `generate_scheme:true` requests a
   server-side Scheme follow-up after success. The legacy generation alias
   `POST /api/projects/{id}/codex/analysis/preview` also saves automatically.
-- `POST /api/projects/{id}/codex/knowledge/preview/publish`: activate the selected saved
-  publication ID without generation; return 409 for stale/conflicting results.
+- `POST /api/projects/{id}/codex/knowledge/preview/publish`: activate a legacy saved
+  preview by publication ID without generation; return 409 for stale/conflicting results.
 - `GET /api/projects/{id}/codex/knowledge/preview`: last earlier
-  preview record, or null. Read-only and project-scoped; no model call.
+  legacy preview record, or null. Read-only and project-scoped; no model call.
 - `GET /api/projects/{id}/codex/generation/status?kind=knowledge`: generation progress.
 - Existing conversation/transcript hash resolvers open original evidence.
 
@@ -25,17 +25,17 @@ not the general Overview. Its optional `snapshot.summary` must match the snapsho
 publication ID. General Overview refresh uses `/codex/brief`, with independent
 `brief` progress/cancellation; Knowledge uses `knowledge` progress. Each uses its
 own project/view generation lease. Other project views may generate concurrently.
-Knowledge generation remains opt-in.
+Knowledge generation starts on request and saves successful results automatically.
 
 | File | Responsibility |
 |---|---|
-| `frontend/src/App.tsx` | Knowledge tab, Overview label, project-scoped hash navigation and mounted preview state. |
+| `frontend/src/App.tsx` | Knowledge tab, Overview label, and project-scoped hash navigation. |
 | `frontend/src/ProjectBrief.tsx` | Independent general Overview refresh, progress/recovery, revisions and legacy matching Important choices. |
 | `frontend/src/BriefContent.tsx` | Shared existing brief section renderer and preview sources. |
 | `frontend/src/ImportantKnowledge.tsx` | Read-only publication-checked Overview highlights. |
 | `frontend/src/knowledge.ts` | API types/validation, filtering, highlight selection, links and publication matching. |
 | `frontend/src/KnowledgeItems.tsx` | Shared read-only record browser, evidence and relationships. |
-| `frontend/src/KnowledgePage.tsx` | Saved Knowledge Summary, records, automatic saving and earlier-result recovery. |
+| `frontend/src/KnowledgePage.tsx` | Saved Knowledge Summary, records, automatic saving, and access to the latest legacy preview. |
 | `frontend/src/knowledge.css` | Responsive filters/details and keyboard focus styling. |
 | `frontend/tests/knowledge.test.ts` | Helper regressions for filtering, identity, status preservation and source links. |
 | `backend/app/integrations/codex/router.py` | Project knowledge API and publication identity pairing. |
@@ -77,8 +77,10 @@ related records. Context-review notes are separate from historical design status
 - Knowledge dropdowns use exact status and category values. The scope field
   matches a substring and offers recorded scope suggestions. Project-wide search
   is separate and provides no semantic retrieval or scope equivalence inference.
-- The current published snapshot is browsable; historical mismatches are reported
-  rather than automatically resolving historical knowledge revisions.
+- The Knowledge tab browses the current saved snapshot. **Earlier saved versions**
+  shows the latest legacy preview when available. Regular Knowledge revisions are
+  accessible through the revisions API. Historical item links report publication
+  mismatches.
 - Failed or cancelled generation preserves saved Knowledge and successful extraction caches; only a complete validated result replaces normal saved Knowledge. Earlier previews retain their separate storage.
 - Source navigation depends on stored descriptors and current availability. Saved
   excerpts remain accessible when original navigation cannot be offered.

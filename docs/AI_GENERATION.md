@@ -11,9 +11,11 @@ available to open earlier results.
 
 - **Regenerate all** runs available views in parallel. When both Scheme and
   Knowledge are queued, Scheme starts after Knowledge saves successfully. Scheme
-  can also run on its own using saved Knowledge, when available.
+  can run on its own using saved Knowledge, when available.
 - **Retry unfinished** reruns missing or unsuccessful views. Earlier results remain
-  visible alongside the latest attempt status.
+  visible alongside the latest attempt status. If this action retries Knowledge,
+  Scheme waits for it to save. Otherwise Scheme starts only when Knowledge has
+  status **Saved**. It is skipped while Knowledge is already running or waiting.
 - **Generate AI tags** is a separate action on saved Knowledge and Q&A.
 
 See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and
@@ -25,10 +27,11 @@ Progress shows the stage, completed batches and cache reuse when available.
 **Cancel generation** may take time to reach an active request. Failed and
 cancelled runs preserve earlier saved results.
 
-After a timeout or interruption, click **Retry unfinished**. ProjectHub skips
-completed batches that still match the current inputs, even after a server
-restart. Unfinished or invalidated batches run again. Reload the page to
-reconnect to a run still active on the same server.
+After a timeout or interruption, click **Retry unfinished**. Views with batch
+caches can reuse completed batches that match the current inputs, even after a
+server restart. A Scheme retry can reuse local inspection results and sends a
+fresh model request. Reload the page to reconnect to a run still active on the
+same server.
 
 **Settings → Overall time budget (seconds)** allows 30 to 7,200 seconds per run,
 with a default of 900 (15 minutes). Each response also has a separate timeout.

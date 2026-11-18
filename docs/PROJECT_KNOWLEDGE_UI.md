@@ -27,7 +27,9 @@ readable if the original source becomes unavailable.
 
 In **Generation**, select **Overview**, **Knowledge**, or **Implementation
 Choices & Limits**, then click **Regenerate selected**. Return to the view to
-read its saved result or open an earlier version.
+read its saved result. Overview and Implementation Choices & Limits offer
+**Previous versions**. In Knowledge, **Earlier saved versions** shows the
+latest legacy preview when available.
 
 Generation uses the project's Codex account, model, reasoning effort and
 instructions. See [AI generation](AI_GENERATION.md) for progress, cancellation

@@ -16,7 +16,7 @@ Use it for software, research, or other projects with a growing conversation his
 
 - **Connect conversations.** Link terminal Codex sessions, import public ChatGPT chats, and browse saved messages with inherited duplicates collapsed.
 - **Get up to speed.** Read the Project Overview for a quick update. Browse decisions, rationale, and trade-offs in Knowledge and generated answers in AI Q&A.
-- **Generate and organize.** Refresh selected views from **Generation**. Saved results retain source links and previous versions. Generate AI tags separately to filter Knowledge and Q&A.
+- **Generate and organize.** Refresh selected views from **Generation**. Saved results retain source links. Generate AI tags separately to filter Knowledge and Q&A.
 - **Explore the code.** Use Scheme to see architecture, workflows, and dependencies. Link a Git repository for read-only branch comparisons, recent commits, and public GitHub issues.
 - **Keep track of work.** Pin projects, search saved content, capture Markdown notes, and manage TODOs.
 - **Continue with context.** Use Ask Project for follow-up questions, or preview project context before sending it to a Codex session.

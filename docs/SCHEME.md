@@ -8,7 +8,7 @@ results makes no AI request.
 ## Views
 
 - **Architecture** shows components and relationships. Expand **Code structure**
-  for the inspected repository tree.
+  for the selected repository tree.
 - **Workflow** shows stages, inputs, outputs, and execution order.
 - **Dependencies** shows tools, libraries, declared versions, and their roles.
 
