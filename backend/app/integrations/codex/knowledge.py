@@ -15,11 +15,19 @@ from sqlalchemy.orm import Session
 from ...models import ProjectHistoryBatch, ProjectKnowledge, GenerationRevision
 from ...config import DEFAULT_EXTRACTION_WORKERS, MAX_EXTRACTION_WORKERS
 from .ai_instructions import ai_instructions
+from .manager import request_knowledge_json
 from .protocol import CodexError
 
 SCHEMA_VERSION = 3
 PROMPT_VERSION = 18
-_quote_retry_counter = ContextVar('projecthub_quote_retry_counter', default=None)
+_extraction_retry_counter = ContextVar('projecthub_extraction_retry_counter', default=None)
+
+
+def _record_extraction_retry(kind):
+    counter = _extraction_retry_counter.get()
+    if counter is not None:
+        with counter['lock']:
+            counter[kind] += 1
 
 
 class EvidenceExcerptError(CodexError):
@@ -525,9 +533,10 @@ def extract_batch(engine, project_id, manager, window, configuration):
             return validate_extraction(cached.evidence[0].get('raw'), window, project_id, version), True
     schema = deepcopy(OUTPUT_SCHEMA)
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
-    generate = getattr(manager, 'generate_extraction', None)
-    if not callable(generate):
-        generate = manager.generate_brief
+    def generate(prompt, contract):
+        return request_knowledge_json(manager, prompt, contract, extraction=True,
+                                      on_retry=lambda: _record_extraction_retry('formatting'))
+
     continuation_instruction = (
         'A context_view marked heading-continuation-v1 is the exact next paragraph of the same '
         'assistant message. A trailing heading is incomplete evidence: preserve the continuation\'s '
@@ -545,10 +554,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
         progress.check_cancelled()
         retry_payload, retry_schema, catalog = prepare_quote_selection(payload, schema)
         progress.check_cancelled()
-        counter = _quote_retry_counter.get()
-        if counter is not None:
-            with counter['lock']:
-                counter['count'] += 1
+        _record_extraction_retry('quote')
         selected_raw = generate(
             PROMPT + continuation_instruction + QUOTE_SELECTION_INSTRUCTIONS
             + ('The previous extraction failed agreement validation. Check every AGREED or REJECTED '
@@ -906,14 +912,14 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     for window in windows:
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
-    retry_counter = {'count': 0, 'lock': threading.Lock()}
-    retry_token = _quote_retry_counter.set(retry_counter)
+    retry_counter = {'quote': 0, 'formatting': 0, 'lock': threading.Lock()}
+    retry_token = _extraction_retry_counter.set(retry_counter)
     try:
         extracted, hits, requests, workers, timings = _extract_windows(
             engine, project_id, manager, windows, configuration)
     finally:
-        _quote_retry_counter.reset(retry_token)
-    requests += retry_counter['count']
+        _extraction_retry_counter.reset(retry_token)
+    requests += retry_counter['quote'] + retry_counter['formatting']
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version)
     # Store only the exact quotations used, while keeping full originals in their
@@ -939,7 +945,8 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'fingerprint': bundle['manifest']['fingerprint'], 'coverage': coverage,
             'extraction_version': version,
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
-                            **({'quote_selector_retries': retry_counter['count']} if retry_counter['count'] else {}),
+                            **({'quote_selector_retries': retry_counter['quote']} if retry_counter['quote'] else {}),
+                            **({'formatting_retries': retry_counter['formatting']} if retry_counter['formatting'] else {}),
                             'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default',
                             'source_selection': selection}}

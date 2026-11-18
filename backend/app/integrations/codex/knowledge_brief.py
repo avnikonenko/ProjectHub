@@ -21,6 +21,7 @@ from .knowledge_sources import load_sources
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview, stage_knowledge_preview
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
+from .manager import request_knowledge_json
 from .protocol import CodexError
 from .revisions import save_revision
 
@@ -322,7 +323,8 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         section['items']['properties']['source_ids']['items']['enum'] = ids
     for collection in schema['properties']['project_map']['properties'].values():
         collection['items']['properties']['source_ids']['items']['enum'] = ids
-    sections, graph = validate_sections(manager.generate_brief(prompt, schema), wire_sources)
+    raw = manager.generate_brief(prompt, schema) if _stage else request_knowledge_json(manager, prompt, schema)
+    sections, graph = validate_sections(raw, wire_sources)
     # Resolve validated request-local IDs immediately. Nothing downstream or
     # persisted may mistake a short model alias for durable project identity.
     for entries in (*sections.values(), *graph.values()):
@@ -563,6 +565,7 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
             if bundle['project'].get('repository_path'):
                 repository = collect_repository_code(bundle['project']['repository_path'])
             progress.update(project_id, stage='Generating knowledge-based brief')
+            synthesis_start = metrics.snapshot()['model_requests']
             sections, graph, cited = _synthesize(manager, candidate, bundle, repository,
                                                  selection_diagnostics=overview_selection,
                                                  engine=engine, project_id=project_id)
@@ -576,10 +579,12 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
                                   *([f"Overview synthesis considered all {overview_selection['available_items']} eligible active Knowledge items in bounded stages; complete records remain in Knowledge."] if overview_selection else [])],
                      'project_map': graph, 'generation': generation_metadata(manager), 'project_state': state}
             profile_info['effective_effort'] = brief['generation'].get('effort') or profile_info['effective_effort']
-            run_diagnostics = {**diagnostics(),
-                               'synthesis_requests': overview_selection.get('synthesis_requests', 1),
-                               'synthesis_cache_hits': overview_selection.get('synthesis_cache_hits', 0),
-                               **({'overview_selection': overview_selection} if overview_selection else {})}
+            run_diagnostics = diagnostics()
+            run_diagnostics.update(
+                synthesis_requests=overview_selection.get(
+                    'synthesis_requests', max(1, run_diagnostics['model_requests'] - synthesis_start)),
+                synthesis_cache_hits=overview_selection.get('synthesis_cache_hits', 0),
+            )
             from .evidence_coverage import knowledge_coverage, repository_coverage
             record_coverage = knowledge_coverage(bundle, run_diagnostics)
             summary_coverage = {**deepcopy(record_coverage),

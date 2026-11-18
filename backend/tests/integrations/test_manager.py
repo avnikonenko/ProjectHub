@@ -786,7 +786,7 @@ def test_generation_whitespace_guard_respects_strings_and_item_identity(env, cas
             assert done.is_set()
         monkeypatch.setattr(module, 'wait_for_generation', wait)
     if case in ('runaway', 'incomplete-runaway', 'late-runaway'):
-        with pytest.raises(CodexError, match='excessive whitespace.*previous saved result'):
+        with pytest.raises(CodexError, match='excessive whitespace.*Generation stopped'):
             env.manager.generate_brief('Synthetic source', {'type': 'object'})
     else:
         assert env.manager.generate_brief('Synthetic source', {'type': 'object'}) == answer

@@ -12,7 +12,7 @@ from backend.app.db import initialize
 from backend.app.models import GenerationRevision, Project, ProjectBrief, ProjectHistoryBatch, ProjectKnowledge
 from backend.app.integrations.codex import knowledge_brief as pilot
 from backend.app.integrations.codex.brief import SECTION_NAMES
-from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
 
 
 def _candidate(project_id=1):
@@ -198,6 +198,27 @@ def test_final_generation_failure_preserves_pair_and_completed_cache(prepared):
         assert db.get(ProjectHistoryBatch, (1, 'successful-extraction')) is not None
     # A failed run must release its shared lock so the next request can proceed.
     assert pilot.generate_knowledge_brief(prepared.engine, 1, FakeSynthesis(), publish=False)['published'] is False
+
+
+def test_knowledge_publishes_after_a_synthesis_formatting_retry(prepared):
+    prompts = []
+
+    class RetrySynthesis(FakeSynthesis):
+        def generate_brief(self, prompt, schema):
+            if 'sections' in schema['properties']:
+                prompts.append(prompt)
+                if len(prompts) == 1:
+                    raise JSONFormattingError('Formatting failure')
+            return super().generate_brief(prompt, schema)
+
+    result = pilot.generate_knowledge_brief(prepared.engine, 1, RetrySynthesis(), publish=True)
+
+    assert len(prompts) == 2
+    assert prompts[0] != prompts[1] and 'compact json' in prompts[1].lower()
+    knowledge, _, revisions = _stored(prepared.engine)
+    assert result['published'] is True
+    assert knowledge['publication_id'] == result['publication_id']
+    assert revisions[-1][2] == knowledge
 
 
 @pytest.mark.parametrize('change', [

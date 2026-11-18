@@ -32,6 +32,7 @@ _DISCONNECT_COMPLETION_UNKNOWN = 'App Server disconnected before confirming comp
 _RESTART_COMPLETION_UNKNOWN = 'ProjectHub restarted before Codex confirmed completion. Inspect the session before retrying.'
 _COMPLETION_UNKNOWN = (_DISCONNECT_COMPLETION_UNKNOWN, _RESTART_COMPLETION_UNKNOWN)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
+_retry_json_formatting = ContextVar('projecthub_retry_json_formatting', default=False)
 _tag_generation_context = ContextVar('projecthub_tag_generation_context', default=False)
 _TAG_CONTEXT_VERSION = 'tag-classification-v1'
 _TAG_BASE_INSTRUCTIONS = (
@@ -54,6 +55,25 @@ def tag_generation_context():
 def tag_context_version() -> str | None:
     """Identify the active classification context for generation cache keys."""
     return _TAG_CONTEXT_VERSION if _tag_generation_context.get() else None
+
+
+def request_knowledge_json(manager, prompt, schema, *, extraction=False, on_retry=None):
+    """Retry one formatting stall while keeping the original validation contract."""
+    structural = getattr(manager, 'generate_extraction', None)
+    first = structural if extraction and callable(structural) else manager.generate_brief
+    progress.check_cancelled()
+    token = _retry_json_formatting.set(True)
+    try:
+        return first(prompt, schema)
+    except JSONFormattingError:
+        pass
+    finally:
+        _retry_json_formatting.reset(token)
+    progress.check_cancelled()
+    if on_retry is not None:
+        on_retry()
+    retry = structural if callable(structural) else first
+    return retry('Return compact JSON with no indentation or padding whitespace.\n' + prompt, schema)
 
 
 def _structural_output_schema(schema):
@@ -695,7 +715,7 @@ class CodexManager:
                     if formatting_guards[key].feed(params.get('delta')):
                         error = JSONFormattingError(
                             'Codex emitted excessive whitespace while formatting a JSON response. '
-                            'Generation stopped; the previous saved result is unchanged.')
+                            'Generation stopped.')
                         formatting_errors[message_turn] = error
                         if message_turn == turn_id:
                             state['error'] = error
@@ -744,6 +764,7 @@ class CodexManager:
                 client = self._discussion_client(cwd)
             client.on_event, client.on_disconnect = event, disconnected
             succeeded = False
+            formatting_failed = False
             try:
                 progress.check_cancelled()
                 if pooled and reused_client:
@@ -795,6 +816,7 @@ class CodexManager:
                 wait_for_generation(done, timeout)
                 if 'error' in state:
                     if isinstance(state['error'], JSONFormattingError):
+                        formatting_failed = True
                         raise state['error']
                     raise CodexError(state['error'])
                 with event_lock:
@@ -841,7 +863,9 @@ class CodexManager:
                     client.on_event = lambda *args: None
                     client.on_disconnect = lambda: None
                     if not succeeded:
-                        scope['failed'] = True
+                        # Only a caller that retries this exact failure may
+                        # open a fresh client in the same generation scope.
+                        scope['failed'] = not (formatting_failed and _retry_json_formatting.get())
                         client.close()
                         scope['client'] = None
                     else:

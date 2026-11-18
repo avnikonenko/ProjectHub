@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from ...models import ProjectHistoryBatch, utcnow
 from . import progress
 from .knowledge import extraction_configuration, _extraction_workers
+from .manager import request_knowledge_json
 from .overview_context import build_overview_companions
 from .protocol import CodexError
 
@@ -198,8 +199,12 @@ class _StageManager:
         self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
         self.diagnostics['synthesis_requests'] += 1
         model_started = time.monotonic()
+
+        def record_retry():
+            self.diagnostics['synthesis_requests'] += 1
+
         try:
-            self.raw = self.manager.generate_brief(prompt, schema)
+            self.raw = request_knowledge_json(self.manager, prompt, schema, on_retry=record_retry)
             return self.raw
         finally:
             self.diagnostics['model_seconds'] += time.monotonic() - model_started

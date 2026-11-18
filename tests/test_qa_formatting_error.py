@@ -8,12 +8,12 @@ from sqlalchemy import create_engine
 
 from backend.app.models import Base
 from backend.app.integrations.codex import manager as module
-from backend.app.integrations.codex import qa
+from backend.app.integrations.codex import progress, qa
 from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
 
 
 ERROR_TEXT = ('Codex emitted excessive whitespace while formatting a JSON response. '
-              'Generation stopped; the previous saved result is unchanged.')
+              'Generation stopped.')
 
 
 class GenerationClient:
@@ -81,7 +81,8 @@ def generation(tmp_path, monkeypatch):
 
     def configure(failure='formatting', late=False):
         def factory(**callbacks):
-            client = GenerationClient(**callbacks, failure=failure, late=late)
+            outcome = failure() if callable(failure) else failure
+            client = GenerationClient(**callbacks, failure=outcome, late=late)
             clients.append(client)
             return client
         manager.client_factory = factory
@@ -139,6 +140,79 @@ def test_fresh_independent_generation_recovers_without_reusing_failed_parent_sco
     assert sum(method == 'turn/start' for client in clients for method, _ in client.calls) == 2
 
 
+@pytest.mark.parametrize('extraction', [False, True])
+def test_knowledge_retries_formatting_once_and_keeps_pooled_generation_usable(
+        generation, monkeypatch, extraction):
+    outcomes = iter(('formatting', 'success'))
+    manager, clients = generation(failure=lambda: next(outcomes, 'success'))
+    monkeypatch.setattr(manager, 'validate_generation', lambda *_: None)
+    manager.account_key = 'fixture-account'
+    selected = manager.for_generation('fixture-model', 'medium')
+    schema = {
+        'type': 'object',
+        'properties': {'items': {'type': 'array', 'maxItems': 2, 'items': {
+            'type': 'string', 'enum': ['draft', 'published'],
+        }}},
+    }
+    reference = 'Original references for extraction or synthesis.'
+    retries = []
+
+    with selected.generation_session():
+        assert module.request_knowledge_json(
+            selected, reference, schema, extraction=extraction,
+            on_retry=lambda: retries.append('formatting'),
+        ) == '{"items":[]}'
+        assert retries == ['formatting']
+        failed, recovered = clients
+        assert failed.closed
+        first_turn = next(params for method, params in failed.calls if method == 'turn/start')
+        retry_turn = next(params for method, params in recovered.calls if method == 'turn/start')
+        structural = {'type': 'object', 'properties': {'items': {
+            'type': 'array', 'items': schema['properties']['items']['items'],
+        }}}
+        assert first_turn['outputSchema'] == (structural if extraction else schema)
+        assert retry_turn['outputSchema'] == structural
+        assert first_turn['input'][0]['text'] != retry_turn['input'][0]['text']
+        assert reference in retry_turn['input'][0]['text']
+        assert 'compact json' in retry_turn['input'][0]['text'].lower()
+        assert json.loads(retry_turn['input'][0]['text'].split('\n', 2)[1]) == schema
+        for client, turn in ((failed, first_turn), (recovered, retry_turn)):
+            start = next(params for method, params in client.calls if method == 'thread/start')
+            assert start['model'] == 'fixture-model'
+            assert turn['effort'] == 'medium'
+        assert selected.generation_metadata['account'] == 'fixture-account'
+        assert selected.generate_brief('next operation in the same scope', {}) == '{"items":[]}'
+
+    assert all(client.closed for client in clients)
+    assert sum(method == 'turn/start' for client in clients for method, _ in client.calls) == 3
+
+
+def test_knowledge_does_not_retry_a_second_formatting_failure(generation):
+    manager, clients = generation()
+    with manager.generation_session(), pytest.raises(JSONFormattingError, match='Generation stopped\\.'):
+        module.request_knowledge_json(manager, 'reference', {'type': 'object'})
+
+    assert len(clients) == 2
+    assert all(client.closed for client in clients)
+    assert sum(method == 'turn/start' for client in clients for method, _ in client.calls) == 2
+
+
+def test_knowledge_checks_cancellation_before_retrying_formatting_failure(generation, monkeypatch):
+    manager, clients = generation()
+    project_id = 9721
+    progress.begin(project_id, 'knowledge')
+    def cancel_during_formatting(prompt, schema):
+        progress.current_cancel_event().set()
+        raise JSONFormattingError(ERROR_TEXT)
+    monkeypatch.setattr(manager, 'generate_brief', cancel_during_formatting)
+    try:
+        with pytest.raises(progress.GenerationCancelled):
+            module.request_knowledge_json(manager, 'reference', {'type': 'object'})
+        assert not clients
+    finally:
+        progress.finish(project_id)
+
+
 @pytest.mark.parametrize('consolidation', [False, True])
 def test_qa_schema_adapter_preserves_full_contract_and_structural_citation_constraints(generation, consolidation):
     manager, clients = generation(failure='success')
@@ -192,3 +266,9 @@ def test_unrelated_failures_remain_plain_codex_errors_and_close_client(generatio
         manager.generate_brief('reference', {'type': 'object'})
     assert type(caught.value) is CodexError
     assert all(client.closed for client in clients)
+
+    before = len(clients)
+    with pytest.raises(CodexError) as knowledge_error:
+        module.request_knowledge_json(manager, 'reference', {'type': 'object'})
+    assert type(knowledge_error.value) is CodexError
+    assert len(clients) == before + 1

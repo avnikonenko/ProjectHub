@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.integrations.codex import knowledge, progress
-from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
 from backend.app.models import Project, ProjectHistoryBatch
 
 
@@ -243,6 +243,25 @@ def test_candidate_counts_retry_request_and_resets_metrics_on_cached_replay(quot
     assert len(replay['items']) == len(candidate['items'])
     assert [{key: actual[key] for key in original}
             for actual, original in zip(replay['items'], candidate['items'])] == candidate['items']
+
+
+def test_candidate_counts_formatting_retry_and_reuses_validated_result(quote_batch, monkeypatch):
+    engine, window, item = quote_batch
+    select_test_windows(monkeypatch, [window])
+    manager = Responses([JSONFormattingError('Formatting stalled'), response(item)])
+    bundle = candidate_bundle(window['sources'])
+
+    candidate = knowledge.build_candidate(engine, 1, manager, bundle)
+    assert candidate['diagnostics']['ai_requests'] == 2
+    assert candidate['diagnostics']['formatting_retries'] == 1
+    assert len(candidate['items']) == 1
+    assert 'Return compact JSON with no indentation' in manager.calls[1][0]
+
+    replay = knowledge.build_candidate(engine, 1, manager, bundle, previous=candidate)
+    assert replay['diagnostics']['cache_hits'] == 1
+    assert replay['diagnostics']['ai_requests'] == 0
+    assert 'formatting_retries' not in replay['diagnostics']
+    assert len(manager.calls) == 2
 
 
 def test_parallel_candidate_counts_each_worker_retry_without_cross_run_leak(quote_batch, monkeypatch):
