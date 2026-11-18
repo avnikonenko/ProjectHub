@@ -541,11 +541,14 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
             profile = get_generation_profile(settings['generation_profile'])
         except (ConfigError, ValueError) as exc:
             raise CodexError('Could not read the knowledge generation profile and worker settings.') from exc
-        progress.begin(project_id, 'knowledge', engine=engine, saves_result=publish)
+        progress.begin(project_id, 'knowledge', engine=engine, saves_result=publish, manager=manager)
         with ExitStack() as scope:
             scope.enter_context(collect_generation_metrics(metrics))
             scope.enter_context(use_knowledge_profile(profile, settings['extraction_workers']))
-            manager, profile_info = configure_profile_manager(manager, profile)
+            configured_manager, profile_info = configure_profile_manager(manager, profile)
+            if configured_manager is not manager:
+                progress.record_settings(project_id, configured_manager)
+                manager = configured_manager
             session = getattr(manager, 'generation_session', None)
             if callable(session):
                 scope.enter_context(session())

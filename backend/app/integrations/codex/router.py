@@ -496,7 +496,7 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
         KnowledgeGenerationInput(**body.model_dump()), request, db, background_tasks)
 
 
-def _record_scheme_followup_failure(engine, project_id, previous_started_at, error):
+def _record_scheme_followup_failure(engine, project_id, previous_started_at, error, manager):
     """Expose a pre-start error without overwriting a competing Scheme run."""
     lease = generation_lock.for_job(project_id, 'scheme')
     if not lease.acquire(blocking=False):
@@ -506,7 +506,7 @@ def _record_scheme_followup_failure(engine, project_id, previous_started_at, err
         if current.get('started_at') != previous_started_at or current['state'] == 'running':
             return
         try:
-            progress.begin(project_id, 'scheme', engine=engine)
+            progress.begin(project_id, 'scheme', engine=engine, manager=manager)
             progress.finish(project_id, error=error)
         except CodexError:
             # Invalid global configuration may also prevent beginning progress.
@@ -534,13 +534,13 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='skipped',
                             error='Scheme was skipped because another Scheme job or maintenance was active.')
     except CodexError as exc:
-        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc))
+        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc), manager)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed', error=str(exc))
         log.warning('Scheme follow-up failed for project=%s: %s', project_id, exc)
     except Exception:
         _record_scheme_followup_failure(engine, project_id, previous_started_at,
-                                        'Scheme follow-up failed. The previous saved result is unchanged.')
+                                        'Scheme follow-up failed. The previous saved result is unchanged.', manager)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed',
                             error='Scheme follow-up failed. The previous saved result is unchanged.')
@@ -564,7 +564,9 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         if body.generate_scheme:
-            dependency_token = attempts.queue_dependency(request.app.state.engine, project_id)
+            engine = request.app.state.engine
+            dependency_token = attempts.queue_dependency(engine, project_id,
+                                                         settings=attempts.settings_for(scheme_manager, engine))
         with use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:

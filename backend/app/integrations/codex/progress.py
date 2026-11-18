@@ -68,8 +68,10 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
-def begin(project_id, kind, engine=None, *, saves_result=True):
+def begin(project_id, kind, engine=None, *, saves_result=True, manager=None):
+    from .generation_attempts import settings_for, start
     budget = _budget()
+    settings = settings_for(manager, engine) if manager is not None else None
     key = (project_id, kind)
     # The caller holds a lease for this project/view through finish().
     with _lock:
@@ -81,18 +83,42 @@ def begin(project_id, kind, engine=None, *, saves_result=True):
         _active[key] = event
         _events[key] = event
         _run_locks[key] = threading.Lock()
-        _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation', 'started_at': utcnow(), 'budget_seconds': budget}
+        _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation',
+                           'started_at': utcnow(), 'budget_seconds': budget, 'settings': settings}
         _current.set((project_id, kind, event))
         _stores[key] = weakref.ref(engine) if engine is not None else None
     if engine is not None:
         try:
-            from .generation_attempts import start
-            start(engine, project_id, kind, _snapshots[key]['started_at'], saves_result=saves_result)
+            start(engine, project_id, kind, _snapshots[key]['started_at'], saves_result=saves_result,
+                  settings=settings)
         except Exception as exc:
             with _lock:
                 if _active.get(key) is event:
                     _finish_locked(project_id, 'Could not save generation attempt status. No generation was started.')
             raise CodexError('Could not save generation attempt status. No generation was started.') from exc
+
+
+def record_settings(project_id, manager):
+    """Capture an effective profile change before the first generation request."""
+    from .generation_attempts import settings_for, update_settings
+    run_lock = _owned_run_lock(project_id)
+    if run_lock is None:
+        return
+    with run_lock:
+        with _lock:
+            key = _owned_key(project_id)
+            if key is None:
+                return
+            reference = _stores.get(key)
+            engine = reference() if reference is not None else None
+            snapshot = _snapshots[key]
+        settings = settings_for(manager, engine)
+        if snapshot.get('settings') == settings:
+            return
+        if engine is not None:
+            update_settings(engine, project_id, key[1], snapshot['started_at'], settings)
+        with _lock:
+            snapshot['settings'] = settings
 
 
 def current_cancel_event():

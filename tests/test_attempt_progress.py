@@ -1,6 +1,7 @@
 """Durable outcomes use the artifact transaction, not per-batch writes or AI."""
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.orm import Session
@@ -8,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import generation_attempts as attempts, progress
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import GenerationRevision, Project
+from backend.app.models import CodexProfile, GenerationRevision, Project
 
 
 @pytest.fixture
@@ -73,6 +74,32 @@ def test_cancel_and_timeout_persist_without_affecting_saved_artifacts(engine):
     progress.begin(1, 'brief', engine=engine)
     progress.finish(1, error='AI generation exceeded its overall time budget.')
     assert latest(engine)['state'] == 'failed' and latest(engine)['error_category'] == 'timeout'
+
+
+def test_failed_attempt_keeps_effective_settings_after_profile_changes_and_memory_loss(engine, monkeypatch):
+    with Session(engine) as db:
+        db.add(CodexProfile(id=1, name='Luna', directory='/private/codex-home'))
+        db.commit()
+    manager = SimpleNamespace(account_key='registered:1', generation_model='gpt-test', generation_effort=None)
+    progress.begin(1, 'knowledge', engine=engine, manager=manager)
+    assert latest(engine, 'knowledge')['settings']['effort'] == 'Model default'
+    manager.generation_effort = 'low'
+    progress.record_settings(1, manager)
+    progress.finish(1, error='The selected account reached its usage limit.')
+    with Session(engine) as db:
+        db.get(CodexProfile, 1).name = 'Renamed account'
+        db.commit()
+    monkeypatch.delitem(progress._snapshots, (1, 'knowledge'))
+    with Session(engine) as db:
+        summary = attempts.generation_summary(db, 1)
+    failed = next(view for view in summary['views'] if view['kind'] == 'knowledge')
+    assert failed['state'] == 'failed'
+    assert failed['latest_attempt']['settings'] == {'account': 'Luna', 'model': 'gpt-test', 'effort': 'low'}
+    assert '/private/codex-home' not in str(failed)
+
+    token = attempts.queue_dependency(engine, 1, settings=attempts.settings_for(manager, engine))
+    attempts.finish(engine, 1, 'scheme', token, state='skipped')
+    assert latest(engine, 'scheme')['settings']['account'] == 'Renamed account'
 
 
 def test_startup_interruption_and_database_identity_do_not_expose_another_database(engine, tmp_path):

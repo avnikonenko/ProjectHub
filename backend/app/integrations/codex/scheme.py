@@ -243,7 +243,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
-        progress.begin(project_id, 'scheme', engine=engine)
+        progress.begin(project_id, 'scheme', engine=engine, manager=manager)
         progress.update(project_id, stage='Collecting Scheme evidence')
         evidence = collect_evidence(engine, project_id)
         knowledge_context = evidence.get('knowledge_context')

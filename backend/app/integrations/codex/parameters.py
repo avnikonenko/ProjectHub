@@ -245,7 +245,7 @@ def refresh_parameters(engine, project_id, manager):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
-        progress.begin(project_id, 'parameters', engine=engine)
+        progress.begin(project_id, 'parameters', engine=engine, manager=manager)
         progress.update(project_id, stage='Inspecting implementation choices and usage sites')
         evidence = collect_parameter_evidence(engine, project_id)
         _evidence(evidence, project_id)

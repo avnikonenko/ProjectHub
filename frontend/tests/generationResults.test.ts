@@ -101,6 +101,30 @@ test('a timed-out attempt remains visible alongside the earlier saved result and
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
 });
 
+test('attempt details show the failed run settings alongside the earlier saved result', () => {
+  const raw = fixture();
+  const settings = { account: 'Luna <team>', model: 'GPT-5', effort: 'low' };
+  Object.assign(raw.views[1], { state: 'failed', showing_previous: true, retryable: true,
+    latest_attempt: { state: 'failed', error: 'Usage limit reached.', settings } });
+  Object.assign(raw.views[2], { state: 'skipped', retryable: true,
+    latest_attempt: { state: 'skipped', error: 'Knowledge failed.', settings: null } });
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data: parseGenerationResults(raw, 2) }));
+  assert.match(html, /<strong>Settings<\/strong> Luna &lt;team&gt; · GPT-5 · low/);
+  assert.match(html, /Showing the earlier saved result/);
+  assert.match(html, /Usage limit reached/);
+  assert.match(html, /Knowledge failed/);
+  assert.equal((html.match(/<strong>Settings<\/strong>/g) ?? []).length, 1);
+});
+
+test('summary rejects malformed attempt settings', () => {
+  for (const settings of ['Luna', [], { account: 'Luna', model: 'GPT-5', effort: '' },
+    { account: 'Luna', model: 'GPT-5', effort: 1 }]) {
+    const raw = fixture();
+    Object.assign(raw.views[1].latest_attempt, { settings });
+    assert.throws(() => parseGenerationResults(raw, 2), /attempt is invalid/);
+  }
+});
+
 test('waiting, interrupted and missing results are distinct from an API failure or successful save', () => {
   const raw = fixture();
   Object.assign(raw.views[1], { state: 'interrupted', saved_at: null, retryable: true });

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ...models import (GenerationRevision, ProjectBrief, ProjectGenerationAttempt,
                        ProjectKnowledge, ProjectQA, ProjectScheme, utcnow)
 from ...services import require_project
+from .accounts import launch_label, profile_entries
 
 KINDS = ('brief', 'knowledge', 'scheme', 'qa', 'parameters')
 _STATES = {'running', 'waiting', 'completed', 'failed', 'cancelled', 'interrupted', 'skipped'}
@@ -22,7 +23,7 @@ def _metadata(row):
     if row is None:
         return None
     result = {name: getattr(row, name) for name in
-              ('project_id', 'kind', 'started_at', 'finished_at', 'state', 'error', 'saves_result')}
+              ('project_id', 'kind', 'started_at', 'finished_at', 'state', 'error', 'saves_result', 'settings')}
     result['error_category'] = ('timeout' if row.state == 'failed' and _TIMEOUT.search(row.error or '')
                                 else 'interrupted' if row.state == 'interrupted' else None)
     return result
@@ -34,19 +35,42 @@ def _validate(kind, started_at):
         raise ValueError('Generation attempt requires a view and start identity.')
 
 
-def start(engine, pid, kind, started_at, *, saves_result=True):
+def settings_for(manager, engine):
+    """Capture display values from this run's manager, without account paths."""
+    key = getattr(manager, 'account_key', None)
+    account = next((label for identifier, label, _ in profile_entries(engine) if identifier == key),
+                   'Selected Codex account') if key else launch_label(engine)
+
+    def label(value, default):
+        return (value.strip() or default) if isinstance(value, str) else default
+
+    return {'account': label(account, 'Selected Codex account'),
+            'model': label(getattr(manager, 'generation_model', None), 'Codex default'),
+            'effort': label(getattr(manager, 'generation_effort', None), 'Model default')}
+
+
+def start(engine, pid, kind, started_at, *, saves_result=True, settings=None):
     """Replace an older outcome without allowing a stale run to replace a retry."""
     _validate(kind, started_at)
     with Session(engine) as db:
         require_project(db, pid)
         statement = insert(ProjectGenerationAttempt).values(
             project_id=pid, kind=kind, started_at=started_at, finished_at=None,
-            state='running', error=None, saves_result=bool(saves_result))
+            state='running', error=None, saves_result=bool(saves_result), settings=settings)
         db.execute(statement.on_conflict_do_update(
             index_elements=['project_id', 'kind'],
             set_=dict(started_at=started_at, finished_at=None, state='running', error=None,
-                      saves_result=bool(saves_result)),
+                      saves_result=bool(saves_result), settings=settings),
             where=ProjectGenerationAttempt.started_at <= started_at))
+        db.commit()
+
+
+def update_settings(engine, pid, kind, started_at, settings):
+    with Session(engine) as db:
+        db.execute(update(ProjectGenerationAttempt).where(
+            ProjectGenerationAttempt.project_id == pid, ProjectGenerationAttempt.kind == kind,
+            ProjectGenerationAttempt.started_at == started_at, ProjectGenerationAttempt.state == 'running',
+        ).values(settings=settings))
         db.commit()
 
 
@@ -89,7 +113,7 @@ def interrupt_running(engine):
         db.commit()
 
 
-def queue_dependency(engine, pid, kind='scheme', dependency='knowledge'):
+def queue_dependency(engine, pid, kind='scheme', dependency='knowledge', *, settings=None):
     """Record a requested follow-up without replacing an active or newer job."""
     if kind != 'scheme' or dependency != 'knowledge':
         raise ValueError('Unsupported generation dependency.')
@@ -98,10 +122,11 @@ def queue_dependency(engine, pid, kind='scheme', dependency='knowledge'):
         require_project(db, pid)
         statement = insert(ProjectGenerationAttempt).values(
             project_id=pid, kind=kind, started_at=token, finished_at=None, state='waiting',
-            error=None, saves_result=True)
+            error=None, saves_result=True, settings=settings)
         outcome = db.execute(statement.on_conflict_do_update(
             index_elements=['project_id', 'kind'],
-            set_=dict(started_at=token, finished_at=None, state='waiting', error=None, saves_result=True),
+            set_=dict(started_at=token, finished_at=None, state='waiting', error=None, saves_result=True,
+                      settings=settings),
             where=~ProjectGenerationAttempt.state.in_(('running', 'waiting'))))
         db.commit()
         return token if outcome.rowcount else None
@@ -205,6 +230,7 @@ def _generation_summary(db, pid, *, live=None):
             attempt = {'project_id': pid, 'kind': kind, 'started_at': started,
                        'finished_at': status.get('finished_at'), 'state': status['state'],
                        'error': status.get('error'), 'saves_result': status.get('saves_result', True),
+                       'settings': status.get('settings'),
                        'error_category': 'timeout' if status['state'] == 'failed' and _TIMEOUT.search(status.get('error') or '') else None}
         # A running in-memory job is authoritative, including compatibility
         # callers which do not persist attempts yet. Never infer success from it.

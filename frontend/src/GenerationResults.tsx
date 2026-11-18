@@ -6,11 +6,19 @@ import './generationResults.css';
 
 export type GenerationResultState = 'saved' | 'not_generated' | 'running' | 'waiting' | 'failed'
   | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped' | 'earlier_result';
+type AttemptSettings = { account: string; model: string; effort: string };
 export type GenerationResultView = GenerationRetryView & {
   state: GenerationResultState;
   history_at?: string | null;
   showing_previous: boolean;
-  latest_attempt: { state: string; started_at?: string | null; finished_at?: string | null; error?: string | null; saves_result?: boolean } | null;
+  latest_attempt: {
+    state: string;
+    started_at?: string | null;
+    finished_at?: string | null;
+    error?: string | null;
+    saves_result?: boolean;
+    settings?: AttemptSettings | null;
+  } | null;
 };
 export type GenerationResultsData = { project_id: number; views: GenerationResultView[] };
 export type GenerationResultsState = { base: string; data: GenerationResultsData | null; loading: boolean; error: string };
@@ -18,6 +26,8 @@ export type GenerationSelection = { project_id: number; selected: ProjectGenerat
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max = 10000): value is string => typeof value === 'string' && value.length <= max;
 const nullableText = (value: unknown) => value === undefined || value === null || text(value);
+const validAttemptSettings = (value: unknown) => value === undefined || value === null
+  || (object(value) && [value.account, value.model, value.effort].every(part => text(part) && part.trim()));
 const labels: Record<ProjectGenerationKind, string> = {
   brief: 'Overview', knowledge: 'Knowledge', scheme: 'Scheme', qa: 'Q&A', parameters: 'Implementation Choices & Limits',
 };
@@ -60,7 +70,8 @@ export function parseGenerationResults(raw: unknown, projectId: number): Generat
         || (attempt.project_id !== undefined && attempt.project_id !== projectId)
         || (attempt.kind !== undefined && attempt.kind !== value.kind)
         || !nullableText(attempt.started_at) || !nullableText(attempt.finished_at) || !nullableText(attempt.error)
-        || (attempt.saves_result !== undefined && typeof attempt.saves_result !== 'boolean')))
+        || (attempt.saves_result !== undefined && typeof attempt.saves_result !== 'boolean')
+        || !validAttemptSettings(attempt.settings)))
       throw new Error('The latest generation attempt is invalid.');
     return { kind: value.kind, state: value.state, saved_at: value.saved_at, history_at: historyAt,
       showing_previous: value.showing_previous, retryable: value.retryable, latest_attempt: attempt } as GenerationResultView;
@@ -103,6 +114,9 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
         <details><summary>Attempt details</summary>
           {dateLabel(view.latest_attempt.started_at) && <p>Started {dateLabel(view.latest_attempt.started_at)}</p>}
           {dateLabel(view.latest_attempt.finished_at) && <p>Finished {dateLabel(view.latest_attempt.finished_at)}</p>}
+          {view.latest_attempt.settings && <p><strong>Settings</strong>{' '}
+            {view.latest_attempt.settings.account} · {view.latest_attempt.settings.model} · {view.latest_attempt.settings.effort}
+          </p>}
           {view.latest_attempt.error && <p>{view.latest_attempt.error}</p>}
         </details>}
     </div>

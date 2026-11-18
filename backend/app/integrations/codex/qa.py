@@ -524,7 +524,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                 **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
 
     try:
-        progress.begin(project_id, 'qa', engine=engine)
+        progress.begin(project_id, 'qa', engine=engine, manager=manager)
         transport_scope.enter_context(collect_generation_metrics(metrics))
         transport_scope.enter_context(archive_worker_scope())
         session = getattr(manager, 'generation_session', None)
