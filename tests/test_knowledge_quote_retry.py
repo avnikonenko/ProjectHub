@@ -141,10 +141,18 @@ def test_second_failure_is_bounded_and_never_cached(quote_batch, failure):
 
 def test_cancellation_before_fallback_prevents_second_request(quote_batch, monkeypatch):
     engine, window, item = quote_batch
-    manager = Responses([corrupted(item), selected(item)])
+    cancelled = False
+
+    def first_response(*_):
+        nonlocal cancelled
+        cancelled = True
+        return corrupted(item)
+
+    manager = Responses([first_response, selected(item)])
 
     def cancel():
-        raise progress.GenerationCancelled()
+        if cancelled:
+            raise progress.GenerationCancelled()
 
     monkeypatch.setattr(progress, 'check_cancelled', cancel)
     with pytest.raises(progress.GenerationCancelled):
