@@ -20,6 +20,21 @@ Designed for developers, researchers, and anyone working on long-running project
 
 ![ProjectHub overview with example data](images/projecthub-dashboard.png)
 
+## What AI generates
+
+Open **Generation** and choose what to make or update. **AI Q&A** uses linked
+Codex sessions and imported ChatGPT chats to create questions and answers.
+**Scheme** can use those conversations and read parts of a linked Git repository
+to make diagrams. Use the links in saved results to see where the information came from.
+
+| Saved result | What you get | When it helps |
+| --- | --- | --- |
+| **Project Overview** | A brief on the project's purpose, architecture, current work, and next steps. | “Where did we leave off?” |
+| **Knowledge** | A summary plus searchable decisions, requirements, proposals, and open questions, with reasons and original evidence. | “Why did we choose SQLite?” |
+| **AI Q&A** | A set of questions and source-linked answers drawn from earlier project discussions. | “What did we discuss about CSV and JSON exports?” |
+| **Scheme** | Architecture and workflow diagrams with dependencies and supporting evidence. | “How does ProjectHub turn linked conversations into an overview?” |
+| **Implementation Choices & Limits** | Code-backed findings about limits, defaults, filters, and fallbacks, with locations for their declarations and use. | “Where is import size capped, and what happens at the limit?” |
+
 ## Use and configuration
 
 - [Install ProjectHub and start a project](GETTING_STARTED.md)
