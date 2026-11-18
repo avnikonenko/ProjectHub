@@ -27,7 +27,7 @@ for line in sys.stdin:
   print(json.dumps({'method':'turn/completed','params':{'turn':{'id':'t','status':'completed'}}}),flush=True)
  result={'id':m['id'],'result':{'ok':True}}
  if method=='reject': result={'id':m['id'],'error':{'code':-1,'message':'not exposed'}}
- if method in ('thread/resume','thread/start') and 'testError' in m['params']:
+ if method in ('thread/resume','thread/start','thread/turns/list') and 'testError' in m['params']:
   result={'id':m['id'],'error':m['params']['testError']}
  print(json.dumps(result),flush=True)
 ''')
@@ -94,7 +94,24 @@ def test_resume_active_writer_error_is_actionable_and_sanitized(fake_server):
         client.close()
 
 
+def test_missing_source_rollout_error_is_actionable_and_sanitized(fake_server):
+    client = AppServerClient(executable=sys.executable, timeout=1)
+    try:
+        with pytest.raises(CodexError, match='is missing from the local Codex history') as err:
+            client.request('thread/turns/list', {'testError': {
+                'code': -32600,
+                'message': 'invalid paginated history lineage for private-marker: missing source rollout',
+            }})
+        assert 'Sources' in str(err.value)
+        assert 'private-marker' not in str(err.value)
+    finally:
+        client.close()
+
+
 @pytest.mark.parametrize('method,code,message', [
+    ('thread/turns/list', -32600, 'private-marker invalid request'),
+    ('thread/turns/list', -1, 'invalid paginated history lineage for private-marker: missing source rollout'),
+    ('thread/start', -32600, 'invalid paginated history lineage for private-marker: missing source rollout'),
     ('thread/resume', -32600, 'private-marker invalid request'),
     ('thread/resume', -32600, 'private-marker thread has an active turn'),
     ('thread/resume', -32600, None),

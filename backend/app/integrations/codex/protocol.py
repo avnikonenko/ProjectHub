@@ -154,6 +154,12 @@ class AppServerClient:
                 message = result['error'].get('message')
                 if code == 'disconnected':
                     raise CodexError('Codex disconnected; delivery may be unverified')
+                if (method == 'thread/turns/list' and code == -32600 and isinstance(message, str)
+                        and message.startswith('invalid paginated history lineage for ')
+                        and message.endswith(': missing source rollout')):
+                    raise CodexError('Codex cannot read this session because the original session history '
+                                     'it depends on is missing from the local Codex history. '
+                                     'Check the linked session in Sources.')
                 if (method == 'thread/resume' and code == -32600 and
                         isinstance(message, str) and 'already has an active writer' in message):
                     raise CodexError('Another Codex app or CLI owns this session. '
