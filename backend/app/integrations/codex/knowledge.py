@@ -35,6 +35,10 @@ class EvidenceExcerptError(CodexError):
     """A model excerpt cannot be resolved to bounded, literal source evidence."""
 
 
+class EvidenceSpeakerError(CodexError):
+    """A citation assigns a known source to the wrong speaker."""
+
+
 class EvidenceAgreementError(CodexError):
     """Valid sources do not establish the model's agreement classification."""
 
@@ -424,7 +428,7 @@ def _validate_agreement(item, evidence, indexed):
         raise EvidenceAgreementError('A short acceptance requires proposal context, not direct agreement.')
 
 
-def validate_extraction(raw, window, project_id, extraction_version, *, omitted_agreements=None):
+def validate_extraction(raw, window, project_id, extraction_version, *, omissions=None):
     if not isinstance(raw, str):
         raise CodexError('Knowledge extraction returned invalid JSON.')
     if len(raw) > MAX_RESPONSE_CHARS:
@@ -446,7 +450,7 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omitted_
     primary = set(window['primary_ids'])
     expected = set(OUTPUT_SCHEMA['properties']['items']['items']['properties'])
     validated = []
-    excerpt_error = None
+    citation_error = None
     agreement_error = None
     for original in result['items']:
         if not isinstance(original, dict) or set(original) != expected:
@@ -466,6 +470,7 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omitted_
             raise CodexError('Knowledge extraction requires original evidence.')
         evidence = []
         seen_refs = set()
+        item_citation_error = None
         for ref in refs:
             if not isinstance(ref, dict) or set(ref) != {'source_id', 'role', 'excerpt'}:
                 raise CodexError('Knowledge extraction returned invalid evidence.')
@@ -473,16 +478,18 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omitted_
             if not isinstance(identifier, str) or len(identifier) > 240 or identifier not in indexed:
                 raise CodexError('Knowledge extraction cited missing or foreign evidence.')
             source = indexed[identifier]
-            if ref['role'] not in ('user', 'assistant') or ref['role'] != source['role']:
-                raise CodexError('Knowledge evidence does not match the original speaker and excerpt.')
+            if ref['role'] not in ('user', 'assistant'):
+                raise CodexError('Knowledge extraction returned an invalid speaker.')
+            if ref['role'] != source['role']:
+                item_citation_error = EvidenceSpeakerError('Knowledge evidence speaker does not match the original message.')
             try:
                 quote = _source_excerpt(ref['excerpt'], source['text'])
             except EvidenceExcerptError as exc:
                 # Check every other field/reference before authorizing a
-                # bounded repair. Never mask foreign evidence or a wrong
-                # speaker behind an earlier repairable error.
-                if excerpt_error is None:
-                    excerpt_error = exc
+                # bounded repair. Never mask foreign evidence or malformed
+                # fields behind an earlier repairable error.
+                if item_citation_error is None:
+                    item_citation_error = exc
                 quote = ref['excerpt'] if isinstance(ref['excerpt'], str) else ''
             identity = (identifier, ref['role'], quote)
             if identity in seen_refs:
@@ -491,17 +498,20 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omitted_
             evidence.append({**ref, 'excerpt': quote, **{key: source.get(key) for key in (
                 'revision', 'conversation_id', 'order', 'source_key', 'timestamp', 'message_revision')},
                 'label': source.get('label', identifier)})
+        if item_citation_error is not None:
+            if omissions is not None:
+                omissions['citation'] += 1
+            elif citation_error is None or isinstance(item_citation_error, EvidenceSpeakerError):
+                citation_error = item_citation_error
+            continue
         try:
             _validate_agreement(item, evidence, indexed)
         except EvidenceAgreementError as exc:
-            if omitted_agreements is not None:
-                # The repair can discard unsupported claims, but malformed
-                # citations and inexact excerpts still fail the whole batch.
-                omitted_agreements.append(str(exc))
+            if omissions is not None:
+                omissions['agreement'] += 1
                 continue
             if agreement_error is None:
                 agreement_error = exc
-        if excerpt_error is not None or agreement_error is not None:
             continue
         # Neighboring messages support interpretation, but are extracted in
         # their own primary window. Ignore duplicate context-only candidates
@@ -516,10 +526,12 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omitted_
                         'role', 'conversation_id', 'order', 'message_order', 'message_revision', 'source_key')},
                         'source_id': source['id'], 'revision': source['revision']} for source in window['sources']])
         validated.append(item)
+    if isinstance(citation_error, EvidenceSpeakerError):
+        raise citation_error
     if agreement_error is not None:
         raise agreement_error
-    if excerpt_error is not None:
-        raise excerpt_error
+    if citation_error is not None:
+        raise citation_error
     return validated
 
 
@@ -595,7 +607,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
     quote_selection = False
     try:
         items = validate_extraction(raw, window, project_id, version)
-    except (EvidenceExcerptError, EvidenceAgreementError) as exc:
+    except (EvidenceExcerptError, EvidenceSpeakerError, EvidenceAgreementError) as exc:
         from . import progress
         from .quote_selectors import (QUOTE_SELECTION_INSTRUCTIONS, prepare_quote_selection,
                                       restore_quote_selection)
@@ -611,14 +623,17 @@ def extract_batch(engine, project_id, manager, window, configuration):
                'If the supplied evidence does not establish agreement, use a supported non-agreed '
                'status and agreement_basis none. Never invent approval, quotes or chronology.\n'
                if isinstance(exc, EvidenceAgreementError) else '')
+            + 'Each evidence role must match the speaker of the selected quote. '
+              'Omit items without a matching quotation.\n'
             + json.dumps(retry_payload, ensure_ascii=False, separators=(',', ':')), retry_schema)
         raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS)
-        omitted_agreements = []
-        items = validate_extraction(raw, window, project_id, version, omitted_agreements=omitted_agreements)
-        if omitted_agreements:
+        omissions = {'agreement': 0, 'citation': 0}
+        items = validate_extraction(raw, window, project_id, version, omissions=omissions)
+        if any(omissions.values()):
             # Publish the validated remainder with a coverage limitation. Keep
             # this window eligible for fresh extraction on a later run.
-            _record_extraction_count('unsupported_agreement_items', len(omitted_agreements))
+            _record_extraction_count('unsupported_agreement_items', omissions['agreement'])
+            _record_extraction_count('invalid_evidence_items', omissions['citation'])
             return items, False
         quote_selection = True
     cached_raw, adjustments = _cache_response(raw, window)
@@ -969,7 +984,8 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
     legacy = _legacy_extraction_configurations(engine, manager, configuration)
-    run = {'quote': 0, 'formatting': 0, 'unsupported_agreement_items': 0, 'lock': threading.Lock(), 'legacy': legacy}
+    run = {'quote': 0, 'formatting': 0, 'unsupported_agreement_items': 0, 'invalid_evidence_items': 0,
+           'lock': threading.Lock(), 'legacy': legacy}
     token = _extraction_run.set(run)
     try:
         extracted, hits, requests, workers, timings = _extract_windows(
@@ -978,12 +994,19 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
         _extraction_run.reset(token)
     requests += run['quote'] + run['formatting']
     omitted = run['unsupported_agreement_items']
-    if omitted:
+    invalid_evidence = run['invalid_evidence_items']
+    if omitted or invalid_evidence:
         coverage = deepcopy(coverage)
+    if omitted:
         claims = 'claim' if omitted == 1 else 'claims'
         coverage.setdefault('limitations', []).append(
             f'Omitted {omitted} candidate agreement or rejection {claims} after retry because the cited '
             'evidence did not establish a user decision. A future generation can retry the affected batches.')
+    if invalid_evidence:
+        claims = 'claim' if invalid_evidence == 1 else 'claims'
+        coverage.setdefault('limitations', []).append(
+            f'Omitted {invalid_evidence} candidate {claims} after retry because their citations did not match '
+            'the original speaker or excerpt. A future generation can retry the affected batches.')
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
     items = reconcile(previous, extracted, full_bundle, version,
                       compatible_versions={_digest(settings) for settings in legacy})
@@ -1013,6 +1036,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
                             **({'quote_selector_retries': run['quote']} if run['quote'] else {}),
                             **({'formatting_retries': run['formatting']} if run['formatting'] else {}),
                             **({'unsupported_agreement_items': omitted} if omitted else {}),
+                            **({'invalid_evidence_items': invalid_evidence} if invalid_evidence else {}),
                             'extraction_workers': workers, 'batch_timings': timings,
                             'default_generation_configuration': configuration['model'] == 'default',
                             'source_selection': selection}}

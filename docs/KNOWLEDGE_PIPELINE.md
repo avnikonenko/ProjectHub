@@ -200,11 +200,11 @@ for windows without matching cache entries.
 
 ### Bounded quotation-format retry
 
-A fresh response can receive one additional request after an evidence excerpt or
-agreement validation failure. Agreement retries ask for a supported status and
-actual user evidence. Cancellation and the overall deadline still apply. Cached
-corruption, foreign references, wrong speakers, invalid JSON and transport errors
-do not trigger this retry.
+A fresh response can receive one additional request after an excerpt, speaker
+attribution, or agreement validation failure. Agreement retries ask for a
+supported status and actual user evidence. Cancellation and the overall deadline
+still apply. Corrupt cache entries, foreign references, malformed fields, invalid
+JSON, and transport errors fail immediately.
 
 For that retry, application code presents the same original source text once as
 ordered, bounded literal snippets. The model selects snippet IDs instead of
@@ -216,10 +216,11 @@ be selected as evidence. Canonical extraction validation runs again before save.
 The retry stores the same canonical schema with literal excerpts. The cache envelope records
 `quote_selection_mode` when used. `ai_requests` includes the extra reading request,
 `quote_selector_retries` records it, and model/token metrics cover both calls when
-usage is reported. If the retry still cites insufficient evidence for an agreement
-or rejection, the run keeps the valid records and reports how many claims it
-omitted under Coverage. Batches with omitted claims can be retried in a future
-generation. Invalid citations and excerpt errors still fail the run.
+usage is reported. If the retry cites the wrong speaker, an inexact excerpt, or
+insufficient evidence for an agreement or rejection, the run keeps the valid
+records and reports how many claims it omitted under Coverage. A future
+generation can retry batches with omitted claims. Unknown selectors and malformed
+responses fail validation.
 
 ### Scope checks when combining Overview stages
 

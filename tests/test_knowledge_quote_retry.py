@@ -60,7 +60,7 @@ def corrupted(item):
     return response(item)
 
 
-def selected(item, *, bad_selector=False, wrong_owner=False, wrong_role=False):
+def selected(item, *, bad_selector=False, wrong_owner=False, role_override=None):
     def result(prompt, schema):
         payload = json.loads(prompt.rsplit('\n', 1)[1])
         assert all('text' not in source and source['literal_quotes'] for source in payload['sources'])
@@ -73,8 +73,8 @@ def selected(item, *, bad_selector=False, wrong_owner=False, wrong_role=False):
         ref['excerpt'] = 'unknown-selector' if bad_selector else quote['id']
         if wrong_owner:
             ref['source_id'] = payload['sources'][1]['id']
-        if wrong_role:
-            ref['role'] = 'user'
+        if role_override is not None:
+            ref['role'] = role_override
         return response(value)
     return result
 
@@ -127,12 +127,28 @@ def test_fresh_copy_error_retries_once_and_caches_original_literals(quote_batch,
     assert hit and replay == items and len(manager.calls) == 2
 
 
-@pytest.mark.parametrize('failure', ['selector', 'source_owner', 'role', 'invalid_json'])
+def test_fresh_speaker_mismatch_retries_once_and_caches_verified_speaker(quote_batch):
+    engine, window, item = quote_batch
+    mismatched = response(item)
+    mismatched['items'][0]['evidence'][0]['role'] = 'user'
+    manager = Responses([mismatched, selected(item)])
+    configuration = knowledge.extraction_configuration(manager)
+
+    items, hit = knowledge.extract_batch(engine, 1, manager, window, configuration)
+
+    assert not hit and len(manager.calls) == 2
+    assert items[0]['evidence'][0]['role'] == 'assistant'
+    assert json.loads(rows(engine)[0][1][0]['raw']) == response(item)
+    replay, hit = knowledge.extract_batch(engine, 1, manager, window, configuration)
+    assert hit and replay == items and len(manager.calls) == 2
+
+
+@pytest.mark.parametrize('failure', ['selector', 'source_owner', 'invalid_role', 'invalid_json'])
 def test_second_failure_is_bounded_and_never_cached(quote_batch, failure):
     engine, window, item = quote_batch
     second = ('not JSON' if failure == 'invalid_json' else selected(
         item, bad_selector=failure == 'selector', wrong_owner=failure == 'source_owner',
-        wrong_role=failure == 'role'))
+        role_override='system' if failure == 'invalid_role' else None))
     manager = Responses([corrupted(item), second])
     with pytest.raises(CodexError):
         knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
@@ -160,12 +176,12 @@ def test_cancellation_before_fallback_prevents_second_request(quote_batch, monke
     assert len(manager.calls) == 1 and rows(engine) == []
 
 
-@pytest.mark.parametrize('failure', ['role', 'foreign', 'invalid_json', 'transport'])
+@pytest.mark.parametrize('failure', ['invalid_role', 'foreign', 'invalid_json', 'transport'])
 def test_non_quote_failures_do_not_retry(quote_batch, failure):
     engine, window, item = quote_batch
     output = deepcopy(item)
-    if failure == 'role':
-        output['evidence'][0]['role'] = 'user'
+    if failure == 'invalid_role':
+        output['evidence'][0]['role'] = 'system'
     elif failure == 'foreign':
         output['evidence'][0]['source_id'] = 'foreign'
     first = ('not JSON' if failure == 'invalid_json' else
@@ -176,7 +192,8 @@ def test_non_quote_failures_do_not_retry(quote_batch, failure):
     assert len(manager.calls) == 1 and rows(engine) == []
 
 
-def test_invalid_cached_quote_does_not_trigger_fresh_generation(quote_batch):
+@pytest.mark.parametrize('mismatch', ['excerpt', 'speaker'])
+def test_invalid_cached_citation_does_not_trigger_fresh_generation(quote_batch, mismatch):
     engine, window, item = quote_batch
     manager = Responses([response(item)])
     configuration = knowledge.extraction_configuration(manager)
@@ -184,7 +201,10 @@ def test_invalid_cached_quote_does_not_trigger_fresh_generation(quote_batch):
     with Session(engine) as db:
         row = db.scalar(select(ProjectHistoryBatch))
         envelope = deepcopy(row.evidence)
-        envelope[0]['raw'] = json.dumps(corrupted(item))
+        invalid = corrupted(item) if mismatch == 'excerpt' else response(item)
+        if mismatch == 'speaker':
+            invalid['items'][0]['evidence'][0]['role'] = 'user'
+        envelope[0]['raw'] = json.dumps(invalid)
         row.evidence = envelope
         db.commit()
     replay_manager = Responses([])
@@ -330,17 +350,17 @@ def test_parallel_candidate_counts_each_worker_retry_without_cross_run_leak(quot
             for actual, original in zip(replay['items'], candidate['items'])] == candidate['items']
 
 
-@pytest.mark.parametrize('violation', ['foreign', 'role', 'classification'])
+@pytest.mark.parametrize('violation', ['foreign', 'invalid_role', 'classification'])
 def test_later_non_quote_errors_are_not_masked_by_earlier_quote_error(quote_batch, violation):
     engine, window, item = quote_batch
     invalid = corrupted(item)
-    if violation in ('foreign', 'role'):
+    if violation in ('foreign', 'invalid_role'):
         ref = {'source_id': 'source:2', 'role': 'assistant',
                'excerpt': window['sources'][1]['text']}
         if violation == 'foreign':
             ref['source_id'] = 'foreign-source'
         else:
-            ref['role'] = 'user'
+            ref['role'] = 'system'
         invalid['items'][0]['evidence'].append(ref)
     else:
         later = deepcopy(item)
@@ -429,14 +449,82 @@ def test_missing_same_conversation_proposal_preserves_valid_items_and_clean_wind
     assert len(manager.calls) == 4
 
 
-@pytest.mark.parametrize('hard_error', ['selector', 'role', 'shape'])
+def test_repeated_speaker_mismatch_omits_the_whole_item_and_keeps_clean_cache(quote_batch, monkeypatch):
+    engine, window, item = quote_batch
+    proposal, observation = window['sources']
+    clean_window = {'sources': [observation], 'primary_ids': [observation['id']], 'context_ids': []}
+    select_test_windows(monkeypatch, [window, clean_window])
+
+    invalid_item = deepcopy(item)
+    invalid_item['statement'] = 'The user stated the expression.'
+    invalid_item['evidence'].append({**invalid_item['evidence'][0], 'role': 'user'})
+    clean_item = {**deepcopy(item), 'statement': observation['text'], 'evidence': [
+        {'source_id': observation['id'], 'role': observation['role'], 'excerpt': observation['text']},
+    ]}
+
+    def retry_with_mismatch(prompt, schema):
+        repaired = selected(invalid_item)(prompt, schema)
+        payload = json.loads(prompt.rsplit('\n', 1)[1])
+        repaired['items'][0]['evidence'][1] = {
+            'role': 'user', 'excerpt': payload['sources'][0]['literal_quotes'][0]['id'],
+        }
+        repaired['items'].extend(selected(item)(prompt, schema)['items'])
+        return repaired
+
+    manager = Responses([{'items': [invalid_item, item]}, retry_with_mismatch,
+                         response(clean_item), response(item)])
+    bundle = candidate_bundle([proposal, observation])
+
+    candidate = knowledge.build_candidate(engine, 1, manager, bundle)
+
+    assert {value['statement'] for value in candidate['items']} == {item['statement'], clean_item['statement']}
+    assert all(ref['role'] == 'assistant' for value in candidate['items'] for ref in value['evidence'])
+    assert candidate['diagnostics']['invalid_evidence_items'] == 1
+    assert candidate['diagnostics']['quote_selector_retries'] == 1
+    assert candidate['diagnostics']['ai_requests'] == 3
+    assert candidate['coverage']['limitations']
+    assert len(rows(engine)) == 1
+
+    replay = knowledge.build_candidate(engine, 1, manager, bundle, previous=candidate)
+    assert replay['diagnostics']['cache_hits'] == 1
+    assert replay['diagnostics']['ai_requests'] == 1
+    assert not replay['diagnostics'].get('invalid_evidence_items')
+    assert replay['coverage']['limitations'] == []
+    assert len(rows(engine)) == 2 and len(manager.calls) == 4
+
+
+@pytest.mark.parametrize('phase', ['fresh', 'repair'])
+def test_speaker_mismatch_cannot_mask_a_later_foreign_citation(quote_batch, phase):
+    engine, window, item = quote_batch
+    mismatched = response(item)
+    mismatched['items'][0]['evidence'][0]['role'] = 'user'
+    if phase == 'fresh':
+        foreign = response(item)['items'][0]
+        foreign['evidence'][0]['source_id'] = 'foreign'
+        mismatched['items'].append(foreign)
+        manager = Responses([mismatched])
+    else:
+        def repair(prompt, schema):
+            result = selected(item, role_override='user')(prompt, schema)
+            result['items'].extend(selected(item, bad_selector=True)(prompt, schema)['items'])
+            return result
+        manager = Responses([mismatched, repair])
+
+    with pytest.raises(CodexError, match='foreign evidence|unknown quote selector'):
+        knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert len(manager.calls) == (1 if phase == 'fresh' else 2)
+    assert rows(engine) == []
+
+
+@pytest.mark.parametrize('hard_error', ['selector', 'invalid_role', 'shape'])
 def test_unsupported_agreement_cannot_mask_later_hard_error_in_repair(quote_batch, hard_error):
     engine, window, item = quote_batch
     unsupported = {**deepcopy(item), 'design_status': 'AGREED', 'agreement_basis': 'direct_user'}
 
     def repair(prompt, schema):
         repaired = selected(unsupported)(prompt, schema)
-        invalid = selected(item, bad_selector=hard_error == 'selector', wrong_role=hard_error == 'role')(prompt, schema)
+        invalid = selected(item, bad_selector=hard_error == 'selector',
+                           role_override='system' if hard_error == 'invalid_role' else None)(prompt, schema)
         if hard_error == 'shape':
             invalid['items'][0].pop('scope')
         repaired['items'].extend(invalid['items'])
@@ -449,7 +537,7 @@ def test_unsupported_agreement_cannot_mask_later_hard_error_in_repair(quote_batc
     assert len(manager.calls) == 2 and rows(engine) == []
 
 
-@pytest.mark.parametrize('hard_error', ['foreign', 'role', 'shape'])
+@pytest.mark.parametrize('hard_error', ['foreign', 'invalid_role', 'shape'])
 def test_agreement_error_cannot_mask_later_hard_error(quote_batch, hard_error):
     engine, window, item = quote_batch
     unsupported = deepcopy(item)
@@ -457,8 +545,8 @@ def test_agreement_error_cannot_mask_later_hard_error(quote_batch, hard_error):
     later = deepcopy(item)
     if hard_error == 'foreign':
         later['evidence'][0]['source_id'] = 'foreign'
-    elif hard_error == 'role':
-        later['evidence'][0]['role'] = 'user'
+    elif hard_error == 'invalid_role':
+        later['evidence'][0]['role'] = 'system'
     else:
         later.pop('scope')
     manager = Responses([{'items': [unsupported, later]}])
