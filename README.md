@@ -15,13 +15,26 @@ Use it for software, research, or other projects with a growing conversation his
 ## What you can do
 
 - **Connect conversations.** Link terminal Codex sessions, import public ChatGPT chats, and browse saved messages with inherited duplicates collapsed.
-- **Get up to speed.** Read the Project Overview for a quick update. Browse decisions, rationale, and trade-offs in Knowledge and generated answers in AI Q&A.
-- **Generate and organize.** Refresh selected views from **Generation**. Saved results retain source links. Generate AI tags separately to filter Knowledge and Q&A.
-- **Explore the code.** Use Scheme to see architecture, workflows, and dependencies. Link a Git repository for read-only branch comparisons, recent commits, and public GitHub issues.
+- **Inspect a Git repository.** Link a checkout for read-only branch comparisons, recent commits, and public GitHub issues.
 - **Keep track of work.** Pin projects, search saved content, capture Markdown notes, and manage TODOs.
-- **Continue with context.** Use Ask Project for follow-up questions, or preview project context before sending it to a Codex session.
+- **Continue in Codex.** Preview project context before sending it to a session.
 
-Choose the Codex account, model, reasoning effort, and response instructions for each project. In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.
+## What AI generates
+
+Open **Generation** and choose what to refresh. Depending on the view, ProjectHub
+uses linked or imported conversations, notes, TODOs, and selected excerpts from
+a linked repository. Follow source links in saved results to check claims.
+
+| Saved result | What you get | When it helps |
+| --- | --- | --- |
+| **Project Overview** | A brief on the project's purpose, architecture, current work, and next steps. | “Where did we leave off?” |
+| **Knowledge** | A summary plus searchable decisions, requirements, proposals, and open questions, with reasons and original evidence. | “Did we agree to validate records before saving them, and why?” |
+| **AI Q&A** | A set of questions and source-linked answers drawn from earlier project discussions. | “What did we discuss about CSV and JSON exports?” |
+| **Scheme** | Architecture and workflow diagrams with dependencies and supporting evidence. | “How does an imported file become a report?” |
+| **Implementation Choices & Limits** | Code-backed findings about limits, defaults, filters, and fallbacks, with locations for their declarations and use. | “Where is import size capped, and what happens at the limit?” |
+
+Use **Reviews → Ask Project** for a new question. Generate **AI tags** separately
+to browse saved Knowledge and Q&A by topic.
 
 **AI runs when you request it.** Opening projects and searching saved information do not trigger model requests.
 
@@ -89,6 +102,8 @@ and run `codex login`. Local notes and browsing work without Codex.
 ## Settings and AI
 
 AI features use your existing **Codex ChatGPT sign-in**. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
+
+In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.
 
 ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
 
