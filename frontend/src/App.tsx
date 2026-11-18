@@ -239,13 +239,13 @@ export default function App() {
             <br />
             Codex requests go to OpenAI.
           </small>
-          <span className="app-version">ProjectHub v{version}</span>
           <small className="app-copyright">(c) 2026 Aleksandra Ivanova</small>
         </div>
       </aside>
       <div className="workspace">
         <header className="topbar">
           <div className="topbar-actions">
+            <small className="app-version muted">ProjectHub v{version}</small>
             <ThemeToggle />
             <AppSettings />
           </div>

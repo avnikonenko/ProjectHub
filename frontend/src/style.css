@@ -159,9 +159,7 @@ button:disabled {
   line-height: 1.8;
   margin-top: 8px;
 }
-.app-version,
 .sidebar-footer .app-copyright {
-  display: block;
   font-size: 0.714286rem;
   margin-top: 12px;
 }
@@ -1177,6 +1175,12 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.topbar-actions .app-version {
+  font-size: inherit;
+  font-weight: 500;
+  letter-spacing: normal;
+  white-space: nowrap;
 }
 .theme-toggle {
   display: inline-grid;
