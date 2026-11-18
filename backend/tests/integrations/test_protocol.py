@@ -97,7 +97,7 @@ def test_resume_active_writer_error_is_actionable_and_sanitized(fake_server):
 def test_missing_source_rollout_error_is_actionable_and_sanitized(fake_server):
     client = AppServerClient(executable=sys.executable, timeout=1)
     try:
-        with pytest.raises(CodexError, match='is missing from the local Codex history') as err:
+        with pytest.raises(protocol.MissingSourceHistory, match='is missing from the local Codex history') as err:
             client.request('thread/turns/list', {'testError': {
                 'code': -32600,
                 'message': 'invalid paginated history lineage for private-marker: missing source rollout',

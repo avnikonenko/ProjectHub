@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from backend.app.models import Base, Project, Decision, CodexSession, Delivery, CodexEvent
 from backend.app.integrations.codex import manager as module
 from backend.app.integrations.codex.manager import CodexManager, context_preview, history_page
-from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex.protocol import CodexError, MissingSourceHistory
 
 
 class FakeClient:
@@ -275,6 +275,48 @@ def test_history_uses_read_client_and_closes_it(env, options, expected_limit):
         'threadId': 'external-thread', 'itemsView': 'summary', 'limit': expected_limit,
         'sortDirection': 'desc', 'cursor': 'cursor-1'})]
     assert clients[0].closed
+
+
+@pytest.mark.parametrize('reader', ['direct', 'shared', 'archive'])
+@pytest.mark.parametrize('title, missing_source', [
+    ('Saved  design\n session', True), (' \n  ', True), ('Saved design session', False),
+])
+def test_history_identifies_session_for_missing_source_only(env, monkeypatch, reader, title, missing_source):
+    saved = env.manager.associate(env.project, title, 'external-thread')
+    client = FakeClient()
+    failure = (MissingSourceHistory() if missing_source else
+               CodexError('Codex rejected thread/turns/list (error -1)'))
+
+    def request(method, params):
+        assert method == 'thread/turns/list'
+        assert params['threadId'] == saved['thread_id']
+        raise failure from RuntimeError('Private server path /tmp/private-source.jsonl')
+
+    monkeypatch.setattr(client, 'request', request)
+    monkeypatch.setattr(env.manager, '_new_read_client', lambda: client)
+    with Session(env.engine) as db:
+        session = db.get(CodexSession, saved['id'])
+        with pytest.raises(CodexError) as error:
+            if reader == 'archive':
+                with env.manager.session_reader(session) as archive:
+                    archive.history(session, client=archive, archive=True)
+            elif reader == 'shared':
+                env.manager.history(session, client=client)
+            else:
+                env.manager.history(session)
+
+    detail = str(error.value)
+    assert '/tmp/private-source.jsonl' not in detail
+    if missing_source:
+        label = f"Session #{saved['id']}"
+        if title.strip():
+            label += ' “Saved design session”'
+        assert f'{label} because' in detail
+        assert 'unlink it in Sources' in detail
+    else:
+        assert error.value is failure
+        assert detail == 'Codex rejected thread/turns/list (error -1)'
+    assert client.closed == (reader != 'shared')
 
 
 @pytest.mark.parametrize('status,ephemeral,model', [

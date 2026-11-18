@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ...models import CodexSession
 from .accounts import account_home
 from .history_search import HistoryIndexBusy, index_history
-from .manager import history_page
+from .manager import read_session_history
 from .protocol import AppServerClient, CodexError
 
 log = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class _SessionReader:
         params = {'threadId': session.thread_id, 'itemsView': 'full', 'limit': 1, 'sortDirection': 'asc'}
         if cursor is not None:
             params['cursor'] = cursor
-        return history_page(self.client.request('thread/turns/list', params), clip_messages=False, limit=1)
+        return read_session_history(self.client, session, params, clip_messages=False, limit=1)
 
 
 def _metadata(client, session):

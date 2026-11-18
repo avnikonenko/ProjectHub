@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ...models import (Project, Question, Decision, Task, CodexSession,
                        ContextPackage, Delivery, CodexEvent)
-from .protocol import AppServerClient, CodexError, JSONFormattingError
+from .protocol import AppServerClient, CodexError, JSONFormattingError, MissingSourceHistory
 from .ai_instructions import ai_instructions, read_project_instructions
 from .generation_metrics import begin_model_request
 from . import progress
@@ -253,7 +253,7 @@ class _HistoryReader:
             if not isinstance(cursor, str) or len(cursor) > 8000:
                 raise CodexError('History cursor exceeds the supported limit.')
             params['cursor'] = cursor
-        return history_page(self._client.request('thread/turns/list', params), clip_messages=False, limit=1)
+        return read_session_history(self._client, session, params, clip_messages=False, limit=1)
 
 
 class CodexManager:
@@ -534,11 +534,10 @@ class CodexManager:
                 raise CodexError('History cursor exceeds the supported limit.')
             params['cursor'] = cursor
         if client is not None:
-            return history_page(client.request('thread/turns/list', params), clip_messages=not archive, limit=limit)
+            return read_session_history(client, session, params, clip_messages=not archive, limit=limit)
         client = with_client()
         try:
-            result = client.request('thread/turns/list', params)
-            return history_page(result, clip_messages=not archive, limit=limit)
+            return read_session_history(client, session, params, clip_messages=not archive, limit=limit)
         finally:
             client.close()
 
@@ -1160,6 +1159,20 @@ def manager_for(app, project_id=None, *, account=_PROJECT_ACCOUNT):
 
 
 _manager_lock = threading.Lock()
+
+
+def read_session_history(client, session, params, *, clip_messages, limit):
+    try:
+        result = client.request('thread/turns/list', params)
+    except MissingSourceHistory as exc:
+        title = ' '.join((session.title or '').split())
+        if len(title) > 120:
+            title = title[:119].rstrip() + '…'
+        label = f'Session #{session.id}'
+        if title:
+            label += f' “{title}”'
+        raise MissingSourceHistory(label) from exc
+    return history_page(result, clip_messages=clip_messages, limit=limit)
 
 
 def history_page(result, *, clip_messages=True, limit=5):

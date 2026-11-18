@@ -14,6 +14,15 @@ class CodexError(RuntimeError):
     pass
 
 
+class MissingSourceHistory(CodexError):
+    """A forked Codex session cannot be read without its source history."""
+
+    def __init__(self, session='this session'):
+        super().__init__(f'Codex cannot read {session} because the original session history '
+                         'it depends on is missing from the local Codex history. '
+                         'If you no longer need this session in the project, unlink it in Sources.')
+
+
 class JSONFormattingError(CodexError):
     """Generation stopped after excessive formatting whitespace in JSON output."""
 
@@ -157,9 +166,7 @@ class AppServerClient:
                 if (method == 'thread/turns/list' and code == -32600 and isinstance(message, str)
                         and message.startswith('invalid paginated history lineage for ')
                         and message.endswith(': missing source rollout')):
-                    raise CodexError('Codex cannot read this session because the original session history '
-                                     'it depends on is missing from the local Codex history. '
-                                     'If you no longer need this session in the project, unlink it in Sources.')
+                    raise MissingSourceHistory()
                 if (method == 'thread/resume' and code == -32600 and
                         isinstance(message, str) and 'already has an active writer' in message):
                     raise CodexError('Another Codex app or CLI owns this session. '
