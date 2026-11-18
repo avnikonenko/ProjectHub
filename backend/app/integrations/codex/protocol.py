@@ -159,7 +159,7 @@ class AppServerClient:
                         and message.endswith(': missing source rollout')):
                     raise CodexError('Codex cannot read this session because the original session history '
                                      'it depends on is missing from the local Codex history. '
-                                     'Check the linked session in Sources.')
+                                     'If you no longer need this session in the project, unlink it in Sources.')
                 if (method == 'thread/resume' and code == -32600 and
                         isinstance(message, str) and 'already has an active writer' in message):
                     raise CodexError('Another Codex app or CLI owns this session. '

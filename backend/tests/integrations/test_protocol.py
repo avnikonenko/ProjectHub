@@ -102,7 +102,7 @@ def test_missing_source_rollout_error_is_actionable_and_sanitized(fake_server):
                 'code': -32600,
                 'message': 'invalid paginated history lineage for private-marker: missing source rollout',
             }})
-        assert 'Sources' in str(err.value)
+        assert 'unlink it in Sources' in str(err.value)
         assert 'private-marker' not in str(err.value)
     finally:
         client.close()
