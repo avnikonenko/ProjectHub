@@ -596,7 +596,8 @@ def extract_batch(engine, project_id, manager, window, configuration):
     schema['properties']['items']['items']['properties']['evidence']['items']['properties']['source_id']['enum'] = list(dict.fromkeys(source['id'] for source in window['sources']))
     def generate(prompt, contract):
         return request_knowledge_json(manager, prompt, contract, extraction=True,
-                                      on_retry=lambda: _record_extraction_count('formatting'))
+                                      on_retry=lambda: _record_extraction_count('formatting'),
+                                      on_transient_retry=lambda: _record_extraction_count('transient'))
 
     continuation_instruction = (
         'A context_view marked heading-continuation-v1 is the exact next paragraph of the same '
@@ -985,7 +986,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
         for source in window['sources']:
             all_sources.setdefault(source['id'], source)
     legacy = _legacy_extraction_configurations(engine, manager, configuration)
-    run = {'quote': 0, 'formatting': 0, 'unsupported_agreement_items': 0, 'invalid_evidence_items': 0,
+    run = {'quote': 0, 'formatting': 0, 'transient': 0, 'unsupported_agreement_items': 0, 'invalid_evidence_items': 0,
            'lock': threading.Lock(), 'legacy': legacy}
     token = _extraction_run.set(run)
     try:
@@ -993,7 +994,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             engine, project_id, manager, windows, configuration)
     finally:
         _extraction_run.reset(token)
-    requests += run['quote'] + run['formatting']
+    requests += run['quote'] + run['formatting'] + run['transient']
     omitted = run['unsupported_agreement_items']
     invalid_evidence = run['invalid_evidence_items']
     if omitted or invalid_evidence:
@@ -1036,6 +1037,7 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
                             **({'quote_selector_retries': run['quote']} if run['quote'] else {}),
                             **({'formatting_retries': run['formatting']} if run['formatting'] else {}),
+                            **({'transient_retries': run['transient']} if run['transient'] else {}),
                             **({'unsupported_agreement_items': omitted} if omitted else {}),
                             **({'invalid_evidence_items': invalid_evidence} if invalid_evidence else {}),
                             'extraction_workers': workers, 'batch_timings': timings,

@@ -32,7 +32,7 @@ _DISCONNECT_COMPLETION_UNKNOWN = 'App Server disconnected before confirming comp
 _RESTART_COMPLETION_UNKNOWN = 'ProjectHub restarted before Codex confirmed completion. Inspect the session before retrying.'
 _COMPLETION_UNKNOWN = (_DISCONNECT_COMPLETION_UNKNOWN, _RESTART_COMPLETION_UNKNOWN)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
-_retry_json_formatting = ContextVar('projecthub_retry_json_formatting', default=False)
+_retry_generation_failure = ContextVar('projecthub_retry_generation_failure', default=False)
 _tag_generation_context = ContextVar('projecthub_tag_generation_context', default=False)
 _TAG_CONTEXT_VERSION = 'tag-classification-v1'
 _TAG_BASE_INSTRUCTIONS = (
@@ -57,21 +57,28 @@ def tag_context_version() -> str | None:
     return _TAG_CONTEXT_VERSION if _tag_generation_context.get() else None
 
 
-def request_knowledge_json(manager, prompt, schema, *, extraction=False, on_retry=None):
-    """Retry one formatting stall while keeping the original validation contract."""
+class TransientGenerationError(CodexError):
+    """Codex reported a temporary service or response transport failure."""
+
+
+def request_knowledge_json(manager, prompt, schema, *, extraction=False, on_retry=None, on_transient_retry=None):
+    """Retry a formatting stall or confirmed transient failure once."""
     structural = getattr(manager, 'generate_extraction', None)
     first = structural if extraction and callable(structural) else manager.generate_brief
     progress.check_cancelled()
-    token = _retry_json_formatting.set(True)
+    token = _retry_generation_failure.set(True)
     try:
         return first(prompt, schema)
-    except JSONFormattingError:
-        pass
+    except (JSONFormattingError, TransientGenerationError) as exc:
+        formatting = isinstance(exc, JSONFormattingError)
     finally:
-        _retry_json_formatting.reset(token)
+        _retry_generation_failure.reset(token)
     progress.check_cancelled()
-    if on_retry is not None:
-        on_retry()
+    report_retry = on_retry if formatting or on_transient_retry is None else on_transient_retry
+    if report_retry is not None:
+        report_retry()
+    if not formatting:
+        return first(prompt, schema)
     retry = structural if callable(structural) else first
     return retry('Return compact JSON with no indentation or padding whitespace.\n' + prompt, schema)
 
@@ -176,23 +183,59 @@ def wait_for_generation(done, timeout):
                          'or increase PROJECTHUB_GENERATION_TIMEOUT before starting ProjectHub.')
 
 
-def brief_turn_error(turn):
-    if turn.get('status') == 'interrupted':
-        return 'Codex interrupted brief generation. Retry to start a new generation.'
-    error = turn.get('error')
+def _reported_generation_failure(error):
     info = error.get('codexErrorInfo') if isinstance(error, dict) else None
+    if isinstance(info, dict) and len(info) == 1:
+        kind, details = next(iter(info.items()))
+        reason = {
+            'httpConnectionFailed': 'the service connection failed',
+            'responseStreamConnectionFailed': 'the response stream could not connect',
+            'responseStreamDisconnected': 'the response stream disconnected',
+            'responseTooManyFailedAttempts': 'the service exhausted its response retries',
+        }.get(kind)
+        if reason is None or not isinstance(details, dict):
+            return None
+        status = details.get('httpStatusCode')
+        if status is not None and (type(status) is not int or not 100 <= status <= 599):
+            return None
+        if status == 429:
+            return 'the service rate limited the request (HTTP 429)', False
+        if status in (401, 403):
+            return f'the service denied the request (HTTP {status})', False
+        suffix = f' (HTTP {status})' if status is not None else ''
+        transient = (status is None or status in (408, 500, 502, 503, 504)
+                     or (kind == 'responseStreamDisconnected' and 200 <= status < 300))
+        return reason + suffix, transient
+    if not isinstance(info, str):
+        return None
     reason = {
         'usageLimitExceeded': 'the selected account reached its usage limit',
         'rateLimitExceeded': 'the selected account was rate limited',
         'contextWindowExceeded': 'the input exceeded the model context window',
+        'sessionBudgetExceeded': 'the Codex session reached its budget',
         'modelNotFound': 'the selected model is unavailable',
         'unauthorized': 'the selected account was not authorized',
         'serverOverloaded': 'the service was overloaded',
         'badRequest': 'the service rejected the generation request',
         'internalServerError': 'the service reported an internal error',
-    }.get(info if isinstance(info, str) else None)
-    return (f'Codex did not complete brief generation: {reason}.'
-            if reason else 'Codex did not complete brief generation; no supported failure reason was provided.')
+        'flexUnavailable': 'Flex processing was unavailable',
+        'policyCapacityUnavailable': 'the service could not process the request under its current capacity policy',
+        'cyberPolicy': 'the request was blocked by a safety policy',
+        'misalignmentPolicyViolation': 'the request was blocked by a safety policy',
+        'inferenceHookDenied': 'the workspace denied inference for this request',
+    }.get(info)
+    return (reason, info in ('serverOverloaded', 'internalServerError')) if reason else None
+
+
+def brief_turn_error(turn, reported_failure=None):
+    if turn.get('status') == 'interrupted':
+        return CodexError('Codex interrupted brief generation. Retry to start a new generation.')
+    failure = _reported_generation_failure(turn.get('error')) or reported_failure
+    if failure is None:
+        return CodexError('Codex did not complete brief generation; no supported failure reason was provided.')
+    reason, transient = failure
+    error_type = TransientGenerationError if transient else CodexError
+    return error_type(f'Codex did not complete brief generation: {reason}.')
 
 
 def record_dict(row):
@@ -684,7 +727,7 @@ class CodexManager:
         timeout = generation_timeout()
         done = threading.Event()
         state = {}
-        messages, completed = {}, {}
+        messages, completed, reported_failures = {}, {}, {}
         formatting_guards, formatting_errors = {}, {}
         event_lock = threading.Lock()
         thread_id = turn_id = None
@@ -700,6 +743,13 @@ class CodexManager:
             if method == 'thread/tokenUsage/updated':
                 if usage_request is not None:
                     usage_request.record(params)
+            elif method == 'error' and params.get('willRetry') is False:
+                error_turn = params.get('turnId')
+                failure = _reported_generation_failure(params.get('error'))
+                if isinstance(error_turn, str) and failure is not None:
+                    with event_lock:
+                        if error_turn == turn_id or (turn_id is None and len(reported_failures) < 16):
+                            reported_failures[error_turn] = failure
             elif method == 'item/agentMessage/delta':
                 message_turn, item_id = params.get('turnId'), params.get('itemId')
                 if not isinstance(message_turn, str) or not isinstance(item_id, str) or not item_id:
@@ -764,7 +814,7 @@ class CodexManager:
                 client = self._discussion_client(cwd)
             client.on_event, client.on_disconnect = event, disconnected
             succeeded = False
-            formatting_failed = False
+            retryable_failure = False
             try:
                 progress.check_cancelled()
                 if pooled and reused_client:
@@ -816,14 +866,17 @@ class CodexManager:
                 wait_for_generation(done, timeout)
                 if 'error' in state:
                     if isinstance(state['error'], JSONFormattingError):
-                        formatting_failed = True
+                        retryable_failure = True
                         raise state['error']
                     raise CodexError(state['error'])
                 with event_lock:
                     turn = completed.get(turn_id, {})
                     message = messages.get(turn_id)
+                    reported_failure = reported_failures.get(turn_id)
                 if turn.get('status') != 'completed':
-                    raise CodexError(brief_turn_error(turn))
+                    error = brief_turn_error(turn, reported_failure)
+                    retryable_failure = isinstance(error, TransientGenerationError)
+                    raise error
                 if not isinstance(message, str) or not message.strip():
                     raise CodexError('Codex completed the brief without a final response.')
                 progress.check_cancelled()
@@ -865,7 +918,7 @@ class CodexManager:
                     if not succeeded:
                         # Only a caller that retries this exact failure may
                         # open a fresh client in the same generation scope.
-                        scope['failed'] = not (formatting_failed and _retry_json_formatting.get())
+                        scope['failed'] = not (retryable_failure and _retry_generation_failure.get())
                         client.close()
                         scope['client'] = None
                     else:

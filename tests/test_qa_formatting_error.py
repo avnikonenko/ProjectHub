@@ -39,6 +39,13 @@ class GenerationClient:
             self.on_event('turn/completed', {'threadId': 'ephemeral', 'turn': {
                 'id': 'turn', 'status': 'failed', 'error': {'message': ERROR_TEXT},
             }})
+        elif isinstance(self.failure, dict):
+            for notification in self.failure.get('notifications', []):
+                self.on_event('error', {'threadId': 'ephemeral', 'turnId': 'turn', 'willRetry': False,
+                                        **notification})
+            self.on_event('turn/completed', {'threadId': 'ephemeral', 'turn': {
+                'id': 'turn', 'status': 'failed', 'error': self.failure.get('error'),
+            }})
         elif self.failure == 'success':
             self.on_event('item/completed', {**scope, 'item': {
                 'type': 'agentMessage', 'phase': 'final_answer', 'text': '{"items":[]}',
@@ -209,6 +216,100 @@ def test_knowledge_checks_cancellation_before_retrying_formatting_failure(genera
         with pytest.raises(progress.GenerationCancelled):
             module.request_knowledge_json(manager, 'reference', {'type': 'object'})
         assert not clients
+    finally:
+        progress.finish(project_id)
+
+
+def provider_error(info):
+    return {'codexErrorInfo': info, 'message': 'private provider error',
+            'additionalDetails': 'private diagnostic details'}
+
+
+@pytest.mark.parametrize('notification,expected', [
+    ({}, 'rate limit'),
+    ({'threadId': 'foreign-thread'}, 'no supported failure reason'),
+    ({'turnId': 'foreign-turn'}, 'no supported failure reason'),
+    ({'willRetry': True}, 'no supported failure reason'),
+])
+@pytest.mark.parametrize('late', [False, True])
+def test_matching_terminal_error_notification_explains_failed_turn(generation, notification, expected, late):
+    info = {'responseStreamConnectionFailed': {'httpStatusCode': 429}}
+    manager, clients = generation(failure={'notifications': [{
+        'error': provider_error(info), **notification,
+    }]}, late=late)
+
+    with pytest.raises(CodexError, match=expected) as caught:
+        manager.generate_brief('reference', {'type': 'object'})
+
+    assert type(caught.value) is CodexError
+    assert 'private' not in str(caught.value)
+    assert len(clients) == 1 and clients[0].closed
+
+
+@pytest.mark.parametrize('status,expected', [(401, 'HTTP 401'), (403, 'HTTP 403'), (429, 'rate limit')])
+def test_known_http_failures_are_sanitized_and_not_retried(generation, status, expected):
+    manager, clients = generation(failure={
+        'error': provider_error({'responseStreamConnectionFailed': {'httpStatusCode': status}}),
+        'notifications': [{'error': provider_error('serverOverloaded')}],
+    })
+
+    with manager.generation_session(), pytest.raises(CodexError, match=expected) as caught:
+        module.request_knowledge_json(manager, 'reference', {'type': 'object'})
+
+    assert type(caught.value) is CodexError
+    assert 'private' not in str(caught.value)
+    assert len(clients) == 1 and clients[0].closed
+
+
+@pytest.mark.parametrize('retry_succeeds', [False, True])
+@pytest.mark.parametrize('status', [200, 503])
+def test_knowledge_retries_a_transient_turn_once_using_the_same_request(generation, retry_succeeds, status):
+    error = {'error': provider_error({'responseStreamDisconnected': {'httpStatusCode': status}})}
+    outcomes = iter([error, 'success' if retry_succeeds else error])
+    manager, clients = generation(failure=lambda: next(outcomes))
+    prompt = 'Original reference.'
+    schema = {'type': 'object', 'properties': {'items': {'type': 'array', 'maxItems': 2}}}
+
+    with manager.generation_session():
+        if retry_succeeds:
+            assert module.request_knowledge_json(manager, prompt, schema) == '{"items":[]}'
+            assert clients[0].closed and not clients[1].closed
+            assert manager.generate_brief('another request', schema) == '{"items":[]}'
+        else:
+            with pytest.raises(module.TransientGenerationError) as caught:
+                module.request_knowledge_json(manager, prompt, schema)
+            assert 'private' not in str(caught.value)
+
+    assert len(clients) == 2
+    for client in clients:
+        params = next(value for method, value in client.calls if method == 'turn/start')
+        assert params['input'] == [{'type': 'text', 'text': prompt}]
+        assert params['outputSchema'] == schema
+        assert client.closed
+    assert sum(method == 'turn/start' for client in clients for method, _ in client.calls) == (3 if retry_succeeds else 2)
+
+
+@pytest.mark.parametrize('stop', ['cancellation', 'budget'])
+def test_knowledge_rechecks_cancellation_and_budget_before_transient_retry(generation, monkeypatch, stop):
+    manager, clients = generation()
+    project_id = 9722
+    progress.begin(project_id, 'knowledge')
+    retries = []
+
+    def fail_and_stop(_prompt, _schema):
+        if stop == 'cancellation':
+            progress.current_cancel_event().set()
+        else:
+            monkeypatch.setitem(progress._clocks, (project_id, 'knowledge'), (0, 0))
+        raise module.TransientGenerationError('The response stream disconnected.')
+
+    monkeypatch.setattr(manager, 'generate_brief', fail_and_stop)
+    error = progress.GenerationCancelled if stop == 'cancellation' else CodexError
+    try:
+        with pytest.raises(error, match='cancelled' if stop == 'cancellation' else 'time budget'):
+            module.request_knowledge_json(manager, 'reference', {'type': 'object'},
+                                          on_retry=lambda: retries.append(True))
+        assert not retries and not clients
     finally:
         progress.finish(project_id)
 
