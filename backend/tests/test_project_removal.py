@@ -14,7 +14,7 @@ from backend.app.main import create_app
 from backend.app.models import (
     CodexEvent, CodexSession, ContextPackage, Delivery, GenerationRevision,
     ProjectAIInstructions, ProjectBrief, ProjectGenerationAttempt, ProjectHistoryBatch,
-    ProjectKnowledge, ProjectQA, ProjectScheme,
+    ProjectKnowledge, ProjectQA, ProjectScheme, RemovedProject,
 )
 
 
@@ -191,6 +191,54 @@ def test_project_removal_cleans_only_its_imported_document_copies(client):
     assert not (uploads / old_note['reference']).exists()
     assert not (uploads / new_note['reference']).exists()
     assert (uploads / kept_note['reference']).read_bytes() == b'document'
+
+
+@pytest.mark.parametrize('covering_project', ['removed', 'kept'])
+def test_project_removal_preserves_uploads_in_a_registered_repository(client, covering_project):
+    data_dir = client.app.state.data_dir
+    uploads = data_dir / 'uploads'
+    repository = data_dir if covering_project == 'removed' else uploads
+    repository.mkdir(exist_ok=True)
+    subprocess.run(['git', 'init', '--quiet', str(repository)], check=True)
+    ids = {}
+    for name in ('removed', 'kept'):
+        options = {'repository_path': str(repository)} if name == covering_project else {}
+        ids[name] = post(client, '/api/projects', {'name': name, **options})['id']
+    path = f"/api/projects/{ids['removed']}"
+    response = client.post(path + '/documents', files={'file': ('copy.txt', b'copy', 'text/plain')})
+    assert response.status_code == 201, response.text
+    uploaded = uploads / response.json()['reference']
+    subprocess.run(['git', '-C', str(repository), 'add', '--', str(uploaded)], check=True)
+
+    assert client.delete(path).status_code == 204
+    assert uploaded.read_bytes() == b'copy'
+    assert client.get(f"/api/projects/{ids['kept']}").status_code == 200
+    with Session(client.app.state.engine) as db:
+        assert db.get(RemovedProject, ids['removed']).pending_uploads == []
+
+
+def test_startup_cleanup_preserves_uploads_in_a_newly_registered_repository(tmp_path, monkeypatch):
+    monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path / 'codex'))
+    data_dir = tmp_path / 'data'
+    uploads = data_dir / 'uploads'
+    uploads.mkdir(parents=True)
+    subprocess.run(['git', 'init', '--quiet', str(uploads)], check=True)
+    filename = 'a' * 32 + '.txt'
+    (uploads / filename).write_bytes(b'copy')
+    subprocess.run(['git', '-C', str(uploads), 'add', '--', filename], check=True)
+
+    with TestClient(create_app(data_dir)) as client:
+        # An earlier removal may have committed while the uploads directory was unavailable.
+        with Session(client.app.state.engine) as db:
+            db.add(RemovedProject(project_id=1, pending_uploads=[filename]))
+            db.commit()
+        post(client, '/api/projects', {'name': 'New', 'repository_path': str(uploads)})
+
+    with TestClient(create_app(data_dir)) as restarted:
+        assert (uploads / filename).read_bytes() == b'copy'
+        with Session(restarted.app.state.engine) as db:
+            assert db.get(RemovedProject, 1).pending_uploads == []
 
 
 def test_removed_upload_cleanup_is_retried_when_the_app_restarts(tmp_path, monkeypatch):

@@ -2,6 +2,7 @@
 from contextlib import ExitStack, contextmanager
 import logging
 import os
+from pathlib import Path
 import re
 import stat
 from threading import Lock
@@ -13,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from .integrations.codex.generation_jobs import generation_lock
 from .integrations.codex.history_search import _index_lock
 from .models import (Answer, AuditEvent, CodexEvent, CodexSession, ContextPackage, Decision,
-                     Delivery, GenerationRevision, Note, ProjectBrief, ProjectGenerationAttempt,
+                     Delivery, GenerationRevision, Note, Project, ProjectBrief, ProjectGenerationAttempt,
                      ProjectHistoryBatch, ProjectQA, Question, RemovedProject, Task)
 from .services import require_project
 
@@ -66,6 +67,22 @@ def _uploaded_names(db, project_id):
     )) if isinstance(name, str) and _UPLOAD_NAME.fullmatch(name)})
 
 
+def _uploads_overlap_repository(db, directory):
+    uploads = directory / 'uploads'
+    roots = db.scalars(select(Project.repository_path).where(Project.repository_path.is_not(None)))
+    for value in roots:
+        root = Path(value)
+        if uploads.is_relative_to(root):
+            return True
+        try:
+            if uploads.resolve().is_relative_to(root.resolve()):
+                return True
+        except (OSError, RuntimeError):
+            # A registration can point to a path that no longer resolves.
+            continue
+    return False
+
+
 def _unlink_upload(name, descriptor):
     if not isinstance(name, str) or not _UPLOAD_NAME.fullmatch(name):
         return
@@ -92,6 +109,13 @@ def _retry_removed_uploads(db, directory, project_id):
         query = query.where(RemovedProject.project_id == project_id)
     pending = list(db.scalars(query))
     if not pending:
+        return
+    if _uploads_overlap_repository(db, directory):
+        # Cleanup may have been queued before this repository was registered.
+        # Retire the queued deletions so they cannot touch it on a later restart.
+        for row in pending:
+            row.pending_uploads = []
+        db.commit()
         return
     try:
         descriptor = os.open(directory / 'uploads', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
@@ -147,7 +171,9 @@ def remove_project(db, directory, project_id, manager):
             raise HTTPException(409, 'Wait for queued or active AI generation to finish before removing this project.')
 
         try:
-            db.add(RemovedProject(project_id=project_id, pending_uploads=_uploaded_names(db, project_id)))
+            # Check before deleting the project row so its own repository is protected too.
+            pending_uploads = [] if _uploads_overlap_repository(db, directory) else _uploaded_names(db, project_id)
+            db.add(RemovedProject(project_id=project_id, pending_uploads=pending_uploads))
             db.execute(text('DELETE FROM codex_history_turns WHERE project_id=:pid'), {'pid': project_id})
             db.execute(text('DELETE FROM codex_history_index WHERE project_id=:pid'), {'pid': project_id})
             # Break the project-local Question -> accepted Answer -> Question cycle.
