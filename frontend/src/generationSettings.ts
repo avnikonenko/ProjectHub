@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from './api';
 
-export type Generation = { model: string; effort: string };
+import type { Generation, GenerationProvider } from './generationProvider';
+export type { Generation } from './generationProvider';
 export type ProjectCodexAccount = {
   account: string | null;
   options: { id: string; label: string }[];
@@ -11,6 +12,8 @@ export type ProjectCodexAccount = {
 
 const defaults: Generation = { model: '', effort: '' };
 const storageKey = (base: string) => `projecthub.ai-settings:${base}`;
+const providerKey = (base: string) => `${storageKey(base)}:provider`;
+const claudeKey = (base: string) => `${storageKey(base)}:claude`;
 const accountChanges = new Map<string, Promise<ProjectCodexAccount>>();
 
 export function loadProjectGeneration(base: string, account: string | null): Generation {
@@ -51,6 +54,8 @@ export function updateProjectCodexAccount(base: string, account: string | null) 
 }
 
 export function useProjectGenerationSettings(base: string) {
+  const [provider, setProvider] = useState<GenerationProvider>('codex');
+  const [claude, setClaude] = useState<Generation>(defaults);
   const [selection, setSelection] = useState<{ account: ProjectCodexAccount; generation: Generation } | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
   const [accountError, setAccountError] = useState('');
@@ -80,6 +85,13 @@ export function useProjectGenerationSettings(base: string) {
   useEffect(() => {
     const owner = new AbortController();
     workspace.current = owner;
+    try {
+      setProvider(localStorage.getItem(providerKey(base)) === 'claude' ? 'claude' : 'codex');
+      const saved = JSON.parse(localStorage.getItem(claudeKey(base)) ?? 'null');
+      if (typeof saved?.model === 'string' && typeof saved.effort === 'string')
+        setClaude({ model: saved.model, effort: saved.effort });
+      else setClaude(defaults);
+    } catch { /* Storage is optional. */ }
     const reload = () => { if (!accountChanges.has(base)) void load(owner); };
     void load(owner);
     window.addEventListener('projecthub:profiles-changed', reload);
@@ -110,13 +122,26 @@ export function useProjectGenerationSettings(base: string) {
   }
 
   function changeGeneration(generation: Generation) {
+    const selected = { model: generation.model, effort: generation.effort };
+    if (provider === 'claude') {
+      try { localStorage.setItem(claudeKey(base), JSON.stringify(selected)); } catch { /* Storage is optional. */ }
+      setClaude(selected);
+      return;
+    }
     if (!selection || savingAccount || accountChanges.has(base)) return;
-    saveProjectGeneration(base, selection.account.account, generation);
-    setSelection({ ...selection, generation });
+    saveProjectGeneration(base, selection.account.account, selected);
+    setSelection({ ...selection, generation: selected });
   }
 
+  function changeProvider(selected: GenerationProvider) {
+    try { localStorage.setItem(providerKey(base), selected); } catch { /* Storage is optional. */ }
+    setProvider(selected);
+  }
+
+  const codexGeneration = savingAccount ? defaults : selection?.generation ?? defaults;
   return {
-    generation: savingAccount ? defaults : selection?.generation ?? defaults,
+    generation: provider === 'claude' ? { ...claude, provider } : codexGeneration,
+    provider, changeProvider, codexGeneration,
     accounts: selection?.account ?? null,
     savingAccount, accountError, changeAccount, changeGeneration,
     reloadAccount: () => {

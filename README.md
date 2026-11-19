@@ -96,7 +96,7 @@ Both routes use the same [saved data directory](#your-data). Open
 
 ## Example: Get back up to speed on Project X
 
-For Codex sessions or AI generation, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+For Codex sessions or generation with Codex, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
 and run `codex login`. Local notes and browsing work without Codex.
 
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
@@ -107,11 +107,11 @@ and run `codex login`. Local notes and browsing work without Codex.
 
 ## Settings and AI
 
-AI features use your existing **Codex ChatGPT sign-in**. No OpenAI API key is required. Open **AI settings** in the project header to choose a profile, model, and reasoning effort or edit project AI instructions.
+Open **AI settings** in the project header to choose Codex or Claude Code, a model, and reasoning effort, or to edit project AI instructions. Codex uses your existing ChatGPT sign-in. Claude Code uses `ANTHROPIC_API_KEY` from the server environment.
 
 In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.
 
-ProjectHub runs locally. AI generation sends selected project context to OpenAI when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
+ProjectHub runs locally. AI generation sends selected project context to your chosen provider when requested. See [AI settings and generation](docs/AI_GENERATION.md) for progress, cancellation, and available settings.
 
 ### AI limitations
 

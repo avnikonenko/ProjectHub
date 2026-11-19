@@ -121,7 +121,7 @@ test('generation rows identify settings for completed, failed and waiting attemp
       extraction_workers: 10, project_instructions: false } } });
   Object.assign(raw.views[1], { state: 'failed', showing_previous: true, retryable: true,
     latest_attempt: { state: 'failed', error: 'Usage limit reached.',
-      settings: { ...settings, project_instructions: true } } });
+      settings: { ...settings, provider: 'claude', model: 'sonnet', project_instructions: true } } });
   Object.assign(raw.views[2], { state: 'waiting',
     latest_attempt: { state: 'waiting', settings: { ...settings, scheme_source_chars: 40_000,
       scheme_read_bytes: 2 * 1024 * 1024, scheme_package_chars: 180_000, scheme_focus: 'balanced' } } });
@@ -139,6 +139,7 @@ test('generation rows identify settings for completed, failed and waiting attemp
   assert.match(rows[0], /<dt>AI workers per job<\/dt><dd>10<\/dd>/);
   assert.match(rows[0], /<dt>Project AI instructions<\/dt><dd>Default<\/dd>/);
   assert.match(rows[1], /<summary>Latest attempt settings<\/summary>/);
+  assert.match(rows[1], /<dt>Provider<\/dt><dd>Claude Code<\/dd>/);
   assert.match(rows[1], /<dt>Project AI instructions<\/dt><dd>Custom<\/dd>/);
   assert.match(rows[1], /Showing the earlier saved result/);
   assert.match(rows[1], /Usage limit reached/);

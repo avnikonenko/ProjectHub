@@ -13,8 +13,8 @@ import { filterParameters, parameterDefault, parameterGroups, parseParameterResu
   parameterRevisionResult, isImplementationChoice,
   type ParameterResult, type ParameterSnapshot, type ProjectParameter } from './parameters';
 import './knowledge.css';
+import { generationBody, generationDestination, type Generation } from './generationProvider';
 
-type Generation = { model: string; effort: string };
 type Request = (path: string, options: RequestInit) => Promise<unknown>;
 type Busy = { busy: boolean; running: boolean };
 type Progress = { state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled'; started_at?: string; error?: string };
@@ -54,7 +54,7 @@ export async function generateProjectParameters(base: string, generation: Genera
   if (!/^\/projects\/[1-9]\d*$/.test(base)) throw new Error('The parameters request does not identify a project.');
   signal.throwIfAborted();
   const raw = await request(`${base}/codex/parameters`, { method: 'POST', signal,
-    body: JSON.stringify({ confirmed: true, model: generation.model || null, effort: generation.effort || null }) });
+    body: JSON.stringify({ confirmed: true, ...generationBody(generation) }) });
   signal.throwIfAborted();
   return parseParameterSnapshot(raw, Number(base.split('/')[2]));
 }
@@ -309,7 +309,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       freshness={freshness} />
     <p>Consequential limits, filters, fallbacks and processing choices found in code, with their consequences and usage locations. These are not values verified in a particular run.</p>
     <details><summary>How this works</summary>
-      <p>Explains implementation choices and limits, their practical consequences, and where they are defined and used in the code. Generation sends selected code to OpenAI through Codex.</p>
+      <p>Explains implementation choices and limits, their practical consequences, and where they are defined and used in the code. Generation sends selected code to {generationDestination(generation.provider)}.</p>
     </details>
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
     {loading && <Feedback>Loading saved implementation choices…</Feedback>}

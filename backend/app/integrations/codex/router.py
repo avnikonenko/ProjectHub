@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from ...models import Project, CodexSession, Decision, Delivery, ContextPackage, CodexEvent, AuditEvent, GenerationRevision, ProjectAIInstructions, CodexProfile, ProjectQA
 from .manager import availability, context_preview, manager_for, record_dict
 from .protocol import CodexError
+from .claude_generation import ClaudeGenerationManager
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, launch_label, profile_entries, validate_profile_directory
@@ -102,8 +103,12 @@ class DeliveryInput(Input):
     session_id: int = Field(gt=0)
 
 
+GenerationProvider = Literal['codex', 'claude']
+
+
 class GenerationInput(ModelInput):
     confirmed: bool = False
+    provider: GenerationProvider = 'codex'
 
 
 class SchemeGenerationInput(GenerationInput):
@@ -167,11 +172,23 @@ def review_profile():
         raise CodexError('Could not read the AI generation profile.') from exc
 
 
-def review_manager(manager, body, profile):
+def select_generation_manager(manager, body):
+    if body.provider == 'claude':
+        return ClaudeGenerationManager(manager).for_generation(body.model, body.effort)
     choose = getattr(manager, 'for_generation', None)
     if body.model or body.effort or callable(choose):
-        manager = manager.for_generation(body.model, body.effort)
-    selected, _ = configure_profile_manager(manager, profile)
+        return manager.for_generation(body.model, body.effort)
+    return manager
+
+
+def generation_base(app, project_id, provider):
+    # Claude can run independently of the selected Codex generation account.
+    # The root manager still routes linked history by each session's account.
+    return manager_for(app) if provider == 'claude' else manager_for(app, project_id)
+
+
+def review_manager(manager, body, profile):
+    selected, _ = configure_profile_manager(select_generation_manager(manager, body), profile)
     return selected
 
 
@@ -455,9 +472,11 @@ def patch_instructions(project_id: int, body: InstructionsInput, db: DB):
 
 
 @router.get('/models')
-def generation_models(project_id: int, request: Request, db: DB):
+def generation_models(project_id: int, request: Request, db: DB, provider: GenerationProvider = 'codex'):
     project(db, project_id)
     try:
+        if provider == 'claude':
+            return ClaudeGenerationManager.generation_models()
         return manager_for(request.app, project_id).generation_models()
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -469,7 +488,7 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
-        manager = manager_for(request.app, project_id)
+        manager = generation_base(request.app, project_id, body.provider)
         profile = review_profile()
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
@@ -576,11 +595,11 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                     background_tasks: BackgroundTasks):
     project(db, project_id)
     if not body.confirmed:
-        raise HTTPException(422, 'Confirm sending project evidence to Codex to refresh the project analysis.')
+        raise HTTPException(422, 'Confirm sending project evidence to the selected provider to refresh the project analysis.')
     dependency_token = None
     try:
-        manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        manager = generation_base(request.app, project_id, body.provider)
+        selected = select_generation_manager(manager, body)
         scheme_manager, scheme_profile = None, None
         if body.generate_scheme:
             scheme_profile = review_profile()
@@ -667,9 +686,9 @@ def get_scheme(project_id: int, request: Request, db: DB):
 def generate_scheme(project_id: int, body: SchemeGenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
-        raise HTTPException(422, 'Confirm sending selected project evidence to Codex before generating Scheme.')
+        raise HTTPException(422, 'Confirm sending selected project evidence to the selected provider before generating Scheme.')
     try:
-        manager = manager_for(request.app, project_id)
+        manager = generation_base(request.app, project_id, body.provider)
         profile = review_profile()
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
@@ -702,9 +721,9 @@ def get_parameters(project_id: int, request: Request, db: DB):
 def generate_parameters(project_id: int, body: GenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
-        raise HTTPException(422, 'Confirm sending inspected parameter evidence to Codex before generation.')
+        raise HTTPException(422, 'Confirm sending inspected parameter evidence to the selected provider before generation.')
     try:
-        manager = manager_for(request.app, project_id)
+        manager = generation_base(request.app, project_id, body.provider)
         profile = review_profile()
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
@@ -773,8 +792,8 @@ def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before generating tags.')
     try:
-        manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        manager = generation_base(request.app, project_id, body.provider)
+        selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
@@ -792,7 +811,7 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
     try:
-        manager = manager_for(request.app, project_id)
+        manager = generation_base(request.app, project_id, body.provider)
         profile = review_profile()
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
@@ -809,7 +828,7 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
 def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
-        raise HTTPException(422, 'Explicitly confirm sending matching passages to OpenAI.')
+        raise HTTPException(422, 'Explicitly confirm sending matching passages to the selected provider.')
     sources = retrieve_passages(db, project_id, body.question)
     db.rollback()
     if not sources:
@@ -819,13 +838,15 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
     try:
         progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False)
-        manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        manager = generation_base(request.app, project_id, body.provider)
+        selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
             progress.update(project_id, stage='Generating project answer')
             result = answer_project(selected, body.question, sources)
+            if body.provider == 'claude':
+                result = {**result, 'provider': body.provider}
             progress.complete(project_id, lambda: None)
             return result
     except CodexError as exc:

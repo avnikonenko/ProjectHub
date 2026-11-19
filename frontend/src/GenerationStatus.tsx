@@ -2,12 +2,13 @@ import { Feedback } from './Feedback';
 import { ErrorBox } from './ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, post } from './api';
+import { generationProviderLabels, type GenerationProvider } from './generationProvider';
 
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
 type RecoveryKind = SavedGenerationKind | 'knowledge';
 export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
 
-export type GenerationProvenance = { account: string; model: string; effort: string };
+export type GenerationProvenance = { account: string; model: string; effort: string; provider?: GenerationProvider };
 export type Progress = {
   state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage: string;
@@ -160,9 +161,11 @@ export function SavedGeneration({ generation }: { generation?: GenerationProvena
   const account = generation?.account?.trim() || 'Account not recorded';
   const model = generation?.model?.trim() || 'Model not recorded';
   const effort = generation?.effort?.trim() || 'Effort not recorded';
+  const provider = generation?.provider && generationProviderLabels[generation.provider];
+  const attribution = provider ? `Provider: ${provider}` : `Account: ${account}`;
   return <small className="generation-provenance" aria-label="Saved generation settings"
-    title={`Account: ${account}; model: ${model}; reasoning effort: ${effort}`}>
-    {account} · {model} · {effort}
+    title={`${attribution}; model: ${model}; reasoning effort: ${effort}`}>
+    {provider || account} · {model} · {effort}
   </small>;
 }
 

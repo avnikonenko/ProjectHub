@@ -13,6 +13,7 @@ import { AIResultHeader } from './AIResultHeader';
 import { SchemeResultCoverage, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
 import { SchemeKnowledgeContext } from './SchemeKnowledgeContext';
 import { SchemeDependencies, type Dependency, type DependencyInventory } from './SchemeDependencies';
+import { generationBody, generationDestination, type Generation } from './generationProvider';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -255,7 +256,7 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
 }
 
 export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
-  base: string; generation: { model: string; effort: string }; visible: boolean;
+  base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   waitingForKnowledge?: boolean;
   focus: SchemeFocus; queuedFocus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
@@ -303,8 +304,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     setNotice('');
     onGenerating(true);
     try {
-      const snapshot = await post(path, { confirmed: true, model: generation.model || null,
-        effort: generation.effort || null, focus: requestedFocus }) as SchemeSnapshot;
+      const snapshot = await post(path, { confirmed: true, ...generationBody(generation),
+        focus: requestedFocus }) as SchemeSnapshot;
       if (alive.current) {
         setLatestVersion(snapshot.generated_at);
         selectedRevision.current = null;
@@ -360,7 +361,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
       Generate Scheme
     </button>
-    <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
+    <small className="muted">Generation sends selected project evidence to {generationDestination(generation.provider)}.</small>
     <details className="brief-details">
       <summary>How focus works</summary>
       <p><strong>Balanced</strong> draws on code and discussions. <strong>Code first</strong> emphasizes how the current checkout works. <strong>Sessions first</strong> emphasizes decisions, reasons, and proposed workflows.</p>

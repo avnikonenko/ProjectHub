@@ -6,6 +6,7 @@ import { Feedback } from './Feedback';
 import { ErrorBox } from './ui';
 import { parseTopicGroups, type TopicGroup } from './topicGroups';
 import { tagProgress, type TagProgressState } from './tagProgress';
+import { generationBody, generationDestination, type Generation } from './generationProvider';
 
 export type TagResult = {
   target: 'knowledge_preview' | 'knowledge' | 'qa';
@@ -16,12 +17,12 @@ export type TagResult = {
 type Props = {
   base: string; target: TagResult['target']; publicationId?: string; generatedAt?: string;
   itemIds: string[]; hasTags: boolean; disabled?: boolean;
-  generation: { model: string; effort: string };
+  generation: Generation;
   onResult: (result: TagResult) => void; onRecovered: () => void;
   onBusyChange?: (busy: boolean) => void; visible?: boolean;
 };
 
-// Opening a result only reads progress. Codex is contacted only by the explicit button.
+// Opening a result only reads progress.
 export function TagGeneration(props: Props) {
   const { base, target, publicationId, generatedAt, itemIds, hasTags, disabled, generation, visible = true } = props;
   const [busy, setBusy] = useState(false);
@@ -80,7 +81,7 @@ export function TagGeneration(props: Props) {
     try {
       const result = await api<TagResult>(`${base}/codex/tags`, { method: 'POST', signal: controller.signal,
         body: JSON.stringify({ confirmed: true, target, publication_id: publicationId, generated_at: generatedAt,
-          model: generation.model || null, effort: generation.effort || null }) });
+          ...generationBody(generation) }) });
       if (controller.signal.aborted) return;
       if (result.target !== target || (target === 'qa' ? result.generated_at !== generatedAt : result.publication_id !== publicationId)
           || !Array.isArray(result.topic_groups) || !result.topic_grouping || typeof result.topic_grouping !== 'object' || Array.isArray(result.topic_grouping))
@@ -100,7 +101,7 @@ export function TagGeneration(props: Props) {
     <button className="secondary" type="button" disabled={disabled || busy || localBusy || !itemIds.length}
       onClick={() => void generate()}>{localBusy ? 'Generating AI tags…' : 'Generate AI tags'}</button>
     <SettingsHelp title="About AI tag generation">
-      <p>Sends this saved version’s item statements or questions and answers to OpenAI through Codex to organize AI tags.</p>
+      <p>Sends this saved version’s item statements or questions and answers to {generationDestination(generation.provider)} to organize AI tags.</p>
     </SettingsHelp>
     <ErrorBox error={error} />
     <ErrorBox error={progressError} />

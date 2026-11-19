@@ -14,6 +14,7 @@ import { GenerationStatus, isGenerationCancelled, cancelledGenerationMessage } f
 import { BriefContent, BriefPreview, BriefSupport } from './BriefContent';
 import { generateAndSaveKnowledge, knowledgePreviewExport, recoverPublishedKnowledge, type KnowledgePreview } from './knowledgePreviewRecovery';
 import { readPublishedKnowledge, subscribePublishedKnowledge, updatePublishedKnowledge } from './publishedKnowledge';
+import type { Generation } from './generationProvider';
 
 type LoadState = { base: string; key: string; loading: boolean; data: KnowledgeResponse | null; error: string };
 type PreviewState = { base: string; busy: boolean; error: string; started: number; loading?: boolean; cancelled?: boolean };
@@ -21,7 +22,7 @@ type LegacyState = { base: string; result: KnowledgePreview | null; loading: boo
 type NoticeState = { base: string; error: string; notice: string };
 type Props = {
   base: string;
-  generation: { model: string; effort: string };
+  generation: Generation;
   link?: KnowledgeLink | null;
   visible?: boolean;
   onPublished?: () => void;

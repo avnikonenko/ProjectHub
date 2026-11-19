@@ -47,7 +47,7 @@ Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/pro
 
 ## Start a project
 
-For Codex sessions or AI generation, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
+For Codex sessions or generation with Codex, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
 and run `codex login` before linking a session or requesting generation. Local
 notes and browsing work without Codex.
 

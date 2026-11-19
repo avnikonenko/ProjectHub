@@ -26,7 +26,7 @@ Green marks entries, purple marks outputs, and blue marks other components.
 3. Open **Scheme** and expand **Components and relationships** or **Evidence
    used** to check the supporting excerpts.
 
-Generation sends selected evidence to Codex with the project's AI settings.
+Generation sends selected evidence to the provider chosen in the project's AI settings.
 The result records its focus. You can also choose it in **Generation → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
 Focus leaves the repository dependency scan independent of the diagrams.

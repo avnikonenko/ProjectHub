@@ -10,10 +10,10 @@ import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
 import { knowledgeHref } from './knowledge';
+import { generationBody, generationDestination, type Generation } from './generationProvider';
 
 
 type GenerationProps = { base: string; evidenceVersion?: string };
-type Generation = { model: string; effort: string };
 type Request = (path: string, options: RequestInit) => Promise<unknown>;
 
 /** Generate only the general Project Overview, independently of Knowledge. */
@@ -22,7 +22,7 @@ export async function generateProjectOverview(base: string, generation: Generati
   if (!/^\/projects\/[1-9]\d*$/.test(base)) throw new Error('The project overview does not identify a project.');
   signal.throwIfAborted();
   const result = await request(`${base}/codex/brief`, { method: 'POST', signal,
-    body: JSON.stringify({ confirmed: true, model: generation.model || null, effort: generation.effort || null }) });
+    body: JSON.stringify({ confirmed: true, ...generationBody(generation) }) });
   if (!result || typeof result !== 'object' || !('generated_at' in result)
       || typeof result.generated_at !== 'string' || !result.generated_at.trim()
       || !('sections' in result) || !result.sections || typeof result.sections !== 'object'
@@ -181,7 +181,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
           {brief?.generation && <SavedGeneration generation={brief.generation} />}
           <p className="brief-note">
             Generating sends relevant saved conversations, notes, TODOs, bounded repository code excerpts and Git metadata,
-            historical decisions, architecture, and the previous summary to OpenAI.
+            historical decisions, architecture, and the previous summary to {generationDestination(generation.provider)}.
           </p>
           <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
             disabled={loading || generating || recoveryBusy || externalBusy} selectedId={revisionId} onLoadingChange={active => {

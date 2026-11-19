@@ -175,3 +175,28 @@ test('a rejected account change preserves the model after verifying the original
   assert.equal(workspace.value.accounts?.account, 'account-a');
   assert.deepEqual(workspace.value.generation, previous);
 });
+
+test('Claude generation preferences stay separate from Codex sessions and other projects', async t => {
+  const run = fixture(t);
+  const workspace = run.open(1);
+  await settle();
+  workspace.value.changeGeneration(previous);
+  workspace.value.changeProvider('claude');
+  await settle();
+  assert.deepEqual(workspace.value.generation, { ...defaults, provider: 'claude' });
+  const claude = { model: 'sonnet', effort: 'medium' };
+  workspace.value.changeGeneration(claude);
+  await settle();
+  assert.deepEqual(workspace.value.generation, { ...claude, provider: 'claude' });
+  assert.deepEqual(workspace.value.codexGeneration, previous);
+  workspace.dispose();
+
+  const restored = run.open(1);
+  const other = run.open(2);
+  await settle();
+  assert.deepEqual(restored.value.generation, { ...claude, provider: 'claude' });
+  assert.deepEqual(other.value.generation, defaults);
+  restored.value.changeProvider('codex');
+  await settle();
+  assert.deepEqual(restored.value.generation, previous);
+});

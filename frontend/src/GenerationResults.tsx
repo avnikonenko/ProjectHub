@@ -3,6 +3,7 @@ import { api } from './api';
 import { ErrorBox } from './ui';
 import { projectGenerationKinds, schemeFocusLabels, type GenerationRetryView, type ProjectGenerationKind, type SchemeFocus } from './generationBatch';
 import type { GenerationProfileId } from './generationDiagnostics';
+import { generationDestination, generationProviderLabels, type GenerationProvider } from './generationProvider';
 import './generationResults.css';
 
 export type GenerationResultState = 'saved' | 'not_generated' | 'running' | 'waiting' | 'failed'
@@ -20,6 +21,7 @@ type AttemptSettings = {
   account: string;
   model: string;
   effort: string;
+  provider?: GenerationProvider;
   generation_profile?: GenerationProfileId;
   scheme_focus?: SchemeFocus;
   project_instructions?: boolean;
@@ -50,6 +52,8 @@ const validAttemptSettings = (value: unknown) => value === undefined || value ==
     && (value.generation_profile === undefined || (typeof value.generation_profile === 'string'
       && Object.hasOwn(profileLabels, value.generation_profile)))
     && (value.project_instructions === undefined || typeof value.project_instructions === 'boolean')
+    && (value.provider === undefined || (typeof value.provider === 'string'
+      && Object.hasOwn(generationProviderLabels, value.provider)))
     && (value.scheme_focus === undefined || (typeof value.scheme_focus === 'string'
       && Object.hasOwn(schemeFocusLabels, value.scheme_focus)))
     && numericalSettings.every(key => {
@@ -140,6 +144,7 @@ function GenerationAttemptSettings({ settings, title }: { settings: AttemptSetti
   return <details>
     <summary>{title}</summary>
     <dl className="generation-attempt-settings">
+      {settings.provider && <div><dt>Provider</dt><dd>{generationProviderLabels[settings.provider]}</dd></div>}
       <div><dt>Model</dt><dd>{settings.model}</dd></div>
       <div><dt>Reasoning effort</dt><dd>{settings.effort}</dd></div>
       {settings.generation_profile && <div>
@@ -202,13 +207,14 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
 
 /** Reads only. Polling stops once no view is running or waiting. */
 export function GenerationResults({ base, refreshVersion, onState, selected = [], onSelectionChange, busy = {},
-  onRegenerateSelected, regenerateDisabled = false, bulkActions, schemeFocus, onSchemeFocusChange, schemeFocusDisabled }: {
+  onRegenerateSelected, regenerateDisabled = false, bulkActions, schemeFocus, onSchemeFocusChange, schemeFocusDisabled, provider }: {
   base: string; refreshVersion: number; onState: (state: GenerationResultsState) => void;
   selected?: readonly ProjectGenerationKind[]; onSelectionChange?: (selected: ProjectGenerationKind[]) => void;
   busy?: Partial<Record<ProjectGenerationKind, boolean>>;
   onRegenerateSelected?: () => void; regenerateDisabled?: boolean;
   bulkActions?: ReactNode;
   schemeFocus?: SchemeFocus; onSchemeFocusChange?: (value: SchemeFocus) => void; schemeFocusDisabled?: boolean;
+  provider?: GenerationProvider;
 }) {
   const [state, setState] = useState<GenerationResultsState>({ base, data: null, loading: true, error: '' });
   const [reload, setReload] = useState(0);
@@ -235,7 +241,7 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
   }, [base, refreshVersion, reload]);
   return <section className="generation-results" aria-label="Generation results" aria-busy={current.loading}>
     <h2>Generation results</h2>
-    <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
+    <small className="muted">Generation sends selected project evidence to {generationDestination(provider)}.</small>
     <div className="generation-selection-controls">
       {current.data && <button className="secondary" onClick={onRegenerateSelected}
         disabled={regenerateDisabled || current.loading || !!current.error || !onRegenerateSelected}>Regenerate selected</button>}

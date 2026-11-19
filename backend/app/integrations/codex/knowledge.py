@@ -287,6 +287,8 @@ def extraction_configuration(manager):
     configuration = {'schema': SCHEMA_VERSION, 'prompt': PROMPT_VERSION, 'instructions': ai_instructions(),
             **{name: str(getattr(manager, 'generation_' + name, None) or 'default')
                for name in ('model', 'effort')}}
+    if getattr(manager, 'generation_provider', None) == 'claude':
+        configuration['provider'] = 'claude'
     # Codex can resolve implicit settings differently for different accounts.
     if 'default' in (configuration['model'], configuration['effort']):
         configuration['account'] = _legacy_extraction_account(manager)

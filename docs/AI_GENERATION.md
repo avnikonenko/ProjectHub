@@ -1,6 +1,6 @@
 # AI generation
 
-Generation sends selected project evidence to OpenAI. Browsing and searching use
+Generation sends selected project evidence to the chosen AI provider. Browsing and searching use
 local data. Follow source links to check claims against the original evidence.
 
 ## Generate or retry
@@ -53,6 +53,19 @@ Raise the overall budget if a run needs more time across stages. For stalled
 requests, try a different model or reasoning effort.
 
 ## Settings for quality and resource use
+
+### AI provider
+
+Choose **Codex** or **Claude Code** in the project's AI generation settings.
+Claude can generate Overview, Knowledge, Scheme, Q&A, Ask Project answers,
+Implementation Choices & Limits, and tags. Selected generation evidence goes
+to Anthropic when Claude is selected. Codex still handles linked Codex sessions
+and their history.
+
+Install [Claude Code](https://code.claude.com/docs/en/cli-reference) on the machine running ProjectHub and set `ANTHROPIC_API_KEY`
+in the environment used to launch ProjectHub. Claude generation uses that key
+for API billing. Signing in to Claude Code alone does not supply this key.
+ProjectHub runs Claude with tools disabled and does not save Claude sessions.
 
 ### Conversation review depth
 

@@ -52,7 +52,9 @@ def _requested_provenance(manager):
         else:
             value = metadata.get(name) if isinstance(metadata, dict) else None
         provenance[name] = str(value or 'default')
-    if request_interface:
+    if getattr(manager, 'generation_provider', None) == 'claude':
+        provenance['provider'] = 'claude'
+    elif request_interface:
         from pathlib import Path
         from .accounts import launch_home
         home = getattr(manager, 'generation_account', None) or getattr(manager, 'account_home', None)
@@ -257,7 +259,7 @@ class _StageManager:
 def _generation_fields(metadata):
     if not isinstance(metadata, dict):
         return {}
-    return {key: metadata[key] for key in ('account', 'model', 'effort')
+    return {key: metadata[key] for key in ('account', 'model', 'effort', 'provider')
             if isinstance(metadata.get(key), str) and metadata[key].strip()}
 
 
@@ -287,7 +289,7 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
             legacy_accounts = tuple(dict.fromkeys((
                 (provenance['account'], provenance.get('account_home')), *legacy_generation_accounts(engine),
             )))
-        provenance = {key: provenance[key] for key in ('model', 'effort')}
+        provenance = {key: provenance[key] for key in ('model', 'effort', 'provider') if key in provenance}
     companions, context_groups = build_overview_companions(candidate, sources)
     groups = {**groups, **context_groups}
     units = [[source, *companions.get(source['id'], [])] for source in sources]

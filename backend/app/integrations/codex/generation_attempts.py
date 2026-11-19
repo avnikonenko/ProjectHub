@@ -37,6 +37,10 @@ def _validate(kind, started_at):
 
 def settings_for(manager, engine):
     """Capture display values from this run's manager, without account paths."""
+    if getattr(manager, 'generation_provider', None) == 'claude':
+        return {'provider': 'claude', 'account': 'Anthropic API key',
+                'model': manager.generation_model or 'Claude default',
+                'effort': manager.generation_effort or 'Model default'}
     key = getattr(manager, 'account_key', None)
     account = next((label for identifier, label, _ in profile_entries(engine) if identifier == key),
                    'Selected Codex account') if key else launch_label(engine)

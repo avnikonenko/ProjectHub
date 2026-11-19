@@ -136,6 +136,7 @@ def _generate_items(manager, batch, *, engine=None, project_id=None):
                 ) if key in source
             } for source in item['sources']] for item in batch],
             'instructions': ai_instructions(),
+            **({'provider': 'claude'} if getattr(manager, 'generation_provider', None) == 'claude' else {}),
             **{key: getattr(manager, 'generation_' + key, None)
                for key in ('account', 'model', 'effort')},
         }
