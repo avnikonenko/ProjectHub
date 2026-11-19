@@ -16,7 +16,7 @@ class GenerationProfile:
 
 _PROFILES = (
     GenerationProfile(
-        'quality', 'Quality',
+        'quality', 'Thorough',
         'Tested default: smaller context-preserving batches and full available source coverage. '
         'Uses your selected model and reasoning effort.',
         14_000, None, None, False,
@@ -28,7 +28,7 @@ _PROFILES = (
         18_000, None, None, True,
     ),
     GenerationProfile(
-        'economy', 'Economy',
+        'economy', 'Quick',
         'Experimental: reuses saved conversation overviews and limits original-message checks in Knowledge. '
         'Defaults to low reasoning when supported; explicit model and effort choices take precedence.',
         24_000, 60_000, 'low', True,
