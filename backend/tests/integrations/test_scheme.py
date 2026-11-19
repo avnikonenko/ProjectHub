@@ -114,7 +114,15 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
 
     def collect(engine, project_id, _limits):
         gathered.append(project_id)
-        return evidence()
+        inspected = evidence()
+        inspected['dependency_inventory'] = {
+            'dependencies': [*inspected['dependencies'], {'id': 'dep:local-only', 'name': 'local-only',
+                'constraint': '', 'category': 'import:python', 'source_ids': ['dependency:local-only'], 'purpose': ''}],
+            'sources': [{'id': 'dependency:local-only', 'label': 'local.py', 'text': 'import local_only',
+                         'provenance': 'Python import'}],
+            'coverage': {'files_total': 2, 'files_scanned': 2, 'limitations': []},
+        }
+        return inspected
 
     monkeypatch.setattr(scheme, 'collect_evidence', collect)
 
@@ -136,6 +144,7 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
             assert 'static' in prompt and 'runtime correctness' in prompt
             assert 'Preserve conflicts' in prompt
             assert 'Do not use tools' in prompt
+            assert 'local-only' not in prompt
             assert schema['properties']['architecture']['properties']['nodes']['maxItems'] == 20
             assert schema['properties']['architecture']['properties']['nodes']['items']['properties']['source_ids']['items']['enum'] == ['file:api.py', 'discussion:1']
             return self.raw
@@ -147,6 +156,9 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
     assert saved['sources'] == evidence()['sources']
     assert saved['coverage']['partial']
     assert saved['generation'] == manager.generation_metadata
+    saved_inventory = saved['dependency_inventory']['dependencies']
+    assert [item['name'] for item in saved_inventory] == ['fastapi', 'local-only']
+    assert saved_inventory[0]['purpose'] == 'Serves the application API.'
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved
         assert scheme.read_scheme(db, 2) is None

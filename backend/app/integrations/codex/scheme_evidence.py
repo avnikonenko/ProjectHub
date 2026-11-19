@@ -3,12 +3,14 @@ import ast
 from collections import deque
 from copy import deepcopy
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import PurePosixPath
 import re
 import stat
 import time
+import tokenize
 import tomllib
 
 from sqlalchemy import text
@@ -25,16 +27,20 @@ from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_knowledge import collect_published_knowledge
+from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
+_MAX_DEPENDENCY_FILE_BYTES = 2 * 1024 * 1024
+_MAX_DEPENDENCY_READ_BYTES = 32 * 1024 * 1024
+_DEPENDENCY_INSPECTION_SECONDS = 10.0
 _INSPECTION_SECONDS = 5.0
 _MAX_METADATA_BYTES = 1024 * 1024
 _METADATA_SECONDS = 5.0
 _MAX_EXCERPT = 1600
 _MAX_DEPENDENCIES = 100
 _MAX_RECORDED_FILE_OMISSIONS = 100
-_REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
+_REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,. -]+\])?\s*([<>=!~;@].*|\(.*\))?$')
 
 
 def _source(identifier, label, value, provenance, **metadata):
@@ -133,9 +139,11 @@ def _safe_relative(value, patterns):
 
 
 def _manifest(path):
-    name = PurePosixPath(path).name.lower()
-    return is_environment_manifest(path) or name in ('pyproject.toml', 'package.json') or (
-        name.startswith('requirements') and name.endswith(('.txt', '.in')))
+    relative = PurePosixPath(path.lower())
+    name = relative.name
+    return is_environment_manifest(path) or name in ('pyproject.toml', 'package.json', 'pipfile') or (
+        (name.startswith('requirements') or 'requirements' in relative.parts[:-1])
+        and name.endswith(('.txt', '.in', '.pip')))
 
 
 def _descriptor(root_fd, relative):
@@ -162,9 +170,9 @@ class _InspectionStopped(Exception):
 
 
 class _InspectionBudget:
-    def __init__(self, max_bytes=DEFAULT_SCHEME_READ_BYTES):
+    def __init__(self, max_bytes=DEFAULT_SCHEME_READ_BYTES, seconds=None):
         self.started = time.monotonic()
-        self.deadline = self.started + _INSPECTION_SECONDS
+        self.deadline = self.started + (_INSPECTION_SECONDS if seconds is None else seconds)
         self.bytes_read = 0
         self.max_bytes = max_bytes
         self.prefix_read_files = 0
@@ -176,14 +184,15 @@ class _InspectionBudget:
             raise _InspectionStopped('byte_budget')
 
 
-def _read(root_fd, relative, *, allow_prefix=False, budget=None):
+def _read(root_fd, relative, *, allow_prefix=False, budget=None, max_file_bytes=None, python_encoding=False):
+    max_file_bytes = _MAX_BYTES if max_file_bytes is None else max_file_bytes
     if budget is not None:
         budget.check()
     fd = _descriptor(root_fd, relative)
     try:
         data = bytearray()
-        while len(data) <= _MAX_BYTES:
-            maximum = min(8192, _MAX_BYTES + 1 - len(data))
+        while len(data) <= max_file_bytes:
+            maximum = min(8192, max_file_bytes + 1 - len(data))
             if budget is not None:
                 budget.check()
                 maximum = min(maximum, budget.max_bytes - budget.bytes_read)
@@ -201,12 +210,13 @@ def _read(root_fd, relative, *, allow_prefix=False, budget=None):
                 break
         if b'\0' in data:
             raise ValueError('Binary file')
-        prefix = len(data) > _MAX_BYTES
+        prefix = len(data) > max_file_bytes
         if prefix:
             if not allow_prefix:
                 raise ValueError('Oversized file')
-            data = data[:_MAX_BYTES].rsplit(b'\n', 1)[0]
-        value = data.decode('utf-8')
+            data = data[:max_file_bytes].rsplit(b'\n', 1)[0]
+        encoding = tokenize.detect_encoding(BytesIO(data).readline)[0] if python_encoding else 'utf-8'
+        value = data.decode(encoding)
         if prefix and budget is not None:
             budget.prefix_read_files += 1
         return value
@@ -540,7 +550,7 @@ def _documentation_excerpt(value):
 
 
 def _dependency(name, constraint, category, source_id, dependencies, limitations):
-    if not isinstance(name, str) or not re.fullmatch(r'[@A-Za-z0-9][@A-Za-z0-9._/-]{0,159}', name):
+    if not isinstance(name, str) or not re.fullmatch(r'[@A-Za-z0-9_][@A-Za-z0-9._/-]{0,159}', name):
         limitations.add('Some malformed dependency declarations were omitted.')
         return
     if not isinstance(constraint, str) or len(constraint) > 300 or any(ord(c) < 32 for c in constraint):
@@ -557,6 +567,16 @@ def _dependency(name, constraint, category, source_id, dependencies, limitations
                          'category': category, 'source_ids': [source_id], 'purpose': ''})
 
 
+def _pip_include(line):
+    match = re.fullmatch(r'(?:-r\s*|--requirement(?:\s+|=))(.+)', line.split(' #', 1)[0])
+    return match[1].strip().strip("\"'") if match else None
+
+
+def _relative_requirement_path(path, include):
+    # Match only against the safe repository path inventory before reading.
+    return os.path.normpath(PurePosixPath(path).parent / include)
+
+
 def _requirements(value, path, source_id, dependencies, includes, limitations):
     # Requirement file purpose is evidence; package names alone are not. Keep
     # documentation/CI/release declarations out of the runtime dependency group.
@@ -566,22 +586,22 @@ def _requirements(value, path, source_id, dependencies, includes, limitations):
                 else 'build' if labels & {'build', 'release', 'packaging'}
                 else 'development' if labels & {'ci', 'dev', 'development', 'test', 'tests', 'testing'}
                 else 'runtime')
-    for line in value.splitlines()[:500]:
+    for line in re.sub(r'\\\r?\n', '', value).splitlines():
         line = line.strip()
         if not line or line.startswith('#'):
             continue
-        if line.startswith(('-r ', '--requirement ')):
-            include = line.split(None, 1)[1].strip()
-            candidate = (PurePosixPath(path).parent / include).as_posix()
-            includes.append(candidate)
+        requirement_include = _pip_include(line)
+        if requirement_include:
+            includes.append(_relative_requirement_path(path, requirement_include))
             continue
         if line.startswith('-'):
             limitations.add('Requirements options and constraints-file semantics are not evaluated.')
             continue
-        match = _REQUIREMENT.fullmatch(line.split(' #', 1)[0])
+        requirement = re.split(r'\s+--hash(?:=|\s)', line.split(' #', 1)[0], maxsplit=1)[0].rstrip()
+        match = _REQUIREMENT.fullmatch(requirement)
         if match:
             name, extras, constraint = match.groups()
-            _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
+            _dependency(name, (extras or '') + (constraint or '').strip(), category, source_id, dependencies, limitations)
         else:
             limitations.add('Some requirements declarations could not be parsed.')
 
@@ -607,10 +627,13 @@ def _manifest_excerpts(declared_excerpt, dependencies, source_id):
             for index, value in enumerate(chunks)]
 
 
-def _parse_manifest(value, path, source_id, dependencies, includes, limitations):
+def _parse_manifest(value, path, source_id, dependencies, includes, limitations, *, full=False):
     if is_environment_manifest(path):
-        for name, constraint, category in environment_dependencies(value, limitations):
+        pip_requirements = []
+        for name, constraint, category in environment_dependencies(value, limitations, pip_requirements):
             _dependency(name, constraint, category, source_id, dependencies, limitations)
+        includes.extend(_relative_requirement_path(path, requirement)
+                        for line in pip_requirements if (requirement := _pip_include(line)))
     elif PurePosixPath(path).name.lower() == 'package.json':
         parsed = json.loads(value)
         if not isinstance(parsed, dict):
@@ -620,14 +643,14 @@ def _parse_manifest(value, path, source_id, dependencies, includes, limitations)
             entries = parsed.get(field, {})
             if not isinstance(entries, dict):
                 raise ValueError('Invalid dependency map')
-            if len(entries) > _MAX_DEPENDENCIES:
-                limitations.add('Some dependency declarations exceeded the extraction limit and were omitted.')
-            for name, constraint in list(entries.items())[:_MAX_DEPENDENCIES]:
+            for name, constraint in entries.items():
                 _dependency(name, constraint, category, source_id, dependencies, limitations)
     elif PurePosixPath(path).name.lower() == 'pyproject.toml':
         parsed = tomllib.loads(value)
         project = parsed.get('project', {})
         groups = [('runtime', project.get('dependencies', []))]
+        if full:
+            groups.append(('build', parsed.get('build-system', {}).get('requires', [])))
         for category, entries in project.get('optional-dependencies', {}).items():
             groups.append(('optional:' + category, entries))
         for category, entries in parsed.get('dependency-groups', {}).items():
@@ -635,19 +658,128 @@ def _parse_manifest(value, path, source_id, dependencies, includes, limitations)
         for category, entries in groups:
             if not isinstance(entries, list):
                 raise ValueError('Invalid Python dependency group')
-            if len(entries) > _MAX_DEPENDENCIES:
-                limitations.add('Some dependency declarations exceeded the extraction limit and were omitted.')
-            for entry in entries[:_MAX_DEPENDENCIES]:
+            for entry in entries:
                 match = _REQUIREMENT.fullmatch(entry) if isinstance(entry, str) else None
                 if match:
                     name, extras, constraint = match.groups()
-                    _dependency(name, (extras or '') + constraint.strip(), category, source_id, dependencies, limitations)
+                    _dependency(name, (extras or '') + (constraint or '').strip(), category, source_id, dependencies, limitations)
                 else:
                     limitations.add('Dynamic Python dependency groups are not evaluated.')
-        if parsed.get('tool', {}).get('poetry') or 'dependencies' in project.get('dynamic', []):
-            limitations.add('Poetry and dynamic Python declarations are not supported in this MVP.')
+        if 'dependencies' in project.get('dynamic', []):
+            dynamic = parsed.get('tool', {}).get('setuptools', {}).get('dynamic', {}).get('dependencies', {})
+            files = dynamic.get('file', [])
+            if isinstance(files, str):
+                files = [files]
+            if isinstance(files, list) and files and all(isinstance(file, str) for file in files):
+                includes.extend(_relative_requirement_path(path, file) for file in files)
+            else:
+                limitations.add('Dynamic Python dependency declarations require a static manifest or import evidence.')
+        if full:
+            poetry = parsed.get('tool', {}).get('poetry', {})
+            maps = [('runtime', poetry.get('dependencies', {})),
+                    ('development', poetry.get('dev-dependencies', {}))]
+            maps.extend(('development:' + group, data.get('dependencies', {}))
+                        for group, data in poetry.get('group', {}).items())
+            _dependency_maps(maps, source_id, dependencies, limitations)
+        elif parsed.get('tool', {}).get('poetry'):
+            limitations.add('Poetry dependency declarations are inventoried separately from graph evidence.')
+    elif PurePosixPath(path).name.lower() == 'pipfile':
+        parsed = tomllib.loads(value)
+        _dependency_maps([('runtime', parsed.get('packages', {})),
+                          ('development', parsed.get('dev-packages', {}))],
+                         source_id, dependencies, limitations)
     else:
         _requirements(value, path, source_id, dependencies, includes, limitations)
+
+
+def _dependency_maps(maps, source_id, dependencies, limitations):
+    for category, entries in maps:
+        for name, versions in entries.items():
+            for spec in versions if isinstance(versions, list) else [versions]:
+                if isinstance(spec, dict):
+                    spec = ('Direct/local reference (location omitted)' if set(spec) & {'url', 'git', 'path', 'file'}
+                            else spec.get('version', ''))
+                _dependency(name, spec, category, source_id, dependencies, limitations)
+
+
+def _dependency_name(name):
+    return re.sub(r'[-_.]+', '-', name.casefold())
+
+
+def _dependency_inventory(root_fd, paths, repository_linked):
+    """Inspect all safe manifest and Python paths separately from model excerpts."""
+    limitations = set()
+    if root_fd is None:
+        limitations.add('The linked repository could not be inspected.' if repository_linked else 'No repository is linked.')
+        return {'dependencies': [], 'sources': [], 'coverage': {
+            'files_total': None if repository_linked else 0, 'files_scanned': 0,
+            'limitations': sorted(limitations)}}, set(), None
+
+    available = set(paths)
+    setup_files = {path for path in paths if PurePosixPath(path).name.lower() in {'setup.py', 'setup.cfg'}}
+    manifests = {path for path in paths if _manifest(path)} | setup_files
+    python_files = {path for path in paths if PurePosixPath(path).suffix.lower() == '.py'}
+    pending = deque(sorted(manifests, key=_scheme_order) + sorted(python_files - manifests, key=_scheme_order))
+    queued = manifests | python_files
+    local_modules = local_python_modules(paths)
+    dependencies, sources, imports = [], [], {}
+    scanned = 0
+    stopped = None
+    budget = _InspectionBudget(_MAX_DEPENDENCY_READ_BYTES, _DEPENDENCY_INSPECTION_SECONDS)
+
+    def add_evidence(relative, items, provenance):
+        items = list({item['id']: item for item in items}.values())
+        if not items:
+            return
+        source_id = 'dependency-evidence:' + hashlib.sha256(f'{provenance}:{relative}'.encode()).hexdigest()[:24]
+        for chunk_id, excerpt in _manifest_excerpts('', items, source_id):
+            sources.append(_source(chunk_id, relative, excerpt, provenance, path=relative))
+        dependencies.extend(items)
+
+    while pending:
+        relative = pending.popleft()
+        canonical_id = 'repository:file:' + hashlib.sha256(relative.encode()).hexdigest()[:24]
+        declarations, includes = [], []
+        try:
+            value = _read(root_fd, relative, budget=budget, max_file_bytes=_MAX_DEPENDENCY_FILE_BYTES,
+                          python_encoding=relative in python_files)
+            if relative in setup_files:
+                for name, constraint, category in setup_dependencies(value, relative, limitations):
+                    _dependency(name, constraint, category, canonical_id, declarations, limitations)
+            elif relative in manifests:
+                _parse_manifest(value, relative, canonical_id, declarations, includes, limitations, full=True)
+            if relative in python_files:
+                for name, constraint, category in python_imports(value, relative, local_modules, limitations):
+                    normalized = _dependency_name(name)
+                    if normalized not in imports:
+                        imports[normalized] = relative, canonical_id, name, constraint, category
+            add_evidence(relative, declarations, 'dependency manifest')
+            for include in includes:
+                if include not in available:
+                    limitations.add('Some pip requirements include files were unavailable or outside the safe repository paths.')
+                elif include not in queued:
+                    queued.add(include)
+                    manifests.add(include)
+                    pending.appendleft(include)
+            scanned += 1
+        except _InspectionStopped as exc:
+            stopped = exc.reason
+            limitations.add(f'The dependency scan reached its {stopped.replace("_", " ")} before checking every file.')
+            break
+        except (OSError, ValueError, TypeError, AttributeError, RecursionError, SyntaxError, LookupError):
+            limitations.add('Some dependency inputs were unreadable, malformed, or exceeded the 2 MiB per-file limit.')
+
+    declared = {_dependency_name(item['name']) for item in dependencies}
+    import_files = {}
+    for normalized in imports.keys() - declared:
+        relative, canonical_id, name, constraint, category = imports[normalized]
+        _dependency(name, constraint, category, canonical_id, import_files.setdefault(relative, []), limitations)
+    for relative, items in sorted(import_files.items()):
+        add_evidence(relative, sorted(items, key=lambda item: item['name'].casefold()), 'Python import')
+    dependencies.sort(key=lambda item: (item['category'].startswith('import:'), item['name'].casefold()))
+    return {'dependencies': dependencies, 'sources': sources, 'coverage': {
+        'files_total': len(queued), 'files_scanned': scanned, 'limitations': sorted(limitations),
+    }}, set(imports), stopped
 
 
 def _qualified_name(node):
@@ -969,6 +1101,7 @@ def collect_evidence(engine, project_id, limits=None):
     try:
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
+        dependency_paths = paths
         markers, metadata_stop = _markers(root_fd, paths) if root_fd is not None else ([], None)
         file_omission_reasons = {}
         if metadata_stop:
@@ -977,7 +1110,7 @@ def collect_evidence(engine, project_id, limits=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        key = _digest({'namespace': 'scheme-inspection-v13', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -989,6 +1122,8 @@ def collect_evidence(engine, project_id, limits=None):
                 result = deepcopy(cached.evidence[0])
                 result['diagnostics'].update(cache_hits=1, duration_ms=round((time.monotonic() - started) * 1000))
                 return result
+        dependency_inventory, imported_names, dependency_stop = _dependency_inventory(
+            root_fd, dependency_paths, bool(repository_path))
         sources, dependencies = list(records), []
         scanned = set()
         files_read = 0
@@ -1170,10 +1305,12 @@ def collect_evidence(engine, project_id, limits=None):
         allowed_ids = {source['id'] for source in bounded}
         dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
         source_order = {source['id']: index for index, source in enumerate(bounded)}
-        dependencies.sort(key=lambda dependency: min(source_order[ref] for ref in dependency['source_ids']))
+        dependencies.sort(key=lambda dependency: (
+            _dependency_name(dependency['name']) not in imported_names,
+            min(source_order[ref] for ref in dependency['source_ids'])))
         if len(dependencies) > _MAX_DEPENDENCIES:
             dependencies = dependencies[:_MAX_DEPENDENCIES]
-            limitations.add('Only the first 100 dependency declarations supported by retained evidence are included.')
+            limitations.add('Only up to 100 dependency declarations are supplied to AI for explanations. The local dependency inventory is separate.')
         excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
         for relative in paths[:_MAX_PATHS]:
@@ -1188,7 +1325,7 @@ def collect_evidence(engine, project_id, limits=None):
                 except OSError:
                     continue
             tree[relative] = 'file'
-        result = {'sources': bounded, 'dependencies': dependencies,
+        result = {'sources': bounded, 'dependencies': dependencies, 'dependency_inventory': dependency_inventory,
             'knowledge_context': deepcopy(knowledge['metadata']),
             'tree': [{'path': path, 'type': kind} for path, kind in sorted(tree.items())],
             'coverage': {'partial': bool(limitations), 'freshness_unknown': freshness_unknown,
@@ -1237,9 +1374,9 @@ def collect_evidence(engine, project_id, limits=None):
         fingerprint_coverage = {key: value for key, value in result['coverage'].items()
                                 if key not in {'file_counts', 'inspection_policy', 'file_omissions'}}
         result['fingerprint'] = _digest({key: result[key] for key in
-            ('sources', 'dependencies', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
+            ('sources', 'dependencies', 'dependency_inventory', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
                 'published_knowledge': knowledge['marker']})
-        if inspection_stop != 'time_budget' and not metadata_stop:
+        if inspection_stop != 'time_budget' and dependency_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))
                 if (db.get(Project, project_id) is not None

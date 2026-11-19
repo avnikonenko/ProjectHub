@@ -35,9 +35,18 @@ used. Regenerate Scheme to use newer Knowledge.
 
 ## Dependencies
 
-Scheme reads direct declarations from common Python, npm, and Conda files.
-Check your environment for installed versions. Inspection leaves dependencies
-and project code untouched.
+The Dependencies tab scans supported manifests and safe Python source files in
+the linked repository. This includes pip requirements and local includes,
+`pyproject.toml`, `setup.py`, `setup.cfg`, Pipfile, Conda environment files,
+and npm package manifests. Imports without a matching declaration appear as
+module names. Each row links to its declaration or import evidence.
+
+The current inventory is available as soon as you open Scheme. Saved versions
+retain their own inventory. The model receives a bounded selection for
+explanations, while the table includes every dependency the local scan found.
+Check **Dependency scan limitations** for incomplete reads or unsupported
+syntax. The scan has a 32 MiB total read limit, a 2 MiB per-file limit, and a
+ten-second time budget. Check the project's environment for installed versions.
 
 ## Freshness and coverage
 

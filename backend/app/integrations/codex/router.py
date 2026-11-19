@@ -641,12 +641,18 @@ def get_scheme(project_id: int, request: Request, db: DB):
     limitations = list(coverage['limitations'])
     if overview_freshness_unknown:
         limitations.append('Scheme freshness checks do not cover every original message in its conversation overviews.')
+    inspection = {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')}
+    inspection['diagnostics'] = evidence.get('diagnostics', {})
+    if 'dependency_inventory' in evidence:
+        inventory = evidence['dependency_inventory']
+        if saved and saved.get('fingerprint') == evidence['fingerprint']:
+            inventory = saved.get('dependency_inventory', inventory)
+        inspection['dependency_inventory'] = inventory
     return {
         'snapshot': saved,
         'freshness': {'state': state, 'partial': coverage['partial'] or overview_freshness_unknown,
                       'limitations': limitations},
-        'inspection': {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')}
-                      | {'diagnostics': evidence.get('diagnostics', {})},
+        'inspection': inspection,
     }
 
 

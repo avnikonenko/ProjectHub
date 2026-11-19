@@ -9,8 +9,8 @@ from pathlib import PurePosixPath
 import re
 
 
-_NAME = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,159}')
-_SPEC = re.compile(r'^([A-Za-z0-9][A-Za-z0-9_.-]*)(.*)$')
+_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,159}')
+_SPEC = re.compile(r'^([A-Za-z0-9_][A-Za-z0-9_.-]*)(.*)$')
 _PIP = re.compile(r'^([A-Za-z0-9][A-Za-z0-9_.-]*)(\[[A-Za-z0-9_,.-]+\])?(.*)$')
 _LIMITATION = 'Some Conda environment dependency declarations use unsupported syntax and were omitted.'
 
@@ -20,7 +20,9 @@ def is_environment_manifest(path):
     if not name.endswith(('.yml', '.yaml')):
         return False
     stem = name.rsplit('.', 1)[0]
-    return stem in {'env', 'environment', 'conda'} or stem.startswith(('env_', 'env-', 'environment_', 'environment-', 'conda_', 'conda-'))
+    return (stem in {'env', 'environment', 'conda'}
+            or stem.startswith(('env_', 'env-', 'environment_', 'environment-', 'conda_', 'conda-'))
+            or stem.endswith(('_env', '-env', '_environment', '-environment')))
 
 
 def _scalar(value):
@@ -40,12 +42,9 @@ def _scalar(value):
     return value
 
 
-def environment_dependencies(value, limitations):
+def environment_dependencies(value, limitations, pip_requirements=None):
     """Return (name, constraint, category) for literal supported declarations."""
     lines = value.splitlines()
-    if len(lines) > 500:
-        limitations.add('Only the first 500 lines of an environment manifest were inspected.')
-    lines = lines[:500]
     headers = [i for i, line in enumerate(lines) if re.match(r'^dependencies\s*:', line)]
     # Multiple documents or duplicate keys cannot safely establish one environment.
     if len(headers) != 1 or any(line.strip() in {'---', '...'} for line in lines):
@@ -116,6 +115,9 @@ def environment_dependencies(value, limitations):
                 continue
             result.append((spec[1], spec[2].strip(), category))
         else:
+            if pip_requirements is not None and re.fullmatch(r'(?:-r\s*|--requirement(?:\s+|=)).+', scalar):
+                pip_requirements.append(scalar)
+                continue
             spec = _PIP.fullmatch(scalar)
             if not spec or (spec[3].strip() and not spec[3].strip().startswith(('=', '<', '>', '!', '~', ';', '@'))):
                 limitations.add(_LIMITATION)

@@ -12,6 +12,7 @@ import { schemeNodeRoles } from './schemeRoles';
 import { AIResultHeader } from './AIResultHeader';
 import { SchemeResultCoverage, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
 import { SchemeKnowledgeContext } from './SchemeKnowledgeContext';
+import { SchemeDependencies, type Dependency, type DependencyInventory } from './SchemeDependencies';
 
 type SchemeSource = BriefSource & {
   provenance: string; content_hash: string; path?: string; revision?: string; date?: string;
@@ -25,7 +26,6 @@ type SchemeEdge = {
   status: SchemeNode['status']; source_ids: string[];
 };
 type SchemeGraph = { nodes: SchemeNode[]; edges: SchemeEdge[]; explanation: string; mermaid: string };
-type Dependency = { id: string; name: string; constraint: string; category: string; purpose: string; source_ids: string[]; purpose_source_ids?: string[] };
 type TreeEntry = { path: string; type: 'file' | 'directory' };
 type Coverage = SchemeCoverage;
 type SchemeSnapshot = {
@@ -33,11 +33,13 @@ type SchemeSnapshot = {
   architecture: SchemeGraph; workflow: SchemeGraph; dependencies: Dependency[];
   sources: SchemeSource[]; tree: TreeEntry[]; coverage: Coverage; fingerprint: string; diagnostics?: SchemeDiagnostics | null;
   knowledge_context?: unknown;
+  dependency_inventory?: DependencyInventory;
 };
 type SchemeResult = {
   snapshot: SchemeSnapshot | null;
   freshness: { state: string; partial: boolean; limitations: string[] };
-  inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[]; diagnostics?: SchemeDiagnostics | null };
+  inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[];
+    diagnostics?: SchemeDiagnostics | null; dependency_inventory?: DependencyInventory };
 };
 
 const freshnessLabels: Record<string, string> = {
@@ -307,7 +309,10 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         setResult((previous) => ({
         snapshot,
         freshness: { state: 'unknown', partial: snapshot.coverage.partial, limitations: snapshot.coverage.limitations },
-        inspection: previous?.inspection ?? { tree: snapshot.tree, dependencies: snapshot.dependencies, coverage: snapshot.coverage },
+        inspection: previous?.inspection ?? {
+          tree: snapshot.tree, dependencies: snapshot.dependencies, coverage: snapshot.coverage, sources: snapshot.sources,
+          dependency_inventory: snapshot.dependency_inventory,
+        },
         }));
         try {
           const current = await api<SchemeResult>(path);
@@ -337,20 +342,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     ? `${freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}${result.freshness.partial || coverage?.partial ? ' · Partial coverage' : ''}`
     : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
-  const dependencies = snapshot?.dependencies ?? result?.inspection.dependencies ?? [];
-  const development = (dependency: Dependency) => /dev|test|build/i.test(dependency.category);
-  function dependencyTable(items: Dependency[], tableLabel: string) {
-    return <div className="scheme-table-scroll" role="region" aria-label={tableLabel} tabIndex={0}><table className="diagnostic-table scheme-dependencies">
-      <thead><tr><th scope="col">Dependency</th><th scope="col">Declared constraint</th><th scope="col">Category</th><th scope="col">Purpose / evidence</th></tr></thead>
-      <tbody>{items.map((dependency) => <tr key={dependency.id}>
-        <td>{dependency.name}</td><td><code>{dependency.constraint || 'Not specified'}</code></td>
-        <td>{label(dependency.category)}</td><td><AIEmphasis text={dependency.purpose || 'Purpose not explained yet.'} />
-          {briefReferences(dependency.purpose_source_ids ?? [], numbers, prefix, sources)}
-          <small>Declaration{briefReferences(dependency.source_ids, numbers, prefix, sources)} · {[...new Set(dependency.source_ids.map((id) => sources.find((source) => source.id === id)?.provenance).filter(Boolean))].map((value) => label(value!)).join(' · ')}</small>
-        </td>
-      </tr>)}</tbody>
-    </table></div>;
-  }
   return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
@@ -394,16 +385,9 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     </>}
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}
       highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
-    {view === 'Dependencies' && <>
-      {!dependencies.length && <Empty>No matching direct dependencies in the inspected evidence.</Empty>}
-      {!!dependencies.filter((item) => !development(item)).length && dependencyTable(dependencies.filter((item) => !development(item)), 'Project dependencies')}
-      {!!dependencies.filter(development).length && <details className="scheme-development">
-        <summary>Development dependencies ({dependencies.filter(development).length})</summary>
-        {dependencyTable(dependencies.filter(development), 'Development dependencies')}
-      </details>}
-      <small>Constraints are declarations, not installed versions. Imports do not establish a working integration.</small>
-    </>}
-    {!!sources.length && <details className="scheme-sources">
+    {view === 'Dependencies' && result && <SchemeDependencies snapshot={snapshot} current={result.inspection}
+      historical={revisionId !== null} prefix={`${prefix}-dependency`} />}
+    {view !== 'Dependencies' && !!sources.length && <details className="scheme-sources">
       <summary>Evidence used ({sources.length})</summary>
       <BriefSources sources={sources} prefix={prefix} />
       <details><summary>Evidence provenance</summary><ul>{sources.map((source, index) =>

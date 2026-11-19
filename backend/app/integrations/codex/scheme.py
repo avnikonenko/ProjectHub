@@ -91,6 +91,20 @@ def scheme_snapshot_for_display(snapshot):
     return _displayable_json(snapshot)
 
 
+def inventory_with_purposes(inventory, explanations, sources):
+    """Attach saved explanations only to matching deterministic declarations."""
+    by_id = {item['id']: item for item in explanations if item.get('purpose')}
+    retained = {source['id'] for source in inventory['sources']} | {source['id'] for source in sources}
+    dependencies = []
+    for item in inventory['dependencies']:
+        explained = by_id.get(item['id'])
+        refs = explained.get('purpose_source_ids', []) if explained else []
+        if explained and set(refs) <= retained:
+            item = {**item, 'purpose': explained['purpose'], 'purpose_source_ids': refs}
+        dependencies.append(item)
+    return {**inventory, 'dependencies': dependencies}
+
+
 def _displayable_json(value):
     if isinstance(value, str):
         return _SURROGATES.sub('\ufffd', value)
@@ -437,6 +451,9 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
                             'duration_seconds': round(time.monotonic() - started, 3),
                             'ai_requests': 1 + overview_diagnostics.get('archive_generated_batches', 0)},
         }
+        if 'dependency_inventory' in evidence:
+            snapshot['dependency_inventory'] = inventory_with_purposes(
+                evidence['dependency_inventory'], dependencies, evidence['sources'])
         if isinstance(knowledge_context, dict):
             snapshot['knowledge_context'] = deepcopy(knowledge_context)
         with Session(engine) as db:
