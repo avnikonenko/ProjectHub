@@ -4,6 +4,15 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.3] - 2026-11-19
+
+- Improve large-project reviews with wider conversation coverage and reusable summaries.
+- Prioritize documented Python entry points and their local modules in Overview code evidence.
+- Search original indexed conversations from Knowledge.
+- Show per-attempt generation settings and improve recovery from malformed model output.
+- Identify linked Codex sessions with missing history and explain how to unlink them.
+- Expand the Scheme dependency inventory and refresh the user guides.
+
 ## [0.2.2] - 2026-11-18
 
 ### Added
