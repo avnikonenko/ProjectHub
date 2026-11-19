@@ -61,8 +61,9 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
             <td><code>{detectedImport ? '—' : dependency.constraint || 'Not specified'}</code></td>
             <td>{detectedImport ? 'Detected import' : label(dependency.category)}</td>
             <td>
-              {dependency.purpose && <><AIEmphasis text={dependency.purpose} />
-                {references(dependency.purpose_source_ids ?? [])}</>}
+              {dependency.purpose ? <><AIEmphasis text={dependency.purpose} />
+                {references(dependency.purpose_source_ids ?? [])}</>
+                : <div className="muted">No purpose explanation available</div>}
               <small>{detectedImport ? 'Import' : 'Declaration'}{references(dependency.source_ids)}
                 {!!provenance.length && ` · ${provenance.join(' · ')}`}</small>
             </td>

@@ -52,6 +52,7 @@ test('a historical Scheme uses its own inventory or its own legacy declarations'
   const selection = { current, historical: true, prefix: '1-dependency' };
   const legacy = renderToStaticMarkup(createElement(dependencies, { ...selection, snapshot: saved }));
   assert.match(legacy, /older-package/);
+  assert.match(legacy, /No purpose explanation available/);
   assert.doesNotMatch(legacy, /crem|worker.py|Saved dependency scan/);
   const historical = { ...saved, dependency_inventory: { ...current.dependency_inventory,
     dependencies: [saved.dependencies[0]], sources: [saved.sources[0]],

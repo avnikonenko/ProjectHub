@@ -429,6 +429,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
             'Give a concise explanation per graph, grounded in its cited nodes and edges. '
             'Dependency IDs/names/constraints come only from the deterministic dependency list; supply only '
             'brief project-specific purpose explanations for known IDs with supporting source_ids. '
+            'For each supplied dependency, include a concise purpose when the evidence supports one. '
+            'A declaration or an import alone does not establish a project-specific purpose. '
             'Prefer observed project integration over generic package descriptions. If only a manifest '
             'supports a purpose, describe the general library role without asserting an implemented integration. '
             'Do not invent packages, installed versions, or integrations. Do not add conversation-only tools '
