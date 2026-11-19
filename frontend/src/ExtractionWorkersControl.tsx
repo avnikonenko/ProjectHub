@@ -256,8 +256,8 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
       Reload AI settings
     </button>}
     <label>
-      Knowledge generation profile
-      <select aria-label="Knowledge generation profile" value={inputValue('generation_profile')}
+      AI generation profile
+      <select aria-label="AI generation profile" value={inputValue('generation_profile')}
         disabled={loading || !profileSettings}
         onChange={event => changeSetting('generation_profile', event.target.value)}>
         {!profileSettings && <option value="">{loading ? 'Loading…' : 'Profiles unavailable'}</option>}
@@ -268,12 +268,12 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
     </label>
     <SettingsHelp title="Profile explanation">
       <ul>
-        <li><strong>Quality (default):</strong> Smaller batches to help preserve detail. Uses all available source material.</li>
-        <li><strong>Balanced (experimental):</strong> Larger batches cover the same sources with potentially fewer calls, but may miss details.</li>
-        <li><strong>Economy (experimental):</strong> Larger batches and a source limit can reduce usage, but some sources may be skipped.</li>
+        <li><strong>Quality (default).</strong> Knowledge reads available original messages in smaller batches to preserve detail.</li>
+        <li><strong>Balanced (experimental).</strong> Knowledge reads available original messages in larger batches, which can reduce calls.</li>
+        <li><strong>Economy (experimental).</strong> Reuses saved conversation overviews across reviews. Knowledge checks selected original messages.</li>
       </ul>
-      <p>Your model and explicit reasoning choice stay the same. Economy uses low reasoning when supported if you haven’t chosen an effort.
-        Changing profiles may require reprocessing; saved results stay intact.</p>
+      <p>Your model and explicit reasoning choice stay the same. Economy uses low reasoning when your model supports it and you leave effort unset.
+        The first Economy run needs to build conversation overviews. Later runs reuse matching batches.</p>
     </SettingsHelp>
     {saveFeedback('generation_profile')}
     {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile

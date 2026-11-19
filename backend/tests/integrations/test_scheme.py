@@ -167,6 +167,40 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
     engine.dispose()
 
 
+def test_economy_scheme_uses_overviews_as_guides_to_original_citations(tmp_path, monkeypatch):
+    from backend.app.generation_profiles import get_generation_profile
+    from backend.app.integrations.codex import archive
+    from backend.app.integrations.codex.knowledge_profiles import use_knowledge_profile
+
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='One'))
+        db.commit()
+    inspected = evidence()
+    inspected['sources'][1]['provenance'] = 'Codex conversation'
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: inspected)
+    original = {'id': 'codex:original', 'label': 'Old discussion', 'text': 'Try backend B.', 'session_id': 7}
+    monkeypatch.setattr(archive, 'conversation_overviews', lambda *_: (
+        [{'text': 'The user proposed backend B.', 'sources': [original]}], ['One cached overview.']))
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            payload = json.loads(prompt.split('\n', 1)[1])
+            assert payload['conversation_overviews'] == [
+                {'text': 'The user proposed backend B.', 'source_ids': ['codex:original']}]
+            assert [source['id'] for source in payload['sources']] == ['file:api.py', 'codex:original']
+            assert payload['sources'][-1]['text'] == original['text']
+            assert payload['dependencies'] == inspected['dependencies']
+            return json.dumps(output()).replace('discussion:1', 'codex:original')
+
+    with use_knowledge_profile(get_generation_profile('economy')):
+        saved = scheme.refresh_scheme(engine, 1, Manager())
+    assert saved['coverage']['overview_freshness_unknown'] is True
+    assert saved['fingerprint'] == inspected['fingerprint']
+    assert saved['architecture']['nodes'][1]['source_ids'] == ['codex:original']
+    engine.dispose()
+
+
 def test_bounds_and_missing_evidence_do_not_call_codex(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:

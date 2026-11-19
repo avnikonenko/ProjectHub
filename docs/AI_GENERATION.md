@@ -54,14 +54,19 @@ requests, try a different model or reasoning effort.
 
 ## Settings for quality and resource use
 
-**Knowledge generation profile** sets how much conversation context Knowledge
-reads and how it batches that context.
+**AI generation profile** applies to generated reviews. Each review uses evidence
+suited to its purpose. Implementation Choices & Limits still uses code and configuration.
 
 | Profile | When to use it |
 | --- | --- |
-| **Quality** (default) | Smaller batches help retain detail across available sources. |
-| **Balanced** (experimental) | Larger batches may reduce calls and miss details. |
-| **Economy** (experimental) | Larger batches and a source limit can reduce usage. Check Coverage for omitted text. |
+| **Quality** (default) | Knowledge reads available original messages in smaller batches to retain detail. |
+| **Balanced** (experimental) | Knowledge reads the same available messages in larger batches, which can reduce calls and miss details. |
+| **Economy** (experimental) | Reuses conversation overviews. Knowledge uses them to select original passages for extraction within its source budget. |
+
+Economy builds overviews from the saved Codex history index and imported ChatGPT
+chats. The first run may make more calls to build the cache. Later runs reuse
+matching batches across reviews. Refresh History to include recent Codex messages
+if the index is out of date. Check Coverage for missing sources and omitted text.
 
 Explicit model and reasoning settings take precedence. Economy can use low
 reasoning by default when the selected model supports it. Changing the profile,

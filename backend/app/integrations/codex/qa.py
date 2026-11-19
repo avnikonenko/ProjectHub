@@ -15,7 +15,8 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import Answer, Project, ProjectQA, ProjectHistoryBatch, Question, utcnow
-from .archive import archive_history, archive_worker_scope, archive_diagnostics, _worker_count
+from .archive import archive_history, conversation_overviews, archive_worker_scope, archive_diagnostics, _worker_count
+from .knowledge_profiles import current_knowledge_profile
 from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, recorded_evidence, generation_metadata, saved_run_metadata, generation_for_read
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
@@ -530,7 +531,9 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
-        evidence, coverage = archive_history(engine, project_id, manager)
+        economy = current_knowledge_profile().id == 'economy'
+        read_history = conversation_overviews if economy else archive_history
+        evidence, coverage = read_history(engine, project_id, manager)
         coverage = [*coverage,
                     'Q&A uses saved conversations, shared-chat documents, accepted solutions and decisions, '
                     'and saved architecture; ordinary notes and TODOs are excluded.']
@@ -538,7 +541,8 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
             project = db.get(Project, project_id)
             if project is None:
                 raise CodexError('Project not found.')
-            evidence.extend(note_evidence(db, project_id, shared_only=True))
+            if not economy:
+                evidence.extend(note_evidence(db, project_id, shared_only=True))
             evidence.extend(recorded_evidence(db, project, include_notes=False))
             accepted = db.execute(select(Answer, Question.title).join(
                 Question, Question.id == Answer.question_id,

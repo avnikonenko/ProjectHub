@@ -19,6 +19,7 @@ from .scheme import read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
+from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .knowledge_sources import load_sources
 from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
@@ -31,6 +32,7 @@ from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 from .session_reassignment import reassign_session
 from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_settings
+from ...generation_profiles import get_generation_profile
 from ...services import begin_session_write
 
 router = APIRouter(prefix='/api/projects/{project_id}/codex', tags=['Codex'])
@@ -151,6 +153,21 @@ def send_options(manager, body):
         return {}
     manager.validate_generation(body.model, body.effort)
     return {'model': body.model, 'effort': body.effort}
+
+
+def review_profile():
+    try:
+        return get_generation_profile(ai_worker_settings()['generation_profile'])
+    except (ConfigError, ValueError) as exc:
+        raise CodexError('Could not read the AI generation profile.') from exc
+
+
+def review_manager(manager, body, profile):
+    choose = getattr(manager, 'for_generation', None)
+    if body.model or body.effort or callable(choose):
+        manager = manager.for_generation(body.model, body.effort)
+    selected, _ = configure_profile_manager(manager, profile)
+    return selected
 
 
 def database(request: Request):
@@ -448,10 +465,11 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing the project brief.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        profile = review_profile()
+        selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        with use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_brief(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -517,13 +535,13 @@ def _record_scheme_followup_failure(engine, project_id, previous_started_at, err
 
 
 def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
-                                     dependency_token=None):
+                                     dependency_token=None, profile=None):
     """Server-owned follow-up, independent of the selected browser project."""
     previous_started_at = progress.read(project_id, 'scheme').get('started_at')
     try:
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
-        with use_project_instructions(instructions):
+        with use_project_instructions(instructions), use_knowledge_profile(profile or review_profile()):
             refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='completed')
@@ -557,10 +575,10 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
     try:
         manager = manager_for(request.app, project_id)
         selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
-        scheme_manager = None
+        scheme_manager, scheme_profile = None, None
         if body.generate_scheme:
-            choose = getattr(manager, 'for_generation', None)
-            scheme_manager = choose(body.model, body.effort) if callable(choose) else manager
+            scheme_profile = review_profile()
+            scheme_manager = review_manager(manager, body, scheme_profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         if body.generate_scheme:
@@ -575,7 +593,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
-                                      publication_id, dependency_token)
+                                      publication_id, dependency_token, scheme_profile)
             result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:
@@ -615,13 +633,18 @@ def get_scheme(project_id: int, request: Request, db: DB):
     db.rollback()
     evidence = collect_evidence(request.app.state.engine, project_id)
     coverage = evidence['coverage']
+    overview_freshness_unknown = bool(saved and (saved.get('coverage') or {}).get('overview_freshness_unknown'))
     state = ('not_generated' if saved is None else
              'unknown' if coverage.get('freshness_unknown') or not evidence.get('fingerprint') else
-             'unchanged' if saved.get('fingerprint') == evidence['fingerprint'] else 'changed')
+             'changed' if saved.get('fingerprint') != evidence['fingerprint'] else
+             'unknown' if overview_freshness_unknown else 'unchanged')
+    limitations = list(coverage['limitations'])
+    if overview_freshness_unknown:
+        limitations.append('Scheme freshness checks do not cover every original message in its conversation overviews.')
     return {
         'snapshot': saved,
-        'freshness': {'state': state, 'partial': coverage['partial'],
-                      'limitations': coverage['limitations']},
+        'freshness': {'state': state, 'partial': coverage['partial'] or overview_freshness_unknown,
+                      'limitations': limitations},
         'inspection': {key: evidence[key] for key in ('tree', 'dependencies', 'coverage', 'sources')}
                       | {'diagnostics': evidence.get('diagnostics', {})},
     }
@@ -634,10 +657,11 @@ def generate_scheme(project_id: int, body: GenerationInput, request: Request, db
         raise HTTPException(422, 'Confirm sending selected project evidence to Codex before generating Scheme.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        profile = review_profile()
+        selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        with use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_scheme(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -668,10 +692,11 @@ def generate_parameters(project_id: int, body: GenerationInput, request: Request
         raise HTTPException(422, 'Confirm sending inspected parameter evidence to Codex before generation.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        profile = review_profile()
+        selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        with use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_parameters(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -755,10 +780,11 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
         raise HTTPException(422, 'Explicitly confirm AI generation before refreshing Q&A.')
     try:
         manager = manager_for(request.app, project_id)
-        selected = manager.for_generation(body.model, body.effort) if body.model or body.effort or callable(getattr(manager, 'for_generation', None)) else manager
+        profile = review_profile()
+        selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        with use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_qa(request.app.state.engine, project_id, selected, max_items=body.max_items)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc

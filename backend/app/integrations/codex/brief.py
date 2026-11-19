@@ -9,7 +9,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
-from .archive import archive_history, summarize_evidence, archive_worker_scope, archive_diagnostics
+from .archive import archive_history, conversation_overviews, summarize_evidence, archive_worker_scope, archive_diagnostics
+from .knowledge_profiles import current_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from . import progress
 from .revisions import save_revision
@@ -115,10 +116,13 @@ def generation_for_read(generation):
              if key not in ('diagnostics', 'coverage')} if isinstance(generation, dict) else generation)
 
 
-def note_evidence(db, project_id, *, shared_only=False):
+def note_evidence(db, project_id, *, shared_only=False, exclude_shared=False):
     query = select(Note).where(Note.project_id == project_id)
+    shared_chat = (Note.kind == 'document') & Note.reference.startswith('https://chatgpt.com/share/')
     if shared_only:
-        query = query.where(Note.kind == 'document', Note.reference.startswith('https://chatgpt.com/share/'))
+        query = query.where(shared_chat)
+    elif exclude_shared:
+        query = query.where(~shared_chat)
     for note in db.scalars(query.order_by(Note.id)):
         text = f'{note.title}\n{note.content}\nReference: {note.reference}'
         for offset in range(0, len(text), 1500):
@@ -137,7 +141,7 @@ def generation_metadata(manager):
     })
 
 
-def recorded_evidence(db, project, *, include_notes=True):
+def recorded_evidence(db, project, *, include_notes=True, exclude_shared=False):
     diagram = project.architecture_mermaid.strip()
     if diagram:
         for offset in range(0, len(diagram), 3000):
@@ -157,7 +161,7 @@ def recorded_evidence(db, project, *, include_notes=True):
                       'updated_at': decision.updated_at, 'text': excerpt}
             yield {'text': excerpt, 'sources': [source]}
     if include_notes:
-        yield from note_evidence(db, project.id)
+        yield from note_evidence(db, project.id, exclude_shared=exclude_shared)
 
 
 def validate_sections(raw, sources):
@@ -287,11 +291,12 @@ def refresh_brief(engine, project_id, manager):
             transport_scope.enter_context(session())
         from ...project_evidence import collect_project_evidence
         snapshot = collect_project_evidence(engine, project_id)
+        economy = current_knowledge_profile().id == 'economy'
         with Session(engine) as db:
             project = db.get(Project, project_id)
             if project is None:
                 raise CodexError('Project not found.')
-            records = list(recorded_evidence(db, project))
+            records = list(recorded_evidence(db, project, exclude_shared=economy))
             name = project.name
             repository_path = project.repository_path
             previous = comparison_baseline(read_brief(db, project_id))
@@ -301,7 +306,8 @@ def refresh_brief(engine, project_id, manager):
                 records.append({'text': source['text'], 'sources': [source]})
         validation_source = {'id': 'evidence:validation', 'label': 'Available validation evidence',
                              'text': snapshot['validation'], 'classification': 'verified'}
-        history, coverage = archive_history(engine, project_id, manager)
+        read_history = conversation_overviews if economy else archive_history
+        history, coverage = read_history(engine, project_id, manager)
         progress.update(project_id, stage='Summarizing project notes and decisions')
         recorded = summarize_evidence(engine, project_id, manager, records)
         history = summarize_evidence(engine, project_id, manager, history)

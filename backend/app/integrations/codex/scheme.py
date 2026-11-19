@@ -13,6 +13,7 @@ from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
 from . import progress
 from .brief import BriefBusy, generation_lock, generation_metadata
+from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
 from .revisions import save_revision
 from .scheme_evidence import collect_evidence
@@ -26,6 +27,7 @@ STATUSES = ('observed', 'proposed', 'uncertain')
 _KNOWLEDGE_INTERPRETATION = 'published Knowledge interpretation'
 _KNOWLEDGE_CHANGED = 'Knowledge changed before the follow-up Scheme could be saved. The previous Scheme is preserved.'
 _SURROGATES = re.compile(r'[\ud800-\udfff]')
+_OVERVIEW_CONTEXT_CHARS = 12_000
 _NODE_TYPES = {
     'architecture': ('module', 'service', 'component', 'database', 'tool', 'interface', 'backend'),
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
@@ -237,6 +239,54 @@ def render_mermaid(graph):
     return '\n'.join(lines)
 
 
+def _with_conversation_overviews(payload, overviews, notes, package_limit):
+    """Add derived context only when its complete original fragments also fit."""
+    sources = {source['id']: source for source in payload['sources']}
+    pinned = {ref for entry in (*sources.values(), *payload['dependencies'])
+              for key in ('source_ids', 'supporting_source_ids') for ref in entry.get(key, ())}
+    kept = {ref: source for ref, source in sources.items()
+            if source.get('provenance') != 'Codex conversation' or ref in pinned}
+    points = []
+    coverage = {**payload['coverage'], 'conversation_excerpts': 0,
+                'overview_freshness_unknown': True, 'partial': True,
+                'limitations': [*payload['coverage']['limitations'], *notes[:2],
+                                'Scheme uses a bounded selection of conversation overviews.']}
+    candidate = {**payload, 'coverage': coverage, 'sources': list(kept.values()),
+                 'conversation_overviews': points}
+    size = len(json.dumps(candidate, ensure_ascii=False))
+    source_budget = coverage.get('inspection_policy', {}).get('max_source_chars', _OVERVIEW_CONTEXT_CHARS)
+    text_budget = min(_OVERVIEW_CONTEXT_CHARS,
+                      source_budget - sum(len(source['text']) for source in kept.values()))
+    for overview in overviews:
+        originals = {}
+        for original in overview['sources']:
+            identifier = original['id']
+            if identifier in kept:
+                continue
+            source = {key: original[key] for key in ('id', 'label', 'text', 'role', 'session_id',
+                      'turn_id', 'note_id', 'share', 'message_order', 'offset_start', 'offset_end')
+                      if key in original}
+            source['provenance'] = 'conversation overview original evidence'
+            originals[identifier] = source
+        point = {'text': overview['text'], 'source_ids': [source['id'] for source in overview['sources']]}
+        additions = list(originals.values())
+        text_size = len(point['text']) + sum(len(source['text']) for source in additions)
+        added = sum(len(json.dumps(entry, ensure_ascii=False)) + 2 for entry in [point, *additions])
+        if text_size > text_budget or size + added > package_limit - 128:
+            continue
+        points.append(point)
+        kept.update(originals)
+        candidate['sources'].extend(additions)
+        text_budget -= text_size
+        size += added
+    if not points:
+        return payload
+    coverage['conversation_excerpts'] = sum(source.get('provenance') in {
+        'Codex conversation', 'conversation overview original evidence'} for source in kept.values())
+    coverage['conversation_overview_points'] = len(points)
+    return candidate
+
+
 def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None):
     job_lock = generation_lock.for_job(project_id, 'scheme')
     if not job_lock.acquire(blocking=False):
@@ -257,11 +307,22 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
         payload['coverage'] = {key: value for key, value in evidence['coverage'].items() if key != 'file_omissions'}
         if isinstance(knowledge_context, dict):
             payload['knowledge_context'] = knowledge_context
-        serialized = json.dumps(payload, ensure_ascii=False)
         policy = payload['coverage'].get('inspection_policy')
         package_limit = policy.get('max_package_chars') if isinstance(policy, dict) else None
         if package_limit not in SCHEME_PACKAGE_CHARS_OPTIONS:
             package_limit = DEFAULT_SCHEME_PACKAGE_CHARS
+        overview_diagnostics = {}
+        if current_knowledge_profile().id == 'economy':
+            from .archive import archive_diagnostics, archive_worker_scope, conversation_overviews
+
+            with archive_worker_scope():
+                overviews, notes = conversation_overviews(engine, project_id, manager)
+                overview_diagnostics = archive_diagnostics()
+            payload = _with_conversation_overviews(payload, overviews, notes, package_limit)
+        if 'conversation_overviews' in payload:
+            coverage = {**evidence['coverage'], **payload['coverage']}
+            evidence = {**evidence, 'sources': payload['sources'], 'coverage': coverage}
+        serialized = json.dumps(payload, ensure_ascii=False)
         if len(serialized) > package_limit:
             raise CodexError('Scheme evidence exceeds the generation input limit.')
         schema = deepcopy(OUTPUT_SCHEMA)
@@ -341,6 +402,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
             'including validation, reporting and outputs; do not mark the order uncertain merely because '
             'acceptance criteria or execution results are unspecified. Keep those separate limitations. '
             'Original passages take precedence over prior AI summaries as evidence of what was proposed. '
+            'When conversation_overviews are supplied, use them as a guide to the original passages. '
+            'Verify their claims against their cited sources and cite those originals. '
             'A quoted tool table or a question presupposing an earlier choice does not independently '
             'establish that the user accepted that choice; describe the intended role conservatively. '
             'Give a concise explanation per graph, grounded in its cited nodes and edges. '
@@ -364,8 +427,9 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
             'dependencies': dependencies,
             **{key: evidence[key] for key in ('sources', 'tree', 'coverage', 'fingerprint')},
             'generation': generation_metadata(manager),
-            'diagnostics': {**evidence.get('diagnostics', {}), 'input_chars': len(prompt),
-                            'duration_seconds': round(time.monotonic() - started, 3), 'ai_requests': 1},
+            'diagnostics': {**evidence.get('diagnostics', {}), **overview_diagnostics, 'input_chars': len(prompt),
+                            'duration_seconds': round(time.monotonic() - started, 3),
+                            'ai_requests': 1 + overview_diagnostics.get('archive_generated_batches', 0)},
         }
         if isinstance(knowledge_context, dict):
             snapshot['knowledge_context'] = deepcopy(knowledge_context)

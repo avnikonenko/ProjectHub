@@ -980,7 +980,15 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
         windows = build_windows(bundle)
     else:
         windows = build_windows(bundle, max_chars=profile.window_chars)
-    windows, coverage, selection = select_profile_windows(bundle, windows, profile)
+    if profile.id == 'economy':
+        from .archive import conversation_overviews
+        overviews, overview_notes = conversation_overviews(engine, project_id, manager, bundle=bundle)
+        overview_citations = {source['id'] for item in overviews for source in item['sources']}
+        windows, coverage, selection = select_profile_windows(
+            bundle, windows, profile, overview_source_ids=overview_citations)
+        coverage.setdefault('limitations', []).extend(overview_notes[:2])
+    else:
+        windows, coverage, selection = select_profile_windows(bundle, windows, profile)
     all_sources = {source['id']: source for source in bundle['sources']}
     for window in windows:
         for source in window['sources']:

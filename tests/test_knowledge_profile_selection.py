@@ -75,6 +75,18 @@ def test_context_counts_toward_budget_and_cannot_be_trimmed_to_admit_a_window():
     assert windows[0]['sources'] == [proposal, acceptance]
 
 
+def test_overview_citations_prioritize_original_windows_within_each_conversation():
+    sources = [source('a1', '1111'), source('a2', '2222', order=2),
+               source('b1', '3333', 'B'), source('b2', '4444', 'B', 2)]
+    economy = replace(get_generation_profile('economy'), source_budget_chars=8)
+    selected, coverage, _ = select_profile_windows(
+        bundle(sources), [window(value) for value in sources], economy,
+        overview_source_ids={'a2', 'b2'},
+    )
+    assert [value['sources'] for value in selected] == [[sources[1]], [sources[3]]]
+    assert coverage['not_extracted_by_profile'] == ['a1', 'b1']
+
+
 def test_context_is_counted_once_across_selected_windows():
     first = source('first', '123')
     second = source('second', '45678', order=2)

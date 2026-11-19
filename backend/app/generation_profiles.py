@@ -1,4 +1,4 @@
-"""Immutable knowledge-generation trade-offs; evidence validation never varies."""
+"""Immutable AI generation trade-offs; evidence validation never varies."""
 from dataclasses import asdict, dataclass
 import os
 
@@ -29,7 +29,7 @@ _PROFILES = (
     ),
     GenerationProfile(
         'economy', 'Economy',
-        'Experimental: larger batches and a limited source budget can reduce usage with partial coverage. '
+        'Experimental: reuses saved conversation overviews and limits original-message checks in Knowledge. '
         'Defaults to low reasoning when supported; explicit model and effort choices take precedence.',
         24_000, 60_000, 'low', True,
     ),

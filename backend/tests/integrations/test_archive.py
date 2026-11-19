@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.models import Project, CodexSession, ProjectHistoryBatch
-from backend.app.integrations.codex.archive import archive_history, summarize_evidence, BATCH_CHARS
+from backend.app.integrations.codex.archive import archive_history, conversation_overviews, summarize_evidence, BATCH_CHARS
 from backend.app.integrations.codex.protocol import CodexError
 
 
@@ -212,6 +212,33 @@ def test_archive_reuses_fresh_session_index_without_rereading_turns(env):
     assert second == evidence
     assert manager.inputs == first_inputs
     assert manager.calls == []
+
+
+def test_conversation_overviews_reuse_unchanged_sessions_and_original_sources(env):
+    engine, _ = env
+    manager = IndexedCodex()
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='c', title='Independent session'))
+        db.commit()
+    manager.turns['c'] = [turn(1, 'Independent project context')]
+    index_session(engine, manager)
+    manager.calls.clear()
+
+    baseline, coverage = conversation_overviews(engine, 1, manager)
+    assert '0 reused from cache, 2 generated' in coverage[0]
+    assert {source['session_id'] for entry in baseline for source in entry['sources']} == {1, 3}
+    assert any(source['text'] == 'Independent project context'
+               for entry in baseline for source in entry['sources'])
+    assert conversation_overviews(engine, 1, manager)[0] == baseline
+    assert manager.calls == []
+    assert len(manager.inputs) == 2
+
+    manager.turns['a'].append(turn(3, 'New decision'))
+    index_session(engine, manager)
+    result, coverage = conversation_overviews(engine, 1, manager)
+    assert '1 reused from cache, 1 generated' in coverage[0]
+    assert len(manager.inputs) == 3
+    assert any(source['text'] == 'New decision' for entry in result for source in entry['sources'])
 
 
 def test_archive_does_not_trust_project_index_timestamp_for_an_older_session(env):

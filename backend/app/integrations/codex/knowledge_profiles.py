@@ -42,7 +42,7 @@ def profile_cache_settings(profile):
             'selection_policy': 'whole_windows_round_robin_v1'}
 
 
-def select_profile_windows(bundle, windows, profile):
+def select_profile_windows(bundle, windows, profile, *, overview_source_ids=()):
     """Budget whole context-preserving windows fairly across conversations.
 
     The budget counts distinct source characters, including context. Repeated
@@ -57,6 +57,10 @@ def select_profile_windows(bundle, windows, profile):
             conversation = next(source['conversation_id'] for source in window['sources']
                                 if source['id'] in primary)
             conversations.setdefault(conversation, deque()).append(index)
+        if overview_source_ids:
+            for conversation, queue in conversations.items():
+                conversations[conversation] = deque(sorted(
+                    queue, key=lambda index: not overview_source_ids.intersection(windows[index]['primary_ids'])))
         order = []
         while any(conversations.values()):
             for queue in conversations.values():

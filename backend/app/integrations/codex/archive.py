@@ -210,7 +210,8 @@ def _summary_jobs(engine, project_id, manager, count, job_for, stage, needed=Non
     phase_run = state['phases']
     results, timings = [None] * count, [None] * count
     completed = hits = 0
-    stage_label = 'Summarizing history batch' if stage == 'history' else 'Combining evidence'
+    stage_label = {'history': 'Summarizing history batch', 'conversation_overviews_v1':
+                   'Building reusable conversation overviews'}.get(stage, 'Combining evidence')
     progress.update(project_id, stage=stage_label, batch_phase=stage, batch_total=count,
                     batch_completed=0, cache_hits=0, batch_started_at=None)
 
@@ -532,6 +533,35 @@ def archive_history(engine, project_id, manager):
             ],
         }
     return evidence, coverage
+
+
+def conversation_overviews(engine, project_id, manager, *, bundle=None):
+    """Share source-linked summaries of stable conversation windows across reviews."""
+    from .knowledge_sources import build_windows, load_sources
+
+    if bundle is None:
+        bundle = load_sources(engine, project_id)
+    if bundle['project']['id'] != project_id:
+        raise CodexError('Conversation overview sources do not belong to this project.')
+    windows = build_windows(bundle)
+
+    def job(index):
+        window = windows[index]
+        sources = [{**source, 'share': True} if source.get('note_id') is not None else source
+                   for source in window['sources']]
+        return {'sources': sources, 'primary_ids': window['primary_ids'],
+                'context_ids': window['context_ids']}, sources, 12
+
+    results, reused, generated = _summary_jobs(
+        engine, project_id, manager, len(windows), job, 'conversation_overviews_v1')
+    coverage = bundle['coverage']
+    notes = [f'Conversation overview batches: {reused} reused from cache, {generated} generated.',
+             'Conversation overviews summarize indexed original messages and may omit details.',
+             *coverage['limitations']]
+    for state in ('unavailable', 'unprocessed', 'excluded'):
+        if coverage[state]:
+            notes.append(f'{len(set(coverage[state]))} conversation sources marked {state}.')
+    return [entry for items, _ in results for entry in items], notes
 
 
 def summarize_evidence(engine, project_id, manager, evidence):

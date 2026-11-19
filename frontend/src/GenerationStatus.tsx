@@ -279,6 +279,7 @@ export function GenerationStatus({
   const batchElapsed = Number.isFinite(batchStarted) ? Math.max(0, (Date.now() - batchStarted) / 1000) : null;
   const batchPhase = progress?.batch_phase === 'AI tagging' ? 'AI tagging'
     : progress?.batch_phase === 'history' ? 'Conversation summaries'
+    : progress?.batch_phase === 'conversation_overviews_v1' ? 'Conversation overviews'
     : progress?.batch_phase === 'reduction' ? 'Evidence reduction'
       : progress?.batch_phase === 'knowledge extraction' ? 'Knowledge extraction'
         : progress?.batch_phase === 'overview synthesis' ? 'Overview synthesis' : 'Batches';
