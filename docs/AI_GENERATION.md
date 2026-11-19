@@ -54,8 +54,11 @@ requests, try a different model or reasoning effort.
 
 ## Settings for quality and resource use
 
-**Conversation review depth** applies to generated reviews. Each review uses evidence
-suited to its purpose. Implementation Choices & Limits still uses code and configuration.
+### Conversation review depth
+
+Choose the depth in **Settings**. It controls how ProjectHub reviews conversation
+history, including how Knowledge batches or selects original messages.
+Implementation Choices & Limits uses code and configuration.
 
 | Profile | When to use it |
 | --- | --- |
@@ -79,6 +82,18 @@ conversations** in Knowledge to find material directly in the local index.
 Explicit model and reasoning settings take precedence. Quick can use low
 reasoning by default when the selected model supports it. Changing the profile,
 model or instructions can require fresh processing.
+
+### Scheme focus for next run
+
+Choose a focus in **Scheme** or **Generation → Scheme**. It controls what the
+diagrams emphasize. **Balanced** (default) combines code and discussions,
+**Code first** emphasizes the current implementation, and **Sessions first**
+emphasizes decisions, reasons, and proposed workflows.
+
+If Scheme is queued behind Knowledge, it keeps the focus selected when you
+started the run. [See how Scheme uses evidence.](SCHEME.md#generate-or-refresh)
+
+### Other settings
 
 **AI workers per job** limits parallel batches for each job. The default is 10.
 Set it to 1 to run batches in sequence, or lower it if you hit memory or account
