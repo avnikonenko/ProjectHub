@@ -183,6 +183,17 @@ function hasInspectionTiming(diagnostics?: SchemeDiagnostics | null): diagnostic
     .some(key => nonnegative(diagnostics[key as keyof SchemeDiagnostics]));
 }
 
+function formatBytes(bytes: number) {
+  const units = ['bytes', 'KB', 'MB', 'GB', 'TB', 'PB'];
+  let unit = 0;
+  let value = bytes;
+  while (value >= 1000 && unit < units.length - 1) {
+    value /= 1000;
+    unit++;
+  }
+  return `${value.toLocaleString('en-US', { maximumFractionDigits: 2 })} ${units[unit]}`;
+}
+
 export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }: { diagnostics?: SchemeDiagnostics | null; saved: boolean; embedded?: boolean }) {
   if (!hasInspectionTiming(diagnostics)) return null;
   const content = <>
@@ -190,8 +201,15 @@ export function SchemeInspectionTiming({ diagnostics, saved, embedded = false }:
     <dl>{([
       ['inspection_seconds', 'Inspection duration', 'seconds'], ['bytes_read', 'Bytes read', 'bytes'],
       ['cache_hits', 'Inspection cache hits', ''], ['package_chars', 'Evidence package size', 'characters'],
-    ] as const).filter(([key]) => nonnegative(diagnostics[key])).map(([key, title, unit]) =>
-      <div key={key}><dt>{title}</dt><dd>{diagnostics[key]} {unit}</dd></div>)}</dl>
+    ] as const).map(([key, title, unit]) => {
+      const value = diagnostics[key];
+      if (!nonnegative(value)) return null;
+      return <div key={key}><dt>{title}</dt>
+        {key === 'bytes_read'
+          ? <dd title={`${value.toLocaleString('en-US')} bytes`}>{formatBytes(value)}</dd>
+          : <dd>{unit ? `${value} ${unit}` : value}</dd>}
+      </div>;
+    })}</dl>
   </>;
   return embedded ? content : <details><summary>Repository inspection diagnostics</summary>{content}</details>;
 }

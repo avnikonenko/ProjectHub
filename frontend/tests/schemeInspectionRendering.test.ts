@@ -119,6 +119,16 @@ test('saved and historical accounting never falls through to latest inspection',
   assert.equal(renderToStaticMarkup(createElement(timing, { saved: true })), '');
 });
 
+test('inspection diagnostics scale byte units and keep evidence size in characters', () => {
+  for (const [bytes, formatted] of [[0, '0 bytes'], [356868, '356.87 KB'],
+    [2500000, '2.5 MB'], [1250000000, '1.25 GB']] as const) {
+    const html = renderToStaticMarkup(createElement(timing, { saved: true,
+      diagnostics: { bytes_read: bytes, package_chars: 98858 } }));
+    assert.ok(html.includes(`<dd title="${bytes.toLocaleString('en-US')} bytes">${formatted}</dd>`));
+    assert.match(html, /Evidence package size<\/dt><dd>98858 characters<\/dd>/);
+  }
+});
+
 test('separately disclosed current counts clearly differ from saved evidence', () => {
   const html = renderToStaticMarkup(createElement(details, { coverage, saved: false, current: true }));
   assert.match(html, /<summary>Current repository inspection<\/summary>/);
