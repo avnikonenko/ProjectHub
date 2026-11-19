@@ -21,7 +21,6 @@ export function SchemeKnowledgeContext({ context }: { context?: unknown }) {
       : status === 'absent' ? <p>No saved Knowledge was available when this Scheme was generated. Scheme does not require Knowledge.</p>
       : status === 'unavailable' ? <p>Saved Knowledge could not be read for this Scheme. See its saved coverage limitations.</p>
       : status === 'published' ? <>
-        <p>Knowledge context recorded with this saved Scheme.</p>
         <dl>
           <div><dt>Knowledge version</dt><dd>{publication ?? 'Not recorded'}</dd></div>
           <div><dt>Items available in this version</dt><dd>{count(metadata.available_items)}</dd></div>

@@ -360,6 +360,11 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       Generate Scheme
     </button>
     <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
+    <details className="brief-details">
+      <summary>How focus works</summary>
+      <p><strong>Balanced</strong> draws on code and discussions. <strong>Code first</strong> emphasizes how the current checkout works. <strong>Sessions first</strong> emphasizes decisions, reasons, and proposed workflows.</p>
+      <p>Dependencies come from the repository scan. When Knowledge triggers Scheme automatically, it uses Balanced.</p>
+    </details>
     {snapshot?.focus && <small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small>}
     {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}
     <ErrorBox error={error} />
@@ -370,8 +375,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       <summary>Scheme details</summary>
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       {snapshot && <SchemeKnowledgeContext context={snapshot.knowledge_context} />}
-      <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
-      <p className="brief-note">Focus changes which evidence leads the diagrams. The dependency inventory comes from the repository scan. Automatic Scheme generation after Knowledge uses Balanced.</p>
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
         disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
           selectingRevision.current = value;
