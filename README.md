@@ -49,9 +49,9 @@ to browse saved Knowledge and Q&A by topic.
 ### Install a wheel
 
 For most users, start with the [v0.2.4 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.4/projecthub_local-0.2.4-py3-none-any.whl).
-It runs on Linux with **Python 3.11+** and includes the interface and database
-migrations. Open a terminal in the download directory. Pick pipx or Conda and use
-the filename you downloaded. [Other releases](https://github.com/avnikonenko/ProjectHub/releases)
+ProjectHub runs on Linux, requires **Python 3.11+**, and includes a web interface.
+Open a terminal in the download directory. Pick pipx or Conda and use the
+filename you downloaded. [Other releases](https://github.com/avnikonenko/ProjectHub/releases)
 
 **With pipx** ([install pipx](https://pipx.pypa.io/latest/how-to/install-pipx.html) if needed)
 
