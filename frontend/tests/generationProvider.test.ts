@@ -8,6 +8,10 @@ test('Codex requests keep their existing shape and Claude requests identify the 
     { model: 'configured', effort: 'low' });
   assert.deepEqual(generationBody({ model: 'sonnet', effort: 'medium', provider: 'claude' }),
     { model: 'sonnet', effort: 'medium', provider: 'claude' });
+  assert.deepEqual(generationBody({ model: 'sonnet', effort: 'medium', provider: 'claude', aiProfile: 'registered:42' }),
+    { model: 'sonnet', effort: 'medium', provider: 'claude', ai_profile: 'registered:42' });
+  assert.deepEqual(generationBody({ model: '', effort: '', provider: 'codex', aiProfile: 'registered:42' }),
+    { model: null, effort: null });
 });
 
 test('generation disclosure names the selected provider and data destination', () => {

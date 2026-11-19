@@ -14,6 +14,7 @@ const defaults: Generation = { model: '', effort: '' };
 const storageKey = (base: string) => `projecthub.ai-settings:${base}`;
 const providerKey = (base: string) => `${storageKey(base)}:provider`;
 const claudeKey = (base: string) => `${storageKey(base)}:claude`;
+const claudeProfileKey = (base: string) => `${claudeKey(base)}:profile`;
 const accountChanges = new Map<string, Promise<ProjectCodexAccount>>();
 
 export function loadProjectGeneration(base: string, account: string | null): Generation {
@@ -56,6 +57,7 @@ export function updateProjectCodexAccount(base: string, account: string | null) 
 export function useProjectGenerationSettings(base: string) {
   const [provider, setProvider] = useState<GenerationProvider>('codex');
   const [claude, setClaude] = useState<Generation>(defaults);
+  const [claudeProfile, setClaudeProfile] = useState('');
   const [selection, setSelection] = useState<{ account: ProjectCodexAccount; generation: Generation } | null>(null);
   const [savingAccount, setSavingAccount] = useState(false);
   const [accountError, setAccountError] = useState('');
@@ -87,6 +89,7 @@ export function useProjectGenerationSettings(base: string) {
     workspace.current = owner;
     try {
       setProvider(localStorage.getItem(providerKey(base)) === 'claude' ? 'claude' : 'codex');
+      setClaudeProfile(localStorage.getItem(claudeProfileKey(base)) ?? '');
       const saved = JSON.parse(localStorage.getItem(claudeKey(base)) ?? 'null');
       if (typeof saved?.model === 'string' && typeof saved.effort === 'string')
         setClaude({ model: saved.model, effort: saved.effort });
@@ -138,10 +141,20 @@ export function useProjectGenerationSettings(base: string) {
     setProvider(selected);
   }
 
+  function changeClaudeProfile(selected: string) {
+    try {
+      if (selected) localStorage.setItem(claudeProfileKey(base), selected);
+      else localStorage.removeItem(claudeProfileKey(base));
+    } catch { /* Storage is optional. */ }
+    setClaudeProfile(selected);
+  }
+
   const codexGeneration = savingAccount ? defaults : selection?.generation ?? defaults;
   return {
-    generation: provider === 'claude' ? { ...claude, provider } : codexGeneration,
-    provider, changeProvider, codexGeneration,
+    generation: provider === 'claude'
+      ? { ...claude, provider, ...(claudeProfile ? { aiProfile: claudeProfile } : {}) }
+      : codexGeneration,
+    provider, changeProvider, codexGeneration, claudeProfile, changeClaudeProfile,
     accounts: selection?.account ?? null,
     savingAccount, accountError, changeAccount, changeGeneration,
     reloadAccount: () => {

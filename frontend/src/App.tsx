@@ -1302,25 +1302,25 @@ function AppSettings() {
           <ExtractionWorkersControl active={open} refreshVersion={aiSettingsVersion} />
           <button type="button" className="secondary"
             onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
-            Add Codex profile
+            Add AI profile
           </button>
-          <SettingsHelp title="About Codex profiles">
-            <p>Register an existing Codex sign-in directory, then choose the profile in project AI settings. ProjectHub checks its login without copying credentials.</p>
-          </SettingsHelp>
+          <AIProfileHelp />
           <Feedback tone="success">{profileMessage}</Feedback>
           <RestartControl active={open} onRestarted={() => setAISettingsVersion(version => version + 1)} />
         </div>
       </details>
       {addingProfile && <Form
-        title="Add Codex profile"
+        title="Add AI profile"
         fields={[
+          { name: 'provider', label: 'AI provider', type: 'select', options: Object.values(generationProviderLabels) },
           { name: 'name', label: 'Profile name', required: true, maxLength: 80 },
-          { name: 'directory', label: 'Codex directory', required: true, maxLength: 4096 },
+          { name: 'directory', label: 'Signed-in profile directory (absolute path)', required: true, maxLength: 4096 },
         ]}
         saveLabel="Add profile" savingLabel="Checking profile…"
         onClose={() => setAddingProfile(false)}
-        onSave={async ({ name, directory }) => {
-          const result = await post('/settings/codex-profiles', { name, directory });
+        onSave={async ({ provider, name, directory }) => {
+          const providerId = provider === generationProviderLabels.claude ? 'claude' : 'codex';
+          const result = await post('/settings/ai-profiles', { provider: providerId, name, directory });
           window.dispatchEvent(new Event('projecthub:profiles-changed'));
           const profileName = typeof result.label === 'string' ? result.label : 'Profile';
           setProfileMessage(result.is_launch
@@ -1332,6 +1332,56 @@ function AppSettings() {
       />}
     </>
   );
+}
+
+function AIProfileHelp() {
+  return <SettingsHelp title="About AI profiles">
+    <p>Use your existing Codex or Claude Code sign-in. To use another account, add its signed-in directory and select the profile in the project’s AI settings. ProjectHub checks the login without copying credentials.</p>
+    <p>To sign in to a separate directory, set <code>CODEX_HOME</code> before running <code>codex login</code>, or set <code>CLAUDE_CONFIG_DIR</code> before running <code>claude auth login</code>.</p>
+  </SettingsHelp>;
+}
+
+function ClaudeProfileControl({ active, selected, locked, onChange }: {
+  active: boolean;
+  selected: string;
+  locked: boolean;
+  onChange: (id: string) => void;
+}) {
+  type Profiles = { options: { id: string; label: string }[]; launch_label: string };
+  const [profiles, setProfiles] = useState<Profiles | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!active) return;
+    let request: AbortController;
+    function load() {
+      request?.abort();
+      const current = new AbortController();
+      request = current;
+      setError('');
+      api<Profiles>('/settings/ai-profiles?provider=claude', { signal: current.signal })
+        .then(result => { if (!current.signal.aborted) setProfiles(result); })
+        .catch((e: Error) => { if (!current.signal.aborted) setError(e.message); });
+    }
+    load();
+    window.addEventListener('projecthub:profiles-changed', load);
+    return () => {
+      request.abort();
+      window.removeEventListener('projecthub:profiles-changed', load);
+    };
+  }, [active]);
+  return <>
+    <label>
+      Claude Code profile for this project
+      <select value={selected} disabled={locked || (!profiles && !selected)}
+        onChange={event => onChange(event.target.value)}>
+        <option value="">{profiles?.launch_label ?? 'Claude Code launch account'}</option>
+        {selected && !profiles?.options.some(option => option.id === selected) &&
+          <option value={selected}>{profiles ? 'Unavailable profile' : 'Selected profile'}</option>}
+        {profiles?.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
+    <ErrorBox error={error} />
+  </>;
 }
 
 function GenerationSettings({ base, settings, providerLocked }: {
@@ -1406,7 +1456,8 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
   providerLocked: boolean;
   children: React.ReactNode;
 }) {
-  const { accounts, accountError, savingAccount, changeAccount, changeGeneration, generation, provider, changeProvider } = settings;
+  const { accounts, accountError, savingAccount, changeAccount, changeGeneration, generation, provider,
+    changeProvider, claudeProfile, changeClaudeProfile } = settings;
   type Model = { id: string; label: string; efforts: string[] };
   const [modelList, setModelList] = useState<{ key: string; models: Model[] } | null>(null);
   const [status, setStatus] = useState('');
@@ -1444,9 +1495,8 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
           <option value="claude">Claude Code</option>
         </select>
       </label>
-      <SettingsHelp title="About Claude Code generation">
-        <p>Install Claude Code and run <code>claude auth login</code> as the user who runs ProjectHub. Generation uses that signed-in account.</p>
-      </SettingsHelp>
+      {provider === 'claude' && <ClaudeProfileControl active={active} selected={claudeProfile}
+        locked={providerLocked} onChange={changeClaudeProfile} />}
       <label>
         Codex account for this project
         <select value={accounts?.account ?? ''} disabled={!accounts || savingAccount}
@@ -1459,6 +1509,7 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
         <p>Used for Codex generation and new Codex sessions. Existing sessions keep their original account.</p>
       </SettingsHelp>
       <ErrorBox error={accountError} />
+      <AIProfileHelp />
       <label>
         Model
         <select value={generation.model} disabled={!canChooseModel} onChange={(e) => changeGeneration({ model: e.target.value, effort: '' })}>

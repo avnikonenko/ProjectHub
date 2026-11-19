@@ -77,6 +77,55 @@ def test_global_profile_registration_works_without_a_project(tmp_path, monkeypat
     app.state.engine.dispose()
 
 
+def test_ai_profiles_register_and_route_only_to_their_provider(tmp_path, monkeypatch):
+    from importlib import import_module
+    from fastapi.testclient import TestClient
+    from backend.app.main import create_app
+
+    routes = import_module('backend.app.integrations.codex.router')
+    monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
+    monkeypatch.setattr(accounts, 'account_homes', lambda: {})
+    monkeypatch.setattr(routes, 'availability', lambda *_: {
+        'authenticated': True, 'app_server': True, 'error': '',
+    })
+    verified = []
+
+    def verify_account(selected):
+        verified.append(selected._directory)
+        return selected
+
+    monkeypatch.setattr(routes.ClaudeGenerationManager, 'verify_account', verify_account)
+    monkeypatch.setattr(routes, 'refresh_scheme', lambda engine, project_id, selected, **kwargs: {
+        'account': selected.generation_metadata['account'],
+    })
+    app = create_app(tmp_path / 'data')
+    with TestClient(app) as client:
+        profile_ids = {}
+        for provider in ('codex', 'claude'):
+            directory = tmp_path / provider
+            directory.mkdir()
+            response = client.post('/api/settings/ai-profiles', json={
+                'provider': provider, 'name': f'{provider} work', 'directory': str(directory),
+            })
+            assert response.status_code == 200, response.text
+            profile_ids[provider] = response.json()['registered_id']
+        for provider, identifier in profile_ids.items():
+            response = client.get('/api/settings/ai-profiles', params={'provider': provider})
+            assert response.json()['options'] == [{'id': identifier, 'label': f'{provider} work'}]
+        with pytest.raises(CodexError, match='unavailable'):
+            accounts.account_home(profile_ids['claude'], app.state.engine)
+
+        project = client.post('/api/projects', json={'name': 'Project'}).json()
+        url = f"/api/projects/{project['id']}/codex/scheme"
+        request = {'confirmed': True, 'provider': 'claude', 'ai_profile': profile_ids['claude']}
+        response = client.post(url, json=request)
+        assert response.status_code == 200, response.text
+        assert response.json()['account'] == 'claude work'
+        assert client.post(url, json={**request, 'ai_profile': profile_ids['codex']}).status_code == 503
+        assert client.post(url, json={**request, 'provider': 'codex'}).status_code == 422
+        assert verified == [str(tmp_path / 'claude')] * 2
+
+
 def test_registered_names_win_without_duplicate_options_or_identity_changes(tmp_path, monkeypatch):
     from backend.app.models import CodexProfile
 

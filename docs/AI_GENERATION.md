@@ -62,10 +62,20 @@ Implementation Choices & Limits, and tags. Selected generation evidence goes
 to Anthropic when Claude is selected. Codex still handles linked Codex sessions
 and their history.
 
-Install [Claude Code](https://code.claude.com/docs/en/cli-reference) on the machine
-running ProjectHub. Run `claude auth login` as the same OS user to let ProjectHub
-use that sign-in. ProjectHub disables Claude tools and session persistence for
-generation. Organization-managed Claude Code settings still apply.
+### AI profiles
+
+An AI profile lets ProjectHub use an existing CLI sign-in. In **Settings → Add AI
+profile**, choose Codex or Claude Code, give the profile a name, and enter the
+absolute path to its configuration directory. This is the directory configured by
+`CODEX_HOME` for Codex or `CLAUDE_CONFIG_DIR` for Claude Code. Install the relevant
+CLI and sign in with `codex login` or `claude auth login` using that directory and
+the same OS user who runs ProjectHub.
+
+Select a registered profile in the project's AI settings. The launch account is
+also available for each provider. Claude Code generation uses the selected Claude
+account, while linked Codex sessions continue to use Codex. ProjectHub disables
+Claude tools and session persistence for generation. Organization-managed Claude
+Code settings still apply.
 
 ### Conversation review depth
 

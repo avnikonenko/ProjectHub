@@ -54,13 +54,13 @@ def _claude_output_schema(value):
     return result
 
 
-def _environment():
+def _environment(directory=None):
     # Let Claude Code resolve its own signed-in account. Do not forward API
     # keys, provider overrides, proxies, or parent-agent settings.
     env = {'HOME': os.path.expanduser('~'), 'PATH': os.environ.get('PATH', os.defpath),
            'DISABLE_AUTOUPDATER': '1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
            'LANG': 'C.UTF-8'}
-    if config_dir := os.environ.get('CLAUDE_CONFIG_DIR'):
+    if config_dir := directory or os.environ.get('CLAUDE_CONFIG_DIR'):
         env['CLAUDE_CONFIG_DIR'] = config_dir
     return env
 
@@ -162,8 +162,11 @@ class ClaudeGenerationManager:
     account_key = 'Claude Code sign-in'
     extraction_generation_mode = 'claude-code-json-schema-v1'
 
-    def __init__(self, history_manager, model=None, effort=None):
+    def __init__(self, history_manager, model=None, effort=None, *, directory=None, account_label=None):
         self._history_manager = history_manager
+        self._directory = directory
+        if account_label:
+            self.account_key = account_label
         self.generation_model = model or 'sonnet'
         self.generation_effort = effort
         if self.generation_model not in _MODELS:
@@ -184,7 +187,8 @@ class ClaudeGenerationManager:
                 for model, efforts in _MODELS.items()]
 
     def for_generation(self, model, effort=None):
-        selected = type(self)(self._history_manager, model, effort)
+        selected = type(self)(self._history_manager, model, effort,
+                              directory=self._directory, account_label=self.account_key)
         selected.generation_account = self.generation_account
         return selected
 
@@ -197,7 +201,7 @@ class ClaudeGenerationManager:
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-auth-') as cwd:
             try:
                 with subprocess.Popen([binary, '--safe-mode', '--restricted', 'auth', 'status'],
-                                      cwd=cwd, env=_environment(), stdin=subprocess.PIPE,
+                                      cwd=cwd, env=_environment(self._directory), stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                       start_new_session=True) as process:
                     try:
@@ -257,7 +261,7 @@ class ClaudeGenerationManager:
         request_id = uuid4().hex
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-') as cwd:
             try:
-                with subprocess.Popen(command, cwd=cwd, env=_environment(),
+                with subprocess.Popen(command, cwd=cwd, env=_environment(self._directory),
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                       start_new_session=True) as process:
                     request = begin_model_request(request_id)

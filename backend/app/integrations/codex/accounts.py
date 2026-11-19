@@ -29,7 +29,7 @@ def account_home(key, engine=None):
     if engine is not None and re.fullmatch(r'registered:[1-9][0-9]*', key):
         with Session(engine) as db:
             row = db.get(CodexProfile, int(key.split(':')[1]))
-            home = Path(row.directory) if row else None
+            home = Path(row.directory) if row and row.provider == 'codex' else None
     else:
         home = account_homes().get(key)
     if home is None or not home.is_dir():
@@ -47,8 +47,26 @@ def profile_entries(engine=None):
     if engine is not None:
         with Session(engine) as db:
             entries.extend((f'registered:{row.id}', row.name, Path(row.directory))
-                           for row in db.scalars(select(CodexProfile).order_by(CodexProfile.id)))
+                           for row in db.scalars(select(CodexProfile).where(CodexProfile.provider == 'codex')
+                                                 .order_by(CodexProfile.id)))
     return entries
+
+
+def claude_profile_entries(engine):
+    with Session(engine) as db:
+        return [(f'registered:{row.id}', row.name, Path(row.directory)) for row in db.scalars(
+            select(CodexProfile).where(CodexProfile.provider == 'claude').order_by(CodexProfile.id))]
+
+
+def claude_profile(engine, key):
+    for identifier, label, path in claude_profile_entries(engine):
+        if identifier == key and path.is_dir():
+            return label, str(path.resolve())
+    raise CodexError('The selected Claude Code profile is unavailable.')
+
+
+def claude_launch_home():
+    return Path(os.environ.get('CLAUDE_CONFIG_DIR', Path.home() / '.claude')).expanduser().resolve()
 
 
 def account_options(engine=None, selected=None):

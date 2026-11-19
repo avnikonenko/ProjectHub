@@ -43,6 +43,7 @@ class CodexProfile(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
     directory: Mapped[str] = mapped_column(Text, unique=True)
+    provider: Mapped[str] = mapped_column(String(16), default='codex', server_default='codex')
 
 
 class ProjectAIInstructions(Base):

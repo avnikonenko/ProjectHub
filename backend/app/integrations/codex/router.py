@@ -13,7 +13,8 @@ from .protocol import CodexError
 from .claude_generation import ClaudeGenerationManager
 from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions, shared_recommendations, use_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
-from .accounts import account_options, account_home, launch_home, launch_label, profile_entries, validate_profile_directory
+from .accounts import (account_options, account_home, launch_home, launch_label, profile_entries,
+                       validate_profile_directory, claude_launch_home, claude_profile, claude_profile_entries)
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import SchemeFocus, read_scheme, refresh_scheme, scheme_snapshot_for_display
@@ -109,6 +110,13 @@ GenerationProvider = Literal['codex', 'claude']
 class GenerationInput(ModelInput):
     confirmed: bool = False
     provider: GenerationProvider = 'codex'
+    ai_profile: str | None = Field(default=None, max_length=40, pattern=r'^registered:[1-9][0-9]*$')
+
+    @model_validator(mode='after')
+    def check_profile_provider(self):
+        if self.ai_profile is not None and self.provider != 'claude':
+            raise ValueError('Choose Codex profiles through the project Codex account setting.')
+        return self
 
 
 class SchemeGenerationInput(GenerationInput):
@@ -174,7 +182,9 @@ def review_profile():
 
 def select_generation_manager(manager, body):
     if body.provider == 'claude':
-        return ClaudeGenerationManager(manager, body.model, body.effort).verify_account()
+        label, directory = claude_profile(manager.engine, body.ai_profile) if body.ai_profile else (None, None)
+        return ClaudeGenerationManager(manager, body.model, body.effort,
+                                       directory=directory, account_label=label).verify_account()
     choose = getattr(manager, 'for_generation', None)
     if body.model or body.effort or callable(choose):
         return manager.for_generation(body.model, body.effort)
@@ -271,35 +281,63 @@ class AddAccountInput(Input):
     directory: str = Field(min_length=1, max_length=4096)
 
 
-def register_profile(body: AddAccountInput, db: DB):
+class AddAIProfileInput(AddAccountInput):
+    provider: GenerationProvider
+
+
+def register_profile(body: AddAccountInput, db: DB, *, provider: GenerationProvider = 'codex'):
+    name_for_provider = 'Claude Code' if provider == 'claude' else 'Codex'
     try:
         directory = validate_profile_directory(body.directory)
     except (CodexError, OSError, RuntimeError) as exc:
-        raise HTTPException(422, 'Choose an existing absolute Codex directory.') from exc
+        raise HTTPException(422, f'Choose an existing absolute {name_for_provider} directory.') from exc
     db.rollback()
-    for _, name, path in profile_entries(db.get_bind()):
+    engine = db.get_bind()
+    registered = claude_profile_entries(engine) if provider == 'claude' else profile_entries(engine)
+    default_directory = claude_launch_home() if provider == 'claude' else launch_home()
+    for _, name, path in registered:
         if path.is_dir() and path.resolve() == Path(directory):
             raise HTTPException(409, f'Profile already available as “{name}”. Choose it in project AI settings.')
-    if Path(directory) == launch_home():
+    if Path(directory) == default_directory:
         raise HTTPException(409, 'This directory is already the ProjectHub launch account. Choose it in project AI settings.')
-    capability = availability(directory)
-    if not capability['authenticated'] or not capability['app_server']:
-        raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
-    stmt = insert(CodexProfile).values(name=body.name, directory=directory)
+    if provider == 'claude':
+        try:
+            ClaudeGenerationManager(None, directory=directory).verify_account()
+        except CodexError as exc:
+            raise HTTPException(422, str(exc)) from exc
+    else:
+        capability = availability(directory)
+        if not capability['authenticated'] or not capability['app_server']:
+            raise HTTPException(422, capability['error'] or 'This directory needs an existing Codex ChatGPT login.')
+    stmt = insert(CodexProfile).values(name=body.name, directory=directory, provider=provider)
     result = db.execute(stmt.on_conflict_do_nothing(index_elements=[CodexProfile.directory]))
     added = result.rowcount == 1
     if not added:
         db.rollback()
-        raise HTTPException(409, 'This Codex directory is already registered. Choose the existing profile in project AI settings.')
+        raise HTTPException(409, 'This directory is already registered. Choose an existing profile in project AI settings.')
     db.commit()
     saved = db.scalar(select(CodexProfile).where(CodexProfile.directory == directory))
     return {'registered_id': f'registered:{saved.id}', 'added': added,
-            'label': saved.name, 'is_launch': Path(directory) == launch_home()}
+            'label': saved.name, 'is_launch': Path(directory) == default_directory}
 
 
 @settings_router.post('/codex-profiles')
 def add_global_account(body: AddAccountInput, db: DB):
     return register_profile(body, db)
+
+
+@settings_router.post('/ai-profiles')
+def add_ai_profile(body: AddAIProfileInput, db: DB):
+    return register_profile(body, db, provider=body.provider)
+
+
+@settings_router.get('/ai-profiles')
+def list_ai_profiles(db: DB, provider: GenerationProvider = 'codex'):
+    engine = db.get_bind()
+    if provider == 'codex':
+        return {'options': account_options(engine), 'launch_label': launch_label(engine)}
+    return {'options': [{'id': identifier, 'label': label} for identifier, label, path in claude_profile_entries(engine)
+                        if path.is_dir()], 'launch_label': 'Claude Code launch account'}
 
 
 @settings_router.get('/ai')

@@ -23,13 +23,15 @@ def fake_cli(tmp_path, monkeypatch):
     return install
 
 
-def test_claude_uses_only_supplied_data_and_validates_result(fake_cli, monkeypatch):
+@pytest.mark.parametrize('directory', [None, '/selected-claude-profile'])
+def test_claude_uses_only_supplied_data_and_validates_result(fake_cli, monkeypatch, directory):
     monkeypatch.setenv('HOME', '/signed-in-user')
     monkeypatch.setenv('CLAUDE_CONFIG_DIR', '/configured-claude-profile')
     monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'must-not-leak')
     monkeypatch.setenv('OPENAI_API_KEY', 'must-not-leak')
     monkeypatch.setenv('CLAUDECODE', 'must-not-leak')
+    expected_directory = directory or '/configured-claude-profile'
     fake_cli('''import json, os, sys
 args = sys.argv[1:]
 assert '--bare' not in args and '--no-session-persistence' in args
@@ -47,7 +49,7 @@ assert json.loads(args[args.index('--settings') + 1]) == {'disableAllHooks': Tru
 assert json.loads(args[args.index('--mcp-config') + 1]) == {'mcpServers': {}}
 assert json.loads(args[args.index('--json-schema') + 1]) == {'type': 'object', 'additionalProperties': False}
 assert os.environ['HOME'] == '/signed-in-user'
-assert os.environ['CLAUDE_CONFIG_DIR'] == '/configured-claude-profile'
+assert os.environ['CLAUDE_CONFIG_DIR'] == ''' + repr(expected_directory) + '''
 assert os.getcwd() != os.environ['HOME']
 assert not set(os.environ) & {'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'CLAUDECODE'}
 assert 'Selected evidence' not in args and 'fixture-key' not in args
@@ -56,7 +58,7 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
                   'usage': {'input_tokens': 10, 'output_tokens': 5,
                             'cache_read_input_tokens': 4, 'cache_creation_input_tokens': 1}}))
 ''')
-    manager = claude_generation.ClaudeGenerationManager(None, 'opus', 'medium')
+    manager = claude_generation.ClaudeGenerationManager(None, 'opus', 'medium', directory=directory)
     metrics = GenerationMetrics()
     evidence = 'Selected evidence' * 16_000  # Requires multiple stdin writes.
     with collect_generation_metrics(metrics):
@@ -151,10 +153,13 @@ def test_claude_missing_cli_reports_installation_error(monkeypatch):
 
 
 def test_claude_verifies_account_and_copies_only_hashed_identity(fake_cli):
+    directory = '/selected-claude-profile'
+
     def select(email, method='claude.ai'):
         payload = {'loggedIn': True, 'apiProvider': 'firstParty', 'authMethod': method, 'email': email}
-        fake_cli(f'import sys\nassert sys.argv[-2:] == ["auth", "status"]\nprint({json.dumps(payload)!r})\n')
-        return claude_generation.ClaudeGenerationManager(None).verify_account()
+        fake_cli(f'import os, sys\nassert sys.argv[-2:] == ["auth", "status"]\n'
+                 f'assert os.environ["CLAUDE_CONFIG_DIR"] == {directory!r}\nprint({json.dumps(payload)!r})\n')
+        return claude_generation.ClaudeGenerationManager(None, directory=directory).verify_account()
 
     first = select('fixture-one@example.invalid')
     second = select('fixture-two@example.invalid')
@@ -162,5 +167,6 @@ def test_claude_verifies_account_and_copies_only_hashed_identity(fake_cli):
     assert 'example.invalid' not in first.generation_account
     with first.independent_generation() as worker:
         assert worker.generation_account == first.generation_account
+        assert worker._directory == directory
     with pytest.raises(CodexError, match='requires a signed-in account'):
         select('fixture-one@example.invalid', 'api_key')
