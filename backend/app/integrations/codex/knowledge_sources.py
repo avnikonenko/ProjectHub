@@ -18,6 +18,7 @@ MAX_SOURCE_CHARS = 2_000_000
 MAX_DOCUMENT_CHARS = 500_000
 MAX_MESSAGES = 2000
 _BALANCED_MAX_MESSAGES = 4000
+_BALANCED_TEXT_HEADROOM = 250_000
 _BALANCED_INTAKE = 'interleaved-v1'
 FRAGMENT_CHARS = 6000
 MAX_PARENTS = 64
@@ -142,6 +143,18 @@ def prior_context_ids(snapshot):
             for ref in item.get('context_dependencies', [])}
 
 
+def needs_large_history_intake(engine, project_id):
+    """Choose a broad intake when the indexed originals exceed the legacy budget."""
+    with Session(engine) as db:
+        turn_chars = db.scalar(text('SELECT coalesce(sum(length(h.messages)),0) '
+            'FROM codex_history_turns h JOIN codex_sessions s '
+            'ON s.id=h.session_id AND s.project_id=h.project_id '
+            'WHERE h.project_id=:pid AND s.is_linked AND h.status<>\'inProgress\''), {'pid': project_id})
+        document_chars = db.scalar(text(f'SELECT coalesce(sum(length(content)),0) '
+            f"FROM notes WHERE project_id=:pid AND kind='document' AND {_SHARE_SQL}"), {'pid': project_id})
+    return turn_chars + document_chars > MAX_SOURCE_CHARS
+
+
 def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, context_ids=()):
     """Return a bounded source snapshot; cached original text remains primary evidence.
 
@@ -152,6 +165,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
     if balanced is None:
         balanced = (previous_manifest or {}).get('intake_policy') == _BALANCED_INTAKE
     message_limit = _BALANCED_MAX_MESSAGES if balanced else MAX_MESSAGES
+    text_limit = MAX_SOURCE_CHARS + (_BALANCED_TEXT_HEADROOM if balanced else 0)
     context_ids = set(context_ids)
     filtered_context = {}
     coverage = {key: [] for key in ('processed', 'unprocessed', 'unavailable', 'excluded', 'limitations')}
@@ -169,7 +183,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
         if message_count >= message_limit:
             omitted('global_message_budget_messages')
             return False
-        if chars + len(body) > MAX_SOURCE_CHARS:
+        if chars + len(body) > text_limit:
             omitted('global_text_budget_messages')
             return False
         message_count += 1
@@ -233,7 +247,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
                           'oversized_turns' if row['size'] > MAX_DOCUMENT_CHARS else
                           'global_message_budget_turns' if message_count >= message_limit else
                           'global_text_budget_turns' if not (balanced and row['has_tool_marker'])
-                          and chars + row['size'] > MAX_SOURCE_CHARS else None)
+                          and chars + row['size'] > text_limit else None)
                 if reason:
                     omitted(reason)
                     coverage['unprocessed'].append(parent)
@@ -304,7 +318,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
             entry = {'source_key': parent, 'note_id': note['id'], 'url': note['reference'],
                      'availability': 'available', 'revision': None}
             entries.append(entry)
-            if note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > MAX_SOURCE_CHARS:
+            if note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > text_limit:
                 omitted('oversized_documents' if note['size'] > MAX_DOCUMENT_CHARS else 'global_text_budget_documents')
                 entry['availability'] = 'excluded'
                 entry['revision'] = _hash(['excluded_by_limit', note['size']])

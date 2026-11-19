@@ -293,22 +293,29 @@ def refresh_brief(engine, project_id, manager):
             transport_scope.enter_context(session())
         from ...project_evidence import collect_project_evidence
         snapshot = collect_project_evidence(engine, project_id)
-        economy = profile.id == 'economy'
+        from .knowledge_sources import needs_large_history_intake
+        large_history = needs_large_history_intake(engine, project_id)
+        mapped_history = profile.id in ('balanced', 'economy') or large_history
         with Session(engine) as db:
             project = db.get(Project, project_id)
             if project is None:
                 raise CodexError('Project not found.')
-            records = list(recorded_evidence(db, project, exclude_shared=economy))
+            records = list(recorded_evidence(db, project, exclude_shared=mapped_history))
             name = project.name
             repository_path = project.repository_path
             previous = comparison_baseline(read_brief(db, project_id))
+            if profile.id == 'balanced' or large_history:
+                from .scheme_knowledge import collect_published_knowledge
+                knowledge_context = collect_published_knowledge(db, project_id)
+            else:
+                knowledge_context = None
         for source in snapshot['sources']:
             if (source.get('classification') == 'verified' or source['id'] == 'project:metadata'
                     or str(source['id']).startswith('task:')):
                 records.append({'text': source['text'], 'sources': [source]})
         validation_source = {'id': 'evidence:validation', 'label': 'Available validation evidence',
                              'text': snapshot['validation'], 'classification': 'verified'}
-        read_history = conversation_overviews if economy else archive_history
+        read_history = conversation_overviews if mapped_history else archive_history
         history, coverage = read_history(engine, project_id, manager)
         progress.update(project_id, stage='Summarizing project notes and decisions')
         recorded = summarize_evidence(engine, project_id, manager, records)
@@ -342,7 +349,22 @@ def refresh_brief(engine, project_id, manager):
                 source_groups[key] = [source]
                 sources.append({'id': key, 'text': source['text'], 'kind': 'repository_code',
                                 'origins': [source['label']], 'classification': 'inferred',
-                                'origin_classifications': ['verified']})
+                                'origin_classifications': ['verified'],
+                                **{field: source[field] for field in ('repository_role', 'referenced_by') if field in source}})
+        if knowledge_context:
+            indexed = {source['id']: source for source in knowledge_context['sources']}
+            for source in knowledge_context['sources']:
+                if (not source.get('knowledge_item_id') or source.get('evidence_partial')
+                        or source.get('evidence_availability') != 'available'):
+                    continue
+                refs = [indexed[identifier] for identifier in source['supporting_source_ids']]
+                if not refs:
+                    continue
+                source_groups[source['id']] = [{**ref, 'classification': 'reported'} for ref in refs]
+                sources.append({'id': source['id'], 'kind': 'published_knowledge',
+                                'classification': 'reported', 'text': source['text'],
+                                'original_excerpts': [{'speaker': ref['role'], 'text': ref['text']} for ref in refs]})
+            coverage.extend(knowledge_context['limitations'])
         # Recent original excerpts can correct older compressed summaries.
         recent = [source for source in snapshot['sources'] if source.get('recent')][:8]
         for index, source in enumerate(recent, 1):
@@ -370,6 +392,15 @@ def refresh_brief(engine, project_id, manager):
                   'Read the supplied code excerpts to explain responsibilities, data flow and implemented paths; '
                   'the existence of code is not proof of correct runtime behavior. Use code to check structure, '
                   'and original discussion excerpts to recover details, but resolve conflicts by supported chronology. '
+                  'Prioritize the modules that implement the main runtime flow and the project-specific '
+                  'constraints that change their behavior. Give a concrete description of what they drive '
+                  'or control. Skip routine maintenance, incidental experiments and tool output when they '
+                  'do not change how someone should understand or continue the project. '
+                  'Documented entrypoints and their referenced modules are strong leads for the main flow. '
+                  'Check the excerpts for actual calls and cite the files that support the flow you describe. '
+                  'Published Knowledge provides saved interpretations and original excerpts. Use those '
+                  'excerpts to check saved choices that matter to the runtime workflow. An old design '
+                  'record does not establish current behavior or override current repository evidence. '
                   'Saved indexed excerpts may predate newly read live summaries; do not treat them as newer '
                   'solely because they are original or labeled recent. '
                   'Explain the application rather than assessing whether the available evidence is sufficient. '
@@ -461,7 +492,7 @@ def refresh_brief(engine, project_id, manager):
                            'input_chars': sum(len(source.get('text', '')) for source in sources),
                            'cited_source_count': len(cited)}
         from .evidence_coverage import repository_coverage
-        run_diagnostics['evidence_coverage'] = {
+        run_diagnostics['evidence_coverage'] = {**run_diagnostics.get('evidence_coverage', {}),
             'repository': repository_coverage(repository_code) if repository_path else {
                 'status': 'not_linked', 'notes': ['No repository was linked for this analysis.']}}
         progress.record_diagnostics(project_id, run_diagnostics)

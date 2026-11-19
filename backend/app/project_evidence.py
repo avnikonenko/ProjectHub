@@ -1,5 +1,5 @@
 """Bounded local project evidence; this module never invokes AI or project code."""
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import fnmatch
 import hashlib
 import json
@@ -237,7 +237,68 @@ def _code_order(relative):
     return (path.stem.lower() not in entrypoints, len(path.parts), relative.casefold(), relative)
 
 
-def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measurements=None):
+_DOCUMENTED_PYTHON = re.compile(r'(?<![\w./-])python(?:3(?:\.\d+)?)?\s+((?:\./)?[\w./-]+\.py)(?![\w.-])')
+_PYTHON_IMPORT_LINE = re.compile(r'^[ \t]*from[ \t]+([.\w]+)[ \t]+import[ \t]+([^\n#]*)|^[ \t]*import[ \t]+([^\n#]*)', re.M)
+_PYTHON_ATTR_CALL = re.compile(r'\b([a-zA-Z_]\w*)\s*\.\s*[a-zA-Z_]\w*\s*\(')
+
+
+def _code_hints(relative, decoded, available):
+    """Find documented commands and local imports in already inspected text."""
+    if _code_category(relative) == 'docs':
+        parent = PurePosixPath(relative).parent
+        names = (match[1].removeprefix('./') for match in _DOCUMENTED_PYTHON.finditer(decoded))
+        return list(dict.fromkeys(candidate for name in names for candidate in (name, (parent / name).as_posix())
+                                  if candidate in available)), set()
+    path = PurePosixPath(relative)
+    if path.suffix.lower() != '.py':
+        return [], set()
+
+    imports_by_binding = set()
+    for match in _PYTHON_IMPORT_LINE.finditer(decoded):
+        module, names, imports = match.groups()
+        if imports is not None:
+            references = [(name, binding or name.split('.')[0]) for name, binding in re.findall(
+                r'(?:^|,)\s*(\w+(?:\.\w+)*)(?:\s+as\s+(\w+))?', imports)]
+        else:
+            base = module.strip('.')
+            references = [(base, base.split('.')[0])] if base else []
+            references.extend(('.'.join(filter(None, (base, name))), binding or name)
+                              for name, binding in re.findall(r'(?:^|[,(])\s*(\w+)(?:\s+as\s+(\w+))?', names))
+        for name, binding in references:
+            dependency = PurePosixPath(*name.split('.')).with_suffix('.py')
+            if module and module.startswith('.'):
+                parents = len(module) - len(module.lstrip('.'))
+                roots = (path.parents[parents - 1],) if parents <= len(path.parents) else ()
+            else:
+                roots = (path.parent, PurePosixPath('.'))
+            for root in roots:
+                candidate = (root / dependency).as_posix()
+                if candidate in available and candidate != relative:
+                    imports_by_binding.add((binding, candidate))
+                    break
+    # Prefer modules used by the inspected implementation over incidental imports.
+    usage = Counter(re.findall(r'\b([a-zA-Z_]\w*)\s*\.', decoded)) if imports_by_binding else {}
+    ranking = Counter()
+    for binding, candidate in imports_by_binding:
+        ranking[candidate] += usage.get(binding, 0)
+    bindings = {binding for binding, _ in imports_by_binding}
+    calls, flow_lines = Counter(), set()
+    if bindings:
+        for index, line in enumerate(decoded.splitlines()):
+            if line.lstrip().startswith(('#', 'import ', 'from ')):
+                continue
+            match = next((match for match in _PYTHON_ATTR_CALL.finditer(line)
+                          if match[1] in bindings and calls[match[1]] < 2), None)
+            if match:
+                calls[match[1]] += 1
+                flow_lines.add(index)
+            if len(flow_lines) == 8:
+                break
+    return sorted(ranking, key=lambda name: (-ranking[name], _code_order(name))), flow_lines
+
+
+def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measurements=None,
+                  code_paths=None, hints=None):
     parts = PurePosixPath(relative).parts
     if not parts or any(part in ('..', '/', '') for part in parts):
         raise OSError('Unsafe relative path')
@@ -276,6 +337,7 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measur
         reasons = ['byte_limit'] if len(data) < metadata.st_size else []
         if decoding_trimmed:
             reasons.append('utf8_boundary')
+        targets, flow_lines = _code_hints(relative, decoded, code_paths) if code_paths is not None else ([], set())
 
         def finish(excerpt, omissions):
             # The initial size is only meaningful for these bytes if the file
@@ -292,6 +354,9 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measur
                                     local_read_complete=len(data) == metadata.st_size,
                                     excerpt_complete=not omissions,
                                     omission_reasons=omissions)
+            if hints is not None:
+                for target in targets:
+                    hints.setdefault(target, set()).add(relative)
             return excerpt, bool(omissions)
 
         if not structural:
@@ -313,19 +378,22 @@ def _code_excerpt(root_fd, relative, maximum, deadline, structural=False, measur
                 # Multiline navigation declarations need their item labels.
                 if re.search(r'\b(?:tabs|routes)\s*=', line):
                     selected.update(range(number, min(number + 10, len(lines))))
-        rendered, used = [], 0
-        for number in sorted(selected):
-            line = f'L{number + 1}: {lines[number][:200]}'
-            if used + len(line) + 1 > maximum:
-                break
-            rendered.append(line)
-            used += len(line) + 1
-        excerpt = '\n'.join(rendered)
+        # Reserve a bounded share for actual calls to locally resolved modules.
+        # Keep these original source lines in chronological order with signatures.
+        rendered, used = {}, 0
+        for candidates, ceiling in ((flow_lines - selected, maximum // 3), (selected, maximum)):
+            for number in sorted(candidates):
+                line = f'L{number + 1}: {lines[number][:200]}'
+                if used + len(line) + 1 > ceiling:
+                    continue
+                rendered[number] = line
+                used += len(line) + 1
+        excerpt = '\n'.join(rendered[number] for number in sorted(rendered))
         if len(selected) < len(lines):
             reasons.append('declaration_selection')
-        if len(rendered) < len(selected):
+        if (selected | flow_lines) - rendered.keys():
             reasons.append('excerpt_limit')
-        if any(len(lines[number]) > 200 for number in selected):
+        if any(len(lines[number]) > 200 for number in selected | flow_lines):
             reasons.append('line_width_limit')
         return finish(excerpt, reasons)
     finally:
@@ -401,14 +469,28 @@ def collect_repository_code(repository_path):
                     code.append(files.pop(0))
                     if len(code) == 7:
                         break
-        candidates = (groups['docs'][:2] + groups['manifest'][:1]
-                      + code + groups['tests'][:2])
-        limited = len(eligible) > len(candidates)
+        code_paths = set(groups['code'])
+        hints = {}
+
+        def candidates():
+            yield from groups['docs'][:2]
+            yield from groups['manifest'][:1]
+            chosen = set()
+            for _ in range(7):
+                target = next((name for name in (*hints, *code) if name not in chosen), None)
+                if target is None:
+                    break
+                chosen.add(target)
+                yield target
+            yield from groups['tests'][:2]
+
         attempted, partial, failed, empty, file_details = set(), [], [], [], []
         root_fd = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
             remaining = _CODE_CHAR_LIMIT
-            for relative in candidates[:_CODE_FILE_LIMIT]:
+            for index, relative in enumerate(candidates()):
+                if index == _CODE_FILE_LIMIT:
+                    break
                 header = f'Repository file: {relative}\nObserved source excerpt; this does not prove functionality or test success.\n'
                 maximum = min(_CODE_FILE_CHARS, remaining) - len(header)
                 if maximum <= 0:
@@ -419,7 +501,7 @@ def collect_repository_code(repository_path):
                 try:
                     excerpt, clipped = _code_excerpt(root_fd, relative, maximum, deadline,
                                                       structural=_code_category(relative) in ('code', 'tests'),
-                                                      measurements=measured_file)
+                                                      measurements=measured_file, code_paths=code_paths, hints=hints)
                 except OSError:
                     skipped += 1
                     failed.append(relative)
@@ -437,6 +519,13 @@ def collect_repository_code(repository_path):
                 remaining -= len(value)
         finally:
             os.close(root_fd)
+        for source in sources:
+            origins = hints.get(source['path'])
+            if origins:
+                source['repository_role'] = ('documented_python_entrypoint' if any(
+                    _code_category(origin) == 'docs' for origin in origins) else 'referenced_python_module')
+                source['referenced_by'] = sorted(origins)
+        limited |= len(eligible) > len(attempted)
         path_groups = {'read': [source['path'] for source in sources], 'partial': partial,
                        'not_selected': sorted(eligible - attempted), 'failed': failed, 'empty': empty}
         inspection.update(status='available', read_files=len(sources), ai_input_files=len(sources),

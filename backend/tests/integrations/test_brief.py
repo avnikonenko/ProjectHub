@@ -6,7 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
+from backend.app.generation_profiles import get_generation_profile
 from backend.app.integrations.codex.brief import SECTION_NAMES, read_brief, refresh_brief, note_evidence
+from backend.app.integrations.codex.knowledge_profiles import use_knowledge_profile
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import CodexSession, Decision, GenerationRevision, Project, Note
 
@@ -101,6 +103,57 @@ def project_db(tmp_path):
         db.commit()
     yield engine
     engine.dispose()
+
+
+@pytest.mark.parametrize('profile_name', ['balanced', 'quality'])
+def test_large_overview_uses_indexed_discussions_code_and_supported_choices(project_db, monkeypatch, profile_name):
+    from backend.app import project_evidence
+    from backend.app.integrations.codex import scheme_knowledge
+    from backend.app.integrations.codex import knowledge_sources
+    from backend.tests.integrations.test_knowledge_sources import insert_turn
+
+    with Session(project_db) as db:
+        db.get(Project, 1).repository_path = '/example'
+        insert_turn(db, messages=[{'role': 'assistant', 'text': 'Conclusion from saved history'}])
+        db.commit()
+    monkeypatch.setattr(knowledge_sources, 'MAX_SOURCE_CHARS', 24)
+    repository_source = {'id': 'repository:code:core.py', 'label': 'core.py',
+                         'text': 'def run_main_workflow(): ...', 'path': 'core.py', 'classification': 'verified',
+                         'repository_role': 'documented_python_entrypoint', 'referenced_by': ['README.md']}
+    monkeypatch.setattr(project_evidence, 'collect_repository_code', lambda _: {
+        'sources': [repository_source], 'coverage': [],
+    })
+    original = {'id': 'original-choice', 'role': 'user', 'label': 'Design discussion',
+                'text': 'Run recovery only when enabled.'}
+    item = {'id': 'saved-choice', 'knowledge_item_id': 'choice', 'evidence_availability': 'available',
+            'text': 'Recovery is opt-in.', 'supporting_source_ids': [original['id']]}
+    monkeypatch.setattr(scheme_knowledge, 'collect_published_knowledge', lambda *_: {
+        'sources': [item, original, {**item, 'id': 'stale-choice', 'evidence_availability': 'stale'}],
+        'limitations': [],
+    })
+
+    class BalancedCodex(FakeCodex):
+        def generate_brief(self, prompt, schema):
+            result = json.loads(super().generate_brief(prompt, schema))
+            if 'sections' in result:
+                records = {source['id']: source for source in self.input['sources']}
+                assert records['saved-choice']['original_excerpts'] == [
+                    {'speaker': 'user', 'text': original['text']},
+                ]
+                assert 'stale-choice' not in records
+                assert records['code:1']['text'] == repository_source['text']
+                assert records['code:1']['repository_role'] == 'documented_python_entrypoint'
+                assert any(source['text'] == 'Conclusion from saved history' for source in records.values())
+                result['sections']['architecture'][0]['source_ids'] = ['code:1', 'saved-choice']
+            return json.dumps(result)
+
+    codex = BalancedCodex()
+    codex.closed = True
+    with use_knowledge_profile(get_generation_profile(profile_name)):
+        brief = refresh_brief(project_db, 1, codex)
+    assert codex.reads == []
+    assert brief['sections']['architecture'][0]['source_ids'] == [repository_source['id'], original['id']]
+    assert brief['diagnostics']['evidence_coverage']['conversations']['processed_sources'] == 1
 
 
 def test_brief_collects_multiple_scoped_sessions_and_keeps_decision_candidates_separate(project_db):

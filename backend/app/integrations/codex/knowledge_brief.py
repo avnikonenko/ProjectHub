@@ -17,7 +17,7 @@ from . import progress
 from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, SECTION_ROLE_GUIDANCE, generation_lock, generation_metadata,
                     read_brief, resolve_citations, validate_sections)
 from .knowledge import build_candidate, read_knowledge
-from .knowledge_sources import load_sources, prior_context_ids
+from .knowledge_sources import load_sources, needs_large_history_intake, prior_context_ids
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview, stage_knowledge_preview
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
@@ -558,8 +558,9 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
                 baseline_brief = read_brief(db, project_id)
             previous_manifest = (previous or {}).get('source_manifest')
             intake = {}
-            if profile.id == 'balanced' or (previous_manifest or {}).get('intake_policy'):
-                intake = {'balanced': profile.id == 'balanced', 'context_ids': prior_context_ids(previous)}
+            broad_intake = profile.id == 'balanced' or needs_large_history_intake(engine, project_id)
+            if broad_intake or (previous_manifest or {}).get('intake_policy'):
+                intake = {'balanced': broad_intake, 'context_ids': prior_context_ids(previous)}
             bundle = load_sources(engine, project_id, previous_manifest=previous_manifest, **intake)
             progress.update(project_id, stage='Extracting source-linked knowledge')
             candidate = build_candidate(engine, project_id, manager, bundle, previous=previous)

@@ -361,6 +361,33 @@ def test_code_collection_includes_deep_route_declarations_instead_of_only_import
     assert len(indexed['main.py']) <= 2000
 
 
+def test_code_collection_prioritizes_documented_runner_and_its_local_calls(tmp_path):
+    repo = repository(tmp_path)
+    for number in range(9):
+        (repo / f'aaa_{number}.py').write_text(f'def auxiliary_{number}(): pass\n')
+    # The command is within the bounded local read but beyond the README excerpt.
+    (repo / 'README.md').write_text('Project background.\n' * 160 + '\n```sh\npython runner.py\n```\n')
+    (repo / 'runner.py').write_text(
+        'import genetics as evolution\n\n' + '# setup details\n' * 20
+        + 'def run():\n    return evolution.evolve_population()\n')
+    (repo / 'genetics.py').write_text('def evolve_population():\n    return []\n')
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-m', 'Document workflow entrypoint and implementation')
+
+    result = evidence.collect_repository_code(str(repo))
+    by_path = {source['path']: source for source in result['sources']}
+    assert [path for path in by_path if path.endswith('.py')][:2] == ['runner.py', 'genetics.py']
+    assert 'return evolution.evolve_population()' in by_path['runner.py']['text']
+    assert 'def evolve_population()' in by_path['genetics.py']['text']
+    assert by_path['runner.py']['repository_role'] == 'documented_python_entrypoint'
+    assert by_path['runner.py']['referenced_by'] == ['README.md']
+    assert by_path['genetics.py']['repository_role'] == 'referenced_python_module'
+    assert by_path['genetics.py']['referenced_by'] == ['runner.py']
+    assert len(by_path) <= 12
+    assert sum(len(source['text']) for source in by_path.values()) <= 24_000
+    assert result['inspection']['ai_input_files'] == len(by_path)
+
+
 def test_not_planned_tasks_do_not_enter_analysis_evidence(env):
     with Session(env) as db:
         db.add(Task(project_id=1, title='Abandoned idea', status='not_planned'))

@@ -534,8 +534,9 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
-        economy = profile.id == 'economy'
-        read_history = conversation_overviews if economy else archive_history
+        from .knowledge_sources import needs_large_history_intake
+        mapped_history = profile.id in ('balanced', 'economy') or needs_large_history_intake(engine, project_id)
+        read_history = conversation_overviews if mapped_history else archive_history
         evidence, coverage = read_history(engine, project_id, manager)
         coverage = [*coverage,
                     'Q&A uses saved conversations, shared-chat documents, accepted solutions and decisions, '
@@ -544,7 +545,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
             project = db.get(Project, project_id)
             if project is None:
                 raise CodexError('Project not found.')
-            if not economy:
+            if not mapped_history:
                 evidence.extend(note_evidence(db, project_id, shared_only=True))
             evidence.extend(recorded_evidence(db, project, include_notes=False))
             accepted = db.execute(select(Answer, Question.title).join(

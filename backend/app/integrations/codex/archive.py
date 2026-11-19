@@ -21,6 +21,7 @@ from .shared_history import SharedPrefixIndex
 
 CHUNK_CHARS = 4000
 BATCH_CHARS = 24_000
+LARGE_OVERVIEW_WINDOW_CHARS = 36_000
 MAX_SUMMARY_CHARS = 600
 CACHE_VERSION = 1
 _archive_run = ContextVar('projecthub_archive_run', default=None)
@@ -55,6 +56,8 @@ def _diagnostics(state):
     if 'conversations' in state:
         recorded = state['conversations']
         result['archive_conversations'] = {**recorded, 'notes': list(recorded['notes'])}
+    if 'overview_conversations' in state:
+        result['evidence_coverage'] = {'conversations': state['overview_conversations']}
     return result
 
 
@@ -537,19 +540,25 @@ def archive_history(engine, project_id, manager):
 
 def conversation_overviews(engine, project_id, manager, *, bundle=None):
     """Share source-linked summaries of stable conversation windows across reviews."""
-    from .knowledge_sources import build_windows, load_sources
+    from .knowledge_profiles import current_knowledge_profile
+    from .knowledge_sources import build_windows, load_sources, needs_large_history_intake
 
     if bundle is None:
-        bundle = load_sources(engine, project_id)
+        broad_intake = (current_knowledge_profile().id == 'balanced'
+                        or needs_large_history_intake(engine, project_id))
+        bundle = load_sources(engine, project_id, balanced=broad_intake)
     if bundle['project']['id'] != project_id:
         raise CodexError('Conversation overview sources do not belong to this project.')
-    windows = build_windows(bundle)
+    broad_intake = bool(bundle['manifest'].get('intake_policy'))
+    windows = build_windows(bundle, max_chars=LARGE_OVERVIEW_WINDOW_CHARS) if broad_intake else build_windows(bundle)
 
     def job(index):
         window = windows[index]
         sources = [{**source, 'share': True} if source.get('note_id') is not None else source
                    for source in window['sources']]
-        return {'sources': sources, 'primary_ids': window['primary_ids'],
+        wire_sources = ([{key: source[key] for key in ('id', 'role', 'text')} for source in sources]
+                        if broad_intake else sources)
+        return {'sources': wire_sources, 'primary_ids': window['primary_ids'],
                 'context_ids': window['context_ids']}, sources, 12
 
     results, reused, generated = _summary_jobs(
@@ -561,6 +570,15 @@ def conversation_overviews(engine, project_id, manager, *, bundle=None):
     for state in ('unavailable', 'unprocessed', 'excluded'):
         if coverage[state]:
             notes.append(f'{len(set(coverage[state]))} conversation sources marked {state}.')
+    state = _archive_run.get()
+    if state is not None:
+        from .evidence_coverage import conversation_coverage
+
+        measured = conversation_coverage(bundle, {})
+        measured['selected_fragments'] = len(bundle['sources'])
+        measured['notes'][-1] = ('Selected fragments were supplied to conversation overview batches or reused from '
+                                'matching cached batches. The final synthesis uses their summaries.')
+        state['overview_conversations'] = measured
     return [entry for items, _ in results for entry in items], notes
 
 
