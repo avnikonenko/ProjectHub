@@ -1,4 +1,5 @@
 import { api } from './api.ts';
+import type { SchemeFocus } from './generationBatch.ts';
 import { parseKnowledgePreview, parseKnowledgeResponse, parsePublishedKnowledgeResult, type KnowledgeResponse } from './knowledge.ts';
 
 export type KnowledgePreview = ReturnType<typeof parseKnowledgePreview>;
@@ -9,14 +10,14 @@ export type PreviewProgress = {
 };
 
 export async function generateAndSaveKnowledge(base: string, projectId: number,
-  generation: { model: string; effort: string }, signal: AbortSignal, generateScheme = false,
+  generation: { model: string; effort: string; schemeFocus?: SchemeFocus }, signal: AbortSignal, generateScheme = false,
   request: (path: string, options: RequestInit) => Promise<unknown> = api) {
   if (base !== `/projects/${projectId}` || !Number.isSafeInteger(projectId) || projectId < 1)
     throw new Error('Knowledge generation does not identify this project.');
   signal.throwIfAborted();
   const raw = await request(`${base}/codex/knowledge/brief`, { method: 'POST', signal,
     body: JSON.stringify({ confirmed: true, publish: true, model: generation.model || null,
-      effort: generation.effort || null, ...(generateScheme ? { generate_scheme: true } : {}) }) });
+      effort: generation.effort || null, ...(generateScheme ? { generate_scheme: true, scheme_focus: generation.schemeFocus } : {}) }) });
   signal.throwIfAborted();
   return parsePublishedKnowledgeResult(raw, projectId);
 }

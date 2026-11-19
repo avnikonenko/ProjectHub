@@ -1,4 +1,4 @@
-import { useGenerationRequest, type GenerationRequestProps, type KnowledgeGenerationOutcome } from './generationBatch';
+import { useGenerationRequest, type GenerationRequestProps, type KnowledgeGenerationOutcome, type SchemeFocus } from './generationBatch';
 import { TagGeneration } from './TagGeneration';
 import { Feedback } from './Feedback';
 import { CoverageDetails } from './CoverageDetails';
@@ -31,6 +31,7 @@ type Props = {
   onGenerationRequestHandled?: GenerationRequestProps['onGenerationRequestHandled'];
   onGenerationOutcome?: (outcome: KnowledgeGenerationOutcome) => void;
   generateSchemeAfter?: boolean;
+  schemeFocus?: SchemeFocus;
   onBusyChange?: (state: { busy: boolean; running: boolean }) => void;
 };
 
@@ -104,7 +105,7 @@ export function EarlierKnowledgeResult({ result, onDownload }: {
   </details>;
 }
 
-export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false }: Props) {
+export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false, schemeFocus }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -234,7 +235,7 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
     setNotice({ base, error: '', notice: '' });
     setPreview({ base, busy: true, error: '', started: Date.now(), loading: false });
     try {
-      const result = await generateAndSaveKnowledge(base, projectId, generation, controller.signal, generateSchemeAfter);
+      const result = await generateAndSaveKnowledge(base, projectId, { ...generation, schemeFocus }, controller.signal, generateSchemeAfter);
       if (!controller.signal.aborted && active.current === run) {
         updatePublishedKnowledge(base, () => ({ snapshot: result.knowledge, paired_with_current_brief: false,
           current_evidence_availability: {}, coverage: {} }));

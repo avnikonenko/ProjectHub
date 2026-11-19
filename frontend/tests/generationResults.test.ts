@@ -66,6 +66,18 @@ test('summary loading uses only a read and rejects aborted, malformed or foreign
     stale.abort(); return fixture();
   }));
 });
+
+test('Scheme focus appears only in the Scheme row and locks while Scheme waits', () => {
+  const raw = fixture();
+  Object.assign(raw.views[2], { state: 'waiting' });
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, {
+    data: parseGenerationResults(raw, 2), schemeFocus: 'sessions', onSchemeFocusChange() {},
+  }));
+  const rows = [...html.matchAll(/<li>(.*?)<\/li>/g)].map(match => match[1]);
+  assert.equal(rows.filter(row => row.includes('Scheme focus for next run')).length, 1);
+  assert.match(rows[2], /<select[^>]*disabled/);
+  assert.match(rows[2], /<option value="sessions" selected="">Sessions first/);
+});
 after(async () => { await server?.close(); });
 function fixture() {
   return { project_id: 2, views: projectGenerationKinds.map(kind => ({ kind, state: 'saved',

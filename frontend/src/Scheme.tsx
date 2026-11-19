@@ -254,14 +254,14 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
   base: string; generation: { model: string; effort: string }; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   waitingForKnowledge?: boolean;
+  focus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
   const [view, setView] = useState<'Architecture' | 'Workflow' | 'Dependencies'>('Architecture');
-  const [focus, setFocus] = useState<SchemeFocus>('balanced');
   const [loading, setLoading] = useState(true);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -349,7 +349,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
     <label>Scheme focus for next run
-      <select value={focus} onChange={event => setFocus(event.target.value as SchemeFocus)}
+      <select value={focus} onChange={event => onFocusChange(event.target.value as SchemeFocus)}
         disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
         {(Object.keys(schemeFocusLabels) as SchemeFocus[]).map(option =>
           <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
@@ -363,7 +363,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     <details className="brief-details">
       <summary>How focus works</summary>
       <p><strong>Balanced</strong> draws on code and discussions. <strong>Code first</strong> emphasizes how the current checkout works. <strong>Sessions first</strong> emphasizes decisions, reasons, and proposed workflows.</p>
-      <p>Dependencies come from the repository scan. When Knowledge triggers Scheme automatically, it uses Balanced.</p>
+      <p>Dependencies come from the repository scan. This choice also applies when Scheme runs after Knowledge from the Generation tab.</p>
     </details>
     {snapshot?.focus && <small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small>}
     {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}

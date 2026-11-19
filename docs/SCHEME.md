@@ -27,8 +27,9 @@ Green marks entries, purple marks outputs, and blue marks other components.
    used** to check the supporting excerpts.
 
 Generation sends selected evidence to Codex with the project's AI settings.
-The result records its focus. Automatic Scheme generation after Knowledge uses
-Balanced. Focus leaves the repository dependency scan independent of the diagrams.
+The result records its focus. You can also choose it in **Generation → Scheme**.
+When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
+Focus leaves the repository dependency scan independent of the diagrams.
 Find earlier results under **Scheme details → Previous versions**.
 
 ## Saved Knowledge

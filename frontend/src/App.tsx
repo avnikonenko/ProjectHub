@@ -1,6 +1,6 @@
 import { planProjectGeneration, planRetryProjectGeneration, planSelectedProjectGeneration, resolveKnowledgeSchemeDependency, useGenerationRequest,
   type GenerationRequestProps, type ProjectGenerationKind, type KnowledgeGenerationOutcome,
-  type KnowledgeSchemeDependency, type GenerationPlan } from './generationBatch';
+  type KnowledgeSchemeDependency, type GenerationPlan, type SchemeFocus } from './generationBatch';
 import { GenerationResults, initializeGenerationSelection, type GenerationResultsState, type GenerationSelection } from './GenerationResults';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
@@ -348,6 +348,7 @@ function ProjectWorkspace({
   const bulkDispatching = useRef(false);
   const pendingScheme = useRef<KnowledgeSchemeDependency | null>(null);
   const [bulkScheme, setBulkScheme] = useState<'none' | 'waiting' | 'requested' | 'skipped'>('none');
+  const [schemeFocus, setSchemeFocus] = useState<SchemeFocus>('balanced');
   useEffect(() => {
     if (knowledgeLink) setKnowledgeSubview('knowledge');
   }, [knowledgeLink?.projectId, knowledgeLink?.publicationId, knowledgeLink?.itemId]);
@@ -776,6 +777,7 @@ function ProjectWorkspace({
         </Feedback>}
         <div hidden={view !== 'Generation' || !!results}>
           <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
+            schemeFocus={schemeFocus} onSchemeFocusChange={setSchemeFocus} schemeFocusDisabled={!!bulkPending.length || bulkScheme === 'waiting'}
             selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
             onRegenerateSelected={regenerateSelected} regenerateDisabled={bulkPending.length > 0
               || bulkScheme === 'waiting' || !selectedPlan?.start.length}
@@ -814,7 +816,7 @@ function ProjectWorkspace({
               showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               onGenerationOutcome={onKnowledgeOutcome}
-              generateSchemeAfter={bulkScheme === 'waiting'} />
+              generateSchemeAfter={bulkScheme === 'waiting'} schemeFocus={schemeFocus} />
             </div>
             {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
               <ProjectParameters base={base} generation={generation}
@@ -836,6 +838,7 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              focus={schemeFocus} onFocusChange={setSchemeFocus}
               waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}

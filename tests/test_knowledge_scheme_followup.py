@@ -48,7 +48,7 @@ def api(tmp_path, monkeypatch):
                 db.commit()
         return {'published': publish, 'publication_id': publication, 'knowledge': saved, 'brief': brief}
 
-    def generate_scheme(actual_engine, pid, selected, *, expected_publication_id):
+    def generate_scheme(actual_engine, pid, selected, *, expected_publication_id, focus):
         assert actual_engine is engine and pid == 1 and selected is choices[1]
         assert selected is not choices[0] and selected.account_key == choices[0].account_key
         assert selected.model == choices[0].model and selected.effort == choices[0].effort
@@ -56,7 +56,7 @@ def api(tmp_path, monkeypatch):
         with Session(engine) as db:
             saved = db.get(ProjectKnowledge, pid).snapshot
             assert saved['publication_id'] == expected_publication_id == 'new-knowledge'
-            result = {'generated_at': 'new-scheme', 'knowledge_publication': saved['publication_id']}
+            result = {'generated_at': 'new-scheme', 'knowledge_publication': saved['publication_id'], 'focus': focus}
             db.get(ProjectScheme, pid).snapshot = result
             db.commit()
         calls.append(('scheme', saved['publication_id']))
@@ -74,13 +74,14 @@ def body(**changes):
 
 
 def test_scheme_followup_uses_committed_knowledge_and_a_fresh_manager(api):
-    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body())
+    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(scheme_focus='code'))
     assert response.status_code == 200, response.text
     assert response.json()['published'] is True and response.json()['scheme_requested'] is True
     assert api.calls == [('knowledge', True), ('scheme', 'new-knowledge')]
     assert len(api.choices) == 2 and api.choices[0] is not api.choices[1]
     with Session(api.engine) as db:
         assert db.get(ProjectScheme, 1).snapshot['knowledge_publication'] == response.json()['publication_id']
+        assert db.get(ProjectScheme, 1).snapshot['focus'] == 'code'
         assert db.get(ProjectScheme, 2) is None and db.get(ProjectKnowledge, 2) is None
 
 

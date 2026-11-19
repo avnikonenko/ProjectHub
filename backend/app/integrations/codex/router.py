@@ -114,6 +114,7 @@ class KnowledgeGenerationInput(GenerationInput):
     # Retained for older clients; public generation always saves its result.
     publish: bool = Field(default=True, strict=True)
     generate_scheme: bool = Field(default=False, strict=True)
+    scheme_focus: SchemeFocus = 'balanced'
 
 
 class KnowledgePublicationInput(Input):
@@ -540,14 +541,14 @@ def _record_scheme_followup_failure(engine, project_id, previous_started_at, err
 
 
 def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
-                                     dependency_token=None, profile=None):
+                                     dependency_token=None, profile=None, focus: SchemeFocus = 'balanced'):
     """Server-owned follow-up, independent of the selected browser project."""
     previous_started_at = progress.read(project_id, 'scheme').get('started_at')
     try:
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
         with use_project_instructions(instructions), use_knowledge_profile(profile or review_profile()):
-            refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id)
+            refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id, focus=focus)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='completed')
     except BriefBusy as exc:
@@ -590,7 +591,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             engine = request.app.state.engine
             dependency_token = attempts.queue_dependency(engine, project_id,
                 settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id,
-                          'scheme_focus': 'balanced'})
+                          'scheme_focus': body.scheme_focus})
         with use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:
@@ -599,7 +600,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
-                                      publication_id, dependency_token, scheme_profile)
+                                      publication_id, dependency_token, scheme_profile, body.scheme_focus)
             result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:

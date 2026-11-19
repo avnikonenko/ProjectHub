@@ -162,10 +162,12 @@ function GenerationAttemptSettings({ settings, title }: { settings: AttemptSetti
   </details>;
 }
 
-export function GenerationResultRows({ data, selected = [], onToggle, busy = {}, disabled = false }: {
+export function GenerationResultRows({ data, selected = [], onToggle, busy = {}, disabled = false, schemeFocus,
+  onSchemeFocusChange, schemeFocusDisabled = false }: {
   data: GenerationResultsData; selected?: readonly ProjectGenerationKind[];
   onToggle?: (kind: ProjectGenerationKind, checked: boolean) => void;
   busy?: Partial<Record<ProjectGenerationKind, boolean>>; disabled?: boolean;
+  schemeFocus?: SchemeFocus; onSchemeFocusChange?: (value: SchemeFocus) => void; schemeFocusDisabled?: boolean;
 }) {
   return <ul className="generation-results-list">{data.views.map(view => <li key={view.kind}>
     <label className="generation-result-choice"><input type="checkbox" checked={selected.includes(view.kind)}
@@ -174,6 +176,13 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
       onChange={event => onToggle?.(view.kind, event.target.checked)} /><span>{labels[view.kind]}</span></label>
     <strong>{states[view.state]}</strong>
     <div className="generation-result-description">
+      {view.kind === 'scheme' && schemeFocus && <label>Scheme focus for next run
+        <select value={schemeFocus} onChange={event => onSchemeFocusChange?.(event.target.value as SchemeFocus)}
+          disabled={disabled || schemeFocusDisabled || !onSchemeFocusChange || !!busy.scheme || view.state === 'running' || view.state === 'waiting'}>
+          {(Object.keys(schemeFocusLabels) as SchemeFocus[]).map(option =>
+            <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
+        </select>
+      </label>}
       {view.showing_previous ? <small>Showing the earlier saved result{dateLabel(view.saved_at) ? ` · ${dateLabel(view.saved_at)}` : ''}.</small>
         : view.saved_at ? <small>Saved {dateLabel(view.saved_at) ?? 'result available'}.</small>
           : view.history_at ? <small>Earlier saved version · {dateLabel(view.history_at)}.</small>
@@ -193,12 +202,13 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
 
 /** Reads only. Polling stops once no view is running or waiting. */
 export function GenerationResults({ base, refreshVersion, onState, selected = [], onSelectionChange, busy = {},
-  onRegenerateSelected, regenerateDisabled = false, bulkActions }: {
+  onRegenerateSelected, regenerateDisabled = false, bulkActions, schemeFocus, onSchemeFocusChange, schemeFocusDisabled }: {
   base: string; refreshVersion: number; onState: (state: GenerationResultsState) => void;
   selected?: readonly ProjectGenerationKind[]; onSelectionChange?: (selected: ProjectGenerationKind[]) => void;
   busy?: Partial<Record<ProjectGenerationKind, boolean>>;
   onRegenerateSelected?: () => void; regenerateDisabled?: boolean;
   bulkActions?: ReactNode;
+  schemeFocus?: SchemeFocus; onSchemeFocusChange?: (value: SchemeFocus) => void; schemeFocusDisabled?: boolean;
 }) {
   const [state, setState] = useState<GenerationResultsState>({ base, data: null, loading: true, error: '' });
   const [reload, setReload] = useState(0);
@@ -243,6 +253,7 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
       </div>
       <small className="muted">Scheme uses saved Knowledge unless Knowledge is also selected.</small>
       <GenerationResultRows data={current.data} selected={selected} busy={busy} disabled={current.loading || !!current.error}
+        schemeFocus={schemeFocus} onSchemeFocusChange={onSchemeFocusChange} schemeFocusDisabled={schemeFocusDisabled}
         onToggle={(kind, checked) => onSelectionChange?.(checked ? [...new Set([...selected, kind])]
           : selected.filter(value => value !== kind))} />
     </>}
