@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -19,6 +20,14 @@ from .revisions import save_revision
 from .scheme_evidence import collect_evidence
 
 MAX_NODES = 20
+SchemeFocus = Literal['balanced', 'code', 'sessions']
+_FOCUS_GUIDANCE = {
+    'balanced': 'Use code for implemented relationships and conversations for design intent and planned work. ',
+    'code': 'Prioritize inspected entry points, calls between modules, data flow, and repository dependencies. '
+            'Use discussions to explain intent and qualify what the checkout supports. ',
+    'sessions': 'Prioritize decisions, rationale, and intended workflows from original conversations. '
+                'Use code to check implementation status and distinguish planned capabilities from observed ones. ',
+}
 MAX_EDGES = 40
 _INPUT_HEADROOM_CHARS = 20_000
 MAX_INPUT_CHARS = max(SCHEME_PACKAGE_CHARS_OPTIONS) + _INPUT_HEADROOM_CHARS
@@ -301,7 +310,7 @@ def _with_conversation_overviews(payload, overviews, notes, package_limit):
     return candidate
 
 
-def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None):
+def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None, focus: SchemeFocus = 'balanced'):
     job_lock = generation_lock.for_job(project_id, 'scheme')
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
@@ -357,6 +366,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
             schema['properties']['dependencies']['maxItems'] = 0
         schema['properties']['dependencies']['items']['properties']['source_ids']['items']['enum'] = source_ids
         prompt = (
+            _FOCUS_GUIDANCE[focus] +
             'Explain this project visually using only the supplied evidence. Return architecture and workflow '
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
@@ -446,6 +456,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
         architecture, workflow, dependencies = validate_output(raw, evidence)
         snapshot = {
             'generated_at': utcnow(), 'architecture': architecture, 'workflow': workflow,
+            'focus': focus,
             'dependencies': dependencies,
             **{key: evidence[key] for key in ('sources', 'tree', 'coverage', 'fingerprint')},
             'generation': generation_metadata(manager),

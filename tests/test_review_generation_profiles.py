@@ -25,7 +25,7 @@ class ModelSelection:
 @pytest.mark.parametrize('route,refresh,input_type', [
     ('generate_brief', 'refresh_brief', routes.GenerationInput),
     ('generate_qa', 'refresh_qa', routes.QAGenerationInput),
-    ('generate_scheme', 'refresh_scheme', routes.GenerationInput),
+    ('generate_scheme', 'refresh_scheme', routes.SchemeGenerationInput),
     ('generate_parameters', 'refresh_parameters', routes.GenerationInput),
 ])
 @pytest.mark.parametrize('profile,model,explicit,expected', [

@@ -20,11 +20,15 @@ Green marks entries, purple marks outputs, and blue marks other components.
 
 1. Use **Edit overview** to link a repository, if available. Link conversations
    through **Sources**.
-2. Open **Generation**, select **Scheme**, then click **Regenerate selected**.
+2. Open **Scheme**, choose a focus, then click **Generate Scheme**. Choose
+   **Balanced** for an even view, **Code first** for the current implementation,
+   or **Sessions first** for decisions, rationale, and proposed workflows.
 3. Open **Scheme** and expand **Components and relationships** or **Evidence
    used** to check the supporting excerpts.
 
 Generation sends selected evidence to Codex with the project's AI settings.
+The result records its focus. Automatic Scheme generation after Knowledge uses
+Balanced. Focus leaves the repository dependency scan independent of the diagrams.
 Find earlier results under **Scheme details → Previous versions**.
 
 ## Saved Knowledge

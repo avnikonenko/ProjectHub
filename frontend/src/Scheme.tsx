@@ -28,8 +28,11 @@ type SchemeEdge = {
 type SchemeGraph = { nodes: SchemeNode[]; edges: SchemeEdge[]; explanation: string; mermaid: string };
 type TreeEntry = { path: string; type: 'file' | 'directory' };
 type Coverage = SchemeCoverage;
+const schemeFocusLabels = { balanced: 'Balanced', code: 'Code first', sessions: 'Sessions first' } as const;
+type SchemeFocus = keyof typeof schemeFocusLabels;
 type SchemeSnapshot = {
   generated_at: string; generation?: GenerationProvenance | null;
+  focus?: SchemeFocus;
   architecture: SchemeGraph; workflow: SchemeGraph; dependencies: Dependency[];
   sources: SchemeSource[]; tree: TreeEntry[]; coverage: Coverage; fingerprint: string; diagnostics?: SchemeDiagnostics | null;
   knowledge_context?: unknown;
@@ -260,6 +263,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
   const [view, setView] = useState<'Architecture' | 'Workflow' | 'Dependencies'>('Architecture');
+  const [focus, setFocus] = useState<SchemeFocus>('balanced');
   const [loading, setLoading] = useState(true);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -301,7 +305,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     setNotice('');
     onGenerating(true);
     try {
-      const snapshot = await post(path, { confirmed: true, model: generation.model || null, effort: generation.effort || null }) as SchemeSnapshot;
+      const snapshot = await post(path, { confirmed: true, model: generation.model || null,
+        effort: generation.effort || null, focus }) as SchemeSnapshot;
       if (alive.current) {
         setLatestVersion(snapshot.generated_at);
         selectedRevision.current = null;
@@ -345,6 +350,19 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
+    <label>Scheme focus for next run
+      <select value={focus} onChange={event => setFocus(event.target.value as SchemeFocus)}
+        disabled={loading || generating || recoveryBusy || waitingForKnowledge}>
+        {(Object.keys(schemeFocusLabels) as SchemeFocus[]).map(option =>
+          <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
+      </select>
+    </label>
+    <button type="button" className="secondary" onClick={() => void generate()}
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
+      Generate Scheme
+    </button>
+    <small className="muted">Generation sends selected project evidence to OpenAI through Codex.</small>
+    {snapshot?.focus && <small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small>}
     {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}
     <ErrorBox error={error} />
     <Feedback>{notice}</Feedback>
@@ -355,6 +373,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       {snapshot && <SchemeKnowledgeContext context={snapshot.knowledge_context} />}
       <p className="brief-note">Architecture, workflows, and dependencies interpreted from inspected code and saved discussions. Generation sends selected evidence to Codex.</p>
+      <p className="brief-note">Focus changes which evidence leads the diagrams. The dependency inventory comes from the repository scan. Automatic Scheme generation after Knowledge uses Balanced.</p>
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
         disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
           selectingRevision.current = value;

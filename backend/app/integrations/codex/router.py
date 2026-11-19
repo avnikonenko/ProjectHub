@@ -15,7 +15,7 @@ from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import account_options, account_home, launch_home, launch_label, profile_entries, validate_profile_directory
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
-from .scheme import read_scheme, refresh_scheme, scheme_snapshot_for_display
+from .scheme import SchemeFocus, read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
@@ -104,6 +104,10 @@ class DeliveryInput(Input):
 
 class GenerationInput(ModelInput):
     confirmed: bool = False
+
+
+class SchemeGenerationInput(GenerationInput):
+    focus: SchemeFocus = 'balanced'
 
 
 class KnowledgeGenerationInput(GenerationInput):
@@ -658,7 +662,7 @@ def get_scheme(project_id: int, request: Request, db: DB):
 
 
 @router.post('/scheme')
-def generate_scheme(project_id: int, body: GenerationInput, request: Request, db: DB):
+def generate_scheme(project_id: int, body: SchemeGenerationInput, request: Request, db: DB):
     project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Confirm sending selected project evidence to Codex before generating Scheme.')
@@ -669,7 +673,7 @@ def generate_scheme(project_id: int, body: GenerationInput, request: Request, db
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions), use_knowledge_profile(profile):
-            return refresh_scheme(request.app.state.engine, project_id, selected)
+            return refresh_scheme(request.app.state.engine, project_id, selected, focus=body.focus)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

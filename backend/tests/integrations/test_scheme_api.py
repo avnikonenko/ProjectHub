@@ -47,14 +47,18 @@ def test_scheme_routes_are_scoped_and_get_never_calls_codex(tmp_path, monkeypatc
             calls.append((model, effort))
             return selected
         monkeypatch.setattr(routes, 'manager_for', lambda *args: SimpleNamespace(for_generation=choose))
-        def generate(engine_arg, project_id, manager):
+        def generate(engine_arg, project_id, manager, *, focus):
             assert engine_arg is engine and project_id == 1 and manager is selected
-            return {'generated_at': '2026-01-02'}
+            return {'generated_at': '2026-01-02', 'focus': focus}
         monkeypatch.setattr(routes, 'refresh_scheme', generate)
         response = client.post('/api/projects/1/codex/scheme', json={'confirmed': True, 'model': 'chosen', 'effort': 'high'})
         assert response.status_code == 200 and calls == [('chosen', 'high')]
+        assert response.json()['focus'] == 'balanced'
+        response = client.post('/api/projects/1/codex/scheme', json={'confirmed': True, 'focus': 'sessions'})
+        assert response.status_code == 200 and response.json()['focus'] == 'sessions'
+        assert client.post('/api/projects/1/codex/scheme', json={'confirmed': True, 'focus': 'invalid'}).status_code == 422
 
-        def fail(*args):
+        def fail(*args, **kwargs):
             raise CodexError('Codex unavailable')
         monkeypatch.setattr(routes, 'refresh_scheme', fail)
         assert client.post('/api/projects/1/codex/scheme', json={'confirmed': True, 'model': 'chosen'}).status_code == 503

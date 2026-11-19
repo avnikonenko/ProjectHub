@@ -105,7 +105,9 @@ def test_workflow_decisions_render_as_diamonds():
     assert '{"Which backend#63; #40;observed#41;"}' in graph['mermaid']
 
 
-def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path, monkeypatch):
+@pytest.mark.parametrize('focus, guidance', [('balanced', 'Use code for implemented relationships'),
+    ('code', 'Prioritize inspected entry points'), ('sessions', 'Prioritize decisions, rationale')])
+def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path, monkeypatch, focus, guidance):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add_all([Project(name='One'), Project(name='Two')])
@@ -133,6 +135,8 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
 
         def generate_brief(self, prompt, schema):
             self.calls += 1
+            if self.calls == 1:
+                assert prompt.startswith(guidance)
             assert 'primary end-to-end' in prompt
             assert 'Do not substitute the workflow for generating this Scheme' in prompt
             # Prompt contract only: semantic diagram quality is evaluated with real generation.
@@ -150,7 +154,8 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
             return self.raw
 
     manager = Manager()
-    saved = scheme.refresh_scheme(engine, 1, manager)
+    saved = scheme.refresh_scheme(engine, 1, manager, focus=focus)
+    assert saved['focus'] == focus
     assert gathered == [1] and manager.calls == 1
     assert saved['diagnostics']['ai_requests'] == 1
     assert saved['sources'] == evidence()['sources']
