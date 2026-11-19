@@ -60,6 +60,25 @@ def corrupted(item):
     return response(item)
 
 
+@pytest.mark.parametrize('repair_succeeds', [True, False])
+def test_missing_evidence_retries_without_caching_unsupported_items(quote_batch, repair_succeeds):
+    engine, window, item = quote_batch
+    uncited = {**deepcopy(item), 'statement': 'Unsupported extra claim.', 'evidence': []}
+
+    def repair(prompt, schema):
+        recovered = selected(item)(prompt, schema)
+        if not repair_succeeds:
+            recovered['items'].append(deepcopy(uncited))
+        return recovered
+
+    manager = Responses([{'items': [uncited, item]}, repair])
+    items, hit = knowledge.extract_batch(engine, 1, manager, window, knowledge.extraction_configuration(manager))
+    assert not hit
+    assert [value['statement'] for value in items] == [item['statement']]
+    assert len(manager.calls) == 2
+    assert len(rows(engine)) == int(repair_succeeds)
+
+
 def selected(item, *, bad_selector=False, wrong_owner=False, role_override=None):
     def result(prompt, schema):
         payload = json.loads(prompt.rsplit('\n', 1)[1])

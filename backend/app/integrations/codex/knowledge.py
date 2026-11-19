@@ -466,6 +466,12 @@ def validate_extraction(raw, window, project_id, extraction_version, *, omission
             raise CodexError('Knowledge extraction returned invalid relationships.')
         item['conflicting_statements'] = [_text(value, 600, empty=False) for value in conflicts]
         refs = item['evidence']
+        if refs == []:
+            if omissions is not None:
+                omissions['citation'] += 1
+            elif citation_error is None:
+                citation_error = EvidenceExcerptError('Knowledge extraction requires original evidence.')
+            continue
         if not isinstance(refs, list) or not 1 <= len(refs) <= 6:
             raise CodexError('Knowledge extraction requires original evidence.')
         evidence = []
@@ -628,7 +634,7 @@ def extract_batch(engine, project_id, manager, window, configuration):
             + 'Each evidence role must match the speaker of the selected quote. '
               'Omit items without a matching quotation.\n'
             + json.dumps(retry_payload, ensure_ascii=False, separators=(',', ':')), retry_schema)
-        raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS)
+        raw = restore_quote_selection(selected_raw, catalog, MAX_RESPONSE_CHARS, allow_empty_evidence=True)
         omissions = {'agreement': 0, 'citation': 0}
         items = validate_extraction(raw, window, project_id, version, omissions=omissions)
         if any(omissions.values()):

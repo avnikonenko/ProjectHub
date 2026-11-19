@@ -104,7 +104,7 @@ def _invalid_constant(value):
     raise CodexError('Quote selection returned a non-JSON numeric constant.')
 
 
-def restore_quote_selection(raw, catalog, max_response_chars):
+def restore_quote_selection(raw, catalog, max_response_chars, *, allow_empty_evidence=False):
     """Decode source-owned selectors into canonical source IDs and excerpts.
 
     This verifies identity and encoding, not whether a quotation supports the
@@ -124,7 +124,7 @@ def restore_quote_selection(raw, catalog, max_response_chars):
         raise CodexError('Quote selection returned invalid items.')
     for item in response['items']:
         if (not isinstance(item, dict) or not isinstance(item.get('evidence'), list)
-                or not 1 <= len(item['evidence']) <= catalog.max_evidence):
+                or not (0 if allow_empty_evidence else 1) <= len(item['evidence']) <= catalog.max_evidence):
             raise CodexError('Quote selection returned invalid evidence.')
         for ref in item['evidence']:
             if not isinstance(ref, dict) or set(ref) != {'role', 'excerpt'}:
