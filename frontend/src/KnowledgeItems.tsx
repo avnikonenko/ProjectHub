@@ -1,6 +1,8 @@
 import { AIEmphasis } from './AIEmphasis';
 import { DeferredDetails } from './DeferredDetails';
 import { useEffect, useId, useRef, useState } from 'react';
+import { api } from './api';
+import { chatGPTTranscriptHref, historyTurnHref } from './historyLinks';
 import { evidenceAvailability, filterKnowledge, knowledgePassageGroups, visibleKnowledgeGroups, visibleRelatedKnowledge, knowledgeSourceHref, statusOrder,
   type KnowledgeItem, type KnowledgeSnapshot } from './knowledge';
 import { ALL_TOPICS, filterTopicItems, topicChoices } from './topicGroups';
@@ -8,6 +10,64 @@ import { TopicPicker } from './TopicPicker';
 import './knowledge.css';
 
 const display = (value: string) => value.replaceAll('_', ' ');
+
+type ConversationHit = { kind: 'codex'; session_id: number; session_title: string; turn_id: string; snippet: string }
+  | { kind: 'chatgpt'; note_id: number; title: string; snippet: string };
+type ConversationPage = { results: ConversationHit[]; next_offset: number | null };
+
+export function searchKnowledgeHistory(projectId: number, query: string, offset: number, signal: AbortSignal,
+  request: typeof api = api) {
+  const params = new URLSearchParams({ q: query.trim().slice(0, 2000), offset: String(offset) });
+  return request<ConversationPage>(`/projects/${projectId}/history/search?${params}`, { signal });
+}
+
+export function KnowledgeHistorySearch({ projectId, query }: { projectId: number; query: string }) {
+  const [offsets, setOffsets] = useState<number[]>([]);
+  const [page, setPage] = useState<ConversationPage | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    const offset = offsets.at(-1);
+    if (offset === undefined) return;
+    const abort = new AbortController();
+    searchKnowledgeHistory(projectId, query, offset, abort.signal)
+      .then(result => { if (!abort.signal.aborted) setPage(result); })
+      .catch((failure: Error) => { if (!abort.signal.aborted) setError(failure.message); });
+    return () => abort.abort();
+  }, [projectId, query, offsets]);
+
+  function load(next: number[]) {
+    setPage(null);
+    setError('');
+    setOffsets(next);
+  }
+
+  if (!offsets.length) return <button type="button" className="quiet" onClick={() => load([0])}>
+    Search original conversations
+  </button>;
+  return <section className="knowledge-group" aria-label="Original conversation results" aria-busy={!page && !error}>
+    <h3>Original conversations</h3>
+    {!page && !error && <p role="status">Searching indexed conversations…</p>}
+    {error && <><p role="alert">Could not search original conversations. {error}</p>
+      <button type="button" className="secondary" onClick={() => load([...offsets])}>Retry search</button></>}
+    {page && !page.results.length && <p>No original conversations match this search.</p>}
+    {page?.results.map(hit => {
+      const href = hit.kind === 'chatgpt' ? chatGPTTranscriptHref({ projectId, noteId: hit.note_id, query })
+        : historyTurnHref({ projectId, sessionId: hit.session_id, turnId: hit.turn_id });
+      return <article key={href} className="list-item">
+        <a href={href}>{hit.kind === 'chatgpt' ? hit.title : hit.session_title}</a>
+        <p>{hit.snippet}</p>
+      </article>;
+    })}
+    {page && (offsets.length > 1 || page.next_offset != null) && <nav className="pagination" aria-label="Original conversation pages">
+      <button type="button" className="secondary" disabled={offsets.length === 1}
+        onClick={() => load(offsets.slice(0, -1))}>Previous</button>
+      <span role="status">Page {offsets.length}</span>
+      <button type="button" className="secondary" disabled={page.next_offset == null}
+        onClick={() => { if (page.next_offset != null) load([...offsets, page.next_offset]); }}>Next</button>
+    </nav>}
+  </section>;
+}
+
 export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, onSelectItem }: {
   snapshot: KnowledgeSnapshot; availability?: Record<string, string>;
   selectedItemId?: string; onSelectItem?: (id: string) => void;
@@ -140,6 +200,8 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
     </div>
     {selected && !byId.has(selected) && <p role="status">The selected knowledge item is unavailable in this snapshot.</p>}
     {!items.length && <p>{snapshot.items.length ? 'No items match these filters.' : 'This snapshot contains no knowledge items.'}</p>}
+    {query.trim() && <KnowledgeHistorySearch key={JSON.stringify([identity, query.trim()])}
+      projectId={snapshot.project_id} query={query.trim()} />}
     {statuses.map((value) => {
       const group = items.filter((item) => item.design_status === value).sort((a, b) => a.id.localeCompare(b.id));
       if (!group.length) return null;
