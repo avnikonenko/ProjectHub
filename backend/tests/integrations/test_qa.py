@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import qa
+from backend.app.integrations.codex import generation_attempts, qa
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import Answer, Decision, Project, Note, Question, Task, GenerationRevision
 from sqlalchemy import select
@@ -72,6 +72,8 @@ def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_p
 
     manager = Generator()
     saved = qa.refresh_qa(engine, 1, manager, max_items=2)
+    with Session(engine) as db:
+        assert generation_attempts.read_latest(db, 1, 'qa')['settings']['max_items'] == 2
     assert manager.batches == 2
     assert manager.consolidations == 1
     assert [item['question'] for item in saved['items']] == ['What does One do?', 'How does One store data?']

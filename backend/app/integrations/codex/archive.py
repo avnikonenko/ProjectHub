@@ -32,7 +32,7 @@ def archive_worker_scope(workers=None):
     """Capture the saved worker limit once for the complete legacy generation."""
     existing = _archive_run.get()
     if existing is not None and workers is None:
-        yield
+        yield existing['workers']
         return
     try:
         selected = ai_worker_settings()['extraction_workers'] if workers is None else workers
@@ -42,7 +42,7 @@ def archive_worker_scope(workers=None):
         raise CodexError(f'Parallel AI workers must be from 1 to {MAX_EXTRACTION_WORKERS}.')
     token = _archive_run.set({'workers': selected, 'phases': 0, 'timings': []})
     try:
-        yield
+        yield selected
     finally:
         _archive_run.reset(token)
 

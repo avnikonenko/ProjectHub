@@ -34,6 +34,10 @@ def use_project_instructions(instructions):
         _project_instructions.reset(token)
 
 
+def has_project_instructions():
+    return _project_instructions.get() is not None
+
+
 def shared_recommendations():
     try:
         text = INSTRUCTIONS_PATH.read_text(encoding='utf-8')

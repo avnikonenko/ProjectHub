@@ -68,10 +68,14 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
-def begin(project_id, kind, engine=None, *, saves_result=True, manager=None):
+def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, **options):
+    from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
-    settings = settings_for(manager, engine) if manager is not None else None
+    settings = None if manager is None else {
+        **settings_for(manager, engine), **options, 'generation_budget': budget,
+        'project_instructions': has_project_instructions(),
+    }
     key = (project_id, kind)
     # The caller holds a lease for this project/view through finish().
     with _lock:
@@ -100,8 +104,8 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None):
             raise CodexError('Could not save generation attempt status. No generation was started.') from exc
 
 
-def record_settings(project_id, manager):
-    """Capture an effective profile change before the first generation request."""
+def record_settings(project_id, manager=None, **options):
+    """Capture effective settings as the run configures the relevant stages."""
     from .generation_attempts import settings_for, update_settings
     run_lock = _owned_run_lock(project_id)
     if run_lock is None:
@@ -114,7 +118,11 @@ def record_settings(project_id, manager):
             reference = _stores.get(key)
             engine = reference() if reference is not None else None
             snapshot = _snapshots[key]
-        settings = settings_for(manager, engine)
+        if 'settings' not in snapshot:
+            return
+        settings = {**snapshot['settings'], **options}
+        if manager is not None:
+            settings.update(settings_for(manager, engine))
         if snapshot.get('settings') == settings:
             return
         if engine is not None:

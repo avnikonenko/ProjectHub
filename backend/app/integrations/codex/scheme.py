@@ -8,7 +8,7 @@ import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS
+from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS, scheme_inspection_limits
 from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
 from . import progress
@@ -293,9 +293,14 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
-        progress.begin(project_id, 'scheme', engine=engine, manager=manager)
+        profile = current_knowledge_profile()
+        progress.begin(project_id, 'scheme', engine=engine, manager=manager, generation_profile=profile.id)
         progress.update(project_id, stage='Collecting Scheme evidence')
-        evidence = collect_evidence(engine, project_id)
+        limits = scheme_inspection_limits()
+        source_chars, read_bytes, package_chars = limits
+        progress.record_settings(project_id, scheme_source_chars=source_chars,
+                                 scheme_read_bytes=read_bytes, scheme_package_chars=package_chars)
+        evidence = collect_evidence(engine, project_id, limits)
         knowledge_context = evidence.get('knowledge_context')
         if expected_publication_id is not None and (
                 not isinstance(knowledge_context, dict) or
@@ -312,10 +317,11 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None)
         if package_limit not in SCHEME_PACKAGE_CHARS_OPTIONS:
             package_limit = DEFAULT_SCHEME_PACKAGE_CHARS
         overview_diagnostics = {}
-        if current_knowledge_profile().id == 'economy':
+        if profile.id == 'economy':
             from .archive import archive_diagnostics, archive_worker_scope, conversation_overviews
 
-            with archive_worker_scope():
+            with archive_worker_scope() as workers:
+                progress.record_settings(project_id, extraction_workers=workers)
                 overviews, notes = conversation_overviews(engine, project_id, manager)
                 overview_diagnostics = archive_diagnostics()
             payload = _with_conversation_overviews(payload, overviews, notes, package_limit)

@@ -525,13 +525,16 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
                 **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
 
     try:
-        progress.begin(project_id, 'qa', engine=engine, manager=manager)
+        profile = current_knowledge_profile()
+        progress.begin(project_id, 'qa', engine=engine, manager=manager, generation_profile=profile.id,
+                       max_items=max_items)
         transport_scope.enter_context(collect_generation_metrics(metrics))
-        transport_scope.enter_context(archive_worker_scope())
+        workers = transport_scope.enter_context(archive_worker_scope())
+        progress.record_settings(project_id, extraction_workers=workers)
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
-        economy = current_knowledge_profile().id == 'economy'
+        economy = profile.id == 'economy'
         read_history = conversation_overviews if economy else archive_history
         evidence, coverage = read_history(engine, project_id, manager)
         coverage = [*coverage,

@@ -112,7 +112,7 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
         db.commit()
     gathered = []
 
-    def collect(engine, project_id):
+    def collect(engine, project_id, _limits):
         gathered.append(project_id)
         return evidence()
 

@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import brief, progress, scheme
+from backend.app.integrations.codex import brief, generation_attempts, progress, scheme
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectBrief, ProjectScheme
 from backend.tests.integrations.test_brief import FakeCodex
@@ -20,8 +20,18 @@ def run_views(tmp_path, monkeypatch, *, cancel_scheme=False):
     with Session(engine) as db:
         db.add(Project(id=1, name='Concurrent project', architecture_mermaid='flowchart LR\nReader --> Store'))
         db.commit()
+    monkeypatch.setenv('PROJECTHUB_GENERATION_PROFILE', 'balanced')
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '3')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '420')
+    scheme_limits = (60_000, 2 * 1024 * 1024, 160_000)
+    monkeypatch.setattr(scheme, 'scheme_inspection_limits', lambda: scheme_limits)
     monkeypatch.setattr(brief, 'archive_history', lambda *args: ([], ['No linked sessions in fixture.']))
-    monkeypatch.setattr(scheme, 'collect_evidence', lambda *args: scheme_evidence())
+
+    def collect_scheme(_engine, _project_id, limits):
+        assert limits == scheme_limits
+        return scheme_evidence()
+
+    monkeypatch.setattr(scheme, 'collect_evidence', collect_scheme)
     ready = {kind: threading.Event() for kind in ('brief', 'scheme')}
     release = threading.Event()
 
@@ -72,6 +82,15 @@ def run_views(tmp_path, monkeypatch, *, cancel_scheme=False):
             assert (db.get(ProjectScheme, 1) is not None) is (not cancel_scheme)
             kinds = list(db.scalars(select(GenerationRevision.kind).where(GenerationRevision.project_id == 1)))
             assert sorted(kinds) == (['brief'] if cancel_scheme else ['brief', 'scheme'])
+            overview_settings = generation_attempts.read_latest(db, 1, 'brief')['settings']
+            scheme_settings = generation_attempts.read_latest(db, 1, 'scheme')['settings']
+            assert overview_settings['extraction_workers'] == 3
+            assert 'extraction_workers' not in scheme_settings
+            assert 'scheme_read_bytes' not in overview_settings
+            assert (scheme_settings['scheme_source_chars'], scheme_settings['scheme_read_bytes'],
+                    scheme_settings['scheme_package_chars']) == scheme_limits
+            assert all(settings['generation_budget'] == 420 and settings['generation_profile'] == 'balanced'
+                       for settings in (overview_settings, scheme_settings))
         assert brief.generation_lock.acquire(blocking=False)
         brief.generation_lock.release()
     finally:

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.integrations.codex import generation_attempts as attempts, progress
+from backend.app.integrations.codex.ai_instructions import use_project_instructions
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import CodexProfile, GenerationRevision, Project
 
@@ -81,9 +82,13 @@ def test_failed_attempt_keeps_effective_settings_after_profile_changes_and_memor
         db.add(CodexProfile(id=1, name='Luna', directory='/private/codex-home'))
         db.commit()
     manager = SimpleNamespace(account_key='registered:1', generation_model='gpt-test', generation_effort=None)
-    progress.begin(1, 'knowledge', engine=engine, manager=manager)
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '420')
+    with use_project_instructions('Project-specific writing instructions.'):
+        progress.begin(1, 'knowledge', engine=engine, manager=manager,
+                       generation_profile='economy', extraction_workers=4)
     assert latest(engine, 'knowledge')['settings']['effort'] == 'Model default'
     manager.generation_effort = 'low'
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '900')
     progress.record_settings(1, manager)
     progress.finish(1, error='The selected account reached its usage limit.')
     with Session(engine) as db:
@@ -94,8 +99,12 @@ def test_failed_attempt_keeps_effective_settings_after_profile_changes_and_memor
         summary = attempts.generation_summary(db, 1)
     failed = next(view for view in summary['views'] if view['kind'] == 'knowledge')
     assert failed['state'] == 'failed'
-    assert failed['latest_attempt']['settings'] == {'account': 'Luna', 'model': 'gpt-test', 'effort': 'low'}
+    assert failed['latest_attempt']['settings'] == {
+        'account': 'Luna', 'model': 'gpt-test', 'effort': 'low', 'generation_profile': 'economy',
+        'extraction_workers': 4, 'generation_budget': 420, 'project_instructions': True,
+    }
     assert '/private/codex-home' not in str(failed)
+    assert 'Project-specific writing instructions.' not in str(failed)
 
     token = attempts.queue_dependency(engine, 1, settings=attempts.settings_for(manager, engine))
     attempts.finish(engine, 1, 'scheme', token, state='skipped')

@@ -911,10 +911,10 @@ def _records(db, project):
     return sources, markers, limitations, excerpt_count
 
 
-def collect_evidence(engine, project_id):
+def collect_evidence(engine, project_id, limits=None):
     """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
     started = time.monotonic()
-    source_budget, read_budget, package_budget = scheme_inspection_limits()
+    source_budget, read_budget, package_budget = scheme_inspection_limits() if limits is None else limits
     limitations = set()
     freshness_unknown = False
     with Session(engine) as db:

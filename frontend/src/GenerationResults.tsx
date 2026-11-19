@@ -2,11 +2,29 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { ErrorBox } from './ui';
 import { projectGenerationKinds, type GenerationRetryView, type ProjectGenerationKind } from './generationBatch';
+import type { GenerationProfileId } from './generationDiagnostics';
 import './generationResults.css';
 
 export type GenerationResultState = 'saved' | 'not_generated' | 'running' | 'waiting' | 'failed'
   | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped' | 'earlier_result';
-type AttemptSettings = { account: string; model: string; effort: string };
+const numericalSettingLabels = {
+  generation_budget: 'Overall time budget',
+  extraction_workers: 'AI workers per job',
+  scheme_source_chars: 'Scheme excerpt budget',
+  scheme_read_bytes: 'Local file read limit',
+  scheme_package_chars: 'Final evidence package limit',
+  max_items: 'Maximum questions',
+} as const;
+type NumericalSetting = keyof typeof numericalSettingLabels;
+type AttemptSettings = {
+  account: string;
+  model: string;
+  effort: string;
+  generation_profile?: GenerationProfileId;
+  project_instructions?: boolean;
+} & Partial<Record<NumericalSetting, number>>;
+const numericalSettings = Object.keys(numericalSettingLabels) as NumericalSetting[];
+const profileLabels: Record<GenerationProfileId, string> = { quality: 'Quality', balanced: 'Balanced', economy: 'Economy' };
 export type GenerationResultView = GenerationRetryView & {
   state: GenerationResultState;
   history_at?: string | null;
@@ -27,7 +45,14 @@ const object = (value: unknown): value is Record<string, unknown> => value !== n
 const text = (value: unknown, max = 10000): value is string => typeof value === 'string' && value.length <= max;
 const nullableText = (value: unknown) => value === undefined || value === null || text(value);
 const validAttemptSettings = (value: unknown) => value === undefined || value === null
-  || (object(value) && [value.account, value.model, value.effort].every(part => text(part) && part.trim()));
+  || (object(value) && [value.account, value.model, value.effort].every(part => text(part) && part.trim())
+    && (value.generation_profile === undefined || (typeof value.generation_profile === 'string'
+      && Object.hasOwn(profileLabels, value.generation_profile)))
+    && (value.project_instructions === undefined || typeof value.project_instructions === 'boolean')
+    && numericalSettings.every(key => {
+      const part = value[key];
+      return part === undefined || (typeof part === 'number' && Number.isSafeInteger(part) && part > 0);
+    }));
 const labels: Record<ProjectGenerationKind, string> = {
   brief: 'Overview', knowledge: 'Knowledge', scheme: 'Scheme', qa: 'Q&A', parameters: 'Implementation Choices & Limits',
 };
@@ -94,6 +119,45 @@ function dateLabel(value: string | null | undefined) {
   return new Date(value).toLocaleString();
 }
 
+function attemptSettingValue(key: NumericalSetting, value: number) {
+  switch (key) {
+    case 'generation_budget':
+      return `${value.toLocaleString()} seconds`;
+    case 'scheme_source_chars':
+    case 'scheme_package_chars':
+      return `${value.toLocaleString()} characters`;
+    case 'scheme_read_bytes':
+      return `${(value / (1024 * 1024)).toLocaleString()} MiB`;
+    default:
+      return value.toLocaleString();
+  }
+}
+
+function GenerationAttemptSettings({ settings, title }: { settings: AttemptSettings; title: string }) {
+  return <details>
+    <summary>{title}</summary>
+    <dl className="generation-attempt-settings">
+      <div><dt>Model</dt><dd>{settings.model}</dd></div>
+      <div><dt>Reasoning effort</dt><dd>{settings.effort}</dd></div>
+      {settings.generation_profile && <div>
+        <dt>AI generation profile</dt><dd>{profileLabels[settings.generation_profile]}</dd>
+      </div>}
+      {settings.project_instructions !== undefined && <div>
+        <dt>Project AI instructions</dt><dd>{settings.project_instructions ? 'Custom' : 'Default'}</dd>
+      </div>}
+      {numericalSettings.map(key => {
+        const value = settings[key];
+        if (value === undefined) return null;
+        return <div key={key}><dt>{numericalSettingLabels[key]}</dt>
+          <dd title={key === 'scheme_read_bytes' ? `${value.toLocaleString()} bytes` : undefined}>
+            {attemptSettingValue(key, value)}
+          </dd>
+        </div>;
+      })}
+    </dl>
+  </details>;
+}
+
 export function GenerationResultRows({ data, selected = [], onToggle, busy = {}, disabled = false }: {
   data: GenerationResultsData; selected?: readonly ProjectGenerationKind[];
   onToggle?: (kind: ProjectGenerationKind, checked: boolean) => void;
@@ -110,13 +174,13 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
         : view.saved_at ? <small>Saved {dateLabel(view.saved_at) ?? 'result available'}.</small>
           : view.history_at ? <small>Earlier saved version · {dateLabel(view.history_at)}.</small>
           : view.state !== 'saved' && <small>No saved result yet.</small>}
+      {view.latest_attempt?.settings && <GenerationAttemptSettings settings={view.latest_attempt.settings}
+        title={view.state === 'waiting' || view.state === 'skipped' ? 'Requested settings'
+          : view.showing_previous || view.latest_attempt.saves_result === false ? 'Latest attempt settings' : 'Settings'} />}
       {view.latest_attempt && view.state !== 'saved' && view.state !== 'running' && view.state !== 'waiting' &&
         <details><summary>Attempt details</summary>
           {dateLabel(view.latest_attempt.started_at) && <p>Started {dateLabel(view.latest_attempt.started_at)}</p>}
           {dateLabel(view.latest_attempt.finished_at) && <p>Finished {dateLabel(view.latest_attempt.finished_at)}</p>}
-          {view.latest_attempt.settings && <p><strong>Settings</strong>{' '}
-            {view.latest_attempt.settings.model} · {view.latest_attempt.settings.effort}
-          </p>}
           {view.latest_attempt.error && <p>{view.latest_attempt.error}</p>}
         </details>}
     </div>

@@ -283,15 +283,17 @@ def refresh_brief(engine, project_id, manager):
                 **metrics.snapshot(), 'duration_seconds': round(time.monotonic() - started, 3)}
 
     try:
-        progress.begin(project_id, 'brief', engine=engine, manager=manager)
+        profile = current_knowledge_profile()
+        progress.begin(project_id, 'brief', engine=engine, manager=manager, generation_profile=profile.id)
         transport_scope.enter_context(collect_generation_metrics(metrics))
-        transport_scope.enter_context(archive_worker_scope())
+        workers = transport_scope.enter_context(archive_worker_scope())
+        progress.record_settings(project_id, extraction_workers=workers)
         session = getattr(manager, 'generation_session', None)
         if callable(session):
             transport_scope.enter_context(session())
         from ...project_evidence import collect_project_evidence
         snapshot = collect_project_evidence(engine, project_id)
-        economy = current_knowledge_profile().id == 'economy'
+        economy = profile.id == 'economy'
         with Session(engine) as db:
             project = db.get(Project, project_id)
             if project is None:

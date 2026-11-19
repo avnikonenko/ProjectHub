@@ -101,25 +101,51 @@ test('a timed-out attempt remains visible alongside the earlier saved result and
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
 });
 
-test('attempt details show the failed run settings alongside the earlier saved result', () => {
+test('generation rows identify settings for completed, failed and waiting attempts', () => {
   const raw = fixture();
   const settings = { account: 'Luna <team>', model: 'GPT-5', effort: 'low' };
+  Object.assign(raw.views[0], { latest_attempt: { state: 'completed',
+    settings: { ...settings, generation_profile: 'economy', generation_budget: 900,
+      extraction_workers: 10, project_instructions: false } } });
   Object.assign(raw.views[1], { state: 'failed', showing_previous: true, retryable: true,
-    latest_attempt: { state: 'failed', error: 'Usage limit reached.', settings } });
-  Object.assign(raw.views[2], { state: 'skipped', retryable: true,
-    latest_attempt: { state: 'skipped', error: 'Knowledge failed.', settings: null } });
+    latest_attempt: { state: 'failed', error: 'Usage limit reached.',
+      settings: { ...settings, project_instructions: true } } });
+  Object.assign(raw.views[2], { state: 'waiting',
+    latest_attempt: { state: 'waiting', settings: { ...settings, scheme_source_chars: 40_000,
+      scheme_read_bytes: 2 * 1024 * 1024, scheme_package_chars: 180_000 } } });
+  Object.assign(raw.views[3], { latest_attempt: { state: 'completed', saves_result: false,
+    settings: { ...settings, max_items: 25 } } });
+  Object.assign(raw.views[4], { state: 'skipped', retryable: true,
+    latest_attempt: { state: 'skipped', error: 'Prerequisite failed.', settings: null } });
   const html = renderToStaticMarkup(createElement(GenerationResultRows, { data: parseGenerationResults(raw, 2) }));
-  assert.match(html, /<strong>Settings<\/strong> GPT-5 · low/);
+  const rows = [...html.matchAll(/<li>(.*?)<\/li>/g)].map(match => match[1]);
+  assert.match(rows[0], /<summary>Settings<\/summary>/);
+  assert.match(rows[0], /<dt>Model<\/dt><dd>GPT-5<\/dd>/);
+  assert.match(rows[0], /<dt>Reasoning effort<\/dt><dd>low<\/dd>/);
+  assert.match(rows[0], /<dt>AI generation profile<\/dt><dd>Economy<\/dd>/);
+  assert.match(rows[0], /<dt>Overall time budget<\/dt><dd>900 seconds<\/dd>/);
+  assert.match(rows[0], /<dt>AI workers per job<\/dt><dd>10<\/dd>/);
+  assert.match(rows[0], /<dt>Project AI instructions<\/dt><dd>Default<\/dd>/);
+  assert.match(rows[1], /<summary>Latest attempt settings<\/summary>/);
+  assert.match(rows[1], /<dt>Project AI instructions<\/dt><dd>Custom<\/dd>/);
+  assert.match(rows[1], /Showing the earlier saved result/);
+  assert.match(rows[1], /Usage limit reached/);
+  assert.match(rows[2], /<summary>Requested settings<\/summary>/);
+  assert.match(rows[2], /<dt>Scheme excerpt budget<\/dt><dd>[^<]+ characters<\/dd>/);
+  assert.match(rows[2], /<dt>Local file read limit<\/dt><dd title="[^"]+ bytes">2 MiB<\/dd>/);
+  assert.match(rows[2], /<dt>Final evidence package limit<\/dt><dd>[^<]+ characters<\/dd>/);
+  assert.match(rows[3], /<summary>Latest attempt settings<\/summary>/);
+  assert.match(rows[3], /<dt>Maximum questions<\/dt><dd>25<\/dd>/);
+  assert.match(rows[4], /Prerequisite failed/);
+  assert.doesNotMatch(rows[4], /settings/i);
   assert.doesNotMatch(html, /Luna/);
-  assert.match(html, /Showing the earlier saved result/);
-  assert.match(html, /Usage limit reached/);
-  assert.match(html, /Knowledge failed/);
-  assert.equal((html.match(/<strong>Settings<\/strong>/g) ?? []).length, 1);
 });
 
 test('summary rejects malformed attempt settings', () => {
-  for (const settings of ['Luna', [], { account: 'Luna', model: 'GPT-5', effort: '' },
-    { account: 'Luna', model: 'GPT-5', effort: 1 }]) {
+  const valid = { account: 'Luna', model: 'GPT-5', effort: 'low' };
+  for (const settings of ['Luna', [], { ...valid, effort: '' }, { ...valid, effort: 1 },
+    { ...valid, generation_profile: 'constructor' }, { ...valid, generation_budget: '900' },
+    { ...valid, extraction_workers: -1 }, { ...valid, project_instructions: 'custom' }]) {
     const raw = fixture();
     Object.assign(raw.views[1].latest_attempt, { settings });
     assert.throws(() => parseGenerationResults(raw, 2), /attempt is invalid/);
