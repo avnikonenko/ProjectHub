@@ -60,13 +60,19 @@ suited to its purpose. Implementation Choices & Limits still uses code and confi
 | Profile | When to use it |
 | --- | --- |
 | **Thorough** (default) | Knowledge reads available original messages in smaller batches to retain detail. |
-| **Balanced** (experimental) | Knowledge reads the same available messages in larger batches, which can reduce calls and miss details. |
+| **Balanced** (experimental) | Knowledge shares the message budget across conversations, skips imported tool logs and processes the selected originals in larger batches. |
 | **Quick** (experimental) | Reuses conversation overviews. Knowledge uses them to select original passages for extraction within its source budget. |
 
 Quick builds overviews from the saved Codex history index and imported ChatGPT
 chats. The first run may make more calls to build the cache. Later runs reuse
 matching batches across reviews. Refresh History to include recent Codex messages
 if the index is out of date. Check Coverage for missing sources and omitted text.
+
+With Balanced Knowledge, linked conversations take turns contributing messages
+within the intake limits. This keeps one long session
+from using the entire budget. Recognized imported tool logs remain searchable in
+History and are excluded from AI conversation evidence. Coverage shows when the
+limits still leave original material out.
 
 Explicit model and reasoning settings take precedence. Quick can use low
 reasoning by default when the selected model supports it. Changing the profile,

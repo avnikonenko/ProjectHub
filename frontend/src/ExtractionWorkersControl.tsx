@@ -269,7 +269,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
     <SettingsHelp title="How review depth works">
       <ul>
         <li><strong>Thorough (default).</strong> Knowledge reads available original messages in smaller batches to preserve detail.</li>
-        <li><strong>Balanced (experimental).</strong> Knowledge reads available original messages in larger batches, which can reduce calls.</li>
+        <li><strong>Balanced (experimental).</strong> Knowledge shares the source budget across conversations and skips imported tool logs.</li>
         <li><strong>Quick (experimental).</strong> Reuses saved conversation overviews across reviews. Knowledge checks selected original messages.</li>
       </ul>
       <p>Your model and explicit reasoning choice stay the same. Quick uses low reasoning when your model supports it and you leave effort unset.

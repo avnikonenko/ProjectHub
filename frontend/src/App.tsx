@@ -350,7 +350,7 @@ function ProjectWorkspace({
   const [bulkScheme, setBulkScheme] = useState<'none' | 'waiting' | 'requested' | 'skipped'>('none');
   useEffect(() => {
     if (knowledgeLink) setKnowledgeSubview('knowledge');
-  }, [knowledgeLink?.publicationId, knowledgeLink?.itemId]);
+  }, [knowledgeLink?.projectId, knowledgeLink?.publicationId, knowledgeLink?.itemId]);
   useEffect(() => {
     if (view === 'Dashboard') setVisited((previous) => previous.brief ? previous : { ...previous, brief: true });
     if (view === 'AI Q&A') setVisited((previous) => previous.qa ? previous : { ...previous, qa: true });

@@ -23,7 +23,7 @@ _PROFILES = (
     ),
     GenerationProfile(
         'balanced', 'Balanced',
-        'Experimental: larger batches can reduce repeated context and calls, but may miss details. '
+        'Experimental: gives long and short conversations a turn within the same text budget. '
         'Uses your selected model and reasoning effort.',
         18_000, None, None, True,
     ),

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.models import CodexSession, Note
 from backend.app.integrations.codex import knowledge_sources as sources
+from backend.app.integrations.codex.knowledge import _source_state
 from backend.app.integrations.codex.evidence_coverage import conversation_coverage
 from backend.tests.integrations.test_knowledge_sources import setup, insert_turn, URL
 
@@ -237,3 +238,75 @@ def test_turn_row_cap_records_omitted_turns_beyond_bounded_query(tmp_path, monke
         assert result['source_inventory']['omission_reasons']['global_message_budget_turns'] == 1
     finally:
         engine.dispose()
+
+
+def test_history_budget_reaches_later_sessions_without_changing_conversation_order(tmp_path, monkeypatch):
+    engine = setup(tmp_path)
+    monkeypatch.setattr(sources, '_BALANCED_MAX_MESSAGES', 3)
+    monkeypatch.setattr(sources, 'MAX_MESSAGES', 3)
+    with Session(engine) as db:
+        db.add(CodexSession(id=3, project_id=1, thread_id='later'))
+        for turn in ('first', 'second', 'remaining'):
+            insert_turn(db, turn=turn, messages=[{'role': 'user', 'text': turn}])
+        db.flush()
+        insert_turn(db, session=3, turn='other-first', messages=[{'role': 'user', 'text': 'later decision'}])
+        db.commit()
+
+    result = sources.load_sources(engine, 1, balanced=True)
+    assert [(row['session_id'], row['turn_id'], row['order']) for row in result['sources']] == [
+        (1, 'first', 0), (1, 'second', 1), (3, 'other-first', 0),
+    ]
+    assert result['manifest']['entries'][0]['partial'] is True
+    assert 'partial' not in result['manifest']['entries'][1]
+    assert sources.load_sources(engine, 1, previous_manifest=result['manifest']) == result
+    assert {row['session_id'] for row in sources.load_sources(engine, 1)['sources']} == {1}
+    engine.dispose()
+
+
+def test_imported_tool_blocks_do_not_spend_the_conversation_budget(tmp_path, monkeypatch):
+    engine = setup(tmp_path)
+    tool_call = '[external_agent_tool_call:sample]\n' + 'x' * 5000 + '\n[/external_agent_tool_call]'
+    tool_result = '[external_agent_tool_result]\nresult\n[/external_agent_tool_result]'
+    ordinary_text = f'Discussion of an example {tool_result}'
+    with Session(engine) as db:
+        insert_turn(db, messages=[{'role': 'assistant', 'text': tool_call},
+                                  {'role': 'assistant', 'text': tool_result},
+                                  {'role': 'assistant', 'text': ordinary_text},
+                                  {'role': 'user', 'text': tool_result}])
+        db.commit()
+    monkeypatch.setattr(sources, 'MAX_SOURCE_CHARS', 300)
+    monkeypatch.setattr(sources, '_BALANCED_MAX_MESSAGES', 2)
+
+    result = sources.load_sources(engine, 1, balanced=True)
+    assert [(row['role'], row['text'], row['message_order'], row['order']) for row in result['sources']] == [
+        ('assistant', ordinary_text, 3, 2), ('user', tool_result, 4, 3),
+    ]
+    assert result['source_inventory']['omission_reasons']['imported_tool_blocks'] == 2
+    assert not result['coverage']['unprocessed']
+    engine.dispose()
+
+
+def test_tool_block_filter_preserves_mixed_and_unterminated_text():
+    block = '[external_agent_tool_result]\nresult\n[/external_agent_tool_result]'
+    assert sources._imported_tool_block(block)
+    assert not sources._imported_tool_block(f'{block}\nImportant conclusion\n{block}')
+    assert not sources._imported_tool_block('[external_agent_tool_result]\nquoted example without closure')
+
+
+def test_filtered_tool_context_can_validate_prior_prose_but_not_serve_as_a_citation(tmp_path):
+    engine = setup(tmp_path)
+    block = '[external_agent_tool_result]\nresult\n[/external_agent_tool_result]'
+    with Session(engine) as db:
+        insert_turn(db, messages=[{'role': 'assistant', 'text': block},
+                                  {'role': 'user', 'text': 'Preserve this decision.'}])
+        db.commit()
+    raw = sources.load_sources(engine, 1)
+    tool, decision = [{**row, 'source_id': row['id']} for row in raw['sources']]
+    result = sources.load_sources(engine, 1, balanced=True, context_ids={tool['source_id']})
+    indexed = {row['id']: row for row in result['sources']}
+    parents = {row['source_key']: row for row in result['manifest']['entries']}
+    item = {'extraction_version': 'test', 'context_dependencies': [tool], 'evidence': [decision]}
+    assert _source_state(item, indexed, parents, 'test', result['filtered_context']) == 'valid'
+    assert _source_state({**item, 'evidence': [tool]}, indexed, parents, 'test', result['filtered_context']) == 'stale'
+    assert tool['id'] not in indexed
+    engine.dispose()

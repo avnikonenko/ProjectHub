@@ -16,6 +16,7 @@ const omissionLabels: Record<string, string> = {
   global_text_budget_messages: 'Messages omitted by total text budget',
   global_message_budget_turns: 'Turns omitted by message-count limit',
   global_message_budget_messages: 'Messages omitted by message-count limit',
+  imported_tool_blocks: 'Imported tool logs excluded from AI evidence',
   invalid_turns: 'Turns with unreadable or invalid content', invalid_documents: 'Unreadable or invalid documents omitted',
   empty_sessions: 'Sessions without usable messages', turn_limit_turns: 'Turns omitted by per-session limit',
 };

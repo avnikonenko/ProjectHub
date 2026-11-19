@@ -9,6 +9,7 @@ import { AIResultHeader } from './AIResultHeader';
 import { RevisionHistory } from './RevisionHistory';
 import { BriefSources, citedSources } from './BriefReferences';
 import { Empty, ErrorBox } from './ui';
+import { knowledgeHref } from './knowledge';
 
 
 type GenerationProps = { base: string; evidenceVersion?: string };
@@ -169,6 +170,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
         {brief && (
           <>
             <BriefContent brief={brief} prefix={base.split('/')[2] + '-brief'} />
+            <a href={knowledgeHref({ projectId: Number(base.split('/')[2]) })}>Search decisions and details in Knowledge</a>
           </>
         )}
       </section>

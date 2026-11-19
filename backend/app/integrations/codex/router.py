@@ -20,7 +20,7 @@ from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
-from .knowledge_sources import load_sources
+from .knowledge_sources import load_sources, prior_context_ids
 from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
 from .scheme_evidence import collect_evidence
@@ -483,8 +483,9 @@ def get_knowledge(project_id: int, request: Request, db: DB):
     saved = read_knowledge(db, project_id)
     brief = read_brief(db, project_id)
     db.rollback()
-    current = load_sources(request.app.state.engine, project_id,
-                           previous_manifest=(saved or {}).get('source_manifest'))
+    previous_manifest = (saved or {}).get('source_manifest')
+    context = {'context_ids': prior_context_ids(saved)} if (previous_manifest or {}).get('intake_policy') else {}
+    current = load_sources(request.app.state.engine, project_id, previous_manifest=previous_manifest, **context)
     publication_id = (saved or {}).get('publication_id')
     paired = bool(isinstance(publication_id, str) and publication_id.strip() and brief and publication_id ==
                   (brief.get('project_state') or {}).get('publication_id'))

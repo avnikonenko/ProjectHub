@@ -6,6 +6,7 @@ message IDs. Fragment hashes are independent of parent revisions for incremental
 import hashlib
 import json
 import re
+from collections import deque
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -16,10 +17,13 @@ from .protocol import CodexError
 MAX_SOURCE_CHARS = 2_000_000
 MAX_DOCUMENT_CHARS = 500_000
 MAX_MESSAGES = 2000
+_BALANCED_MAX_MESSAGES = 4000
+_BALANCED_INTAKE = 'interleaved-v1'
 FRAGMENT_CHARS = 6000
 MAX_PARENTS = 64
 _MARKER = re.compile(r'(?m)^(User|ChatGPT):[ \t]*(?:\r?\n)?')
 _SHARE = re.compile(r'https://chatgpt\.com/share/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/?', re.I)
+_IMPORTED_TOOL_HEADER = re.compile(r'\[(external_agent_tool_call|external_agent_tool_result)(?::[^\]\r\n]*)?\]')
 
 # SQLite metadata-only equivalent of _SHARE.fullmatch. A prefix LIKE alone would
 # count ordinary references as imported chats and overstate the denominator.
@@ -121,13 +125,35 @@ def _fragments(body):
         start, part = end, part + 1
 
 
-def load_sources(engine, project_id, previous_manifest=None):
+def _imported_tool_block(body):
+    value = body.strip()
+    header = _IMPORTED_TOOL_HEADER.match(value)
+    if header:
+        start, closing = header.end(), f'[/{header[1]}]'
+    elif value.startswith('<local-command-stdout>'):
+        start, closing = len('<local-command-stdout>'), '</local-command-stdout>'
+    else:
+        return False
+    return value.endswith(closing) and value.find(closing, start) == len(value) - len(closing)
+
+
+def prior_context_ids(snapshot):
+    return {ref['source_id'] for item in (snapshot or {}).get('items', [])
+            for ref in item.get('context_dependencies', [])}
+
+
+def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, context_ids=()):
     """Return a bounded source snapshot; cached original text remains primary evidence.
 
     Coverage lists contain parent keys (processed/unprocessed/unavailable/excluded).
     Manifest availability refers to local evidence, not remote conversation deletion.
     """
     sources, entries = [], []
+    if balanced is None:
+        balanced = (previous_manifest or {}).get('intake_policy') == _BALANCED_INTAKE
+    message_limit = _BALANCED_MAX_MESSAGES if balanced else MAX_MESSAGES
+    context_ids = set(context_ids)
+    filtered_context = {}
     coverage = {key: [] for key in ('processed', 'unprocessed', 'unavailable', 'excluded', 'limitations')}
     chars = 0
     message_count = 0
@@ -140,7 +166,7 @@ def load_sources(engine, project_id, previous_manifest=None):
 
     def append(body, role, ordinal, parent, identity, label, offset=0, **metadata):
         nonlocal chars, message_count
-        if message_count >= MAX_MESSAGES:
+        if message_count >= message_limit:
             omitted('global_message_budget_messages')
             return False
         if chars + len(body) > MAX_SOURCE_CHARS:
@@ -180,7 +206,7 @@ def load_sources(engine, project_id, previous_manifest=None):
             coverage['limitations'].append(
                 f'Only the first {MAX_PARENTS} session records and {MAX_PARENTS} document notes were considered; '
                 'unlinked sessions and ordinary document notes can occupy slots before eligible conversations.')
-        for session in sessions[:MAX_PARENTS]:
+        def session_turns(session):
             parent = f'codex:{session.id}:{session.thread_id}'
             entry = {'source_key': parent, 'session_id': session.id, 'thread_id': session.thread_id,
                      'availability': 'available', 'revision': None}
@@ -189,21 +215,25 @@ def load_sources(engine, project_id, previous_manifest=None):
                 entry['availability'] = 'excluded'
                 entry['revision'] = _hash(['unlinked', session.thread_id])
                 coverage['excluded'].append(parent)
-                continue
+                return
             total_turns = db.scalar(text('SELECT count(*) FROM codex_history_turns '
                 'WHERE project_id=:pid AND session_id=:sid'), {'pid': project_id, 'sid': session.id})
-            rows = db.execute(text('SELECT turn_id,status,length(messages) AS size '
+            rows = db.execute(text('SELECT turn_id,status,length(messages) AS size, '
+                "(instr(messages,'[external_agent_tool_') > 0 OR instr(messages,'<local-command-stdout>') > 0) AS has_tool_marker "
                 'FROM codex_history_turns WHERE project_id=:pid AND session_id=:sid ORDER BY id LIMIT :lim'),
-                {'pid': project_id, 'sid': session.id, 'lim': MAX_MESSAGES + 1})
-            hashes, had_rows, considered_turns = [], False, 0
-            first_source = len(sources)
+                {'pid': project_id, 'sid': session.id, 'lim': message_limit + 1})
+            hashes, had_rows, considered_turns, admitted = [], False, 0, False
+            filtered = False
             for row in rows.mappings():
+                if had_rows:
+                    yield
                 had_rows = True
                 considered_turns += 1
                 reason = ('active_turns' if row['status'] == 'inProgress' else
                           'oversized_turns' if row['size'] > MAX_DOCUMENT_CHARS else
-                          'global_message_budget_turns' if message_count >= MAX_MESSAGES else
-                          'global_text_budget_turns' if chars + row['size'] > MAX_SOURCE_CHARS else None)
+                          'global_message_budget_turns' if message_count >= message_limit else
+                          'global_text_budget_turns' if not (balanced and row['has_tool_marker'])
+                          and chars + row['size'] > MAX_SOURCE_CHARS else None)
                 if reason:
                     omitted(reason)
                     coverage['unprocessed'].append(parent)
@@ -220,11 +250,29 @@ def load_sources(engine, project_id, previous_manifest=None):
                         if (not isinstance(message, dict) or message.get('role') not in ('user', 'assistant')
                                 or not isinstance(message.get('text'), str)):
                             raise ValueError('Invalid message')
-                        hashes.append([row['turn_id'], ordinal, message['role'], _hash(message['text'])])
-                        if not append(message['text'], message['role'], ordinal, parent,
-                                      f'codex:{session.id}:turn:{_hash([session.thread_id, row["turn_id"]])[:24]}:m:{ordinal}',
+                        body, role = message['text'], message['role']
+                        revision = _hash(body)
+                        hashes.append([row['turn_id'], ordinal, role, revision])
+                        identity = f'codex:{session.id}:turn:{_hash([session.thread_id, row["turn_id"]])[:24]}:m:{ordinal}'
+                        if balanced and role == 'assistant' and _imported_tool_block(body):
+                            filtered = True
+                            omitted('imported_tool_blocks')
+                            for part, start, end in _fragments(body):
+                                identifier = f'{identity}:p:{part}'
+                                order = orders.get(parent, 0)
+                                if identifier in context_ids:
+                                    filtered_context[identifier] = {
+                                        'role': role, 'conversation_id': parent, 'order': order,
+                                        'message_order': ordinal, 'message_revision': revision,
+                                        'revision': _hash(body[start:end]),
+                                    }
+                                orders[parent] = order + 1
+                            continue
+                        if append(body, role, ordinal, parent, identity,
                                       f'{session.title} · turn {row["turn_id"]}',
                                       session_id=session.id, turn_id=row['turn_id']):
+                            admitted |= bool(body)
+                        else:
                             coverage['unprocessed'].append(parent)
                 except (ValueError, TypeError, RecursionError):
                     omitted('invalid_turns')
@@ -239,16 +287,19 @@ def load_sources(engine, project_id, previous_manifest=None):
                 coverage['unavailable'].append(parent)
             elif parent in coverage['unavailable']:
                 entry['availability'] = 'unavailable'
-            elif len(sources) > first_source:
+            elif admitted:
                 coverage['processed'].append(parent)
+            elif filtered and parent not in coverage['unprocessed']:
+                entry.update(availability='excluded', reason='imported_tool_logs_only')
+                coverage['excluded'].append(parent)
             if parent in coverage['unprocessed']:
                 entry['partial'] = True
             if (not session.history_indexed_at or not session.history_indexed_activity
                     or session.history_indexed_activity != session.codex_activity_at or session.last_error):
                 coverage['limitations'].append(f'{parent}: index freshness or remote availability is not established; stored evidence was used.')
-        for note in notes[:MAX_PARENTS]:
+        def document_messages(note):
             if not isinstance(note['reference'], str) or not _SHARE.fullmatch(note['reference']):
-                continue
+                return
             parent = f'chatgpt:note:{note["id"]}'
             entry = {'source_key': parent, 'note_id': note['id'], 'url': note['reference'],
                      'availability': 'available', 'revision': None}
@@ -258,31 +309,48 @@ def load_sources(engine, project_id, previous_manifest=None):
                 entry['availability'] = 'excluded'
                 entry['revision'] = _hash(['excluded_by_limit', note['size']])
                 coverage['excluded'].append(parent)
-                continue
+                return
             value = db.scalar(select(Note.content).where(Note.project_id == project_id, Note.id == note['id']))
             entry['revision'] = _hash(value)
             if not isinstance(value, str):
                 omitted('invalid_documents')
                 entry.update(availability='unavailable', reason='changed_during_read')
                 coverage['unavailable'].append(parent)
-                continue
+                return
             try:
                 messages = _messages(value)
             except ValueError:
                 omitted('invalid_documents')
                 entry['availability'] = 'unavailable'
                 coverage['unavailable'].append(parent)
-                continue
-            first_source = len(sources)
+                return
             for ordinal, role, body, offset in messages:
+                if ordinal > 1:
+                    yield
                 if not append(body, role, ordinal, parent, f'{parent}:m:{ordinal}',
                               f'{note["title"]} · message {ordinal}', offset,
                               note_id=note['id'], reference=note['reference']):
                     coverage['unprocessed'].append(parent)
-            if len(sources) > first_source:
+            if orders.get(parent):
                 coverage['processed'].append(parent)
             if parent in coverage['unprocessed']:
                 entry['partial'] = True
+        # Spend one turn (or imported message) per conversation per round.
+        # Preserve chronological, conversation-contiguous output for extraction.
+        readers = deque([*(session_turns(session) for session in sessions[:MAX_PARENTS]),
+                         *(document_messages(note) for note in notes[:MAX_PARENTS])])
+        if balanced:
+            pending = object()
+            while readers:
+                reader = readers.popleft()
+                if next(reader, pending) is not pending:
+                    readers.append(reader)
+            parent_order = {entry['source_key']: index for index, entry in enumerate(entries)}
+            sources.sort(key=lambda source: parent_order[source['source_key']])
+        else:
+            for reader in readers:
+                for _ in reader:
+                    pass
         current_keys = {entry['source_key'] for entry in entries}
         previous_entries = (previous_manifest or {}).get('entries', [])
         for old in previous_entries:
@@ -303,6 +371,8 @@ def load_sources(engine, project_id, previous_manifest=None):
             coverage[availability].append(old['source_key'])
     if any(s['partial_message'] for s in sources):
         coverage['limitations'].append('Messages above 6,000 characters were split into exact, newline-aware fragments; distant proposal context may be incomplete.')
+    if inventory['omission_reasons'].get('imported_tool_blocks'):
+        coverage['limitations'].append('Imported tool logs remain searchable in History and are excluded from AI conversation evidence.')
     if coverage['unprocessed'] or coverage['excluded']:
         coverage['limitations'].append('Source limits or exclusions prevented complete extraction coverage.')
     if coverage['unavailable']:
@@ -311,8 +381,10 @@ def load_sources(engine, project_id, previous_manifest=None):
         coverage[key] = list(dict.fromkeys(coverage[key]))
     manifest = {'entries': entries, 'project_revision': _hash(project_data),
                 'fingerprint': _hash({'entries': entries, 'project': project_data})}
+    if balanced:
+        manifest['intake_policy'] = _BALANCED_INTAKE
     return {'project': project_data, 'sources': sources, 'manifest': manifest, 'coverage': coverage,
-            'source_inventory': inventory}
+            'source_inventory': inventory, **({'filtered_context': filtered_context} if filtered_context else {})}
 
 
 def has_heading_continuation(source, following):

@@ -650,12 +650,16 @@ def extract_batch(engine, project_id, manager, window, configuration):
     return items, False
 
 
-def _source_state(item, sources, entries, extraction_version):
+def _source_state(item, sources, entries, extraction_version, filtered_context=None):
     if item.get('extraction_version') != extraction_version:
         return 'stale'
     states = []
-    for ref in [*item.get('context_dependencies', []), *item.get('evidence', [])]:
+    refs = [(ref, True) for ref in item.get('context_dependencies', [])]
+    refs.extend((ref, False) for ref in item.get('evidence', []))
+    for ref, context_only in refs:
         current = sources.get(ref['source_id'])
+        if current is None and context_only and filtered_context:
+            current = filtered_context.get(ref['source_id'])
         if current is not None:
             identity_changed = any(ref[key] != current.get(key) for key in (
                 'role', 'conversation_id', 'order', 'message_order', 'message_revision') if key in ref)
@@ -734,7 +738,7 @@ def reconcile(previous, extracted, bundle, extraction_version, *, compatible_ver
         item = deepcopy(old)
         if item.get('extraction_version') in compatible_versions:
             item['extraction_version'] = extraction_version
-        item['source_state'] = _source_state(item, current, entries, extraction_version)
+        item['source_state'] = _source_state(item, current, entries, extraction_version, bundle.get('filtered_context'))
         items[item['id']] = item
     fresh_ids = set()
     for original in extracted:
@@ -1018,8 +1022,13 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
             f'Omitted {invalid_evidence} candidate {claims} after retry because their citations did not match '
             'the original speaker or excerpt. A future generation can retry the affected batches.')
     full_bundle = {**bundle, 'sources': list(all_sources.values())}
-    items = reconcile(previous, extracted, full_bundle, version,
-                      compatible_versions={_digest(settings) for settings in legacy})
+    compatible_versions = {_digest(settings) for settings in legacy}
+    if profile.id == 'balanced':
+        # A different budget does not invalidate a prior Thorough interpretation
+        # when the model, instructions, and its exact evidence still match.
+        compatible_versions.add(_digest({key: value for key, value in configuration.items()
+                                         if key != 'generation_profile'}))
+    items = reconcile(previous, extracted, full_bundle, version, compatible_versions=compatible_versions)
     # Store only the exact quotations used, while keeping full originals in their
     # independent index/document source. Historical unavailable excerpts survive.
     compact = {}
