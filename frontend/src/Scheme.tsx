@@ -254,11 +254,11 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
   base: string; generation: { model: string; effort: string }; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   waitingForKnowledge?: boolean;
-  focus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
+  focus: SchemeFocus; queuedFocus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
   const [view, setView] = useState<'Architecture' | 'Workflow' | 'Dependencies'>('Architecture');
@@ -294,7 +294,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     return () => abort.abort();
   }, [path, recoveryVersion, visible, generationRequest]);
 
-  async function generate() {
+  async function generate(requestedFocus: SchemeFocus) {
     if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge) return;
     inFlight.current = true;
     resultRead.current++;
@@ -304,7 +304,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     onGenerating(true);
     try {
       const snapshot = await post(path, { confirmed: true, model: generation.model || null,
-        effort: generation.effort || null, focus }) as SchemeSnapshot;
+        effort: generation.effort || null, focus: requestedFocus }) as SchemeSnapshot;
       if (alive.current) {
         setLatestVersion(snapshot.generated_at);
         selectedRevision.current = null;
@@ -334,7 +334,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       if (alive.current) { setGenerating(false); onGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading ? 'wait' : 'ready',
+    () => generate(queuedFocus), onGenerationRequestHandled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';
@@ -355,7 +356,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
       </select>
     </label>
-    <button type="button" className="secondary" onClick={() => void generate()}
+    <button type="button" className="secondary" onClick={() => void generate(focus)}
       disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
       Generate Scheme
     </button>

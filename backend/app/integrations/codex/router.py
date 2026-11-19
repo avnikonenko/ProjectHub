@@ -520,7 +520,7 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
         KnowledgeGenerationInput(**body.model_dump()), request, db, background_tasks)
 
 
-def _record_scheme_followup_failure(engine, project_id, previous_started_at, error, manager):
+def _record_scheme_followup_failure(engine, project_id, previous_started_at, error, manager, focus):
     """Expose a pre-start error without overwriting a competing Scheme run."""
     lease = generation_lock.for_job(project_id, 'scheme')
     if not lease.acquire(blocking=False):
@@ -530,7 +530,7 @@ def _record_scheme_followup_failure(engine, project_id, previous_started_at, err
         if current.get('started_at') != previous_started_at or current['state'] == 'running':
             return
         try:
-            progress.begin(project_id, 'scheme', engine=engine, manager=manager)
+            progress.begin(project_id, 'scheme', engine=engine, manager=manager, scheme_focus=focus)
             progress.finish(project_id, error=error)
         except CodexError:
             # Invalid global configuration may also prevent beginning progress.
@@ -558,13 +558,13 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='skipped',
                             error='Scheme was skipped because another Scheme job or maintenance was active.')
     except CodexError as exc:
-        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc), manager)
+        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc), manager, focus)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed', error=str(exc))
         log.warning('Scheme follow-up failed for project=%s: %s', project_id, exc)
     except Exception:
         _record_scheme_followup_failure(engine, project_id, previous_started_at,
-                                        'Scheme follow-up failed. The previous saved result is unchanged.', manager)
+                                        'Scheme follow-up failed. The previous saved result is unchanged.', manager, focus)
         if dependency_token:
             attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed',
                             error='Scheme follow-up failed. The previous saved result is unchanged.')

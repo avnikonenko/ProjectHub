@@ -134,10 +134,11 @@ def test_pre_start_scheme_error_keeps_knowledge_saved_and_reports_scheme_failure
     def fail(*args, **kwargs):
         raise CodexError('Scheme follow-up could not inspect its sources.')
     monkeypatch.setattr(routes, 'refresh_scheme', fail)
-    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body())
+    response = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(scheme_focus='sessions'))
     assert response.status_code == 200 and response.json()['published'] is True
     status = api.client.get('/api/projects/1/codex/generation/status?kind=scheme').json()
     assert status['state'] == 'failed' and 'could not inspect' in status['error']
+    assert status['latest_attempt']['settings']['scheme_focus'] == 'sessions'
     assert 'Scheme follow-up failed for project=1' in caplog.text
     with Session(api.engine) as db:
         assert db.get(ProjectKnowledge, 1).snapshot['publication_id'] == 'new-knowledge'

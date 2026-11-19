@@ -349,6 +349,7 @@ function ProjectWorkspace({
   const pendingScheme = useRef<KnowledgeSchemeDependency | null>(null);
   const [bulkScheme, setBulkScheme] = useState<'none' | 'waiting' | 'requested' | 'skipped'>('none');
   const [schemeFocus, setSchemeFocus] = useState<SchemeFocus>('balanced');
+  const [queuedSchemeFocus, setQueuedSchemeFocus] = useState<SchemeFocus>('balanced');
   useEffect(() => {
     if (knowledgeLink) setKnowledgeSubview('knowledge');
   }, [knowledgeLink?.projectId, knowledgeLink?.publicationId, knowledgeLink?.itemId]);
@@ -429,6 +430,7 @@ function ProjectWorkspace({
   function dispatchGenerationPlan(plan: GenerationPlan) {
     setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
     setBulkAttemptCount(plan.start.length + Number(plan.waitForKnowledge));
+    if (plan.waitForKnowledge || plan.start.includes('scheme')) setQueuedSchemeFocus(schemeFocus);
     pendingScheme.current = plan.waitForKnowledge ? { project: base, request: bulkRequests.knowledge + 1 } : null;
     setBulkScheme(plan.waitForKnowledge ? 'waiting' : plan.schemeSkippedForKnowledge ? 'skipped' : 'none');
     if (!plan.start.length) return;
@@ -816,7 +818,7 @@ function ProjectWorkspace({
               showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               onGenerationOutcome={onKnowledgeOutcome}
-              generateSchemeAfter={bulkScheme === 'waiting'} schemeFocus={schemeFocus} />
+              generateSchemeAfter={bulkScheme === 'waiting'} schemeFocus={queuedSchemeFocus} />
             </div>
             {parametersVisited && <div hidden={knowledgeSubview !== 'parameters'}>
               <ProjectParameters base={base} generation={generation}
@@ -838,7 +840,7 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
-              focus={schemeFocus} onFocusChange={setSchemeFocus}
+              focus={schemeFocus} queuedFocus={queuedSchemeFocus} onFocusChange={setSchemeFocus}
               waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
