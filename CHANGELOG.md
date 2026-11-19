@@ -4,6 +4,13 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.4] - 2026-11-19
+
+- Choose Balanced, Code first, or Sessions first from Scheme or Generation. Queued runs keep the requested focus, and saved Schemes and attempt settings show it.
+- Clarify dependency purposes and declaration evidence in Scheme.
+- Retry Knowledge extraction when an item has no original citation, and preserve supported items if the retry still lacks evidence.
+- Explain review depth, Scheme focus, and how to install the latest code from Git.
+
 ## [0.2.3] - 2026-11-19
 
 - Improve large-project reviews with wider conversation coverage and reusable summaries.
