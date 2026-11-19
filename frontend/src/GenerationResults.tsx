@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { ErrorBox } from './ui';
-import { projectGenerationKinds, type GenerationRetryView, type ProjectGenerationKind } from './generationBatch';
+import { projectGenerationKinds, schemeFocusLabels, type GenerationRetryView, type ProjectGenerationKind, type SchemeFocus } from './generationBatch';
 import type { GenerationProfileId } from './generationDiagnostics';
 import './generationResults.css';
 
@@ -21,6 +21,7 @@ type AttemptSettings = {
   model: string;
   effort: string;
   generation_profile?: GenerationProfileId;
+  scheme_focus?: SchemeFocus;
   project_instructions?: boolean;
 } & Partial<Record<NumericalSetting, number>>;
 const numericalSettings = Object.keys(numericalSettingLabels) as NumericalSetting[];
@@ -49,6 +50,8 @@ const validAttemptSettings = (value: unknown) => value === undefined || value ==
     && (value.generation_profile === undefined || (typeof value.generation_profile === 'string'
       && Object.hasOwn(profileLabels, value.generation_profile)))
     && (value.project_instructions === undefined || typeof value.project_instructions === 'boolean')
+    && (value.scheme_focus === undefined || (typeof value.scheme_focus === 'string'
+      && Object.hasOwn(schemeFocusLabels, value.scheme_focus)))
     && numericalSettings.every(key => {
       const part = value[key];
       return part === undefined || (typeof part === 'number' && Number.isSafeInteger(part) && part > 0);
@@ -145,6 +148,7 @@ function GenerationAttemptSettings({ settings, title }: { settings: AttemptSetti
       {settings.project_instructions !== undefined && <div>
         <dt>Project AI instructions</dt><dd>{settings.project_instructions ? 'Custom' : 'Default'}</dd>
       </div>}
+      {settings.scheme_focus && <div><dt>Scheme focus</dt><dd>{schemeFocusLabels[settings.scheme_focus]}</dd></div>}
       {numericalSettings.map(key => {
         const value = settings[key];
         if (value === undefined) return null;

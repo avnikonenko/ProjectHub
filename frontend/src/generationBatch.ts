@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 
 export const projectGenerationKinds = ['brief', 'knowledge', 'scheme', 'qa', 'parameters'] as const;
 export type ProjectGenerationKind = typeof projectGenerationKinds[number];
+export const schemeFocusLabels = { balanced: 'Balanced', code: 'Code first', sessions: 'Sessions first' } as const;
+export type SchemeFocus = keyof typeof schemeFocusLabels;
 export type GenerationRequestState = 'wait' | 'ready' | 'skip';
 export type GenerationRequestTracker = { identity: string; sequence: number };
 export type GenerationRequestProps = {

@@ -589,7 +589,8 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         if body.generate_scheme:
             engine = request.app.state.engine
             dependency_token = attempts.queue_dependency(engine, project_id,
-                settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id})
+                settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id,
+                          'scheme_focus': 'balanced'})
         with use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:

@@ -1,4 +1,4 @@
-import { useGenerationRequest, type GenerationRequestProps } from './generationBatch';
+import { schemeFocusLabels, useGenerationRequest, type GenerationRequestProps, type SchemeFocus } from './generationBatch';
 import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -28,8 +28,6 @@ type SchemeEdge = {
 type SchemeGraph = { nodes: SchemeNode[]; edges: SchemeEdge[]; explanation: string; mermaid: string };
 type TreeEntry = { path: string; type: 'file' | 'directory' };
 type Coverage = SchemeCoverage;
-const schemeFocusLabels = { balanced: 'Balanced', code: 'Code first', sessions: 'Sessions first' } as const;
-type SchemeFocus = keyof typeof schemeFocusLabels;
 type SchemeSnapshot = {
   generated_at: string; generation?: GenerationProvenance | null;
   focus?: SchemeFocus;
@@ -352,7 +350,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       freshness={freshness} />
     <label>Scheme focus for next run
       <select value={focus} onChange={event => setFocus(event.target.value as SchemeFocus)}
-        disabled={loading || generating || recoveryBusy || waitingForKnowledge}>
+        disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
         {(Object.keys(schemeFocusLabels) as SchemeFocus[]).map(option =>
           <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
       </select>

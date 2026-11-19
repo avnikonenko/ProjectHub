@@ -173,11 +173,13 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
     invalid = output()
     invalid['architecture']['explanation'] = 'Invalid Unicode \ud800'
     manager.raw = json.dumps(invalid)
+    failed_focus = 'code' if focus != 'code' else 'sessions'
     with pytest.raises(CodexError, match='invalid text'):
-        scheme.refresh_scheme(engine, 1, manager)
+        scheme.refresh_scheme(engine, 1, manager, focus=failed_focus)
     assert manager.calls == 3  # No automatic repair/retry.
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved
+        assert scheme.progress.read(1, 'scheme', engine)['latest_attempt']['settings']['scheme_focus'] == failed_focus
         revisions = list(db.scalars(select(GenerationRevision)))
         assert len(revisions) == 1 and revisions[0].kind == 'scheme'
         assert revisions[0].snapshot == saved

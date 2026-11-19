@@ -112,7 +112,7 @@ test('generation rows identify settings for completed, failed and waiting attemp
       settings: { ...settings, project_instructions: true } } });
   Object.assign(raw.views[2], { state: 'waiting',
     latest_attempt: { state: 'waiting', settings: { ...settings, scheme_source_chars: 40_000,
-      scheme_read_bytes: 2 * 1024 * 1024, scheme_package_chars: 180_000 } } });
+      scheme_read_bytes: 2 * 1024 * 1024, scheme_package_chars: 180_000, scheme_focus: 'balanced' } } });
   Object.assign(raw.views[3], { latest_attempt: { state: 'completed', saves_result: false,
     settings: { ...settings, max_items: 25 } } });
   Object.assign(raw.views[4], { state: 'skipped', retryable: true,
@@ -131,6 +131,7 @@ test('generation rows identify settings for completed, failed and waiting attemp
   assert.match(rows[1], /Showing the earlier saved result/);
   assert.match(rows[1], /Usage limit reached/);
   assert.match(rows[2], /<summary>Requested settings<\/summary>/);
+  assert.match(rows[2], /<dt>Scheme focus<\/dt><dd>Balanced<\/dd>/);
   assert.match(rows[2], /<dt>Scheme excerpt budget<\/dt><dd>[^<]+ characters<\/dd>/);
   assert.match(rows[2], /<dt>Local file read limit<\/dt><dd title="[^"]+ bytes">2 MiB<\/dd>/);
   assert.match(rows[2], /<dt>Final evidence package limit<\/dt><dd>[^<]+ characters<\/dd>/);

@@ -317,7 +317,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
     started = time.monotonic()
     try:
         profile = current_knowledge_profile()
-        progress.begin(project_id, 'scheme', engine=engine, manager=manager, generation_profile=profile.id)
+        progress.begin(project_id, 'scheme', engine=engine, manager=manager,
+                       generation_profile=profile.id, scheme_focus=focus)
         progress.update(project_id, stage='Collecting Scheme evidence')
         limits = scheme_inspection_limits()
         source_chars, read_bytes, package_chars = limits
