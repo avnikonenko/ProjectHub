@@ -62,10 +62,10 @@ Implementation Choices & Limits, and tags. Selected generation evidence goes
 to Anthropic when Claude is selected. Codex still handles linked Codex sessions
 and their history.
 
-Install [Claude Code](https://code.claude.com/docs/en/cli-reference) on the machine running ProjectHub and set `ANTHROPIC_API_KEY`
-in the environment used to launch ProjectHub. Claude generation uses that key
-for API billing. Signing in to Claude Code alone does not supply this key.
-ProjectHub runs Claude with tools disabled and does not save Claude sessions.
+Install [Claude Code](https://code.claude.com/docs/en/cli-reference) on the machine
+running ProjectHub. Run `claude auth login` as the same OS user to let ProjectHub
+use that sign-in. ProjectHub disables Claude tools and session persistence for
+generation. Organization-managed Claude Code settings still apply.
 
 ### Conversation review depth
 

@@ -13,8 +13,6 @@ from backend.app.integrations.codex.protocol import CodexError
 
 @pytest.fixture
 def fake_cli(tmp_path, monkeypatch):
-    monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
-
     def install(body):
         path = tmp_path / 'claude'
         path.write_text(f'#!{sys.executable}\n' + body)
@@ -26,12 +24,16 @@ def fake_cli(tmp_path, monkeypatch):
 
 
 def test_claude_uses_only_supplied_data_and_validates_result(fake_cli, monkeypatch):
+    monkeypatch.setenv('HOME', '/signed-in-user')
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', '/configured-claude-profile')
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'fixture-key')
     monkeypatch.setenv('ANTHROPIC_BASE_URL', 'must-not-leak')
     monkeypatch.setenv('OPENAI_API_KEY', 'must-not-leak')
     monkeypatch.setenv('CLAUDECODE', 'must-not-leak')
     fake_cli('''import json, os, sys
 args = sys.argv[1:]
-assert '--bare' in args and '--no-session-persistence' in args
+assert '--bare' not in args and '--no-session-persistence' in args
+assert '--safe-mode' in args and '--restricted' in args
 assert '--strict-mcp-config' in args and '--disable-slash-commands' in args
 assert '--no-chrome' in args
 assert args[args.index('--tools') + 1] == ''
@@ -44,9 +46,10 @@ assert args[args.index('--setting-sources') + 1] == ''
 assert json.loads(args[args.index('--settings') + 1]) == {'disableAllHooks': True}
 assert json.loads(args[args.index('--mcp-config') + 1]) == {'mcpServers': {}}
 assert json.loads(args[args.index('--json-schema') + 1]) == {'type': 'object', 'additionalProperties': False}
-assert os.environ['HOME'] == os.environ['CLAUDE_CONFIG_DIR'] == os.getcwd()
-assert not set(os.environ) & {'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'CLAUDECODE'}
-assert os.environ['ANTHROPIC_API_KEY'] == 'fixture-key'
+assert os.environ['HOME'] == '/signed-in-user'
+assert os.environ['CLAUDE_CONFIG_DIR'] == '/configured-claude-profile'
+assert os.getcwd() != os.environ['HOME']
+assert not set(os.environ) & {'ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL', 'OPENAI_API_KEY', 'CLAUDECODE'}
 assert 'Selected evidence' not in args and 'fixture-key' not in args
 print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
                   'structured_output': {'received': sys.stdin.read(), 'cwd': os.getcwd()},
@@ -141,8 +144,7 @@ def test_claude_reuses_only_the_scoped_history_reader_and_validates_options():
         manager.for_generation('haiku', 'high')
 
 
-def test_claude_missing_key_fails_before_starting_the_cli(fake_cli, monkeypatch):
-    fake_cli('raise AssertionError("should not run without a credential")\n')
-    monkeypatch.delenv('ANTHROPIC_API_KEY')
-    with pytest.raises(CodexError, match='Set ANTHROPIC_API_KEY'):
+def test_claude_missing_cli_reports_installation_error(monkeypatch):
+    monkeypatch.setattr(claude_generation.shutil, 'which', lambda _: None)
+    with pytest.raises(CodexError, match='Install its CLI'):
         claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})

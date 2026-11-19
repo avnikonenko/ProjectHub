@@ -107,7 +107,7 @@ and run `codex login`. Local notes and browsing work without Codex.
 
 ## Settings and AI
 
-Open **AI settings** in the project header to choose Codex or Claude Code, a model, and reasoning effort, or to edit project AI instructions. Codex uses your existing ChatGPT sign-in. Claude Code uses `ANTHROPIC_API_KEY` from the server environment.
+Open **AI settings** in the project header to choose Codex or Claude Code, a model, and reasoning effort, or to edit project AI instructions. Each provider uses its CLI sign-in on the machine running ProjectHub.
 
 In Settings, choose a colour palette for the Portfolio theme. Light/dark mode and text size can be adjusted independently.
 

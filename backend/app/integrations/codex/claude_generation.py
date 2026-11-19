@@ -53,12 +53,15 @@ def _claude_output_schema(value):
     return result
 
 
-def _environment(cwd, api_key):
-    # Never forward ambient provider overrides, proxies, API keys, or the user's
-    # Claude settings. The API key is only passed to the selected local binary.
-    return {'HOME': cwd, 'CLAUDE_CONFIG_DIR': cwd, 'PATH': os.environ.get('PATH', os.defpath),
-            'ANTHROPIC_API_KEY': api_key, 'DISABLE_AUTOUPDATER': '1',
-            'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1', 'LANG': 'C.UTF-8'}
+def _environment():
+    # Let Claude Code resolve its own signed-in account. Do not forward API
+    # keys, provider overrides, proxies, or parent-agent settings.
+    env = {'HOME': os.path.expanduser('~'), 'PATH': os.environ.get('PATH', os.defpath),
+           'DISABLE_AUTOUPDATER': '1', 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+           'LANG': 'C.UTF-8'}
+    if config_dir := os.environ.get('CLAUDE_CONFIG_DIR'):
+        env['CLAUDE_CONFIG_DIR'] = config_dir
+    return env
 
 
 def _exchange(process, data, timeout):
@@ -105,7 +108,7 @@ def _exchange(process, data, timeout):
                     continue
     progress.check_cancelled()
     if process.returncode != 0:
-        raise CodexError('Claude Code generation failed. Check the CLI and Anthropic API key.')
+        raise CodexError('Claude Code generation failed. Check that the server can run Claude Code and that claude auth status shows a signed-in account.')
     return output
 
 
@@ -154,8 +157,8 @@ def _record_usage(request, request_id, result):
 
 class ClaudeGenerationManager:
     generation_provider = 'claude'
-    generation_account = 'claude-code-api-key'
-    account_key = 'Anthropic API key'
+    generation_account = 'claude-code-sign-in'
+    account_key = 'Claude Code sign-in'
     extraction_generation_mode = 'claude-code-json-schema-v1'
 
     def __init__(self, history_manager, model=None, effort=None):
@@ -194,9 +197,6 @@ class ClaudeGenerationManager:
         binary = shutil.which('claude')
         if not binary:
             raise CodexError('Claude Code is unavailable. Install its CLI on the ProjectHub server.')
-        api_key = os.environ.get('ANTHROPIC_API_KEY')
-        if not api_key or not api_key.strip():
-            raise CodexError('Set ANTHROPIC_API_KEY in the ProjectHub server environment to use Claude.')
         wire_schema = _claude_output_schema(output_schema)
         schema = json.dumps(wire_schema, ensure_ascii=True, separators=(',', ':'))
         if len(schema) > _MAX_SCHEMA_BYTES:
@@ -209,7 +209,7 @@ class ClaudeGenerationManager:
         if len(data) > _MAX_INPUT_BYTES:
             raise CodexError('Claude generation exceeded its input limit.')
         system = _SYSTEM_PROMPT + '\n' + ai_instructions()
-        command = [binary, '--print', '--bare', '--output-format', 'json', '--json-schema', schema,
+        command = [binary, '--print', '--safe-mode', '--restricted', '--output-format', 'json', '--json-schema', schema,
                    '--no-session-persistence', '--tools', '', '--disallowedTools', 'mcp__*',
                    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '',
                    '--settings', '{"disableAllHooks":true}', '--disable-slash-commands', '--no-chrome',
@@ -221,7 +221,7 @@ class ClaudeGenerationManager:
         request_id = uuid4().hex
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-') as cwd:
             try:
-                with subprocess.Popen(command, cwd=cwd, env=_environment(cwd, api_key),
+                with subprocess.Popen(command, cwd=cwd, env=_environment(),
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                       start_new_session=True) as process:
                     request = begin_model_request(request_id)

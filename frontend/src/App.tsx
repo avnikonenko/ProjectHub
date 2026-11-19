@@ -1445,7 +1445,7 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
         </select>
       </label>
       <SettingsHelp title="About Claude Code generation">
-        <p>Install Claude Code and set <code>ANTHROPIC_API_KEY</code> in the environment that starts ProjectHub. Signing in to Claude Code alone is insufficient.</p>
+        <p>Install Claude Code and run <code>claude auth login</code> as the user who runs ProjectHub. Generation uses that signed-in account.</p>
       </SettingsHelp>
       <label>
         Codex account for this project
