@@ -75,12 +75,14 @@ projecthub
 
 Install Git for repository inspection.
 
-### Install from a source checkout
+### Install the latest code from Git
 
+The `main` branch may include changes newer than the latest wheel release.
 Requires **Linux, Python 3.11+ with venv, Git, and Node.js 22.18+ with npm**.
-Run these commands from your checkout:
 
 ```bash
+git clone https://github.com/avnikonenko/ProjectHub.git
+cd ProjectHub
 bash scripts/install.sh
 projecthub
 ```
