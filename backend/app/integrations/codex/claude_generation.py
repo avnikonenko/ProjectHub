@@ -1,5 +1,6 @@
 """One-shot Claude Code generation without project tools or saved sessions."""
 from contextlib import contextmanager
+import hashlib
 import json
 import os
 import selectors
@@ -183,7 +184,42 @@ class ClaudeGenerationManager:
                 for model, efforts in _MODELS.items()]
 
     def for_generation(self, model, effort=None):
-        return type(self)(self._history_manager, model, effort)
+        selected = type(self)(self._history_manager, model, effort)
+        selected.generation_account = self.generation_account
+        return selected
+
+    def verify_account(self):
+        """Identify the sign-in before looking up cached model work."""
+        binary = shutil.which('claude')
+        if not binary:
+            raise CodexError('Claude Code is unavailable. Install its CLI on the ProjectHub server.')
+        message = 'Claude generation requires a signed-in account. Run claude auth login as the ProjectHub server user.'
+        with tempfile.TemporaryDirectory(prefix='projecthub-claude-auth-') as cwd:
+            try:
+                with subprocess.Popen([binary, '--safe-mode', '--restricted', 'auth', 'status'],
+                                      cwd=cwd, env=_environment(), stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      start_new_session=True) as process:
+                    try:
+                        raw = _exchange(process, b'', 10)
+                    except BaseException:
+                        _terminate(process)
+                        raise
+                status = json.loads(raw)
+            except (OSError, ValueError, RecursionError):
+                raise CodexError(message) from None
+            except CodexError:
+                progress.check_cancelled()
+                raise CodexError(message) from None
+        email = status.get('email') if isinstance(status, dict) else None
+        if (not isinstance(email, str) or not email.strip() or len(email) > 320
+                or status.get('loggedIn') is not True or status.get('authMethod') != 'claude.ai'
+                or status.get('apiProvider') != 'firstParty'):
+            raise CodexError(message)
+        organization = status.get('orgId')
+        identity = json.dumps([email.strip().casefold(), organization if isinstance(organization, str) else None])
+        self.generation_account = 'claude:' + hashlib.sha256(identity.encode()).hexdigest()
+        return self
 
     @contextmanager
     def independent_generation(self):

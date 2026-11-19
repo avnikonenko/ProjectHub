@@ -174,7 +174,7 @@ def review_profile():
 
 def select_generation_manager(manager, body):
     if body.provider == 'claude':
-        return ClaudeGenerationManager(manager).for_generation(body.model, body.effort)
+        return ClaudeGenerationManager(manager, body.model, body.effort).verify_account()
     choose = getattr(manager, 'for_generation', None)
     if body.model or body.effort or callable(choose):
         return manager.for_generation(body.model, body.effort)

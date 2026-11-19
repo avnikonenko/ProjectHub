@@ -148,3 +148,19 @@ def test_claude_missing_cli_reports_installation_error(monkeypatch):
     monkeypatch.setattr(claude_generation.shutil, 'which', lambda _: None)
     with pytest.raises(CodexError, match='Install its CLI'):
         claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+
+
+def test_claude_verifies_account_and_copies_only_hashed_identity(fake_cli):
+    def select(email, method='claude.ai'):
+        payload = {'loggedIn': True, 'apiProvider': 'firstParty', 'authMethod': method, 'email': email}
+        fake_cli(f'import sys\nassert sys.argv[-2:] == ["auth", "status"]\nprint({json.dumps(payload)!r})\n')
+        return claude_generation.ClaudeGenerationManager(None).verify_account()
+
+    first = select('fixture-one@example.invalid')
+    second = select('fixture-two@example.invalid')
+    assert first.generation_account != second.generation_account
+    assert 'example.invalid' not in first.generation_account
+    with first.independent_generation() as worker:
+        assert worker.generation_account == first.generation_account
+    with pytest.raises(CodexError, match='requires a signed-in account'):
+        select('fixture-one@example.invalid', 'api_key')

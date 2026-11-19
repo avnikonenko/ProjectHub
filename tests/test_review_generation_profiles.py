@@ -57,12 +57,13 @@ def test_review_routes_capture_profile_and_preserve_explicit_choices(
     assert getattr(routes, route)(3, body, request, database) == {'saved': True}
 
 
-def test_claude_selection_is_opt_in_and_keeps_provider_cache_keys_separate():
+def test_claude_selection_is_opt_in_and_keeps_provider_cache_keys_separate(monkeypatch):
     from backend.app.integrations.codex.generation_attempts import settings_for
     from backend.app.integrations.codex.knowledge import extraction_configuration
     from backend.app.integrations.codex.staged_overview import _requested_provenance
 
     codex = ModelSelection('sonnet', 'high')
+    monkeypatch.setattr(routes.ClaudeGenerationManager, 'verify_account', lambda self: self)
     request = routes.GenerationInput(confirmed=True, provider='claude', model='sonnet', effort='high')
     claude = routes.select_generation_manager(codex, request)
     assert claude.generation_provider == 'claude'
@@ -99,6 +100,7 @@ def test_claude_http_generation_and_model_catalog_do_not_resolve_codex_account(t
         return {'saved': True, 'generation': manager.generation_metadata}
 
     monkeypatch.setattr(routes, 'manager_for', root_history_manager)
+    monkeypatch.setattr(routes.ClaudeGenerationManager, 'verify_account', lambda self: self)
     monkeypatch.setattr(routes, 'refresh_scheme', refresh)
     with TestClient(app) as client:
         models = client.get('/api/projects/1/codex/models?provider=claude')
