@@ -1349,17 +1349,18 @@ function AIProfileHelp() {
   </SettingsHelp>;
 }
 
-function ClaudeProfileControl({ active, selected, locked, onChange }: {
+function ProjectAIProfileControl({ active, settings, locked }: {
   active: boolean;
-  selected: string;
+  settings: ReturnType<typeof useProjectGenerationSettings>;
   locked: boolean;
-  onChange: (id: string) => void;
 }) {
+  const { provider, accounts, accountError, savingAccount, changeAccount, claudeProfile, changeClaudeProfile } = settings;
+  const isClaude = provider === 'claude';
   type Profiles = { options: { id: string; label: string }[]; launch_label: string };
   const [profiles, setProfiles] = useState<Profiles | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
-    if (!active) return;
+    if (!active || !isClaude) return;
     let request: AbortController;
     function load() {
       request?.abort();
@@ -1376,19 +1377,23 @@ function ClaudeProfileControl({ active, selected, locked, onChange }: {
       request.abort();
       window.removeEventListener('projecthub:profiles-changed', load);
     };
-  }, [active]);
+  }, [active, isClaude]);
+  const selected = isClaude ? claudeProfile : accounts?.account ?? '';
+  const options = isClaude ? profiles?.options : accounts?.options;
+  const launchLabel = isClaude ? profiles?.launch_label ?? 'Claude Code launch account'
+    : accounts?.launch_label || 'ProjectHub launch account';
   return <>
     <label>
-      Claude Code profile for this project
-      <select value={selected} disabled={locked || (!profiles && !selected)}
-        onChange={event => onChange(event.target.value)}>
-        <option value="">{profiles?.launch_label ?? 'Claude Code launch account'}</option>
-        {selected && !profiles?.options.some(option => option.id === selected) &&
+      AI profile for this project
+      <select value={selected} disabled={locked || (isClaude ? !profiles && !selected : !accounts || savingAccount)}
+        onChange={event => (isClaude ? changeClaudeProfile : changeAccount)(event.target.value)}>
+        {(isClaude || accounts?.include_launch !== false) && <option value="">{launchLabel}</option>}
+        {isClaude && selected && !options?.some(option => option.id === selected) &&
           <option value={selected}>{profiles ? 'Unavailable profile' : 'Selected profile'}</option>}
-        {profiles?.options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+        {options?.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
       </select>
     </label>
-    <ErrorBox error={error} />
+    <ErrorBox error={isClaude ? error : accountError} />
   </>;
 }
 
@@ -1464,8 +1469,7 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
   providerLocked: boolean;
   children: React.ReactNode;
 }) {
-  const { accounts, accountError, savingAccount, changeAccount, changeGeneration, generation, provider,
-    changeProvider, claudeProfile, changeClaudeProfile } = settings;
+  const { accounts, savingAccount, changeGeneration, generation, provider, changeProvider } = settings;
   type Model = { id: string; label: string; efforts: string[] };
   const [modelList, setModelList] = useState<{ key: string; models: Model[] } | null>(null);
   const [status, setStatus] = useState('');
@@ -1503,20 +1507,7 @@ function GenerationOptions({ active, base, settings, providerLocked, children }:
           <option value="claude">Claude Code</option>
         </select>
       </label>
-      {provider === 'claude' && <ClaudeProfileControl active={active} selected={claudeProfile}
-        locked={providerLocked} onChange={changeClaudeProfile} />}
-      <label>
-        Codex account for this project
-        <select value={accounts?.account ?? ''} disabled={!accounts || savingAccount}
-          onChange={(e) => changeAccount(e.target.value)}>
-          {accounts?.include_launch !== false && <option value="">{accounts?.launch_label || 'ProjectHub launch account'}</option>}
-          {accounts?.options.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-        </select>
-      </label>
-      <SettingsHelp title="About the project account">
-        <p>Used for Codex generation and new Codex sessions. Existing sessions keep their original account.</p>
-      </SettingsHelp>
-      <ErrorBox error={accountError} />
+      <ProjectAIProfileControl active={active} settings={settings} locked={providerLocked} />
       <AIProfileHelp />
       <label>
         Model
