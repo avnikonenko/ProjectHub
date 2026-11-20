@@ -989,13 +989,17 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     configuration = extraction_configuration(manager)
     version = _digest(configuration)
     profile = current_knowledge_profile()
+    overview_diagnostics = {}
     if profile.id == 'quality':
         windows = build_windows(bundle)
     else:
         windows = build_windows(bundle, max_chars=profile.window_chars)
     if profile.id == 'economy':
-        from .archive import conversation_overviews
-        overviews, overview_notes = conversation_overviews(engine, project_id, manager, bundle=bundle)
+        from .archive import archive_diagnostics, archive_worker_scope, conversation_overviews
+        from .knowledge_profiles import captured_knowledge_workers
+        with archive_worker_scope(captured_knowledge_workers()):
+            overviews, overview_notes = conversation_overviews(engine, project_id, manager, bundle=bundle)
+            overview_diagnostics = archive_diagnostics()
         overview_citations = {source['id'] for item in overviews for source in item['sources']}
         windows, coverage, selection = select_profile_windows(
             bundle, windows, profile, overview_source_ids=overview_citations)
@@ -1060,7 +1064,8 @@ def build_candidate(engine, project_id, manager, bundle, previous=None):
     return {'project_id': project_id, 'items': items, 'sources': list(compact.values()), 'source_manifest': bundle['manifest'],
             'fingerprint': bundle['manifest']['fingerprint'], 'coverage': coverage,
             'extraction_version': version,
-            'diagnostics': {'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
+            'diagnostics': {**overview_diagnostics,
+                            'ai_requests': requests, 'cache_hits': hits, 'extraction_windows': len(windows),
                             **({'quote_selector_retries': run['quote']} if run['quote'] else {}),
                             **({'formatting_retries': run['formatting']} if run['formatting'] else {}),
                             **({'transient_retries': run['transient']} if run['transient'] else {}),

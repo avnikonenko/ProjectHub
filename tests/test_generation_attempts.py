@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import delete, event, select
+from sqlalchemy import create_engine, delete, event, select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
@@ -154,6 +154,36 @@ def test_attempts_persist_latest_failure_without_touching_saved_result(engine):
         row = attempts.generation_summary(db, 1)['views'][0]
         assert row['state'] == 'timed_out' and row['retryable'] and row['showing_previous']
         assert row['saved_at'] == 'earlier'
+
+
+def test_failed_generation_restores_bounded_progress_after_restart(engine):
+    from backend.app.integrations.codex import progress
+
+    progress.begin(1, 'knowledge', engine=engine)
+    progress.update(1, stage='Summarizing overview batches', batch_phase='overview synthesis',
+                    batch_completed=9, batch_total=17, cache_hits=8)
+    progress.record_diagnostics(1, {'model_requests': 12, 'private_data': ['source excerpt']})
+    progress.finish(1, 'The selected account reached its usage limit.')
+    restarted = create_engine(engine.url)
+    try:
+        status = progress.read(1, 'knowledge', engine=restarted)
+        details = status['latest_attempt']['progress']
+        assert status['state'] == 'failed'
+        assert status['last_stage'] == details['stage'] == 'Summarizing overview batches'
+        assert status['batch_phase'] == details['batch_phase'] == 'overview synthesis'
+        assert status['batch_completed'] == 9 and status['batch_total'] == 17 and status['cache_hits'] == 8
+        assert status['elapsed_seconds'] == details['elapsed_seconds']
+        assert details['model_requests'] == 12 and 'private_data' not in details
+        with Session(restarted) as db:
+            view = next(item for item in attempts.generation_summary(db, 1)['views'] if item['kind'] == 'knowledge')
+            assert view['latest_attempt']['progress'] == details
+        progress.begin(1, 'knowledge', engine=restarted)
+        try:
+            assert latest(restarted, kind='knowledge')['progress'] is None
+        finally:
+            progress.finish(1, 'Finish fixture.')
+    finally:
+        restarted.dispose()
 
 
 @pytest.mark.parametrize('error,is_timeout', [

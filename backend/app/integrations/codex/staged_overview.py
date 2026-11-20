@@ -25,6 +25,15 @@ from .protocol import CodexError
 
 MAX_LEVELS = 8
 CACHE_VERSION = 1
+_REDUCTION_RETRY_GUIDANCE = (
+    '\nCompact intermediate retry: the previous batch summaries and their attached original excerpts '
+    'did not fit the next synthesis step. For this batch, use short single-sentence points. '
+    'Keep the required purpose and architecture points, then only distinct material facts, supported '
+    'choices, their reasons, constraints or unresolved conflicts. Avoid repeating any point across sections. '
+    'Cite the fewest supplied aliases that jointly support each claim, keeping proposal and acceptance '
+    'evidence together. Leave the project map empty for this intermediate pass and state essential '
+    'component relationships in Architecture. Keep all sections required by the response schema.\n'
+)
 
 
 def _digest(value):
@@ -173,10 +182,11 @@ def _summary_sources(result, sources, groups, level, batch, entry_references=Non
 
 
 class _StageManager:
-    def __init__(self, manager, engine, project_id, identity, diagnostics, legacy_accounts):
+    def __init__(self, manager, engine, project_id, identity, diagnostics, legacy_accounts, *, compact=False):
         self.manager, self.engine, self.project_id = manager, engine, project_id
         self.identity, self.diagnostics = identity, diagnostics
         self.legacy_accounts = legacy_accounts
+        self.compact = compact
         self.fingerprint = self.raw = None
         self.cached = self.legacy_hit = False
         self.generation = None
@@ -184,8 +194,15 @@ class _StageManager:
     def __getattr__(self, name):
         return getattr(self.manager, name)
 
+    def _stage_prompt(self, prompt):
+        if self.compact:
+            guidance, _, sources = prompt.rpartition('\n')
+            return guidance + _REDUCTION_RETRY_GUIDANCE + sources
+        return prompt
+
     def generate_brief(self, prompt, schema):
         progress.check_cancelled()
+        prompt = self._stage_prompt(prompt)
         configuration = extraction_configuration(self.manager)
         cache_inputs = {'overview_stage_version': CACHE_VERSION, 'project_id': self.project_id,
                         'identity': self.identity, 'prompt': prompt, 'schema': schema,
@@ -227,6 +244,17 @@ class _StageManager:
                     self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
                     return self.raw
         self.diagnostics['cache_lookup_seconds'] += time.monotonic() - lookup_started
+        return self._request(prompt, schema)
+
+    def correct_brief_response(self, prompt, schema, validation_error):
+        # Only retry fresh model output. An invalid cache entry is a separate
+        # integrity failure and must not trigger a model request or replacement.
+        if self.cached:
+            raise validation_error
+        # Keep the original cache identity. Only the validated reply is saved.
+        return self._request(self._stage_prompt(prompt), schema)
+
+    def _request(self, prompt, schema):
         self.diagnostics['synthesis_requests'] += 1
         model_started = time.monotonic()
 
@@ -334,12 +362,12 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         _support_catalog(records, stage_groups)
         return records, stage_groups, identity(records, stage_groups), size, level, batch
 
-    def run(job, selected):
+    def run(job, selected, *, compact=False):
         records, stage_groups, stage_identity, size, level, batch = job
         progress.check_cancelled()
         local = dict(synthesis_requests=0, synthesis_cache_hits=0,
                      cache_lookup_seconds=0.0, model_seconds=0.0)
-        proxy = _StageManager(selected, engine, project_id, stage_identity, local, legacy_accounts)
+        proxy = _StageManager(selected, engine, project_id, stage_identity, local, legacy_accounts, compact=compact)
         entry_references = {}
         started = time.monotonic()
         success = False
@@ -379,16 +407,18 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
                                     last_batch_seconds=round(elapsed, 3),
                                     batch_started_at=min(active_batches.values(), default=None))
 
-    def run_level(batches, original_groups, level):
+    def run_level(batches, original_groups, level, *, compact=False):
         workers = min(_extraction_workers(manager), max(1, len(batches)))
         diagnostics['synthesis_workers'] = max(diagnostics['synthesis_workers'], workers)
-        progress.update(project_id, stage='Combining overview batches' if level else 'Summarizing overview batches',
+        stage = ('Condensing overview batches' if compact else
+                 'Combining overview batches' if level else 'Summarizing overview batches')
+        progress.update(project_id, stage=stage,
                         batch_phase='overview synthesis', batch_total=diagnostics['synthesis_batches_total'],
                         batch_completed=diagnostics['synthesis_batches_completed'],
                         cache_hits=diagnostics['synthesis_cache_hits'],
                         batch_started_at=None, last_batch_seconds=None)
         if workers == 1:
-            return [run(prepare(records, original_groups, level, index), manager)
+            return [run(prepare(records, original_groups, level, index), manager, compact=compact)
                     for index, records in enumerate(batches)]
         jobs = [prepare(records, original_groups, level, index) for index, records in enumerate(batches)]
         abort = threading.Event()
@@ -400,7 +430,7 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
                 with progress.abort_on(abort):
                     progress.check_cancelled()
                     with manager.independent_generation() as selected:
-                        return run(job, selected)
+                        return run(job, selected, compact=compact)
             except BaseException as exc:
                 with failure_lock:
                     if not failure:
@@ -451,11 +481,12 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
         return results
 
     previous_size = measure(_unique(record for unit in units for record in unit))
+    compact_retry = recovery_used = False
     for level in range(MAX_LEVELS):
         batches = _partition(units, measure, MAX_SYNTHESIS_CHARS)
         diagnostics['synthesis_batches_total'] += len(batches)
         summaries, next_groups = [], {}
-        results = run_level(batches, groups, level)
+        results = run_level(batches, groups, level, compact=compact_retry)
         for batch_index, (records, (result, entry_references, _, _)) in enumerate(zip(batches, results)):
             records, resolved = _summary_sources(result, records, groups, level, batch_index, entry_references)
             summaries.extend(records)
@@ -468,9 +499,16 @@ def staged_synthesis(manager, candidate, bundle, repository, sources, groups, *,
                 manager.generation_metadata = metadata
             return result
         if next_size >= previous_size:
-            raise CodexError('Overview stages did not reduce the input enough to continue safely; '
-                             'completed stage caches and saved results are preserved.')
+            if recovery_used or level + 1 == MAX_LEVELS:
+                raise CodexError('Overview stages did not reduce the input enough to continue safely; '
+                                 'completed stage caches and saved results are preserved.')
+            # Retry the previous bounded inputs, not their expanded summaries.
+            # The alternative prompt has its own cache identity. Validated
+            # normal stages remain reusable on a future attempt.
+            compact_retry = recovery_used = True
+            continue
         previous_size = next_size
         groups, units = next_groups, [[record] for record in summaries]
+        compact_retry = False
     raise CodexError('Overview synthesis reached its safe stage limit; '
                      'completed stage caches and saved results are preserved.')

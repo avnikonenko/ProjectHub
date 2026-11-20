@@ -47,7 +47,7 @@ generation_timeout = 600
 generation_budget = 900
 # Independent extraction requests; increase only after measuring account capacity.
 extraction_workers = {DEFAULT_EXTRACTION_WORKERS}
-# Knowledge-generation quality/cost trade-off: quality, balanced, or economy.
+# Conversation review depth: quality (Thorough), balanced, or economy (Summary-assisted).
 generation_profile = "quality"
 # Total source excerpt characters available to Scheme.
 scheme_source_chars = {DEFAULT_SCHEME_SOURCE_CHARS}

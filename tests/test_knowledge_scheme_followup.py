@@ -2,16 +2,16 @@
 from copy import deepcopy
 from types import SimpleNamespace
 
-from fastapi import FastAPI
+from fastapi import BackgroundTasks, FastAPI
 from fastapi.testclient import TestClient
 import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import progress, router as routes, scheme
+from backend.app.integrations.codex import generation_attempts as attempts, progress, router as routes, scheme
 from backend.app.integrations.codex.ai_instructions import ai_instructions
 from backend.app.integrations.codex.protocol import CodexError
-from backend.app.models import GenerationRevision, Project, ProjectAIInstructions, ProjectKnowledge, ProjectScheme
+from backend.app.models import GenerationRevision, Project, ProjectAIInstructions, ProjectKnowledge, ProjectScheme, utcnow
 
 
 @pytest.fixture
@@ -48,12 +48,14 @@ def api(tmp_path, monkeypatch):
                 db.commit()
         return {'published': publish, 'publication_id': publication, 'knowledge': saved, 'brief': brief}
 
-    def generate_scheme(actual_engine, pid, selected, *, expected_publication_id, focus):
+    def generate_scheme(actual_engine, pid, selected, *, expected_publication_id, focus, dependency_token):
         assert actual_engine is engine and pid == 1 and selected is choices[1]
         assert selected is not choices[0] and selected.account_key == choices[0].account_key
         assert selected.model == choices[0].model and selected.effort == choices[0].effort
         assert 'Project one writing preference.' in ai_instructions()
         with Session(engine) as db:
+            queued = attempts.read_latest(db, pid, 'scheme')
+            assert queued['state'] == 'waiting' and queued['started_at'] == dependency_token
             saved = db.get(ProjectKnowledge, pid).snapshot
             assert saved['publication_id'] == expected_publication_id == 'new-knowledge'
             result = {'generated_at': 'new-scheme', 'knowledge_publication': saved['publication_id'], 'focus': focus}
@@ -161,3 +163,52 @@ def test_busy_scheme_followup_does_not_overwrite_another_scheme_run(api, monkeyp
     finally:
         progress.finish(1)
         lease.release()
+
+
+def test_current_queue_owns_callback_and_cannot_overwrite_a_newer_saved_scheme(api, monkeypatch):
+    queued = []
+    publications = iter(('knowledge-a', 'knowledge-b'))
+
+    def defer(_tasks, callback, *args, **kwargs):
+        queued.append((callback, args, kwargs))
+
+    def publish(engine, pid, selected, *, publish):
+        assert publish and engine is api.engine and pid == 1
+        publication = next(publications)
+        with Session(engine) as db:
+            db.get(ProjectKnowledge, pid).snapshot = {'publication_id': publication}
+            db.commit()
+        return {'published': True, 'publication_id': publication}
+
+    monkeypatch.setattr(BackgroundTasks, 'add_task', defer)
+    monkeypatch.setattr(routes, 'generate_knowledge_brief', publish)
+    monkeypatch.setattr(routes, 'refresh_scheme', scheme.refresh_scheme)
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: pytest.fail('Stale callback inspected project evidence.'))
+    first = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(scheme_focus='code'))
+    assert first.status_code == 200 and first.json()['scheme_requested'] is True
+    with Session(api.engine) as db:
+        waiting = attempts.read_latest(db, 1, 'scheme')
+    assert waiting['state'] == 'waiting' and waiting['settings']['scheme_focus'] == 'code'
+    second = api.client.post('/api/projects/1/codex/knowledge/brief', json=body(scheme_focus='sessions'))
+    assert second.status_code == 200 and second.json()['scheme_requested'] is False
+    assert len(queued) == 1
+    with Session(api.engine) as db:
+        assert attempts.read_latest(db, 1, 'scheme') == waiting
+        assert db.get(ProjectKnowledge, 1).snapshot['publication_id'] == 'knowledge-b'
+
+    # A successful manual Scheme superseded the waiting token before its
+    # background callback started. It must stay the latest result and attempt.
+    newer = utcnow()
+    attempts.start(api.engine, 1, 'scheme', newer, settings={'scheme_focus': 'sessions'})
+    expected = {'generated_at': newer, 'knowledge_publication': 'knowledge-b'}
+    with Session(api.engine) as db:
+        db.get(ProjectScheme, 1).snapshot = expected
+        attempts.finish(api.engine, 1, 'scheme', newer, state='completed', db=db)
+        db.commit()
+    callback, args, kwargs = queued.pop()
+    callback(*args, **kwargs)
+    with Session(api.engine) as db:
+        assert db.get(ProjectScheme, 1).snapshot == expected
+        status = attempts.read_latest(db, 1, 'scheme')
+        assert status['state'] == 'completed' and status['started_at'] == newer
+        assert status['settings']['scheme_focus'] == 'sessions'

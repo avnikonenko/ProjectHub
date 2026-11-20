@@ -23,9 +23,11 @@ def _metadata(row):
     if row is None:
         return None
     result = {name: getattr(row, name) for name in
-              ('project_id', 'kind', 'started_at', 'finished_at', 'state', 'error', 'saves_result', 'settings')}
+              ('project_id', 'kind', 'started_at', 'finished_at', 'state', 'error', 'saves_result', 'settings', 'progress')}
     result['error_category'] = ('timeout' if row.state == 'failed' and _TIMEOUT.search(row.error or '')
                                 else 'interrupted' if row.state == 'interrupted' else None)
+    if row.progress is not None and 'elapsed_seconds' in row.progress:
+        result['elapsed_seconds'] = row.progress['elapsed_seconds']
     return result
 
 
@@ -64,7 +66,7 @@ def start(engine, pid, kind, started_at, *, saves_result=True, settings=None):
         db.execute(statement.on_conflict_do_update(
             index_elements=['project_id', 'kind'],
             set_=dict(started_at=started_at, finished_at=None, state='running', error=None,
-                      saves_result=bool(saves_result), settings=settings),
+                      saves_result=bool(saves_result), settings=settings, progress=None),
             where=ProjectGenerationAttempt.started_at <= started_at))
         db.commit()
 
@@ -78,13 +80,13 @@ def update_settings(engine, pid, kind, started_at, settings):
         db.commit()
 
 
-def finish(engine, pid, kind, started_at, *, state, error=None, finished_at=None, db=None):
+def finish(engine, pid, kind, started_at, *, state, error=None, finished_at=None, progress=None, db=None):
     """CAS the run identity; optionally stage the outcome in its artifact transaction."""
     _validate(kind, started_at)
     if state not in _STATES or state in {'running', 'waiting'}:
         raise ValueError('Generation attempt requires a terminal outcome.')
     values = dict(state=state, error=str(error)[:4000] if error else None,
-                  finished_at=finished_at or utcnow())
+                  finished_at=finished_at or utcnow(), progress=progress)
     def apply(session):
         require_project(session, pid)
         session.execute(update(ProjectGenerationAttempt).where(
@@ -130,28 +132,44 @@ def queue_dependency(engine, pid, kind='scheme', dependency='knowledge', *, sett
         outcome = db.execute(statement.on_conflict_do_update(
             index_elements=['project_id', 'kind'],
             set_=dict(started_at=token, finished_at=None, state='waiting', error=None, saves_result=True,
-                      settings=settings),
+                      settings=settings, progress=None),
             where=~ProjectGenerationAttempt.state.in_(('running', 'waiting'))))
         db.commit()
         return token if outcome.rowcount else None
 
 
-def saved_times(db, pid, *, with_presence=False):
-    """Read scalar timestamps only, not potentially megabyte-sized saved records."""
+def _has_recoverable_gaps(column, *counts):
+    archive = func.json_array_length(column, '$.diagnostics.archive_omissions') > 0
+    for count in counts:
+        path = f'$.diagnostics.{count}'
+        archive = archive | ((func.json_type(column, path) == 'integer') & (func.json_extract(column, path) > 0))
+    return archive
+
+
+def _saved_artifacts(db, pid):
+    """Read timestamps and retry flags without loading saved result bodies."""
     require_project(db, pid)
     queries = {
-        'brief': select(ProjectBrief.generated_at).where(ProjectBrief.project_id == pid),
-        'knowledge': select(ProjectKnowledge.snapshot['generated_at'].as_string()).where(ProjectKnowledge.project_id == pid),
-        'scheme': select(ProjectScheme.snapshot['generated_at'].as_string()).where(ProjectScheme.project_id == pid),
-        'qa': select(ProjectQA.generated_at).where(ProjectQA.project_id == pid),
+        'brief': select(ProjectBrief.generated_at, _has_recoverable_gaps(ProjectBrief.generation))
+            .where(ProjectBrief.project_id == pid),
+        'knowledge': select(ProjectKnowledge.snapshot['generated_at'].as_string(), _has_recoverable_gaps(
+            ProjectKnowledge.snapshot, 'unsupported_agreement_items', 'invalid_evidence_items'))
+            .where(ProjectKnowledge.project_id == pid),
+        'scheme': select(ProjectScheme.snapshot['generated_at'].as_string(), _has_recoverable_gaps(ProjectScheme.snapshot))
+            .where(ProjectScheme.project_id == pid),
+        'qa': select(ProjectQA.generated_at, _has_recoverable_gaps(
+            ProjectQA.generation, 'qa_consolidate_fallback_batches', 'qa_rank_fallback_batches'))
+            .where(ProjectQA.project_id == pid),
         'parameters': select(GenerationRevision.generated_at).where(
             GenerationRevision.project_id == pid, GenerationRevision.kind == 'parameters').order_by(GenerationRevision.id.desc()).limit(1),
     }
-    times, present = {}, {}
+    times, present, recoverable = {}, {}, set()
     for kind, query in queries.items():
         row = db.execute(query).first()
         times[kind], present[kind] = (row[0] if row else None), row is not None
-    return (times, present) if with_presence else times
+        if row is not None and len(row) > 1 and row[1]:
+            recoverable.add(kind)
+    return times, present, recoverable
 
 
 def _legacy_knowledge_time(db, pid):
@@ -219,7 +237,7 @@ def generation_summary(db, pid, *, live=None):
 
 def _generation_summary(db, pid, *, live=None):
     require_project(db, pid)
-    saved, present = saved_times(db, pid, with_presence=True)
+    saved, present, recoverable = _saved_artifacts(db, pid)
     history_at = None if present['knowledge'] else _legacy_knowledge_time(db, pid)
     views = []
     for kind in KINDS:
@@ -241,7 +259,7 @@ def _generation_summary(db, pid, *, live=None):
         if status.get('state') == 'running':
             state = 'running'
         elif attempt is None or (attempt['state'] == 'completed'):
-            state = ('saved' if present[kind] else 'earlier_result'
+            state = ('partial' if kind in recoverable else 'saved' if present[kind] else 'earlier_result'
                      if kind == 'knowledge' and history_at else 'not_generated')
         elif attempt['state'] == 'failed' and attempt['error_category'] == 'timeout':
             state = 'timed_out'
@@ -250,6 +268,7 @@ def _generation_summary(db, pid, *, live=None):
         views.append({'kind': kind, 'state': state, 'saved_at': saved[kind],
                       'history_at': history_at if kind == 'knowledge' else None,
                       'latest_attempt': attempt,
-                      'showing_previous': bool(present[kind] and state != 'saved'),
-                      'retryable': state in {'not_generated', 'earlier_result', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped'}})
+                      'showing_previous': bool(present[kind] and state not in {'saved', 'partial'}),
+                      'retryable': state in {'partial', 'not_generated', 'earlier_result', 'failed', 'timed_out',
+                                             'cancelled', 'interrupted', 'skipped'}})
     return {'project_id': pid, 'views': views}

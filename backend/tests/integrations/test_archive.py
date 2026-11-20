@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.models import Project, CodexSession, ProjectHistoryBatch
 from backend.app.integrations.codex.archive import archive_history, conversation_overviews, summarize_evidence, BATCH_CHARS
-from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
 
 
 def turn(number, text='Recorded conclusion', status='completed'):
@@ -103,6 +103,7 @@ def test_archive_rejects_foreign_citations_and_does_not_cache_failure(env):
     manager.foreign = True
     with pytest.raises(CodexError, match='foreign'):
         archive_history(engine, 1, manager)
+    assert len(manager.inputs) == 4
     assert manager.closed
     with Session(engine) as db:
         assert list(db.scalars(select(ProjectHistoryBatch))) == []
@@ -143,6 +144,77 @@ def test_recursive_reduction_preserves_original_sources_and_cache(env):
     generated = len(manager.inputs)
     assert summarize_evidence(engine, 1, manager, evidence) == reduced
     assert len(manager.inputs) == generated
+
+
+def test_deferred_reduction_splits_input_and_shares_the_output_slots(env):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    generate = manager.generate_brief
+    sources = [{'id': f'original:{i}', 'label': f'Note {i}', 'text': f'Exact original {i}'} for i in range(9)]
+    items = [{'text': f'Fact {i}', 'source_ids': [source['id']], 'source_labels': [source['label']]}
+             for i, source in enumerate(sources)]
+    payload = {'evidence': items}
+    caps = []
+
+    def invalidate_full_batch(prompt, schema):
+        wire = json.loads(prompt.split('\n', 1)[1])
+        manager.foreign = len(wire['evidence']) == len(items)
+        caps.append(schema['properties']['evidence']['maxItems'])
+        assert 'one to six source IDs' in prompt
+        return generate(prompt, schema)
+
+    manager.generate_brief = invalidate_full_batch
+    with archive.archive_worker_scope(1):
+        results, _, generated = archive._summary_jobs(engine, 1, manager, 1, lambda _: (payload, sources, 5), 'reduction')
+        assert archive.archive_diagnostics()['archive_recovered_batches'] == 1
+    assert generated == 1
+    assert caps == [5, 5, 5, 2, 3]
+    recovery = [wire['evidence'] for wire in manager.inputs[-2:]]
+    assert [[item['text'] for item in part] for part in recovery] == [
+        [item['text'] for item in items[:4]], [item['text'] for item in items[4:]]]
+    result, _ = results[0]
+    assert [row['sources'][0] for row in result] == [*sources[:2], *sources[4:7]]
+    assert archive._summarize(engine, 1, manager, payload, sources, 'reduction', 5) == (result, True)
+    assert len(manager.inputs) == 5
+
+
+@pytest.mark.parametrize('all_invalid', [False, True])
+def test_reduction_retains_every_point_from_failed_groups_and_stops_if_no_progress(env, all_invalid):
+    from backend.app.integrations.codex import archive, progress
+
+    engine, manager = env
+    generate = manager.generate_brief
+    points = [{'text': f'Fact {i}', 'sources': [
+        {'id': f'original:{i}', 'label': f'Note {i}', 'text': f'Exact original {i}'}]} for i in range(48)]
+    recovery_stages = []
+
+    def invalidate_group(prompt, schema):
+        wire = json.loads(prompt.split('\n', 1)[1])
+        manager.foreign = all_invalid or wire['evidence'][0]['source_labels'][0] == 'Note 0'
+        stage = progress.read(1, 'brief')['stage']
+        if stage.startswith('Rechecking deferred conversation batches'):
+            recovery_stages.append(stage)
+        assert len(manager.inputs) < 20, 'Failed reductions must terminate.'
+        return generate(prompt, schema)
+
+    manager.generate_brief = invalidate_group
+    progress.begin(1, 'brief')
+    try:
+        with archive.archive_worker_scope(1):
+            if all_invalid:
+                with pytest.raises(CodexError, match='could not fit the earlier validated evidence'):
+                    summarize_evidence(engine, 1, manager, points)
+            else:
+                reduced = summarize_evidence(engine, 1, manager, points)
+                assert len(reduced) == 24
+                assert all(actual is earlier for actual, earlier in zip(reduced[:16], points))
+            diagnostics = archive.archive_diagnostics()
+    finally:
+        progress.finish(1)
+    assert diagnostics['archive_retained_reduction_batches'] == (3 if all_invalid else 2)
+    assert 'archive_omissions' not in diagnostics
+    assert recovery_stages[0] == f'Rechecking deferred conversation batches (1 of {3 if all_invalid else 1})'
 
 
 @pytest.mark.parametrize('count', [18, 40])
@@ -338,9 +410,14 @@ def test_retry_reuses_successful_batches_before_bad_citation(env):
     engine, manager = env
     manager.turns['a'] = [turn(i, 'x' * 15000) for i in range(3)]
     generate = manager.generate_brief
+    second_input = None
 
     def fail_second(prompt, schema):
-        manager.foreign = len(manager.inputs) == 1
+        nonlocal second_input
+        payload = json.loads(prompt.split('\n', 1)[1])
+        if len(manager.inputs) == 1:
+            second_input = payload
+        manager.foreign = payload == second_input
         return generate(prompt, schema)
 
     manager.generate_brief = fail_second
@@ -355,6 +432,255 @@ def test_retry_reuses_successful_batches_before_bad_citation(env):
     assert result
     assert manager.inputs.count(first_input) == 1
     assert any('1 reused from cache' in item for item in coverage)
+
+
+def test_invalid_citation_is_retried_and_saved_with_original_source(env):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    original = {'id': 'session:1:turn:very-long-turn-identifier:part:7', 'text': 'Original evidence'}
+    payload = {'sources': [original], 'primary_ids': [original['id']], 'context_ids': []}
+    generate = manager.generate_brief
+
+    def retry_once(prompt, schema):
+        manager.foreign = not manager.inputs
+        if not manager.foreign:
+            assert 'Retry the batch after an invalid citation' in prompt
+        return generate(prompt, schema)
+
+    manager.generate_brief = retry_once
+    result, cached = _summarize(engine, 1, manager, payload, [original], 'conversation_overviews_v1')
+    assert not cached
+    wire = {'sources': [{**original, 'id': 's1'}], 'primary_ids': ['s1'], 'context_ids': []}
+    assert manager.inputs == [wire, wire]
+    assert result[0]['sources'] == [original]
+    assert _summarize(engine, 1, manager, payload, [original], 'conversation_overviews_v1') == (result, True)
+    assert len(manager.inputs) == 2
+
+
+@pytest.mark.parametrize('raw,reason', [
+    (json.dumps({'evidence': [{'text': 'Point', 'source_ids': ['s1']}] * 9}), 'exceeding the evidence limit'),
+    (json.dumps({'evidence': [{'text': 'X' * 601, 'source_ids': ['s1']}]}), 'invalid evidence text'),
+    (json.dumps({'evidence': [{'text': '   ', 'source_ids': ['s1']}]}), 'invalid evidence text'),
+    (json.dumps({'evidence': [{'text': '\ud800', 'source_ids': ['s1']}]}), 'invalid evidence text'),
+    ('{"evidence":', 'an invalid response structure'),
+    ('{"evidence": {}}', 'an invalid response structure'),
+    ('{"evidence": [{"source_ids": ["s1"]}]}', 'an invalid response structure'),
+])
+def test_invalid_history_output_is_retried_and_only_valid_result_is_cached(env, raw, reason):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    source = {'id': 'turn:1', 'text': 'Original evidence'}
+    payload = {'sources': [source]}
+    generate = manager.generate_brief
+    requests = []
+
+    def fail_once(prompt, schema):
+        requests.append(prompt)
+        if len(requests) == 1:
+            return raw
+        return generate(prompt, schema)
+
+    manager.generate_brief = fail_once
+    result, cached = _summarize(engine, 1, manager, payload, [source], 'history')
+    assert not cached
+    assert 'at most 8 entries in the evidence array' in requests[0]
+    assert 'at most 600 characters' in requests[0]
+    assert f'Retry the batch after {reason}' in requests[1]
+    assert result == [{'text': 'Saved outcome 0', 'sources': [source]}]
+    assert _summarize(engine, 1, manager, payload, [source], 'history') == (result, True)
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize('whole_conversation,large_gap', [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize('reason', ['citation_validation', 'evidence_limit', 'evidence_text', 'output_structure', 'formatter'])
+def test_failed_batch_is_deferred_and_only_small_partial_coverage_is_allowed(env, whole_conversation, large_gap, reason):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    generate = manager.generate_brief
+    sources = [{'id': f'message:{i}', 'label': f'Turn {i}', 'turn_id': str(i),
+                'session_id': 2 if i == 1 and whole_conversation else 1,
+                'text': (('bad ' * (200 if large_gap else 1)) if i == 1 else 'good ' * 50)}
+               for i in range(3)]
+
+    def job(index):
+        return {'sources': [sources[index]]}, [sources[index]], 8
+
+    def invalidate_one(prompt, schema):
+        wire = json.loads(prompt.split('\n', 1)[1])
+        manager.foreign = wire['sources'][0]['text'].startswith('bad')
+        if manager.foreign and reason != 'citation_validation':
+            manager.inputs.append(wire)
+            if reason == 'formatter':
+                raise JSONFormattingError('Provider did not finish structured output.')
+            point = {'text': 'X' * 601 if reason == 'evidence_text' else 'Point', 'source_ids': ['s1']}
+            return json.dumps({'evidence': {} if reason == 'output_structure' else
+                               [point] * (9 if reason == 'evidence_limit' else 1)})
+        return generate(prompt, schema)
+
+    manager.generate_brief = invalidate_one
+    omissions = []
+    with archive.archive_worker_scope(1):
+        if whole_conversation or large_gap:
+            with pytest.raises(CodexError, match='Too much conversation evidence'):
+                archive._summary_jobs(engine, 1, manager, 3, job, 'history', omissions=omissions)
+        else:
+            results, _, generated = archive._summary_jobs(engine, 1, manager, 3, job, 'history', omissions=omissions)
+            assert [len(result[0]) for result in results] == [1, 0, 1]
+            assert generated == 2
+        diagnostics = archive.archive_diagnostics()
+    assert diagnostics['archive_deferred_batches'] == 1
+    recorded_reason = 'output_structure' if reason == 'formatter' else reason
+    assert omissions == diagnostics['archive_omissions'] == [
+        {'phase': 'history', 'batch': 2, 'source_count': 1, 'sources': ['Turn 1'],
+         **({'reason': recorded_reason} if recorded_reason != 'citation_validation' else {})}]
+    assert [call['sources'][0]['label'] for call in manager.inputs] == ['Turn 0', *['Turn 1'] * 3, 'Turn 2', 'Turn 1']
+    with Session(engine) as db:
+        assert len(list(db.scalars(select(ProjectHistoryBatch)))) == 2
+
+
+def test_deferred_batch_rechecks_smaller_inputs_with_boundary_context_and_reuses_recovery(env):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    generate = manager.generate_brief
+    sources = [{'id': f'message:{i}', 'label': f'Turn {i}', 'turn_id': str(i),
+                'session_id': 1, 'text': f'Evidence {i}'} for i in range(4)]
+    payload = {'sources': sources}
+
+    def invalidate_full_batch(prompt, schema):
+        manager.foreign = len(json.loads(prompt.split('\n', 1)[1])['sources']) == 4
+        return generate(prompt, schema)
+
+    manager.generate_brief = invalidate_full_batch
+    with archive.archive_worker_scope(1):
+        results, _, generated = archive._summary_jobs(engine, 1, manager, 1, lambda _: (payload, sources, 8), 'history')
+        assert generated == 1
+        assert archive.archive_diagnostics()['archive_recovered_batches'] == 1
+    first, second = manager.inputs[3:]
+    assert [source['label'] for source in first['sources']] == ['Turn 0', 'Turn 1', 'Turn 2']
+    assert [source['label'] for source in second['sources']] == ['Turn 1', 'Turn 2', 'Turn 3']
+    assert first['context_ids'] == ['s3'] and second['context_ids'] == ['s1']
+    assert archive._summarize(engine, 1, manager, payload, sources, 'history') == (results[0][0], True)
+    assert len(manager.inputs) == 5
+
+
+@pytest.mark.parametrize('deferred', [False, True])
+def test_provider_formatting_errors_repair_conversation_overviews_and_reuse_the_cache(env, deferred):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    manager.generation_provider = 'claude'
+    generate = manager.generate_brief
+    sources = [{'id': f'message:{i}', 'label': f'Turn {i}', 'turn_id': str(i),
+                'session_id': 1, 'text': f'Evidence {i}'} for i in range(4)]
+    payload = {'sources': sources, 'primary_ids': [source['id'] for source in sources], 'context_ids': []}
+    failed = []
+
+    def retryable(prompt, schema):
+        wire = json.loads(prompt.split('\n', 1)[1])
+        if len(wire['sources']) == len(sources) and (deferred or not failed):
+            failed.append(prompt)
+            raise JSONFormattingError('Provider exhausted structured-output attempts.')
+        assert 'Return compact JSON without indentation or padding.' in prompt
+        return generate(prompt, schema)
+
+    manager.generate_brief = retryable
+    with archive.archive_worker_scope(1):
+        results, hits, generated = archive._summary_jobs(
+            engine, 1, manager, 1, lambda _: (payload, sources, 8), 'conversation_overviews_v1')
+        diagnostics = archive.archive_diagnostics()
+    assert (hits, generated) == (0, 1)
+    assert len(failed) == (3 if deferred else 1)
+    assert len(manager.inputs) == (2 if deferred else 1)
+    assert bool(diagnostics.get('archive_recovered_batches')) == deferred
+    assert 'archive_omissions' not in diagnostics
+    assert all(ref in sources for point in results[0][0] for ref in point['sources'])
+    assert archive._summarize(engine, 1, manager, payload, sources, 'conversation_overviews_v1') == (results[0][0], True)
+    assert len(failed) == (3 if deferred else 1)
+    assert len(manager.inputs) == (2 if deferred else 1)
+
+
+@pytest.mark.parametrize('message', ['Auth failed', 'Quota exceeded', 'Network failed'])
+def test_provider_operational_errors_do_not_trigger_archive_recovery(env, message):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    calls = []
+    source = {'id': 'turn', 'label': 'Turn', 'text': 'Recorded evidence'}
+
+    def fail(prompt, schema):
+        calls.append(prompt)
+        raise CodexError(message)
+
+    manager.generate_brief = fail
+    with archive.archive_worker_scope(1):
+        with pytest.raises(CodexError, match=message):
+            archive._summary_jobs(engine, 1, manager, 1, lambda _: ({'sources': [source]}, [source], 8),
+                                  'conversation_overviews_v1', omissions=[])
+        assert 'archive_deferred_batches' not in archive.archive_diagnostics()
+    assert len(calls) == 1
+    with Session(engine) as db:
+        assert not list(db.scalars(select(ProjectHistoryBatch)))
+
+
+def test_deferred_recheck_leaves_time_for_final_generation(env, monkeypatch):
+    from backend.app.integrations.codex import archive, progress
+
+    engine, manager = env
+    generate = manager.generate_brief
+    sources = [{'id': 'valid', 'session_id': 1, 'text': 'A' * 100},
+               {'id': 'missing', 'session_id': 1, 'text': 'B'}]
+
+    def job(index):
+        return {'sources': [sources[index]]}, [sources[index]], 8
+
+    def invalidate_one(prompt, schema):
+        manager.foreign = json.loads(prompt.split('\n', 1)[1])['sources'][0]['text'] == 'B'
+        return generate(prompt, schema)
+
+    manager.generate_brief = invalidate_one
+    monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '30')
+    progress.begin(1, 'brief')
+    try:
+        omissions = []
+        archive._summary_jobs(engine, 1, manager, len(sources), job, 'history', omissions=omissions)
+        assert len(manager.inputs) == 4  # One valid request and three initial failed attempts.
+        assert omissions[0]['batch'] == 2
+        progress.check_cancelled()  # The optional deadline does not apply to final synthesis.
+    finally:
+        progress.finish(1)
+
+
+@pytest.mark.parametrize('context_only', [False, True])
+def test_failed_batch_cannot_be_recovered_without_a_primary_citation(env, context_only):
+    from backend.app.integrations.codex import archive
+
+    engine, manager = env
+    sources = [{'id': f'message:{i}', 'session_id': 1, 'turn_id': str(i), 'text': f'Evidence {i}'}
+               for i in range(4)]
+    payload = {'sources': sources}
+
+    def invalid_recovery(prompt, schema):
+        wire = json.loads(prompt.split('\n', 1)[1])
+        manager.inputs.append(wire)
+        ids = ['s999'] if len(manager.inputs) <= 3 else wire.get('context_ids', []) if context_only else []
+        return json.dumps({'evidence': [{'text': 'Test reply', 'source_ids': ids}] if ids else []})
+
+    manager.generate_brief = invalid_recovery
+    omissions = []
+    with archive.archive_worker_scope(1):
+        with pytest.raises(CodexError, match='Too much conversation evidence'):
+            archive._summary_jobs(engine, 1, manager, 1, lambda _: (payload, sources, 8), 'history',
+                                  omissions=omissions)
+        diagnostics = archive.archive_diagnostics()
+    assert diagnostics['archive_deferred_batches'] == 1
+    assert 'archive_recovered_batches' not in diagnostics
+    assert omissions[0]['source_count'] == 4
+    with Session(engine) as db:
+        assert not list(db.scalars(select(ProjectHistoryBatch)))
 
 
 def test_small_long_note_edit_reuses_unchanged_chunks_and_refreshes_citations(env):

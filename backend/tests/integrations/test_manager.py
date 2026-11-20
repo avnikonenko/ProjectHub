@@ -1,4 +1,5 @@
 """Actual SQLite persistence with a fake App Server; no FastAPI dependency."""
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -541,6 +542,87 @@ def test_generation_session_failure_closes_and_does_not_retry(env):
         with pytest.raises(CodexError, match='transport failed'):
             env.manager.generate_brief('no retry', {})
     assert len([m for m, _ in client.calls if m == 'turn/start']) == 1
+
+
+@pytest.mark.parametrize('failures', [1, 3])
+def test_archive_formatting_recovery_reopens_pooled_codex_transport(env, failures):
+    from backend.app.integrations.codex import archive
+
+    clients, prompts = [], []
+
+    class ArchiveClient(ReusableBriefClient):
+        def request(self, method, params):
+            if method != 'turn/start':
+                return super().request(method, params)
+            assert not self.closed
+            self.calls.append((method, params))
+            thread, turn = params['threadId'], f'turn-{self.thread_count}'
+            prompt = params['input'][0]['text']
+            prompts.append(prompt)
+            if len(prompts) <= failures:
+                self.on_event('item/agentMessage/delta', {'threadId': thread, 'turnId': turn,
+                    'itemId': 'formatting-output', 'delta': '{' + '\n' * 4097})
+            else:
+                wire = json.loads(prompt.split('\n', 1)[1])
+                source_id = wire['primary_ids'][0]
+                answer = json.dumps({'evidence': [{'text': 'A recorded outcome.', 'source_ids': [source_id]}]})
+                self.on_event('item/completed', {'threadId': thread, 'turnId': turn,
+                    'item': {'type': 'agentMessage', 'phase': 'final_answer', 'text': answer}})
+                self.on_event('turn/completed', {'threadId': thread, 'turn': {'id': turn, 'status': 'completed'}})
+            return {'turn': {'id': turn}}
+
+    def factory(**callbacks):
+        clients.append(ArchiveClient(**callbacks))
+        return clients[-1]
+
+    def job(index):
+        sources = [{'id': f'original:{index}:{i}', 'label': f'Turn {i}', 'session_id': index + 1,
+                    'turn_id': str(i), 'text': f'An official excerpt {index}:{i}.'} for i in range(4)]
+        return {'sources': sources, 'primary_ids': [source['id'] for source in sources], 'context_ids': []}, sources, 8
+
+    env.manager.client_factory = factory
+    with env.manager.generation_session(), archive.archive_worker_scope(1):
+        results, hits, generated = archive._summary_jobs(
+            env.engine, 1, env.manager, 2, job, 'conversation_overviews_v1')
+        assert (hits, generated) == (0, 2)
+        assert all(client.closed and client.close_count == 1 for client in clients[:-1])
+        assert not clients[-1].closed
+        calls = len(prompts)
+        assert calls == (6 if failures == 3 else 3)
+        assert 'Return compact JSON without indentation or padding.' in prompts[1]
+        replay, hits, generated = archive._summary_jobs(
+            env.engine, 1, env.manager, 2, job, 'conversation_overviews_v1')
+        assert (hits, generated) == (2, 0)
+        assert [result[0] for result in replay] == [result[0] for result in results]
+        assert len(prompts) == calls
+    assert len(clients) == failures + 1
+    assert clients[-1].close_count == 1
+
+
+def test_expired_optional_recovery_leaves_pooled_generation_usable(env, monkeypatch):
+    from backend.app.integrations.codex import manager, progress
+
+    clients = []
+
+    def factory(**callbacks):
+        clients.append(ReusableBriefClient(**callbacks))
+        return clients[-1]
+
+    env.manager.client_factory = factory
+    wait = manager.wait_for_generation
+
+    def expire_first(done, timeout):
+        if len(clients) == 1:
+            raise progress.OptionalWorkExpired('Time reserved for synthesis.')
+        return wait(done, timeout)
+
+    monkeypatch.setattr(manager, 'wait_for_generation', expire_first)
+    with env.manager.generation_session():
+        with pytest.raises(progress.OptionalWorkExpired):
+            env.manager.generate_brief('optional recovery', {})
+        assert clients[0].closed
+        assert env.manager.generate_brief('final synthesis', {}) == 'answer-1'
+    assert len(clients) == 2
 
 
 def test_generation_session_does_not_share_transport_across_manager_identity(env):

@@ -71,9 +71,10 @@ def test_qa_persists_coverage_and_diagnostics_with_each_revision(tmp_path, monke
             measured_request(str(self.calls))
             if self.fail:
                 raise CodexError('Synthetic generation failure')
+            if 'selected_ids' in schema['properties']:
+                return json.dumps({'selected_ids': ['q1']})
             return json.dumps({'items': [{'question': 'Which database?', 'answer': 'SQLite.',
-                                          'source_ids': ['1'], **({'variants': []}
-                                          if 'variants' in schema['properties']['items']['items']['properties'] else {})}]})
+                                          'source_ids': ['1']}]})
     manager = Generator()
     try:
         saved = qa.refresh_qa(engine, 1, manager)
@@ -89,7 +90,7 @@ def test_qa_persists_coverage_and_diagnostics_with_each_revision(tmp_path, monke
             assert revision.snapshot['diagnostics'] == saved['diagnostics']
         manager.fail = True
         with pytest.raises(CodexError):
-            qa.refresh_qa(engine, 1, manager)
+            qa.refresh_qa(engine, 1, manager, max_items=24)
         engine.dispose()
         monkeypatch.setattr(progress, 'read', lambda *args: pytest.fail('Read borrowed current progress'))
         with Session(engine) as db:

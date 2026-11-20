@@ -28,8 +28,9 @@ _PROFILES = (
         18_000, None, None, True,
     ),
     GenerationProfile(
-        'economy', 'Quick',
-        'Experimental: reuses saved conversation overviews and limits original-message checks in Knowledge. '
+        'economy', 'Summary-assisted',
+        'Experimental: reuses saved conversation overviews, builds missing ones, '
+        'and limits original-message checks in Knowledge. '
         'Defaults to low reasoning when supported; explicit model and effort choices take precedence.',
         24_000, 60_000, 'low', True,
     ),

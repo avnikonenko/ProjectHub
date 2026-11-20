@@ -27,7 +27,7 @@ def prepared(tmp_path, monkeypatch):
     monkeypatch.setattr(qa, '_generate_items', lambda *args, **kwargs: ([
         (item, {identifier: {'id': identifier, 'text': identifier}
                 for identifier in ('source:1', 'source:2')})], False))
-    monkeypatch.setattr(qa, 'consolidate_items', lambda *args: [deepcopy(item)])
+    monkeypatch.setattr(qa, 'consolidate_items', lambda *args, **kwargs: [deepcopy(item)])
     yield engine, item, original
     engine.dispose()
 

@@ -32,7 +32,7 @@ def evidence():
 
 def node(identifier='api', status='observed', refs=None):
     return {'id': identifier, 'label': 'API', 'description': 'Application interface', 'type': 'service',
-            'status': status, 'source_ids': refs or ['file:api.py'], 'paths': ['api.py'] if not refs else []}
+            'status': status, 'source_ids': refs or ['file:api.py']}
 
 
 def output():
@@ -66,7 +66,7 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
     (lambda result: result['architecture']['nodes'][0].update(id=' api '), 'node ID'),
     (lambda result: result['architecture']['edges'][0].update(target='missing'), 'missing endpoint'),
     (lambda result: result['architecture']['nodes'][0].update(source_ids=['project:foreign']), 'foreign evidence'),
-    (lambda result: result['architecture']['nodes'][0].update(paths=['../../outside']), 'supporting evidence'),
+    (lambda result: result['architecture']['nodes'][0].update(paths=['../../outside']), 'invalid structure'),
     (lambda result: result['architecture']['nodes'][0].update(status='validated'), 'classification'),
     (lambda result: result['architecture']['nodes'][0].update(type='output'), 'classification'),
     (lambda result: result['workflow'].update(explanation=''), 'invalid text'),
@@ -220,6 +220,45 @@ def test_economy_scheme_uses_overviews_as_guides_to_original_citations(tmp_path,
     engine.dispose()
 
 
+def test_economy_scheme_preserves_local_archive_warning_at_package_limit(tmp_path, monkeypatch):
+    from backend.app.generation_profiles import get_generation_profile
+    from backend.app.integrations.codex import archive
+    from backend.app.integrations.codex.knowledge_profiles import use_knowledge_profile
+
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='One'))
+        db.commit()
+    inspected = evidence()
+    limit = scheme.DEFAULT_SCHEME_PACKAGE_CHARS
+    inspected['coverage'].update(partial=False, inspection_policy={'max_package_chars': limit})
+    package = {key: inspected[key] for key in ('sources', 'dependencies', 'tree', 'coverage')}
+    inspected['sources'][0]['text'] += 'x' * (limit - len(json.dumps(package, ensure_ascii=False)))
+    assert len(json.dumps(package, ensure_ascii=False)) == limit
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: inspected)
+    warning = 'Conversation summary coverage is partial: 1 batch omitted after citation validation failed.'
+    original = {'id': 'codex:original', 'label': 'Old discussion', 'text': 'Try backend B.', 'session_id': 7}
+    monkeypatch.setattr(archive, 'conversation_overviews', lambda *_: (
+        [{'text': 'The user proposed backend B.', 'sources': [original]}], ['Batch counts.', warning]))
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            serialized = prompt.split('\n', 1)[1]
+            assert len(serialized) == limit
+            assert json.loads(serialized) == package
+            return json.dumps(output())
+
+    with use_knowledge_profile(get_generation_profile('economy')):
+        saved = scheme.refresh_scheme(engine, 1, Manager())
+    assert saved['coverage']['partial'] is True
+    assert saved['coverage']['conversation_overview_points'] == 0
+    assert warning in saved['coverage']['limitations']
+    assert warning not in inspected['coverage']['limitations']
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1)['coverage'] == saved['coverage']
+    engine.dispose()
+
+
 def test_bounds_and_missing_evidence_do_not_call_codex(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -270,8 +309,6 @@ def test_knowledge_citations_require_original_evidence_in_each_claim(collection)
     target = (result['dependencies'] if collection == 'dependencies'
               else result['architecture'][collection])[0]
     target['source_ids'] = ['knowledge:item:choice']
-    if collection == 'nodes':
-        target['paths'] = []
     with pytest.raises(CodexError, match='original evidence alongside Knowledge'):
         scheme.validate_output(json.dumps(result), knowledge_evidence())
     target['source_ids'].extend(['knowledge:original:proposal', 'knowledge:original:acceptance'])

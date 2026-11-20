@@ -32,7 +32,7 @@ _DISCONNECT_COMPLETION_UNKNOWN = 'App Server disconnected before confirming comp
 _RESTART_COMPLETION_UNKNOWN = 'ProjectHub restarted before Codex confirmed completion. Inspect the session before retrying.'
 _COMPLETION_UNKNOWN = (_DISCONNECT_COMPLETION_UNKNOWN, _RESTART_COMPLETION_UNKNOWN)
 _generation_transport = ContextVar("projecthub_generation_transport", default=None)
-_retry_generation_failure = ContextVar('projecthub_retry_generation_failure', default=False)
+_recoverable_generation_failures = ContextVar('projecthub_recoverable_generation_failures', default=())
 _tag_generation_context = ContextVar('projecthub_tag_generation_context', default=False)
 _TAG_CONTEXT_VERSION = 'tag-classification-v1'
 _TAG_BASE_INSTRUCTIONS = (
@@ -61,18 +61,27 @@ class TransientGenerationError(CodexError):
     """Codex reported a temporary service or response transport failure."""
 
 
+@contextmanager
+def allow_generation_recovery(*, transient=False):
+    """Allow a caller's own retry to reopen a failed pooled transport."""
+    errors = (JSONFormattingError, TransientGenerationError) if transient else (JSONFormattingError,)
+    token = _recoverable_generation_failures.set(errors)
+    try:
+        yield
+    finally:
+        _recoverable_generation_failures.reset(token)
+
+
 def request_knowledge_json(manager, prompt, schema, *, extraction=False, on_retry=None, on_transient_retry=None):
     """Retry a formatting stall or confirmed transient failure once."""
     structural = getattr(manager, 'generate_extraction', None)
     first = structural if extraction and callable(structural) else manager.generate_brief
     progress.check_cancelled()
-    token = _retry_generation_failure.set(True)
     try:
-        return first(prompt, schema)
+        with allow_generation_recovery(transient=True):
+            return first(prompt, schema)
     except (JSONFormattingError, TransientGenerationError) as exc:
         formatting = isinstance(exc, JSONFormattingError)
-    finally:
-        _retry_generation_failure.reset(token)
     progress.check_cancelled()
     report_retry = on_retry if formatting or on_transient_retry is None else on_transient_retry
     if report_retry is not None:
@@ -815,6 +824,7 @@ class CodexManager:
             client.on_event, client.on_disconnect = event, disconnected
             succeeded = False
             retryable_failure = False
+            optional_work_expired = False
             try:
                 progress.check_cancelled()
                 if pooled and reused_client:
@@ -866,7 +876,7 @@ class CodexManager:
                 wait_for_generation(done, timeout)
                 if 'error' in state:
                     if isinstance(state['error'], JSONFormattingError):
-                        retryable_failure = True
+                        retryable_failure = isinstance(state['error'], _recoverable_generation_failures.get())
                         raise state['error']
                     raise CodexError(state['error'])
                 with event_lock:
@@ -875,17 +885,20 @@ class CodexManager:
                     reported_failure = reported_failures.get(turn_id)
                 if turn.get('status') != 'completed':
                     error = brief_turn_error(turn, reported_failure)
-                    retryable_failure = isinstance(error, TransientGenerationError)
+                    retryable_failure = isinstance(error, _recoverable_generation_failures.get())
                     raise error
                 if not isinstance(message, str) or not message.strip():
                     raise CodexError('Codex completed the brief without a final response.')
                 progress.check_cancelled()
                 succeeded = True
                 return message
+            except progress.OptionalWorkExpired:
+                optional_work_expired = True
+                raise
             finally:
                 cancellation = progress.current_cancel_event()
                 abort = progress.current_abort_event()
-                stopping = ((cancellation is not None and cancellation.is_set())
+                stopping = (optional_work_expired or (cancellation is not None and cancellation.is_set())
                             or (abort is not None and abort.is_set()))
                 if stopping and thread_id and turn_id:
                     # Never use a source-session client here. The generated
@@ -918,7 +931,7 @@ class CodexManager:
                     if not succeeded:
                         # Only a caller that retries this exact failure may
                         # open a fresh client in the same generation scope.
-                        scope['failed'] = not (retryable_failure and _retry_generation_failure.get())
+                        scope['failed'] = not (optional_work_expired or retryable_failure)
                         client.close()
                         scope['client'] = None
                     else:

@@ -89,16 +89,18 @@ def test_model_output_errors_do_not_trigger_overflow_fallback(monkeypatch, inval
     before = deepcopy(sources)
 
     def unexpected_fallback(*args):
-        pytest.fail('Model output errors must not select a different evidence set or retry.')
+        pytest.fail('Model output errors must not select a different evidence set.')
 
     monkeypatch.setattr(overview_selection, 'select_overview_sources', unexpected_fallback)
 
     class InvalidCapture(Capture):
         calls = 0
+        payloads = []
 
         def generate_brief(self, prompt, schema):
             self.calls += 1
             output = super().generate_brief(prompt, schema)
+            self.payloads.append(deepcopy(self.payload))
             if invalid_output == 'foreign-reference':
                 return output.replace('k1', 'foreign-reference')
             return invalid_output
@@ -107,7 +109,8 @@ def test_model_output_errors_do_not_trigger_overflow_fallback(monkeypatch, inval
     with pytest.raises(CodexError):
         module._synthesize(manager, {'coverage': {}}, {'project': {}}, {},
                            selection_diagnostics=diagnostics)
-    assert manager.calls == 1
+    assert manager.calls == 2
+    assert manager.payloads[0] == manager.payloads[1]
     assert diagnostics == {}
     assert sources == before
 

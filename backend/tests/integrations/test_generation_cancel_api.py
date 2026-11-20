@@ -70,10 +70,10 @@ def test_cancelled_qa_does_not_replace_saved_snapshot_or_revision(tmp_path, monk
 
     class Generator:
         def generate_brief(self, prompt, schema):
-            if prompt.startswith('Build a compact project reference'):
+            if prompt.startswith('Select and rank existing project Q&A IDs'):
                 current = progress.read(1, 'qa')
                 progress.cancel(1, 'qa', current['started_at'])
-                return json.dumps({'items': [{'question': 'Which storage?', 'answer': 'Local', 'source_ids': ['1'], 'variants': []}]})
+                return json.dumps({'selected_ids': ['q1']})
             return json.dumps({'items': [{'question': 'Which storage?', 'answer': 'Local', 'source_ids': ['1']}]})
 
     try:

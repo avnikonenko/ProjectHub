@@ -195,7 +195,7 @@ def test_duplicate_parallel_cache_misses_return_winner_and_replay_identically(en
                 count = len(self.inputs)
             barrier.wait(timeout=2)
             return json.dumps({'evidence': [{'text': f'Interpretation {count}',
-                                            'source_ids': ['source:0']}]})
+                                            'source_ids': [data['sources'][0]['id']]}]})
 
     manager = RaceManager()
     with archive.archive_worker_scope(2):
@@ -240,5 +240,60 @@ def test_parallel_workers_share_the_overall_budget(env, monkeypatch):
             with pytest.raises(CodexError, match='overall time budget'):
                 archive._summary_jobs(engine, 1, manager, 10, job, 'history')
         assert len(invoked) <= 2
+    finally:
+        progress.finish(1)
+
+
+def test_invalid_citation_batch_does_not_abort_parallel_valid_batches(env):
+    engine, _ = env
+    first_requests = threading.Barrier(2)
+
+    class OneBadBatch(ParallelFake):
+        def generate_brief(self, prompt, schema):
+            data = json.loads(prompt.split('\n', 1)[1])
+            source = data['sources'][0]
+            with self.lock:
+                self.inputs.append(data)
+                count = len(self.inputs)
+                self.active += 1
+                self.peak = max(self.peak, self.active)
+            try:
+                if count <= 2:
+                    first_requests.wait(timeout=3)
+                progress.check_cancelled()
+                return json.dumps({'evidence': [{'text': 'Supported fixture point',
+                    'source_ids': ['foreign' if source['text'] == 'B' else source['id']]}]})
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+    manager = OneBadBatch()
+
+    def same_conversation_job(index):
+        source = {'id': f'session:1:turn:{index}:part:1', 'label': f'Turn {index}',
+                  'session_id': 1, 'turn_id': str(index),
+                  'text': 'B' if index == 0 else 'A' * 1000}
+        return {'sources': [source]}, [source], 8
+
+    progress.begin(1, 'brief')
+    try:
+        with archive.archive_worker_scope(2):
+            omissions = []
+            results, hits, generated = archive._summary_jobs(
+                engine, 1, manager, 4, same_conversation_job, 'history', omissions=omissions)
+            diagnostics = archive.archive_diagnostics()
+        assert manager.peak == 2 and len(manager.inputs) == 7
+        assert results[0] == ([], False)
+        assert generated == 3 and hits == 0 and len(omissions) == 1
+        assert diagnostics['archive_deferred_batches'] == 1
+        assert diagnostics['archive_omissions'] == omissions
+        assert [result[0][0]['sources'][0]['id'] for result in results[1:]] == [
+            f'session:1:turn:{index}:part:1' for index in range(1, 4)]
+        status = progress.read(1, 'brief')
+        assert status['batch_total'] == 4 and status['batch_completed'] == 3
+        with Session(engine) as db:
+            cached = list(db.scalars(select(ProjectHistoryBatch)))
+            assert len(cached) == 3
+            assert all(row.evidence[0]['sources'][0]['text'] == 'A' * 1000 for row in cached)
     finally:
         progress.finish(1)

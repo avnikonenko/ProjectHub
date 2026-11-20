@@ -26,11 +26,29 @@ _stores = {}
 log = logging.getLogger('uvicorn.error')
 _current = ContextVar('projecthub_active_generation', default=None)
 _abort = ContextVar('projecthub_extraction_abort', default=None)
+_optional_deadline = ContextVar('projecthub_optional_work_deadline', default=None)
 
 
 class GenerationCancelled(CodexError):
     def __init__(self):
         super().__init__('AI generation cancelled. The previous saved result is unchanged.')
+
+
+class OptionalWorkExpired(CodexError):
+    pass
+
+
+@contextmanager
+def reserve_generation_time(project_id, seconds):
+    """Leave room for required stages after optional recovery work."""
+    with _lock:
+        key = _owned_key(project_id)
+        clock = _clocks.get(key) if key is not None else None
+    token = _optional_deadline.set(sum(clock) - seconds if clock else None)
+    try:
+        yield
+    finally:
+        _optional_deadline.reset(token)
 
 
 def _idle():
@@ -164,6 +182,9 @@ def check_cancelled():
     abort = current_abort_event()
     if abort is not None and abort.is_set():
         raise CodexError('Another extraction batch failed.')
+    deadline = _optional_deadline.get()
+    if deadline is not None and time.monotonic() >= deadline:
+        raise OptionalWorkExpired('Time reserved for the final result has been reached.')
 
 
 def cancel(project_id, kind, started_at):
@@ -248,17 +269,26 @@ def _persistence_record(project_id):
             return None
         reference = _stores.get(key)
         engine = reference() if reference is not None else None
-        return key, engine, _snapshots[key]['started_at'], _events[key].is_set()
+        snapshot = _snapshots[key]
+        details = {name: snapshot[name][:160] for name in ('stage', 'batch_phase')
+                   if isinstance(snapshot.get(name), str) and snapshot[name]}
+        details.update({name: snapshot[name] for name in ('batch_completed', 'batch_total', 'cache_hits')
+                        if type(snapshot.get(name)) is int and snapshot[name] >= 0})
+        requests = snapshot.get('diagnostics', {}).get('model_requests')
+        if type(requests) is int and requests >= 0:
+            details['model_requests'] = requests
+        details['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[key][0]), 3)
+        return key, engine, snapshot['started_at'], _events[key].is_set(), details
 
 
 def _persist_terminal(record, *, error=None, db=None, finished_at=None):
     if record is None or record[1] is None:
         return
-    key, engine, started_at, cancelled = record
+    key, engine, started_at, cancelled, details = record
     from .generation_attempts import finish as finish_attempt
     finish_attempt(engine, key[0], key[1], started_at,
                    state='cancelled' if cancelled else 'failed' if error is not None else 'completed',
-                   error=None if cancelled else error, finished_at=finished_at or utcnow(), db=db)
+                   error=None if cancelled else error, finished_at=finished_at or utcnow(), progress=details, db=db)
 
 
 def finish(project_id, error=None):
@@ -316,10 +346,13 @@ def _stored_progress(engine, project_id, kind):
     stages = {'running': 'Generating', 'completed': 'Completed', 'failed': 'Failed',
               'cancelled': 'Cancelled', 'interrupted': 'Interrupted',
               'waiting': 'Waiting for Knowledge', 'skipped': 'Skipped'}
+    details = attempt.get('progress') or {}
     return {**_idle(), 'state': legacy_state, 'stage': stages.get(state, ''),
             'started_at': attempt['started_at'], 'error': attempt.get('error'),
             'latest_attempt': attempt,
-            **({'elapsed_seconds': attempt['elapsed_seconds']} if attempt.get('elapsed_seconds') is not None else {})}
+            **({'last_stage': details['stage']} if 'stage' in details else {}),
+            **{name: details[name] for name in ('batch_phase', 'batch_completed', 'batch_total',
+                                              'cache_hits', 'elapsed_seconds') if name in details}}
 
 def read(project_id, kind, engine=None):
     key = (project_id, kind)
@@ -350,4 +383,6 @@ def read(project_id, kind, engine=None):
         return stored
     if 'latest_attempt' in stored:
         result['latest_attempt'] = stored['latest_attempt']
+        if stored.get('started_at') == result.get('started_at') and 'last_stage' in stored:
+            result['last_stage'] = stored['last_stage']
     return result

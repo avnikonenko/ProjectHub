@@ -63,7 +63,7 @@ class ParallelManager:
                     if owner.publish_metadata:
                         payload = json.JSONDecoder().raw_decode(prompt.split('\n', 1)[1])[0]
                         self.generation_metadata = {'model': (
-                            'actual-consolidation' if 'Build a compact project reference' in prompt
+                            'actual-consolidation' if 'Select and rank existing project Q&A IDs' in prompt
                             else 'actual-draft-' + payload[0]['text'])}
                     return raw
                 except JSONFormattingError:
@@ -87,8 +87,8 @@ class ParallelManager:
                 value = self.hook(prompt, payload)
                 if value is not None:
                     return value
-            if 'Build a compact project reference' in prompt:
-                return json.dumps({'items': [dict(item, variants=[]) for item in payload]})
+            if 'Select and rank existing project Q&A IDs' in prompt:
+                return json.dumps({'selected_ids': [item['id'] for item in payload][:schema['properties']['selected_ids']['maxItems']]})
             time.sleep(.04 if payload[0]['text'] == '0' else .01)
             progress.check_cancelled()
             return json.dumps({'items': [{
@@ -202,10 +202,14 @@ def test_refresh_reversed_order_atomic_revision_and_cache_replay(engine, monkeyp
         revisions = list(db.scalars(select(GenerationRevision)))
         assert len(revisions) == 1 and revisions[0].snapshot == saved
         assert db.get(ProjectQA, 2) is None
-    manager.hook = lambda prompt, payload: 'invalid JSON' if 'Build a compact project reference' in prompt else None
-    with archive.archive_worker_scope(2), pytest.raises(CodexError, match='invalid JSON'):
-        qa.refresh_qa(engine, 1, manager)
-    assert manager.children == 7  # Five drafts came from the cache.
+    def fail_consolidation(prompt, payload):
+        if 'Select and rank existing project Q&A IDs' in prompt:
+            raise CodexError('Synthetic transport failure')
+
+    manager.hook = fail_consolidation
+    with archive.archive_worker_scope(2), pytest.raises(CodexError, match='Synthetic transport failure'):
+        qa.refresh_qa(engine, 1, manager, max_items=24)
+    assert manager.children == 7  # Five cached drafts and one failed new ranking call.
     with Session(engine) as db:
         assert qa.read_qa(db, 1) == saved
         assert len(list(db.scalars(select(GenerationRevision)))) == 1
@@ -284,7 +288,7 @@ def test_formatting_retry_uses_fresh_child_and_keeps_canonical_cache(engine, sta
         if len(attempts) == 1:
             raise JSONFormattingError('Too much formatting whitespace')
         assert 'Return compact JSON' in prompt
-        return '{"items":[]}'
+        return '{"items":[]}' if stage == 'draft' else '{"selected_ids":[]}'
 
     manager.hook = hook
     if stage == 'draft':
@@ -343,7 +347,7 @@ class AdapterManager:
 
 @pytest.mark.parametrize('stage', ['draft', 'consolidation'])
 def test_formatting_fallback_uses_structural_adapter_without_mutating_contract(engine, stage):
-    manager = AdapterManager('{"items":[]}')
+    manager = AdapterManager('{"items":[]}' if stage == 'draft' else '{"selected_ids":[]}')
     canonical = deepcopy(qa._SCHEMA)
     if stage == 'draft':
         assert qa.generate_items(manager, points(1), engine=engine, project_id=1) == []
@@ -372,7 +376,7 @@ def test_formatting_fallback_keeps_local_draft_bounds_and_rejects_malformed_outp
     manager = AdapterManager(raw)
     with pytest.raises(CodexError, match=message):
         qa.generate_items(manager, points(1), engine=engine, project_id=1)
-    assert manager.adapters == 1 and len(manager.calls) == 2
+    assert manager.adapters == 1 and len(manager.calls) == 3
     with Session(engine) as db:
         assert not list(db.scalars(select(ProjectHistoryBatch)))
 
@@ -400,9 +404,9 @@ def test_formatting_fallback_keeps_local_consolidation_bounds(kind):
         qa._consolidate_group(manager, [{
             'question': 'Question?', 'answer': 'Answer.', 'source_ids': ['note:0'],
         }], 25)
-    # Invalid citations retain their pre-existing one correction attempt.
+    # A completed response that fails any local validation gets one correction.
     assert manager.adapters == 1
-    assert len(manager.calls) == (3 if kind == 'references' else 2)
+    assert len(manager.calls) == 3
 
 
 def test_parallel_consolidation_rounds_keep_order_diagnostics_and_serial_final_rank(engine, monkeypatch):
@@ -416,10 +420,10 @@ def test_parallel_consolidation_rounds_keep_order_diagnostics_and_serial_final_r
         if progress.read(1, 'qa')['batch_phase'] == 'qa_rank':
             final_active.append(manager.active)
             assert [item['question'] for item in payload] == ['Question 0?', 'Question 16?']
-            return json.dumps({'items': [dict(item, variants=[]) for item in payload]})
+            return json.dumps({'selected_ids': [item['id'] for item in payload]})
         time.sleep(.04 if payload[0]['question'] == 'Question 0?' else .01)
         progress.check_cancelled()
-        return json.dumps({'items': [dict(payload[0], variants=[])]})
+        return json.dumps({'selected_ids': [payload[0]['id']]})
 
     manager.hook = hook
     token = _marker.set('consolidation instructions')

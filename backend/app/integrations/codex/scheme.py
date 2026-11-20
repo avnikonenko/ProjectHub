@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS, scheme_inspection_limits
 from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
-from . import progress
+from . import generation_attempts, progress
 from .brief import BriefBusy, generation_lock, generation_metadata
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
@@ -43,6 +43,10 @@ _NODE_TYPES = {
 }
 
 
+class SchemeQueueSuperseded(CodexError):
+    """The queued follow-up no longer owns the Scheme attempt."""
+
+
 def _string(limit, minimum=1):
     return {'type': 'string', 'minLength': minimum, 'maxLength': limit}
 
@@ -62,7 +66,6 @@ def _graph_schema(kind):
             'label': _string(100), 'description': _string(400),
             'type': {'type': 'string', 'enum': list(_NODE_TYPES[kind])},
             'status': {'type': 'string', 'enum': list(STATUSES)}, 'source_ids': _refs(),
-            'paths': {'type': 'array', 'maxItems': 6, 'items': _string(500)},
         })},
         'edges': {'type': 'array', 'maxItems': MAX_EDGES, 'items': _object({
             'source': _string(64), 'target': _string(64), 'label': _string(100, 0),
@@ -174,7 +177,7 @@ def _validate_graph(graph, kind, sources):
     _text(graph['explanation'], 1000)
     identifiers = set()
     for index, node in enumerate(nodes):
-        _keys(node, ('id', 'label', 'description', 'type', 'status', 'source_ids', 'paths'))
+        _keys(node, ('id', 'label', 'description', 'type', 'status', 'source_ids'))
         identifier = _text(node['id'], 64)
         if (identifier != node['id'] or not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', identifier)
                 or identifier in identifiers):
@@ -185,11 +188,8 @@ def _validate_graph(graph, kind, sources):
         if node['type'] not in _NODE_TYPES[kind] or node['status'] not in STATUSES:
             raise CodexError('Scheme generation returned an invalid component classification.')
         node['source_ids'] = _references(node['source_ids'], sources, f'{kind}.nodes[{index}].source_ids')
-        paths = node['paths']
-        allowed_paths = {sources[ref].get('path') for ref in node['source_ids']}
-        if (not isinstance(paths, list) or len(paths) > 6
-                or any(not isinstance(path, str) or path not in allowed_paths for path in paths)):
-            raise CodexError('Scheme generation referenced a path without supporting evidence.')
+        cited_paths = (sources[ref].get('path') for ref in node['source_ids'])
+        node['paths'] = list(dict.fromkeys(path for path in cited_paths if isinstance(path, str) and path))
     seen_edges = set()
     for index, edge in enumerate(edges):
         _keys(edge, ('source', 'target', 'label', 'type', 'status', 'source_ids'))
@@ -303,6 +303,14 @@ def _with_conversation_overviews(payload, overviews, notes, package_limit):
         text_budget -= text_size
         size += added
     if not points:
+        # Keep the original package intact when the derived context cannot fit,
+        # but never discard its citation-omission warning with that context.
+        warnings = [note for note in notes if note.startswith('Conversation summary coverage is partial:')]
+        if warnings:
+            return {**payload, 'conversation_overviews': [], 'coverage': {
+                **payload['coverage'], 'partial': True, 'conversation_overview_points': 0,
+                'limitations': list(dict.fromkeys([*payload['coverage']['limitations'], *warnings])),
+            }}
         return payload
     coverage['conversation_excerpts'] = sum(source.get('provenance') in {
         'Codex conversation', 'conversation overview original evidence'} for source in kept.values())
@@ -310,12 +318,23 @@ def _with_conversation_overviews(payload, overviews, notes, package_limit):
     return candidate
 
 
-def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None, focus: SchemeFocus = 'balanced'):
+def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None, focus: SchemeFocus = 'balanced',
+                   dependency_token=None):
     job_lock = generation_lock.for_job(project_id, 'scheme')
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
     try:
+        if dependency_token is not None:
+            # A manual run or a newer queued job can replace this request before
+            # its background callback starts. Compare under the execution lease
+            # before begin() can replace the latest Scheme attempt.
+            with Session(engine) as db:
+                attempt = (generation_attempts.read_latest(db, project_id, 'scheme')
+                           if db.get(Project, project_id) is not None else None)
+            if (attempt is None or attempt['state'] != 'waiting'
+                    or attempt['started_at'] != dependency_token):
+                raise SchemeQueueSuperseded('A newer Scheme run replaced this queued request.')
         profile = current_knowledge_profile()
         progress.begin(project_id, 'scheme', engine=engine, manager=manager,
                        generation_profile=profile.id, scheme_focus=focus)
@@ -348,10 +367,14 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                 progress.record_settings(project_id, extraction_workers=workers)
                 overviews, notes = conversation_overviews(engine, project_id, manager)
                 overview_diagnostics = archive_diagnostics()
-            payload = _with_conversation_overviews(payload, overviews, notes, package_limit)
-        if 'conversation_overviews' in payload:
-            coverage = {**evidence['coverage'], **payload['coverage']}
-            evidence = {**evidence, 'sources': payload['sources'], 'coverage': coverage}
+            archive_payload = _with_conversation_overviews(payload, overviews, notes, package_limit)
+            if 'conversation_overviews' in archive_payload:
+                coverage = {**evidence['coverage'], **archive_payload['coverage']}
+                evidence = {**evidence, 'sources': archive_payload['sources'], 'coverage': coverage}
+                # With no fitting overview points, save the omission warning locally
+                # and send the original, bounded evidence package.
+                if archive_payload['conversation_overviews']:
+                    payload = archive_payload
         serialized = json.dumps(payload, ensure_ascii=False)
         if len(serialized) > package_limit:
             raise CodexError('Scheme evidence exceeds the generation input limit.')
@@ -374,7 +397,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Keep both diagrams at project-capability level: help a user understand what the project does '
             'and how its main capabilities connect. Use concise domain-language labels supported by the '
             'evidence. Put module names, command names, file formats, and implementation mechanics in '
-            'descriptions and paths unless they are themselves essential project concepts. Do not spend '
+            'descriptions unless they are themselves essential project concepts. Do not spend '
             'the node budget on generic entrypoints, orchestration wrappers, or intermediate storage '
             'when these crowd out meaningful project capabilities. Use specific useful outputs rather '
             'than vague labels such as artifacts. '
@@ -425,7 +448,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'current approach. Preserve recorded conflicts and distinguish a proposed replacement from '
             'an observed implementation. Original evidence and current code remain independently usable '
             'when Knowledge is missing or does not cover a capability. '
-            'Paths must match paths of cited sources, or return an empty paths list. '
+            'For a node that refers to code, cite the relevant supplied code source. '
+            'File paths are added from those citations after generation. '
             'Graphs may independently be empty when evidence is insufficient; provide a short explanation '
             'instead of inventing stages. Identify discussion-only diagrams as conceptual. '
             'An explicit sequence in an original discussion supports a proposed workflow even without '
@@ -488,6 +512,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             progress.complete(project_id, db.commit, db=db)
         progress.finish(project_id)
         return snapshot
+    except SchemeQueueSuperseded:
+        raise
     except Exception as exc:
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)
                         else 'Scheme generation failed. The previous saved scheme is preserved.')

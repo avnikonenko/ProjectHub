@@ -67,9 +67,10 @@ def test_cleanup_failure_keeps_api_success_and_scheme_followup(prepared, monkeyp
         for_generation=lambda model, effort: next(selections)))
     seen = []
 
-    def generate_scheme(engine, pid, selected, *, expected_publication_id, focus):
+    def generate_scheme(engine, pid, selected, *, expected_publication_id, focus, dependency_token):
         assert engine is prepared.engine and pid == 1 and selected is scheme_manager
         assert focus == 'balanced'
+        assert dependency_token
         with Session(engine) as db:
             saved = db.get(ProjectKnowledge, pid).snapshot
             assert saved['publication_id'] != 'old'

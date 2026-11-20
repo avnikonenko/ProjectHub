@@ -58,11 +58,13 @@ def test_valid_duplicate_references_are_normalized_in_first_seen_order(graph, co
     assert workflow['nodes'] == []
 
 
-def test_duplicate_normalization_preserves_path_support_checks():
+def test_node_paths_come_only_from_cited_sources():
     result = output()
-    result['architecture']['nodes'][0]['source_ids'] = ['discussion:1', 'discussion:1']
-    with pytest.raises(CodexError, match='path without supporting evidence'):
-        scheme.validate_output(json.dumps(result), evidence())
+    inputs = evidence()
+    inputs['sources'].append({**inputs['sources'][0], 'id': 'file:api.py:other-excerpt'})
+    result['architecture']['nodes'][0]['source_ids'] = ['file:api.py', 'discussion:1', 'file:api.py:other-excerpt']
+    architecture, _, _ = scheme.validate_output(json.dumps(result), inputs)
+    assert [node['paths'] for node in architecture['nodes']] == [['api.py'], []]
 
 
 def test_six_references_are_allowed_but_seven_are_not_collapsed_before_validation():
@@ -88,12 +90,17 @@ def test_refresh_saves_normalized_references_and_preserves_snapshot_after_foreig
             assert '1–6 distinct IDs exactly from the top-level sources list' in prompt
             assert 'citations embedded in source text' in prompt
             assert 'dependency IDs' in prompt
+            for kind in ('architecture', 'workflow'):
+                node_schema = schema['properties'][kind]['properties']['nodes']['items']
+                assert 'paths' not in node_schema['properties']
+                assert 'paths' not in node_schema['required']
             return json.dumps(self.result)
 
     manager = Manager()
     manager.result['architecture']['nodes'][0]['source_ids'] *= 2
     saved = scheme.refresh_scheme(engine, 1, manager)
     assert saved['architecture']['nodes'][0]['source_ids'] == ['file:api.py']
+    assert saved['architecture']['nodes'][0]['paths'] == ['api.py']
     manager.result['architecture']['nodes'][0]['source_ids'].append('note:foreign-project')
     with pytest.raises(CodexError, match='missing or foreign evidence'):
         scheme.refresh_scheme(engine, 1, manager)

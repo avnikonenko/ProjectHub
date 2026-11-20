@@ -15,7 +15,7 @@ from ...models import ProjectKnowledge, utcnow
 from ...project_evidence import collect_project_evidence, collect_repository_code
 from . import progress
 from .brief import (BriefBusy, OUTPUT_SCHEMA, SECTION_NAMES, SECTION_ROLE_GUIDANCE, generation_lock, generation_metadata,
-                    read_brief, resolve_citations, validate_sections)
+                    generate_validated_brief, read_brief, resolve_citations)
 from .knowledge import build_candidate, read_knowledge
 from .knowledge_sources import load_sources, needs_large_history_intake, prior_context_ids
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview, stage_knowledge_preview
@@ -323,8 +323,9 @@ def _synthesize(manager, candidate, bundle, repository, *, selection_diagnostics
         section['items']['properties']['source_ids']['items']['enum'] = ids
     for collection in schema['properties']['project_map']['properties'].values():
         collection['items']['properties']['source_ids']['items']['enum'] = ids
-    raw = manager.generate_brief(prompt, schema) if _stage else request_knowledge_json(manager, prompt, schema)
-    sections, graph = validate_sections(raw, wire_sources)
+    request = manager.generate_brief if _stage else lambda text, output: request_knowledge_json(manager, text, output)
+    correction = getattr(manager, 'correct_brief_response', None) if _stage else None
+    sections, graph = generate_validated_brief(request, prompt, schema, wire_sources, corrective_request=correction)
     # Resolve validated request-local IDs immediately. Nothing downstream or
     # persisted may mistake a short model alias for durable project identity.
     for entries in (*sections.values(), *graph.values()):
@@ -527,7 +528,8 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
     overview_selection = {}
 
     def diagnostics():
-        return {**((candidate or {}).get('diagnostics', {})),
+        return {**progress.read(project_id, 'knowledge').get('diagnostics', {}),
+                **((candidate or {}).get('diagnostics', {})),
                 'duration_seconds': round(time.monotonic() - started, 3),
                 'profile': deepcopy(profile_info), **metrics.snapshot(),
                 **({'overview_selection': deepcopy(overview_selection),

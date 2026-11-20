@@ -18,7 +18,7 @@ from .accounts import (account_options, account_home, launch_home, launch_label,
                        validate_profile_directory, claude_launch_home, claude_profile, claude_profile_entries)
 from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
-from .scheme import SchemeFocus, read_scheme, refresh_scheme, scheme_snapshot_for_display
+from .scheme import SchemeFocus, SchemeQueueSuperseded, read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import read_knowledge, reconcile
@@ -625,54 +625,39 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
         KnowledgeGenerationInput(**body.model_dump()), request, db, background_tasks)
 
 
-def _record_scheme_followup_failure(engine, project_id, previous_started_at, error, manager, focus):
-    """Expose a pre-start error without overwriting a competing Scheme run."""
-    lease = generation_lock.for_job(project_id, 'scheme')
-    if not lease.acquire(blocking=False):
-        return
-    try:
-        current = progress.read(project_id, 'scheme')
-        if current.get('started_at') != previous_started_at or current['state'] == 'running':
-            return
-        try:
-            progress.begin(project_id, 'scheme', engine=engine, manager=manager, scheme_focus=focus)
-            progress.finish(project_id, error=error)
-        except CodexError:
-            # Invalid global configuration may also prevent beginning progress.
-            # The original exception is still reported in the follow-up log.
-            pass
-    finally:
-        lease.release()
-
-
 def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
-                                     dependency_token=None, profile=None, focus: SchemeFocus = 'balanced'):
+                                     dependency_token, profile=None, focus: SchemeFocus = 'balanced'):
     """Server-owned follow-up, independent of the selected browser project."""
-    previous_started_at = progress.read(project_id, 'scheme').get('started_at')
+    if dependency_token is None:
+        return
+
+    def finish_waiting(state, error=None):
+        # If execution started, its progress attempt has already replaced the
+        # waiting token. Only a pre-start outcome can still match this token.
+        try:
+            attempts.finish(engine, project_id, 'scheme', dependency_token, state=state, error=error)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise
+
     try:
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
         with use_project_instructions(instructions), use_knowledge_profile(profile or review_profile()):
-            refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id, focus=focus)
-        if dependency_token:
-            attempts.finish(engine, project_id, 'scheme', dependency_token, state='completed')
+            refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id, focus=focus,
+                           dependency_token=dependency_token)
+        finish_waiting('completed')
+    except SchemeQueueSuperseded:
+        log.info('Ignored superseded Scheme follow-up for project=%s', project_id)
     except BriefBusy as exc:
         # Never alter progress or cancellation for an existing Scheme job.
         log.warning('Scheme follow-up not started for project=%s: %s', project_id, exc)
-        if dependency_token:
-            attempts.finish(engine, project_id, 'scheme', dependency_token, state='skipped',
-                            error='Scheme was skipped because another Scheme job or maintenance was active.')
+        finish_waiting('skipped', 'Scheme was skipped because another Scheme job or maintenance was active.')
     except CodexError as exc:
-        _record_scheme_followup_failure(engine, project_id, previous_started_at, str(exc), manager, focus)
-        if dependency_token:
-            attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed', error=str(exc))
+        finish_waiting('failed', str(exc))
         log.warning('Scheme follow-up failed for project=%s: %s', project_id, exc)
     except Exception:
-        _record_scheme_followup_failure(engine, project_id, previous_started_at,
-                                        'Scheme follow-up failed. The previous saved result is unchanged.', manager, focus)
-        if dependency_token:
-            attempts.finish(engine, project_id, 'scheme', dependency_token, state='failed',
-                            error='Scheme follow-up failed. The previous saved result is unchanged.')
+        finish_waiting('failed', 'Scheme follow-up failed. The previous saved result is unchanged.')
         log.exception('Scheme follow-up failed for project=%s', project_id)
 
 
@@ -703,6 +688,8 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             publication_id = result.get('publication_id')
             if result.get('published') is not True or not isinstance(publication_id, str) or not publication_id:
                 raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
+            if dependency_token is None:
+                return {**result, 'scheme_requested': False}
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
                                       publication_id, dependency_token, scheme_profile, body.scheme_focus)

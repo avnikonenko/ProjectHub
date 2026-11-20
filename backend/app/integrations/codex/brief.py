@@ -83,6 +83,10 @@ class BriefBusy(CodexError):
     pass
 
 
+class BriefResponseError(CodexError):
+    """A completed model response failed the brief contract."""
+
+
 def read_brief(db, project_id):
     row = db.get(ProjectBrief, project_id)
     if row is None:
@@ -166,62 +170,85 @@ def recorded_evidence(db, project, *, include_notes=True, exclude_shared=False):
 
 def validate_sections(raw, sources):
     if not isinstance(raw, str) or len(raw) > 150_000:
-        raise CodexError('Brief generation returned an invalid or oversized response.')
+        raise BriefResponseError('Brief generation returned an invalid or oversized response.')
     try:
         result = json.loads(raw)
     except (ValueError, RecursionError) as exc:
-        raise CodexError('Brief generation did not return valid JSON.') from exc
+        raise BriefResponseError('Brief generation did not return valid JSON.') from exc
     if not isinstance(result, dict) or set(result) != {'sections', 'project_map'}:
-        raise CodexError('Brief generation returned an unsupported structure.')
+        raise BriefResponseError('Brief generation returned an unsupported structure.')
     sections = result['sections']
     if not isinstance(sections, dict) or set(sections) != set(SECTION_NAMES):
-        raise CodexError('Brief generation omitted or added sections.')
+        raise BriefResponseError('Brief generation omitted or added sections.')
     if not sections['overview'] or not sections['architecture']:
-        raise CodexError('Brief generation omitted the overview or reported architecture.')
+        raise BriefResponseError('Brief generation omitted the overview or reported architecture.')
     allowed = {source['id'] for source in sources}
     for name, entries in sections.items():
         if not isinstance(entries, list) or len(entries) > SECTION_LIMITS[name]:
-            raise CodexError('Brief generation returned invalid section entries.')
+            raise BriefResponseError('Brief generation returned invalid section entries.')
         for entry in entries:
             if not isinstance(entry, dict) or set(entry) != {'text', 'source_ids', 'classification'}:
-                raise CodexError('Brief generation returned an invalid entry.')
+                raise BriefResponseError('Brief generation returned an invalid entry.')
             if not isinstance(entry['classification'], str) or entry['classification'] not in CLASSIFICATIONS:
-                raise CodexError('Brief generation returned an invalid evidence classification.')
+                raise BriefResponseError('Brief generation returned an invalid evidence classification.')
             value, references = entry['text'], entry['source_ids']
             if not isinstance(value, str) or not value.strip() or len(value) > SECTION_TEXT_LIMITS[name]:
-                raise CodexError('Brief generation returned invalid entry text.')
+                raise BriefResponseError('Brief generation returned invalid entry text.')
             if name == 'overview' and value.rstrip().rstrip('\"”’\'').endswith((',', ';', ':', '—', '-')):
-                raise CodexError('Brief overview ended with an incomplete sentence. The previous summary is preserved.')
+                raise BriefResponseError('Brief overview ended with an incomplete sentence. The previous summary is preserved.')
             if (not isinstance(references, list) or not 1 <= len(references) <= 3
                     or any(not isinstance(ref, str) or ref not in allowed for ref in references)):
-                raise CodexError('Brief generation cited missing or foreign sources.')
+                raise BriefResponseError('Brief generation cited missing or foreign sources.')
     graph = result['project_map']
     if not isinstance(graph, dict) or set(graph) != set(MAP_FIELDS):
-        raise CodexError('Brief generation returned an invalid project map.')
+        raise BriefResponseError('Brief generation returned an invalid project map.')
     node_ids = set()
     for name, fields in MAP_FIELDS.items():
         rows = graph[name]
         if not isinstance(rows, list) or len(rows) > MAP_LIMITS[name]:
-            raise CodexError('Brief generation returned an oversized project map.')
+            raise BriefResponseError('Brief generation returned an oversized project map.')
         for row in rows:
             if not isinstance(row, dict) or set(row) != {*fields, 'source_ids'}:
-                raise CodexError('Brief generation returned an invalid map entry.')
+                raise BriefResponseError('Brief generation returned an invalid map entry.')
             refs = row['source_ids']
             if (not isinstance(refs, list) or not 1 <= len(refs) <= 3
                     or any(not isinstance(ref, str) or ref not in allowed for ref in refs)):
-                raise CodexError('Project map cited missing or foreign sources.')
+                raise BriefResponseError('Project map cited missing or foreign sources.')
             if not isinstance(row['label'], str) or not row['label'].strip() or len(row['label']) > MAP_LABEL_LIMIT:
-                raise CodexError('Project map returned an invalid label.')
+                raise BriefResponseError('Project map returned an invalid label.')
             if name == 'nodes':
                 node_id = row['id']
                 if not isinstance(node_id, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,32}', node_id) or node_id in node_ids:
-                    raise CodexError('Project map returned an invalid node ID.')
+                    raise BriefResponseError('Project map returned an invalid node ID.')
                 node_ids.add(node_id)
             elif (not isinstance(row['from'], str) or not isinstance(row['to'], str)
                     or row['from'] not in node_ids or row['to'] not in node_ids
                     or not isinstance(row['inferred'], bool)):
-                raise CodexError('Project map returned an invalid connection.')
+                raise BriefResponseError('Project map returned an invalid connection.')
     return sections, graph
+
+
+def generate_validated_brief(request, prompt, schema, sources, *, corrective_request=None):
+    """Give one invalid completed response another chance with the same evidence."""
+    raw = request(prompt, schema)
+    try:
+        return validate_sections(raw, sources)
+    except BriefResponseError as exc:
+        progress.check_cancelled()
+        corrective_prompt = (
+            f'Correct the previous Overview attempt. Validation failed: {exc} '
+            'Write a fresh compact JSON response matching the exact schema. Keep all required fields. '
+            'Give each point a complete thought. Write concise prose so you stay below the character limits, '
+            f'including spaces: {SECTION_TEXT_LIMITS["overview"]} for overview, '
+            f'{SECTION_TEXT_LIMITS["architecture"]} for architecture and current_status, '
+            f'{MAX_POINT_CHARS} for other sections and {MAP_LABEL_LIMIT} for map labels. '
+            'Include a supported overview and architecture point. Leave optional arrays empty where unsupported. '
+            'Cite only source IDs supplied in this request, and use existing map node IDs for edge endpoints. '
+            'Apply the following evidence and requirements to the corrected result. ' + prompt
+        )
+        raw = (request(corrective_prompt, schema) if corrective_request is None else
+               corrective_request(corrective_prompt, schema, exc))
+    return validate_sections(raw, sources)
 
 
 def resolve_citations(sections, graph, source_groups):
@@ -320,6 +347,10 @@ def refresh_brief(engine, project_id, manager):
         progress.update(project_id, stage='Summarizing project notes and decisions')
         recorded = summarize_evidence(engine, project_id, manager, records)
         history = summarize_evidence(engine, project_id, manager, history)
+        retained = archive_diagnostics().get('archive_retained_reduction_batches', 0)
+        if retained:
+            coverage.append(f'{retained} evidence reduction batches retained their previously validated '
+                            'input and were considered again in later passes.')
         coverage.append('Project notes (including AI notes), saved architecture and accepted decisions are included when available. Notes are unverified reference material.')
         coverage.append(snapshot['validation'])
         if snapshot.get('git_error'):
@@ -478,7 +509,7 @@ def refresh_brief(engine, project_id, manager):
             section['items']['properties']['source_ids']['items']['enum'] = allowed_ids
         for collection in schema['properties']['project_map']['properties'].values():
             collection['items']['properties']['source_ids']['items']['enum'] = allowed_ids
-        sections, graph = validate_sections(manager.generate_brief(prompt, schema), sources)
+        sections, graph = generate_validated_brief(manager.generate_brief, prompt, schema, sources)
         deduplicate_brief_changes(sections, previous)
         # Always show the known coverage gap, even if synthesis omits it.
         validation_entry = {'text': validation_source['text'], 'source_ids': [validation_id],

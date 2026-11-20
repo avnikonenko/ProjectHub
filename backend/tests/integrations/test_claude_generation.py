@@ -8,7 +8,8 @@ import pytest
 
 from backend.app.integrations.codex import claude_generation, progress
 from backend.app.integrations.codex.generation_metrics import GenerationMetrics, collect_generation_metrics
-from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
+from backend.app.integrations.codex.manager import TransientGenerationError, request_knowledge_json
 
 
 @pytest.fixture
@@ -110,6 +111,199 @@ def test_claude_redacts_failure_output(fake_cli):
     with pytest.raises(CodexError, match='generation failed') as caught:
         claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
     assert 'private' not in str(caught.value)
+    assert caught.value.provider_diagnostics['exit_status'] == 1
+    assert caught.value.provider_diagnostics['category'] == 'unknown_exit'
+    assert 'private' not in repr(caught.value.provider_diagnostics)
+
+
+@pytest.mark.parametrize('message,limit,reset', [
+    ("You've hit your weekly limit · resets Nov 23, 1pm (Europe/Prague)",
+     'weekly', 'Nov 23, 1pm (Europe/Prague)'),
+    ("You've hit your 5-hour limit · resets 1:10pm (Europe/Prague)",
+     '5-hour', '1:10pm (Europe/Prague)'),
+    ("You've hit your limit · resets 1pm (UTC)", None, '1pm (UTC)'),
+    ("You've hit your weekly limit · resets private account data", 'weekly', None),
+    ("You've hit your weekly limit · resets 1pm (private)", 'weekly', '1pm'),
+    ("You've hit your 5-hour limit · resets 1pm <private-script>", '5-hour', None),
+])
+def test_claude_exposes_only_safe_verified_usage_reset(fake_cli, message, limit, reset):
+    payload = {'type': 'result', 'is_error': True, 'subtype': 'success',
+               'stop_reason': 'stop_sequence', 'result': message}
+    fake_cli(f'import sys\nprint({json.dumps(payload)!r})\nsys.exit(1)\n')
+    with pytest.raises(CodexError) as caught:
+        claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+    failure = caught.value
+    assert not isinstance(failure, (JSONFormattingError, TransientGenerationError))
+    assert failure.provider_diagnostics['category'] == 'rate_limited'
+    assert failure.provider_diagnostics.get('limit_kind') == limit
+    assert failure.provider_diagnostics.get('reset_at') == reset
+    if reset:
+        assert f'resets {reset}' in str(failure)
+    if limit:
+        assert f'Claude {limit} limit' in str(failure)
+    assert 'private' not in str(failure) + repr(failure.provider_diagnostics)
+
+
+def test_claude_does_not_take_reset_details_from_unverified_or_generic_error():
+    for payload in (
+        {'type': 'error', 'status': 429,
+         'result': "You've hit your weekly limit · resets Nov 23, 1pm (Europe/Prague)"},
+        {'type': 'result', 'is_error': False, 'subtype': 'success', 'stop_reason': 'stop_sequence',
+         'result': "You've hit your weekly limit · resets Nov 23, 1pm (Europe/Prague)"},
+    ):
+        failure = claude_generation._generation_failure(1, json.dumps(payload).encode(), b'', 0)
+        assert 'reset_at' not in failure.provider_diagnostics
+        assert 'limit_kind' not in failure.provider_diagnostics
+        assert 'Nov 23' not in str(failure)
+
+
+@pytest.mark.parametrize('payload,transient,category', [
+    ({'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'private API key'}},
+     True, 'service_unavailable'),
+    ({'type': 'error', 'error': {'type': 'api_error', 'status_code': 503, 'message': 'private path'}},
+     True, 'service_unavailable'),
+    ({'type': 'result', 'is_error': True, 'error': {'type': 'network_error', 'message': 'private host'}},
+     True, 'connection_failure'),
+    ({'type': 'error', 'error': {'type': 'authentication_error', 'message': 'private token'}},
+     False, 'authorization_denied'),
+    ({'type': 'error', 'status': 429, 'error': {'type': 'api_error', 'message': 'private account'}},
+     False, 'rate_limited'),
+    ({'type': 'result', 'is_error': True, 'subtype': 'success', 'stop_reason': 'stop_sequence',
+      'result': "You've hit your 5-hour limit · resets 1:10pm (private zone)"}, False, 'rate_limited'),
+    ({'type': 'result', 'is_error': False, 'subtype': 'success', 'stop_reason': 'stop_sequence',
+      'result': "You've hit your 5-hour limit · resets 1:10pm (private zone)"}, False, 'unknown_exit'),
+    ({'type': 'result', 'is_error': True, 'subtype': 'success', 'stop_reason': 'stop_sequence',
+      'result': 'Unrecognized private account error'}, False, 'unknown_exit'),
+    ({'type': 'error', 'status': 503, 'error': {'type': 'authentication_error'}},
+     False, 'authorization_denied'),
+    ({'type': 'result', 'is_error': True, 'subtype': 'error_max_structured_output_retries',
+      'errors': ['private schema diagnostic']}, False, 'structured_output_failure'),
+    ({'type': 'result', 'is_error': False, 'structured_output': {
+        'type': 'error', 'error': {'type': 'overloaded_error'}}}, False, 'unknown_exit'),
+])
+def test_claude_failure_uses_only_allowlisted_machine_diagnostics(fake_cli, payload, transient, category):
+    fake_cli(f'import sys\nprint({json.dumps(payload)!r})\nsys.exit(1)\n')
+    with pytest.raises(CodexError) as caught:
+        claude_generation.ClaudeGenerationManager(None).generate_brief('private input', {'type': 'object'})
+    assert isinstance(caught.value, TransientGenerationError) is transient
+    assert isinstance(caught.value, JSONFormattingError) is (category == 'structured_output_failure')
+    assert caught.value.provider_diagnostics['category'] == category
+    assert 'exit status 1' in str(caught.value)
+    assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
+    if category == 'rate_limited':
+        assert 'Retry after the Claude usage limit resets' in str(caught.value)
+        assert 'sign-in' not in str(caught.value)
+
+
+def test_claude_drains_bounded_stderr_without_exposing_it(fake_cli, monkeypatch):
+    monkeypatch.setattr(claude_generation, '_MAX_ERROR_BYTES', 128)
+    fake_cli('import sys\nsys.stderr.write("private stderr " * 20000)\nsys.stderr.flush()\nsys.exit(7)\n')
+    with pytest.raises(CodexError) as caught:
+        claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+    diagnostics = caught.value.provider_diagnostics
+    assert diagnostics['exit_status'] == 7 and diagnostics['stderr_truncated'] is True
+    assert diagnostics['stderr_bytes'] == len('private stderr ' * 20000)
+    assert diagnostics['stdout_bytes'] == 0
+    assert 'private' not in str(caught.value) + repr(diagnostics)
+
+
+def test_claude_stderr_is_drained_while_writing_large_input(fake_cli):
+    fake_cli('''import json, sys
+sys.stderr.write('private progress ' * 20000)
+sys.stderr.flush()
+content = sys.stdin.read()
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                  'structured_output': {'characters': len(content)}}))
+''')
+    result = claude_generation.ClaudeGenerationManager(None).generate_brief(
+        'x' * 200000, {'type': 'object', 'additionalProperties': False})
+    assert json.loads(result)['characters'] == 200000
+
+
+def test_claude_auth_diagnostic_dominates_temporary_error_and_signals_are_not_retried():
+    temporary = json.dumps({'type': 'error', 'error': {'type': 'overloaded_error'}}).encode()
+    denied = json.dumps({'type': 'error', 'error': {'type': 'authentication_error'}}).encode()
+    failure = claude_generation._generation_failure(1, temporary, denied, len(denied))
+    assert not isinstance(failure, TransientGenerationError)
+    assert failure.provider_diagnostics['category'] == 'authorization_denied'
+    killed = claude_generation._generation_failure(-9, temporary, b'', 0)
+    assert not isinstance(killed, TransientGenerationError)
+    assert 'signal 9' in str(killed)
+
+
+def test_claude_explicit_temporary_failure_uses_existing_single_retry(fake_cli, tmp_path):
+    counter = tmp_path / 'attempt-count'
+    fake_cli('''import json, pathlib, sys
+counter = pathlib.Path(''' + repr(str(counter)) + ''')
+attempt = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(attempt))
+if attempt == 1:
+ print(json.dumps({'type': 'error', 'error': {'type': 'overloaded_error', 'message': 'private'}}), file=sys.stderr)
+ sys.exit(1)
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                  'structured_output': {'value': 'complete'}}))
+''')
+    retries = []
+    result = request_knowledge_json(claude_generation.ClaudeGenerationManager(None), 'fixture',
+                                    {'type': 'object'}, on_transient_retry=lambda: retries.append(True))
+    assert json.loads(result) == {'value': 'complete'}
+    assert counter.read_text() == '2' and retries == [True]
+
+
+@pytest.mark.parametrize('exit_status', [0, 1])
+def test_claude_structured_exhaustion_uses_bounded_formatting_retry(fake_cli, tmp_path, exit_status):
+    counter = tmp_path / 'formatting-attempt-count'
+    fake_cli('''import json, pathlib, sys
+counter = pathlib.Path(''' + repr(str(counter)) + ''')
+attempt = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(attempt))
+print(json.dumps({'type': 'result', 'is_error': True,
+ 'subtype': 'error_max_structured_output_retries', 'errors': ['private diagnostic']}))
+sys.exit(''' + str(exit_status) + ''')
+''')
+    retries = []
+    with pytest.raises(JSONFormattingError) as caught:
+        request_knowledge_json(claude_generation.ClaudeGenerationManager(None), 'private input',
+                               {'type': 'object'}, on_retry=lambda: retries.append(True))
+    assert counter.read_text() == '2' and retries == [True]
+    assert caught.value.provider_diagnostics['category'] == 'structured_output_failure'
+    assert caught.value.provider_diagnostics['exit_status'] == exit_status
+    assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
+
+
+@pytest.mark.parametrize('payload,category', [
+    ({'type': 'error', 'error': {'type': 'authentication_error'}}, 'authorization_denied'),
+    ({'type': 'result', 'is_error': True, 'subtype': 'success', 'stop_reason': 'stop_sequence',
+      'result': "You've hit your 5-hour limit · resets 1pm (private zone)"}, 'rate_limited'),
+    ({'type': 'result', 'is_error': True, 'subtype': 'error_max_budget_usd'}, 'budget_limit'),
+])
+def test_claude_known_zero_exit_failures_remain_fatal_without_retry(fake_cli, tmp_path, payload, category):
+    counter = tmp_path / 'fatal-attempt-count'
+    fake_cli('import pathlib\ncounter = pathlib.Path(' + repr(str(counter)) + ')\n'
+             'counter.write_text(counter.read_text() + "x" if counter.exists() else "x")\n'
+             + f'print({json.dumps(payload)!r})\n')
+    with pytest.raises(CodexError) as caught:
+        request_knowledge_json(claude_generation.ClaudeGenerationManager(None), 'fixture', {'type': 'object'})
+    assert not isinstance(caught.value, (JSONFormattingError, TransientGenerationError))
+    assert counter.read_text() == 'x'
+    assert caught.value.provider_diagnostics['category'] == category
+    assert caught.value.provider_diagnostics['exit_status'] == 0
+    assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
+
+
+def test_claude_formatting_classification_requires_failed_result_and_preserves_fatal_errors():
+    exhausted = json.dumps({'type': 'result', 'is_error': True,
+                            'subtype': 'error_max_structured_output_retries'}).encode()
+    for fatal_type in ('authentication_error', 'rate_limit_error', 'invalid_request_error'):
+        fatal = json.dumps({'type': 'error', 'error': {'type': fatal_type}}).encode()
+        failure = claude_generation._generation_failure(1, exhausted, fatal, len(fatal))
+        assert not isinstance(failure, (JSONFormattingError, TransientGenerationError))
+        assert failure.provider_diagnostics['category'] != 'structured_output_failure'
+    assert not isinstance(claude_generation._generation_failure(-9, exhausted, b'', 0), JSONFormattingError)
+    for envelope in ({'type': 'result', 'is_error': False}, {'type': 'error'}):
+        envelope['subtype'] = 'error_max_structured_output_retries'
+        failure = claude_generation._generation_failure(1, json.dumps(envelope).encode(), b'', 0)
+        assert not isinstance(failure, JSONFormattingError)
 
 
 def test_claude_caps_output_and_stops_its_cli(fake_cli, monkeypatch):

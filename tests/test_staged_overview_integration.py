@@ -121,11 +121,66 @@ class StagedModel:
             raise progress.GenerationCancelled()
         allowed = schema['properties']['sections']['properties']['overview']['items']['properties']['source_ids']['items']['enum']
         sections = {name: [] for name in SECTION_NAMES}
+        foreign = self.foreign_at is not None and (number == self.foreign_at or 'Correct the previous Overview attempt.' in prompt)
         for section in ('overview', 'current_status', 'architecture'):
             sections[section] = [{'text': f'A supported synthetic {section} point.',
                                   'classification': 'reported',
-                                  'source_ids': ['foreign:project:999'] if number == self.foreign_at else [allowed[0]]}]
+                                  'source_ids': ['foreign:project:999'] if foreign else [allowed[0]]}]
         return json.dumps({'sections': sections, 'project_map': {'nodes': [], 'edges': []}})
+
+
+class ExpandingStageModel(StagedModel):
+    def __init__(self, *, compact=True):
+        super().__init__()
+        self.compact = compact
+        self.retry_flags = []
+
+    def generate_brief(self, prompt, schema):
+        raw = json.loads(super().generate_brief(prompt, schema))
+        retry = 'Compact intermediate retry:' in prompt
+        self.retry_flags.append(retry)
+        batch = self.calls[-1]['sources']
+        if (not retry or not self.compact) and not any(source.get('kind') == 'staged_interpretation' for source in batch):
+            for name in ('changes', 'unresolved_problems', 'validation', 'next_steps'):
+                raw['sections'][name] = [{'text': f'Supported {name} point. ' * 10,
+                                          'classification': 'reported', 'source_ids': ['k1']}]
+        return json.dumps(raw)
+
+
+@pytest.mark.parametrize('compact', (True, False))
+def test_nonreducing_stage_retries_once_on_original_batches_and_keeps_caches(staged_state, monkeypatch, compact):
+    candidate = _large_candidate(1, 16)
+    for index, item in enumerate(candidate['items']):
+        item['statement'] = f'Independent component {index} requirement.'
+    bundle = {'project': {'id': 1, 'name': 'A staged project'}}
+    repository = {}
+    monkeypatch.setattr(pilot, 'MAX_SYNTHESIS_CHARS', 2_500)
+    before = deepcopy(candidate)
+    manager, diagnostics = ExpandingStageModel(compact=compact), {}
+
+    def run(selected, selection):
+        return pilot._synthesize(selected, candidate, bundle, repository, engine=staged_state.engine,
+                                 selection_diagnostics=selection)
+
+    if compact:
+        result = run(manager, diagnostics)
+        assert all(source['id'].startswith(('original:', 'project:')) for source in result[2])
+        replay, replay_diagnostics = ExpandingStageModel(), {}
+        assert run(replay, replay_diagnostics) == result
+        assert replay.calls == []
+        assert replay_diagnostics['synthesis_cache_hits'] == len(manager.calls)
+    else:
+        with pytest.raises(CodexError, match='did not reduce the input enough'):
+            run(manager, diagnostics)
+        assert len(_stage_rows(staged_state.engine)) == len(manager.calls)
+
+    first_retry = manager.retry_flags.index(True)
+    retry_payloads = [payload for payload, retry in zip(manager.calls, manager.retry_flags) if retry]
+    assert first_retry >= 2
+    assert retry_payloads == manager.calls[:first_retry]
+    assert diagnostics['selected_items'] == 16
+    assert manager.seen == {f'SOURCE_1_{index}' for index in range(16)}
+    assert candidate == before
 
 
 def test_oversized_refresh_processes_every_source_and_preserves_originals(staged_state):
@@ -149,6 +204,32 @@ def test_oversized_refresh_processes_every_source_and_preserves_originals(staged
     assert _stored(staged_state.engine, 2) == other_before
     assert _saved_preview(staged_state.engine) == result
     assert _saved_preview(staged_state.engine, 2)['publication_id'] == 'prior-preview'
+
+
+def test_corrected_stage_preserves_evidence_and_replays_without_repeating_the_invalid_response(staged_state):
+    class RepairModel(StagedModel):
+        def generate_brief(self, prompt, schema):
+            raw = super().generate_brief(prompt, schema)
+            if len(self.calls) == 2 and 'sections' in schema['properties']:
+                invalid = json.loads(raw)
+                invalid['sections']['architecture'][0]['text'] = 'x' * 601
+                return json.dumps(invalid)
+            if len(self.calls) == 3:
+                assert 'Correct the previous Overview attempt.' in prompt
+                assert '600 for architecture and current_status' in prompt
+                assert self.calls[1] == self.calls[2]
+            return raw
+
+    manager = RepairModel()
+    first = pilot.generate_knowledge_brief(staged_state.engine, 1, manager, publish=False)
+    assert manager.seen == {f'SOURCE_1_{index}' for index in range(520)}
+    assert first['diagnostics']['synthesis_requests'] == len(manager.calls)
+    assert len(_stage_rows(staged_state.engine)) == len(manager.calls) - 1
+    retry = StagedModel()
+    second = pilot.generate_knowledge_brief(staged_state.engine, 1, retry, publish=False)
+    assert retry.calls == []
+    assert second['diagnostics']['synthesis_cache_hits'] == len(manager.calls) - 1
+    assert first['brief']['sections'] == second['brief']['sections']
 
 
 @pytest.mark.parametrize('failure', ['model', 'cancel', 'foreign'])

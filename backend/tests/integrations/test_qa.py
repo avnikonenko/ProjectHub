@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 
 
-def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_path, monkeypatch):
+def test_qa_selects_canonical_answers_and_preserves_alternatives_on_invalid_selection(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add_all([Project(name='One'), Project(name='Two')])
@@ -29,69 +29,58 @@ def test_qa_consolidates_batches_and_preserves_snapshot_on_foreign_variant(tmp_p
 
         def generate_brief(self, prompt, schema):
             batch = json.loads(prompt.split('\n', 1)[1])
-            if 'Build a compact project reference' in prompt:
-                assert self.batches >= 2
-                assert schema['properties']['items']['maxItems'] == 2
-                assert 'at most 2 distinct entries' in prompt
+            if 'Select and rank existing project Q&A IDs' in prompt:
                 self.consolidations += 1
-                if self.consolidations == 3:
-                    assert 'Correct the previous attempt' in prompt
-                assert all('[99]' not in item['answer'] for item in batch)
-                by_question = {item['question']: item['source_ids'] for item in batch}
-                assert set(by_question) == {
-                    'How does One store data?', 'What does One do?', 'What is the purpose of One?',
-                    'Which projects does One target?',
-                }
-                return json.dumps({'items': [{
-                    'question': 'What does One do?',
-                    'answer': 'One tracks context for any project locally. [99]',
-                    'source_ids': [*by_question['What does One do?'], *by_question['What is the purpose of One?']],
-                    'variants': [{
-                        'answer': 'A separate discussion says it targets only software projects.',
-                        'source_ids': ['foreign' if self.bad else by_question['Which projects does One target?'][0]],
-                    }],
-                }, {
-                    'question': 'How does One store data?',
-                    'answer': 'One stores records in SQLite.',
-                    'source_ids': by_question['How does One store data?'],
-                }]})
+                assert self.batches == 2
+                assert schema['properties']['selected_ids']['maxItems'] in (2, 3)
+                assert all('source_ids' not in item for item in batch)
+                by_question = {item['question']: item['id'] for item in batch}
+                if self.bad:
+                    return json.dumps({'selected_ids': ['foreign']})
+                return json.dumps({'selected_ids': [by_question['What does One do?'],
+                                                    by_question['How does One store data?']]})
             self.batches += 1
-            allowed = schema['properties']['items']['items']['properties']['source_ids']['items']['enum']
-            assert allowed == [item['id'] for item in batch]
             if batch[0]['text'] == 'Decision 12':
                 return json.dumps({'items': [
                     {'question': 'How does One store data?', 'answer': 'In SQLite.', 'source_ids': ['2']},
-                    {'question': 'What does One do?', 'answer': 'One tracks context for any project. [99]',
-                     'source_ids': ['1']},
+                    {'question': 'What does One do?', 'answer': 'One tracks context for any project. [99]', 'source_ids': ['1']},
                 ]})
-            assert batch[0]['text'] == 'Decision 0'
             return json.dumps({'items': [
                 {'question': 'What is the purpose of One?', 'answer': 'It works locally.', 'source_ids': ['1']},
-                {'question': 'Which projects does One target?', 'answer': 'Only software projects.', 'source_ids': ['2']},
+                {'question': 'What does One do?', 'answer': 'Only software projects.', 'source_ids': ['2']},
             ]})
 
     manager = Generator()
     saved = qa.refresh_qa(engine, 1, manager, max_items=2)
     with Session(engine) as db:
         assert generation_attempts.read_latest(db, 1, 'qa')['settings']['max_items'] == 2
-    assert manager.batches == 2
-    assert manager.consolidations == 1
+    assert manager.batches == 2 and manager.consolidations == 1
     assert [item['question'] for item in saved['items']] == ['What does One do?', 'How does One store data?']
-    assert saved['items'][0]['answer'] == 'One tracks context for any project locally.'
-    assert saved['items'][0]['source_ids'] == ['turn:12', 'turn:0']
-    assert saved['items'][0]['variants'][0]['source_ids'] == ['turn:1']
+    assert saved['items'][0]['answer'] == 'One tracks context for any project.'
+    assert saved['items'][0]['source_ids'] == ['turn:12']
+    assert saved['items'][0]['variants'] == [{'answer': 'Only software projects.', 'source_ids': ['turn:1']}]
     assert saved['items'][1]['source_ids'] == ['turn:13']
-    assert {source['id'] for source in saved['sources']} == {'turn:12', 'turn:0', 'turn:1', 'turn:13'}
+    assert {source['id'] for source in saved['sources']} == {'turn:12', 'turn:1', 'turn:13'}
     manager.bad = True
-    with pytest.raises(CodexError, match='foreign evidence'):
-        qa.refresh_qa(engine, 1, manager, max_items=2)
-    assert manager.consolidations == 3
-    assert manager.batches == 2  # Completed drafts survive the failed final consolidation.
+    fallback = qa.refresh_qa(engine, 1, manager, max_items=3)
+    assert manager.consolidations == 3 and manager.batches == 2
+    assert fallback['diagnostics']['qa_rank_fallback_batches'] == 1
+    assert fallback['diagnostics']['qa_rank_retries'] == 1
+    assert 'Used previously validated answers' in ' '.join(fallback['coverage'])
+    assert len(fallback['items']) == 3
+    assert all('foreign' not in item['source_ids'] for item in fallback['items'])
+    manager.bad = False
+    recovered = qa.refresh_qa(engine, 1, manager, max_items=3)
+    assert recovered['items'] == saved['items']
+    assert recovered['diagnostics']['qa_rank_fallback_batches'] == 0
+    replay = qa.refresh_qa(engine, 1, manager, max_items=3)
+    assert replay['items'] == recovered['items']
+    assert replay['diagnostics']['qa_rank_cache_hits'] == 1 and replay['diagnostics']['qa_rank_retries'] == 0
+    assert manager.consolidations == 4
     with Session(engine) as db:
-        assert qa.read_qa(db, 1) == saved
-        assert qa.read_qa(db, 2) is None
+        assert qa.read_qa(db, 1) == replay and qa.read_qa(db, 2) is None
         revisions = list(db.scalars(select(GenerationRevision)))
-        assert len(revisions) == 1 and revisions[0].snapshot == saved
+        assert len(revisions) == 4 and any(row.snapshot == saved for row in revisions)
     engine.dispose()
 
 
@@ -118,9 +107,9 @@ def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, 
     class Generator:
         generation_metadata = {'account': 'test-profile', 'model': 'test-model', 'effort': 'high'}
         def generate_brief(self, prompt, schema):
-            if 'Build a compact project reference' in prompt:
+            if 'Select and rank existing project Q&A IDs' in prompt:
                 candidates = json.loads(prompt.split('\n', 1)[1])
-                return json.dumps({'items': [{**candidates[0], 'variants': []}]})
+                return json.dumps({'selected_ids': [candidates[0]['id']]})
             assert 'Use glass jars' in prompt
             assert all(text in prompt for text in ('Ignore TODO lists', 'UI --> API', 'Use SQLite', 'Use local storage'))
             assert all(text not in prompt for text in ('NOTE BACKLOG', 'TASK BACKLOG', 'PROPOSED ONLY', 'FOREIGN DECISION'))
@@ -167,12 +156,12 @@ def test_qa_limit_applies_to_output_without_a_fixed_saved_ceiling(monkeypatch):
 
     calls = []
 
-    def rank(manager, candidates, limit):
+    def rank(manager, candidates, limit, **kwargs):
         calls.append((len(candidates), limit))
         return candidates[:limit]
 
     monkeypatch.setattr(qa, '_consolidate_group', rank)
-    candidates = [{'question': f'Question {i}?'} for i in range(145)]
+    candidates = [{'question': f'Question {i}?', 'answer': 'Validated answer.', 'source_ids': [f'source:{i}']} for i in range(145)]
     assert len(qa.consolidate_items(None, candidates, 15)) == 15
     assert calls[-1][1] == 15
     assert len(qa.consolidate_items(None, candidates, 120)) == 120
@@ -333,8 +322,8 @@ def test_qa_retry_reuses_completed_drafts_after_a_later_batch_fails(tmp_path, mo
 
         def generate_brief(self, prompt, schema):
             payload = json.loads(prompt.split('\n', 1)[1])
-            if 'Build a compact project reference' in prompt:
-                return json.dumps({'items': [{**payload[0], 'variants': []}]})
+            if 'Select and rank existing project Q&A IDs' in prompt:
+                return json.dumps({'selected_ids': [payload[0]['id']]})
             first = payload[0]['text']
             self.seen.append(first)
             if self.fail and first == 'Fact 0':

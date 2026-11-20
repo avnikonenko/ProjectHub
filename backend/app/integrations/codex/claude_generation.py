@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+import re
 import selectors
 import shutil
 import signal
@@ -10,17 +11,19 @@ import subprocess
 import tempfile
 import time
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import progress
 from .ai_instructions import ai_instructions
 from .generation_metrics import begin_model_request
-from .manager import generation_timeout
-from .protocol import CodexError
+from .manager import TransientGenerationError, generation_timeout
+from .protocol import CodexError, JSONFormattingError
 
 
 _MODELS = {'sonnet': ('low', 'medium', 'high'), 'opus': ('low', 'medium', 'high'), 'haiku': ()}
 _MAX_INPUT_BYTES = 4 * 1024 * 1024
 _MAX_OUTPUT_BYTES = 2 * 1024 * 1024
+_MAX_ERROR_BYTES = 16 * 1024
 _MAX_SCHEMA_BYTES = 120_000  # Linux bounds each exec argument independently.
 _CHUNK_BYTES = 64 * 1024
 _SYSTEM_PROMPT = (
@@ -31,6 +34,13 @@ _SYSTEM_PROMPT = (
 )
 _UNSUPPORTED_BOUNDS = {'minLength', 'maxLength', 'maxItems', 'minimum', 'maximum',
                        'exclusiveMinimum', 'exclusiveMaximum', 'multipleOf'}
+_USAGE_LIMIT = re.compile(r"You've hit your (?:(?P<limit>\d+-(?:hour|day)|weekly) )?limit · resets (?P<reset>[^\r\n]{1,100})")
+_SAFE_RESET = re.compile(
+    r'(?P<date>(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) '
+    r'(?:[1-9]|[12]\d|3[01])(?:, (?:20\d{2}))?(?:, | at ))?'
+    r'(?P<time>(?:[1-9]|1[0-2])(?::[0-5]\d)?(?:am|pm))'
+    r'(?: \((?P<zone>[A-Za-z_+-]+(?:/[A-Za-z0-9_+-]+){0,3})\))?'
+)
 
 
 def _claude_output_schema(value):
@@ -65,16 +75,148 @@ def _environment(directory=None):
     return env
 
 
+def _usage_limit_details(value):
+    """Expose only recognized limit kinds and bounded calendar/time components."""
+    if (not isinstance(value, dict) or value.get('type') != 'result'
+            or value.get('is_error') is not True or value.get('subtype') != 'success'
+            or value.get('stop_reason') != 'stop_sequence' or not isinstance(value.get('result'), str)):
+        return None
+    match = _USAGE_LIMIT.fullmatch(value['result'])
+    if not match:
+        return None
+    limit = match['limit']
+    details = {}
+    if limit == 'weekly' or limit and re.fullmatch(r'[1-9]\d{0,2}-(?:hour|day)', limit):
+        details['limit_kind'] = limit
+    reset = _SAFE_RESET.fullmatch(match['reset'])
+    if reset:
+        safe_reset = (reset['date'] or '') + reset['time']
+        if zone := reset['zone']:
+            try:
+                ZoneInfo(zone)
+            except (ValueError, ZoneInfoNotFoundError):
+                pass
+            else:
+                safe_reset += f' ({zone})'
+        details['reset_at'] = safe_reset
+    return details
+
+
+def _failure_details(output):
+    """Read structured errors and the CLI's known account-limit notification."""
+    try:
+        value = json.loads(output)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    if (not isinstance(value, dict) or not (
+            value.get('type') == 'error' or
+            value.get('type') == 'result' and value.get('is_error') is True)):
+        return None
+    error = value.get('error')
+    error = error if isinstance(error, dict) else value
+    known = {
+        'authentication_error': ('authorization_denied', 'the selected account was not authorized', False),
+        'permission_error': ('authorization_denied', 'the selected account was not authorized', False),
+        'rate_limit_error': ('rate_limited', 'the selected account was rate limited', False),
+        'invalid_request_error': ('request_rejected', 'the provider rejected the request', False),
+        'request_too_large': ('input_limit', 'the provider rejected the input size', False),
+        'overloaded_error': ('service_unavailable', 'the provider reported a temporary service failure', True),
+        'network_error': ('connection_failure', 'the provider reported a temporary connection failure', True),
+        'connection_error': ('connection_failure', 'the provider reported a temporary connection failure', True),
+        'timeout_error': ('request_timeout', 'the provider reported a temporary request timeout', True),
+    }
+    detail = known.get(error.get('type')) if isinstance(error.get('type'), str) else None
+    status = next((record.get(key) for record in (error, value) for key in ('status_code', 'status')
+                   if type(record.get(key)) is int and record[key] in
+                   (400, 401, 403, 404, 408, 413, 422, 429, 500, 502, 503, 504)), None)
+    if detail is not None and not detail[2]:
+        return (*detail, status)
+    if status in (401, 403):
+        return 'authorization_denied', 'the selected account was not authorized', False, status
+    if status == 429:
+        return 'rate_limited', 'the selected account was rate limited', False, status
+    if status == 408:
+        return 'request_timeout', 'the provider reported a temporary request timeout', True, status
+    if status in (500, 502, 503, 504):
+        return 'service_unavailable', 'the provider reported a temporary service failure', True, status
+    if status is not None:
+        return 'request_rejected', 'the provider rejected the request', False, status
+    if detail:
+        return (*detail, None)
+    subtype = value.get('subtype')
+    # The signed-in CLI currently reports its subscription cap in this failed
+    # envelope even though the subtype says success and there is no HTTP status.
+    if _usage_limit_details(value) is not None:
+        return 'rate_limited', 'the selected account reached its usage limit', False, None
+    limits = {
+        'error_max_structured_output_retries': ('structured_output_failure', 'the CLI exhausted structured-output retries'),
+        'error_max_turns': ('turn_limit', 'the CLI reached its turn limit'),
+        'error_max_budget_usd': ('budget_limit', 'the CLI reached its configured spending limit'),
+        'error_during_execution': ('execution_failure', 'the CLI reported an execution failure'),
+    }
+    failure = limits.get(subtype) if isinstance(subtype, str) else None
+    if subtype == 'error_max_structured_output_retries' and value.get('type') != 'result':
+        return None
+    return (*failure, False, None) if failure else None
+
+
+def _generation_failure(returncode, output, errors, error_bytes):
+    details = [detail for raw in (output, errors) if (detail := _failure_details(raw)) is not None]
+    # Contradictory diagnostics must never turn an explicit auth/limit failure
+    # into an automatic retry. Unknown text is intentionally not inspected.
+    detail = next((value for value in details if not value[2] and value[0] != 'structured_output_failure'),
+                  next((value for value in details if not value[2]), details[0] if details else None))
+    category, reason, transient, status = detail or ('unknown_exit', None, False, None)
+    exit_label = f'signal {-returncode}' if returncode < 0 else f'exit status {returncode}'
+    suffix = f'; {reason}' if reason else ''
+    if status is not None:
+        suffix += f' (HTTP {status})'
+    error_type = TransientGenerationError if transient and returncode >= 0 else CodexError
+    if category == 'structured_output_failure' and returncode >= 0:
+        error_type = JSONFormattingError
+    guidance = ('Retry after the Claude usage limit resets. Completed batches remain cached.'
+                if category == 'rate_limited' else
+                'The CLI could not produce the required structured output.' if category == 'structured_output_failure'
+                else 'Check Claude Code availability and the selected account sign-in.')
+    reset_details = {}
+    if category == 'rate_limited':
+        for raw in (output, errors):
+            try:
+                reset_details = _usage_limit_details(json.loads(raw)) or {}
+            except (ValueError, UnicodeError, RecursionError):
+                continue
+            if reset_details:
+                break
+        if reset_details:
+            limit_label = reset_details.get('limit_kind', 'usage')
+            reset_label = f"; resets {reset_details['reset_at']}" if 'reset_at' in reset_details else ''
+            guidance = f'Claude {limit_label} limit{reset_label}. {guidance}'
+    failure = error_type(f'Claude Code generation failed ({exit_label}{suffix}). {guidance}')
+    failure.provider_diagnostics = {
+        'provider': 'claude', 'exit_status': returncode,
+        'category': category, 'stdout_bytes': len(output), 'stderr_bytes': error_bytes,
+        'stderr_truncated': error_bytes > _MAX_ERROR_BYTES,
+        **reset_details,
+        **({'http_status': status} if status is not None else {}),
+    }
+    return failure
+
+
 def _exchange(process, data, timeout):
     """Feed stdin and drain stdout concurrently under bounded deadline and memory."""
     deadline = time.monotonic() + timeout
     output = bytearray()
+    errors = bytearray()
+    error_bytes = 0
     pending = memoryview(data)
     with selectors.DefaultSelector() as channels:
         os.set_blocking(process.stdin.fileno(), False)
         os.set_blocking(process.stdout.fileno(), False)
         channels.register(process.stdin, selectors.EVENT_WRITE)
         channels.register(process.stdout, selectors.EVENT_READ)
+        if process.stderr is not None:
+            os.set_blocking(process.stderr.fileno(), False)
+            channels.register(process.stderr, selectors.EVENT_READ)
         while channels.get_map() or process.poll() is None:
             progress.check_cancelled()
             remaining = deadline - time.monotonic()
@@ -101,6 +243,9 @@ def _exchange(process, data, timeout):
                         chunk = os.read(key.fd, _CHUNK_BYTES)
                         if not chunk:
                             channels.unregister(key.fileobj)
+                        elif key.fileobj is process.stderr:
+                            error_bytes += len(chunk)
+                            errors.extend(chunk[:max(0, _MAX_ERROR_BYTES - len(errors))])
                         else:
                             output.extend(chunk)
                             if len(output) > _MAX_OUTPUT_BYTES:
@@ -108,8 +253,8 @@ def _exchange(process, data, timeout):
                 except BlockingIOError:
                     continue
     progress.check_cancelled()
-    if process.returncode != 0:
-        raise CodexError('Claude Code generation failed. Check that the server can run Claude Code and that claude auth status shows a signed-in account.')
+    if process.returncode != 0 or _failure_details(output) is not None:
+        raise _generation_failure(process.returncode, output, errors, error_bytes)
     return output
 
 
@@ -262,7 +407,7 @@ class ClaudeGenerationManager:
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-') as cwd:
             try:
                 with subprocess.Popen(command, cwd=cwd, env=_environment(self._directory),
-                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       start_new_session=True) as process:
                     request = begin_model_request(request_id)
                     try:
