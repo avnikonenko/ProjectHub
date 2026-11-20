@@ -1,4 +1,5 @@
 """Project-scoped JSON exports spooled to disk before the HTTP response starts."""
+from base64 import b64encode
 import json
 import tempfile
 
@@ -6,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select, text
 from starlette.background import BackgroundTask
 
-from .models import (Answer, AuditEvent, CodexEvent, CodexSession, ContextPackage,
+from .models import (Answer, AuditEvent, CodexEvent, CodexSession, ContextPackage, ConversationImportSource,
                      Decision, Delivery, GenerationRevision, Note, ProjectAIInstructions,
                      ProjectBrief, ProjectHistoryBatch, ProjectKnowledge, ProjectQA,
                      ProjectScheme, Question, Task)
@@ -25,6 +26,31 @@ def _array(handle, values):
         if index:
             handle.write(b',')
         _write(handle, value)
+    handle.write(b']')
+
+
+def _source_copies(handle, db, project_id):
+    source = ConversationImportSource
+    rows = db.scalars(select(source).join(Note, (Note.id == source.note_id) &
+        (Note.project_id == source.project_id)).where(source.project_id == project_id)
+        .order_by(source.id).execution_options(yield_per=1))
+    handle.write(b'[')
+    for index, row in enumerate(rows):
+        if index:
+            handle.write(b',')
+        handle.write(b'{"payload_base64":"')
+        # Divisible by three, so only the last chunk can contain base64 padding.
+        size = 48 * 1024
+        for offset in range(0, len(row.payload), size):
+            handle.write(b64encode(row.payload[offset:offset + size]))
+        handle.write(b'"')
+        for column in source.__table__.columns:
+            if column.name != 'payload':
+                handle.write(b',')
+                _write(handle, column.name)
+                handle.write(b':')
+                _write(handle, getattr(row, column.name))
+        handle.write(b'}')
     handle.write(b']')
 
 
@@ -84,6 +110,8 @@ def project_export_response(db, project_id):
             rows = db.scalars(select(model).where(model.project_id == project_id)
                               .order_by(*ordering).execution_options(yield_per=1))
             _array(handle, (question_dict(db, row) if model is Question else serialize(row) for row in rows))
+        handle.write(b',"conversation_import_sources":')
+        _source_copies(handle, db, project_id)
         for key, model in [('brief', ProjectBrief), ('qa', ProjectQA), ('scheme', ProjectScheme),
                            ('knowledge', ProjectKnowledge), ('ai_instructions', ProjectAIInstructions)]:
             handle.write(b',')

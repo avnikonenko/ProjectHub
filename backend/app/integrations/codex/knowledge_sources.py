@@ -25,6 +25,7 @@ MAX_PARENTS = 64
 _MARKER = re.compile(r'(?m)^(User|ChatGPT):[ \t]*(?:\r?\n)?')
 _SHARE = re.compile(r'https://chatgpt\.com/share/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/?', re.I)
 _IMPORTED_TOOL_HEADER = re.compile(r'\[(external_agent_tool_call|external_agent_tool_result)(?::[^\]\r\n]*)?\]')
+CONVERSATION_NOTE_SQL = "json_type(CASE WHEN json_valid(conversation) THEN conversation END) IS 'object'"
 
 # SQLite metadata-only equivalent of _SHARE.fullmatch. A prefix LIKE alone would
 # count ordinary references as imported chats and overstate the denominator.
@@ -36,6 +37,7 @@ _SHARE_SQL = """typeof(reference)='text'
     AND substr(reference,45,1)='-' AND substr(reference,50,1)='-'
     AND length(replace(substr(reference,27,36),'-',''))=32
     AND lower(replace(substr(reference,27,36),'-','')) NOT GLOB '*[^0-9a-f]*'"""
+_IMPORTED_SQL = f'({CONVERSATION_NOTE_SQL} OR ({_SHARE_SQL}))'
 
 
 def _source_inventory(db, project_id, sessions, notes):
@@ -43,11 +45,11 @@ def _source_inventory(db, project_id, sessions, notes):
         'coalesce(sum(CASE WHEN is_linked THEN 1 ELSE 0 END),0) AS linked '
         'FROM codex_sessions WHERE project_id=:pid'), {'pid': project_id}).mappings().one()
     document_counts = db.execute(text(f'SELECT count(*) AS total, '
-        f'coalesce(sum(CASE WHEN {_SHARE_SQL} THEN 1 ELSE 0 END),0) AS shared '
+        f'coalesce(sum(CASE WHEN {_IMPORTED_SQL} THEN 1 ELSE 0 END),0) AS shared '
         "FROM notes WHERE project_id=:pid AND kind='document'"), {'pid': project_id}).mappings().one()
     considered_sessions, considered_documents = sessions[:MAX_PARENTS], notes[:MAX_PARENTS]
     linked = sum(bool(session.is_linked) for session in considered_sessions)
-    imported = sum(isinstance(note['reference'], str) and bool(_SHARE.fullmatch(note['reference']))
+    imported = sum(note['canonical'] or (isinstance(note['reference'], str) and bool(_SHARE.fullmatch(note['reference'])))
                    for note in considered_documents)
     return {
         'scope': 'registered_project_sources',
@@ -126,6 +128,41 @@ def _fragments(body):
         start, part = end, part + 1
 
 
+def _canonical_message_ranges(size, metadata):
+    """Validate the importer offsets without loading original message bodies."""
+    if (not isinstance(metadata, dict) or metadata.get('completeness') not in ('complete', 'partial', 'unknown')
+            or not isinstance(metadata.get('messages'), list) or not metadata['messages']):
+        raise ValueError('Invalid imported conversation metadata')
+    messages, previous_end, ids = [], 0, set()
+    for ordinal, message in enumerate(metadata['messages'], 1):
+        if not isinstance(message, dict):
+            raise ValueError('Invalid imported message metadata')
+        start, end, role = message.get('start'), message.get('end'), message.get('role')
+        if (type(start) is not int or type(end) is not int or not previous_end <= start < end <= size
+                or role not in ('user', 'assistant')):
+            raise ValueError('Invalid imported message boundary')
+        message_id = message.get('id')
+        if message_id is not None:
+            if not isinstance(message_id, str) or not message_id.strip() or len(message_id) > 512 or message_id in ids:
+                raise ValueError('Invalid imported message identity')
+            ids.add(message_id)
+        timestamp = message.get('timestamp')
+        messages.append((ordinal, role, start, end - start, message_id,
+                         timestamp if isinstance(timestamp, str) else None))
+        previous_end = end
+    return messages
+
+
+def _document_digest(db, note_id):
+    """Hash the stored original without retaining it in an interleaved reader."""
+    digest = hashlib.sha256()
+    connection = db.connection().connection.driver_connection
+    with connection.blobopen('notes', 'content', note_id, readonly=True) as blob:
+        while chunk := blob.read(65536):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _imported_tool_block(body):
     value = body.strip()
     header = _IMPORTED_TOOL_HEADER.match(value)
@@ -151,7 +188,7 @@ def needs_large_history_intake(engine, project_id):
             'ON s.id=h.session_id AND s.project_id=h.project_id '
             'WHERE h.project_id=:pid AND s.is_linked AND h.status<>\'inProgress\''), {'pid': project_id})
         document_chars = db.scalar(text(f'SELECT coalesce(sum(length(content)),0) '
-            f"FROM notes WHERE project_id=:pid AND kind='document' AND {_SHARE_SQL}"), {'pid': project_id})
+            f"FROM notes WHERE project_id=:pid AND kind='document' AND {_IMPORTED_SQL}"), {'pid': project_id})
     return turn_chars + document_chars > MAX_SOURCE_CHARS
 
 
@@ -178,26 +215,34 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
         reasons = inventory.setdefault('omission_reasons', {})
         reasons[reason] = reasons.get(reason, 0) + count
 
-    def append(body, role, ordinal, parent, identity, label, offset=0, **metadata):
-        nonlocal chars, message_count
+    def message_budget(size):
         if message_count >= message_limit:
-            omitted('global_message_budget_messages')
-            return False
-        if chars + len(body) > text_limit:
-            omitted('global_text_budget_messages')
+            return 'global_message_budget_messages'
+        if chars + size > text_limit:
+            return 'global_text_budget_messages'
+        return None
+
+    def append(body, role, ordinal, parent, identity, label, offset=0, *, message_id=None, **metadata):
+        nonlocal chars, message_count
+        reason = message_budget(len(body))
+        if reason:
+            omitted(reason)
             return False
         message_count += 1
         chars += len(body)
+        message_revision = _hash(body if message_id is None else [message_id, body])
         for part, start, end in _fragments(body):
             fragment = body[start:end]
             sources.append({
                 'id': f'{identity}:p:{part}', 'label': label, 'conversation_id': parent,
                 'source_key': parent, 'role': role, 'text': fragment,
-                'revision': _hash(fragment), 'message_revision': _hash(body),
+                'revision': _hash(fragment if message_id is None else [message_id, fragment]),
+                'message_revision': message_revision,
                 'order': orders.get(parent, 0),
                 'message_order': ordinal, 'timestamp': None,
                 'offset_start': offset + start, 'offset_end': offset + end,
-                'partial_message': len(body) > FRAGMENT_CHARS, **metadata,
+                'partial_message': len(body) > FRAGMENT_CHARS,
+                **({'message_id': message_id} if message_id is not None else {}), **metadata,
             })
             orders[parent] = orders.get(parent, 0) + 1
         return True
@@ -212,7 +257,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
         project_data = {key: getattr(project, key) for key in ('id', 'name', 'description', 'goals', 'repository_path')}
         sessions = list(db.scalars(select(CodexSession).where(
             CodexSession.project_id == project_id).order_by(CodexSession.id).limit(MAX_PARENTS + 1)))
-        notes = list(db.execute(text('SELECT id,title,reference,length(content) AS size '
+        notes = list(db.execute(text(f'SELECT id,title,reference,length(content) AS size,{CONVERSATION_NOTE_SQL} AS canonical '
             "FROM notes WHERE project_id=:pid AND kind='document' ORDER BY id LIMIT :lim"),
             {'pid': project_id, 'lim': MAX_PARENTS + 1}).mappings())
         inventory = _source_inventory(db, project_id, sessions, notes)
@@ -312,38 +357,79 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
                     or session.history_indexed_activity != session.codex_activity_at or session.last_error):
                 coverage['limitations'].append(f'{parent}: index freshness or remote availability is not established; stored evidence was used.')
         def document_messages(note):
-            if not isinstance(note['reference'], str) or not _SHARE.fullmatch(note['reference']):
+            shared = isinstance(note['reference'], str) and bool(_SHARE.fullmatch(note['reference']))
+            if not note['canonical'] and not shared:
                 return
             parent = f'chatgpt:note:{note["id"]}'
-            entry = {'source_key': parent, 'note_id': note['id'], 'url': note['reference'],
-                     'availability': 'available', 'revision': None}
+            entry = {'source_key': parent, 'note_id': note['id'], 'availability': 'available', 'revision': None}
+            if shared:
+                entry['url'] = note['reference']
             entries.append(entry)
-            if note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > text_limit:
+            if not note['canonical'] and (note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > text_limit):
                 omitted('oversized_documents' if note['size'] > MAX_DOCUMENT_CHARS else 'global_text_budget_documents')
                 entry['availability'] = 'excluded'
                 entry['revision'] = _hash(['excluded_by_limit', note['size']])
                 coverage['excluded'].append(parent)
                 return
-            value = db.scalar(select(Note.content).where(Note.project_id == project_id, Note.id == note['id']))
-            entry['revision'] = _hash(value)
-            if not isinstance(value, str):
+            sliced = note['canonical'] and note['size'] > MAX_DOCUMENT_CHARS
+            params = {'pid': project_id, 'nid': note['id']}
+            row = db.execute(text('SELECT CASE WHEN :sliced THEN NULL ELSE content END,conversation '
+                                  'FROM notes WHERE project_id=:pid AND id=:nid'),
+                             {**params, 'sliced': sliced}).first()
+            value, raw_metadata = row if row is not None else (None, None)
+            if row is None or (not sliced and not isinstance(value, str)):
                 omitted('invalid_documents')
                 entry.update(availability='unavailable', reason='changed_during_read')
                 coverage['unavailable'].append(parent)
                 return
             try:
-                messages = _messages(value)
-            except ValueError:
+                if note['canonical']:
+                    metadata = json.loads(raw_metadata)
+                    entry['revision'] = (_hash(['sliced', _document_digest(db, note['id']), metadata])
+                                         if sliced else _hash([value, metadata]))
+                    ranges = _canonical_message_ranges(note['size'] if sliced else len(value), metadata)
+                    if not sliced and any(not value[start:start + size].strip()
+                                          for _, _, start, size, _, _ in ranges):
+                        raise ValueError('Empty imported message')
+                    completeness = metadata['completeness']
+                    entry['transcript_completeness'] = completeness
+                    if completeness == 'partial':
+                        coverage['limitations'].append(f'{parent}: the imported transcript is partial. Only stored messages are available.')
+                    elif completeness == 'unknown':
+                        coverage['limitations'].append(f'{parent}: completeness of the imported transcript is not established.')
+                else:
+                    entry['revision'] = _hash(value)
+                    ranges = [(order, role, start, len(body), None, None)
+                              for order, role, body, start in _messages(value)]
+            except (ValueError, TypeError, RecursionError):
                 omitted('invalid_documents')
                 entry['availability'] = 'unavailable'
                 coverage['unavailable'].append(parent)
                 return
-            for ordinal, role, body, offset in messages:
+            for ordinal, role, offset, size, message_id, timestamp in ranges:
                 if ordinal > 1:
                     yield
-                if not append(body, role, ordinal, parent, f'{parent}:m:{ordinal}',
+                if sliced:
+                    reason = message_budget(size)
+                    if reason:
+                        omitted(reason)
+                        coverage['unprocessed'].append(parent)
+                        continue
+                    body = db.scalar(text('SELECT substr(content,:start,:size) FROM notes '
+                                          'WHERE project_id=:pid AND id=:nid'),
+                                     {**params, 'start': offset + 1, 'size': size})
+                    if not isinstance(body, str) or len(body) != size or not body.strip():
+                        omitted('invalid_messages')
+                        entry['availability'] = 'unavailable'
+                        coverage['unavailable'].append(parent)
+                        continue
+                else:
+                    body = value[offset:offset + size]
+                identity = f'{parent}:mid:{_hash(message_id)[:24]}' if message_id is not None else f'{parent}:m:{ordinal}'
+                if not append(body, role, ordinal, parent, identity,
                               f'{note["title"]} · message {ordinal}', offset,
-                              note_id=note['id'], reference=note['reference']):
+                              message_id=message_id, note_id=note['id'], reference=note['reference'],
+                              **({'timestamp': timestamp} if timestamp is not None else {})):
                     coverage['unprocessed'].append(parent)
             if orders.get(parent):
                 coverage['processed'].append(parent)
@@ -467,10 +553,16 @@ def build_windows(bundle, max_chars=14000):
         windows.append(value)
 
     for source in bundle['sources']:
-        if previous is not None and source['conversation_id'] != previous['conversation_id']:
-            flush()
-            group, context = [], []
-            previous = None
+        if previous is not None:
+            different_conversation = source['conversation_id'] != previous['conversation_id']
+            skipped_message = (source.get('note_id') is not None
+                               and source['message_order'] > previous['message_order'] + 1)
+            if different_conversation or skipped_message:
+                # An omitted message can contain a different proposal or the
+                # real antecedent of a short acceptance after the gap.
+                flush()
+                group, context = [], []
+                previous = None
         if not group:
             context = [previous] if previous else []
             if size([source], context) > max_chars:

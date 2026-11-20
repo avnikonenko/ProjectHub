@@ -8,6 +8,7 @@ from sqlalchemy import bindparam, select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, CodexSession, utcnow
+from .knowledge_sources import CONVERSATION_NOTE_SQL
 from .protocol import CodexError
 
 PAGE_SIZE = 20
@@ -30,7 +31,7 @@ _CHATGPT_MATCHES = (
     "'chatgpt',n.id,n.title "
     'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
     "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
-    "AND n.kind='document' AND lower(n.reference) GLOB :reference"
+    f"AND n.kind='document' AND ({CONVERSATION_NOTE_SQL} OR lower(n.reference) GLOB :reference)"
 )
 
 

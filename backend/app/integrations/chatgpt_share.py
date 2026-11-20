@@ -229,7 +229,7 @@ def _stream_transcript(chunks):
     return title if isinstance(title, str) else '', messages
 
 
-def parse_transcript(html):
+def parse_transcript(html, *, return_messages=False):
     parser = _Transcript()
     parser.feed(html)
     parser.close()
@@ -246,10 +246,11 @@ def parse_transcript(html):
             'No readable transcript was found. Check that the share opens without signing in.'
         )
     title = title.strip().removeprefix('ChatGPT - ').strip()
-    return title[:500] or 'Shared ChatGPT conversation', '\n\n'.join(messages)
+    result = (title[:500] or 'Shared ChatGPT conversation', '\n\n'.join(messages))
+    return (*result, messages) if return_messages else result
 
 
-def read_transcript(url):
+def read_transcript(url, *, return_messages=False):
     request = Request(canonical_url(url), headers={
         'User-Agent': _BROWSER_AGENT,
         'Accept': 'text/html',
@@ -278,4 +279,4 @@ def read_transcript(url):
         ) from exc
     except (URLError, OSError, HTTPException) as exc:
         raise ShareReadError('Could not connect to ChatGPT to read the shared conversation.') from exc
-    return parse_transcript(body.decode('utf-8', errors='replace'))
+    return parse_transcript(body.decode('utf-8', errors='replace'), return_messages=return_messages)

@@ -10,6 +10,7 @@ import re
 from sqlalchemy import text
 
 from ...services import require_project
+from .knowledge_sources import CONVERSATION_NOTE_SQL
 
 
 BUDGET_CHARS = 12_000
@@ -101,14 +102,30 @@ def _origin(db, project_id, ref, descriptor):
     if note_id is not None and session_id is not None:
         return None
     if isinstance(note_id, int) and not isinstance(note_id, bool) and note_id > 0:
-        row = db.execute(text('SELECT id,updated_at,reference,instr(content,:quote)>0 AS present '
-                              'FROM notes WHERE project_id=:pid AND id=:nid'),
-                         {'pid': project_id, 'nid': note_id, 'quote': ref['excerpt']}).mappings().first()
+        stable = re.fullmatch(r'chatgpt:note:\d+:mid:([0-9a-f]{24}):p:\d+', source_id)
+        ordinal = re.fullmatch(r'chatgpt:note:\d+:m:(\d{1,9}):p:\d+', source_id)
+        message_id = descriptor.get('message_id')
+        if not (stable and _short(message_id, 512) and _hash(message_id)[:24] == stable[1]):
+            message_id = None
+        message = "CASE WHEN m.type='object' THEN m.value ELSE '{}' END"
+        start = f"json_extract({message},'$.start')"
+        end = f"json_extract({message},'$.end')"
+        row = db.execute(text(f'WITH note AS (SELECT id,updated_at,reference,content,conversation, '
+            f"kind='document' AND {CONVERSATION_NOTE_SQL} AS imported FROM notes WHERE project_id=:pid AND id=:nid) "
+            'SELECT id,updated_at,reference,imported,CASE WHEN imported THEN EXISTS (SELECT 1 '
+            "FROM json_each(conversation,'$.messages') m WHERE "
+            f"((:message_id IS NOT NULL AND json_extract({message},'$.id')=:message_id) OR m.key=:ordinal) "
+            f"AND json_extract({message},'$.role')=:role AND json_type({message},'$.start')='integer' "
+            f"AND json_type({message},'$.end')='integer' AND {start}>=0 AND {end}>{start} "
+            f'AND {end}<=length(content) AND instr(substr(content,{start}+1,{end}-{start}),:quote)>0) '
+            'ELSE instr(content,:quote)>0 END AS present FROM note'),
+            {'pid': project_id, 'nid': note_id, 'quote': ref['excerpt'], 'role': ref['role'],
+             'message_id': message_id, 'ordinal': int(ordinal[1]) - 1 if ordinal else None}).mappings().first()
         if row is None:
             return None
         navigation = {'note_id': note_id}
-        if isinstance(row['reference'], str) and re.fullmatch(
-                r'https://chatgpt\.com/share/[0-9a-f-]{36}/?', row['reference'], re.I):
+        if row['imported'] or (isinstance(row['reference'], str) and re.fullmatch(
+                r'https://chatgpt\.com/share/[0-9a-f-]{36}/?', row['reference'], re.I)):
             navigation['share'] = True
         return navigation, 'available' if row['present'] else 'stale', {
             'note_id': note_id, 'updated_at': row['updated_at'], 'quote_present': bool(row['present'])}
@@ -199,7 +216,7 @@ def collect_published_knowledge(db, project_id):
         params = {f'id_{index}': identifier for index, identifier in enumerate(sorted(identifiers))}
         names = ','.join(':' + key for key in params)
         params['pid'] = project_id
-        columns = ('id', 'project_id', 'label', 'role', 'revision', 'session_id', 'turn_id', 'note_id')
+        columns = ('id', 'project_id', 'label', 'role', 'revision', 'session_id', 'turn_id', 'note_id', 'message_id')
         source_projection = ','.join(f"'{field}',json_extract(e.value,'$.{field}')" for field in columns)
         source_rows = db.execute(text('SELECT substr(json_object(' + source_projection + '),1,4001) AS source '
             "FROM project_knowledge k,json_each(k.snapshot,'$.sources') e WHERE k.project_id=:pid "

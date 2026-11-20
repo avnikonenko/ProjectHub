@@ -5,12 +5,14 @@ from urllib.parse import urlencode
 from sqlalchemy import text
 
 from .integrations.codex.history_search import search_history, _SHARE_REFERENCE
+from .integrations.codex.knowledge_sources import CONVERSATION_NOTE_SQL
 from .services import require_project
 
 PAGE_SIZE = 10
 KINDS = ('tasks', 'notes', 'conversations', 'qa', 'knowledge', 'sessions', 'other')
 TITLES = {'tasks': 'TODOs', 'notes': 'Notes', 'conversations': 'Conversations',
           'qa': 'AI Q&A', 'knowledge': 'Knowledge', 'sessions': 'Sessions', 'other': 'Other records'}
+_CONVERSATION_NOTE = f"(n.kind='document' AND ({CONVERSATION_NOTE_SQL} OR lower(n.reference) GLOB :share))"
 
 
 def _page(kind, rows, offset):
@@ -24,7 +26,7 @@ def _records(db, project_id, kind, match, offset):
         join = f' JOIN {kind} n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
         condition = 'search_index.entity_type=:kind'
         if kind == 'notes':
-            condition += " AND NOT (n.kind='document' AND lower(n.reference) GLOB :share)"
+            condition += f' AND NOT {_CONVERSATION_NOTE}'
     else:
         join = ''
         condition = "search_index.entity_type NOT IN ('tasks','notes')"
@@ -65,9 +67,9 @@ def _notes(db, project_id, match, terms, offset):
         "substr(snippet(search_index,4,'[',']','…',40),1,600) AS snippet, search_index.rank AS score "
         "FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id "
         "WHERE search_index MATCH :match AND search_index.entity_type='notes' AND n.project_id=:pid "
-        "AND NOT (n.kind='document' AND lower(n.reference) GLOB :share) "
+        f'AND NOT {_CONVERSATION_NOTE} '
         "UNION ALL SELECT n.id,substr(n.title,1,500),substr(n.content || ' ' || n.reference,1,600),0.0 "
-        "FROM notes n WHERE n.project_id=:pid AND NOT (n.kind='document' AND lower(n.reference) GLOB :share) "
+        f'FROM notes n WHERE n.project_id=:pid AND NOT {_CONVERSATION_NOTE} '
         "AND n.id NOT IN (SELECT entity_id FROM search_index WHERE search_index MATCH :match "
         "AND project_id=:pid AND entity_type='notes') AND " + where + ') '
         "SELECT id,title,snippet FROM matches ORDER BY score,id LIMIT :limit OFFSET :offset"

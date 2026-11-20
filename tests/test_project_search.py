@@ -73,6 +73,32 @@ def test_conversations_use_existing_index_and_hide_unlinked_or_foreign_history(s
         assert db.execute(text('SELECT COUNT(*) FROM codex_history_turns')).scalar() == 3
 
 
+def test_imported_conversations_and_saved_passage_notes_are_grouped_separately(search_app):
+    client, engine = search_app
+    with Session(engine) as db:
+        canonical = {'provider': 'claude', 'completeness': 'unknown', 'messages': [
+            {'role': 'user', 'start': 6, 'end': 21, 'id': 'message-1'}]}
+        db.add_all([
+            Note(id=11, project_id=1, title='Local conversation', kind='document',
+                 content='User:\nligand evidence', conversation=canonical),
+            Note(id=12, project_id=1, title='Referenced conversation', kind='document',
+                 content='User:\nligand evidence', conversation=canonical, reference='https://example.test/referenceonly'),
+            Note(id=13, project_id=1, title='Saved conversation passage',
+                 content='> ligand evidence', reference='#history?project=1&note=11'),
+            Note(id=14, project_id=1, title='Ordinary document', kind='document',
+                 content='ligand evidence', reference='https://example.test/referenceonly'),
+            Note(id=15, project_id=2, title='Foreign conversation', kind='document',
+                 content='User:\nligand evidence', conversation=canonical),
+        ])
+        db.commit()
+    groups = get(client)
+    assert {row['id'] for row in groups['conversations']['results']} == {'chatgpt:11', 'chatgpt:12'}
+    assert {row['href'] for row in groups['conversations']['results']} == {
+        '#history?project=1&note=11&q=ligand', '#history?project=1&note=12&q=ligand'}
+    assert {row['id'] for row in groups['notes']['results']} == {'notes:13', 'notes:14'}
+    assert [row['id'] for row in get(client, 'notes', 'referenceonly')['notes']['results']] == ['notes:14']
+
+
 def test_bounded_pages_all_terms_and_snippets(search_app):
     client, engine = search_app
     with Session(engine) as db:

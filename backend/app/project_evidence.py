@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from .models import CodexSession, Note, Project, Task, utcnow
 from .services import require_project
+from .integrations.codex.knowledge_sources import CONVERSATION_NOTE_SQL
 
 _GIT_TIMEOUT = 5
 _GIT_MAX_OUTPUT = 1024 * 1024
@@ -751,10 +752,14 @@ def collect_project_evidence(engine, project_id):
             ('notes', 'id,title,kind,reference,updated_at'),
             ('tasks', 'id,title,status,priority,updated_at'),
         ):
-            for row in db.execute(text(f'SELECT {fields} FROM {table} WHERE project_id=:pid ORDER BY id'), {'pid': project_id}):
-                content_digest.update(_digest(list(row)).encode())
+            projection = fields + f",kind='document' AND {CONVERSATION_NOTE_SQL} AS imported" if table == 'notes' else fields
+            for row in db.execute(text(f'SELECT {projection} FROM {table} WHERE project_id=:pid ORDER BY id'), {'pid': project_id}):
+                content_digest.update(_digest(list(row[:-1] if table == 'notes' else row)).encode())
                 _blob_digest(db, table, 'content' if table == 'notes' else 'description', row.id, content_digest)
                 content_digest.update(b'\0')
+                if table == 'notes' and row.imported:
+                    _blob_digest(db, 'notes', 'conversation', row.id, content_digest)
+                    content_digest.update(b'\0')
         # Legacy accepted decisions still feed brief generation. Hash all of
         # their text without loading long fields, but never foreign records.
         for row in db.execute(text("SELECT id,updated_at FROM decisions WHERE project_id=:pid "
@@ -763,13 +768,13 @@ def collect_project_evidence(engine, project_id):
             for field in ('title', 'description', 'rationale', 'evidence', 'limitations', 'next_step'):
                 _blob_digest(db, 'decisions', field, row.id, content_digest)
                 content_digest.update(b'\0')
-        notes = db.execute(text('SELECT id,title,kind,reference,substr(content,1,1100) AS content '
+        notes = db.execute(text(f'SELECT id,title,kind,reference,{CONVERSATION_NOTE_SQL} AS canonical,substr(content,1,1100) AS content '
                                'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 8'), {'pid': project_id}).mappings()
         for note in notes:
             reported.append({'id': f"note:{note['id']}", 'label': note['title'][:200],
                              'text': (f"{note['kind']}: {note['title']}\n{note['content']}")[:1300],
                              'classification': 'reported', 'note_id': note['id'],
-                             'share': bool(_SHARE.fullmatch(note['reference']))})
+                             'share': bool(note['kind'] == 'document' and note['canonical'] or _SHARE.fullmatch(note['reference']))})
         tasks = db.execute(text('SELECT id,title,status,priority,substr(description,1,900) AS description '
                                "FROM tasks WHERE project_id=:pid AND status!='not_planned' "
                                "ORDER BY status='completed',id DESC LIMIT 6"), {'pid': project_id}).mappings()

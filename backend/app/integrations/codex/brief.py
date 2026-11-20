@@ -5,7 +5,7 @@ import json
 import re
 import time
 
-from sqlalchemy import select, text
+from sqlalchemy import literal_column, select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
@@ -16,6 +16,7 @@ from . import progress
 from .revisions import save_revision
 from .protocol import CodexError
 from .generation_jobs import generation_lock
+from .knowledge_sources import CONVERSATION_NOTE_SQL
 
 SECTION_NAMES = ('overview', 'architecture', 'changes', 'open_questions', 'decision_candidates', 'since_last_brief',
                  'current_status', 'implemented', 'work_in_progress', 'unresolved_problems', 'validation', 'next_steps')
@@ -122,18 +123,24 @@ def generation_for_read(generation):
 
 def note_evidence(db, project_id, *, shared_only=False, exclude_shared=False):
     query = select(Note).where(Note.project_id == project_id)
-    shared_chat = (Note.kind == 'document') & Note.reference.startswith('https://chatgpt.com/share/')
+    shared_chat = (Note.kind == 'document') & (
+        literal_column(CONVERSATION_NOTE_SQL) | Note.reference.startswith('https://chatgpt.com/share/'))
     if shared_only:
         query = query.where(shared_chat)
     elif exclude_shared:
         query = query.where(~shared_chat)
     for note in db.scalars(query.order_by(Note.id)):
-        text = f'{note.title}\n{note.content}\nReference: {note.reference}'
+        imported = note.kind == 'document' and isinstance(note.conversation, dict)
+        transcript_status = note.conversation.get('completeness') if imported else None
+        warning = ('Imported transcript is partial. Only stored messages are available.\n' if transcript_status == 'partial'
+                   else 'Completeness of the imported transcript is not established.\n' if transcript_status == 'unknown' else '')
+        text = f'{note.title}\n{warning}{note.content}\nReference: {note.reference}'
         for offset in range(0, len(text), 1500):
             excerpt = text[offset:offset + 1500]
             source = {'id': f'note:{note.id}:{offset // 1500 + 1}',
                       'label': f'{"AI note" if note.kind == "ai_note" else "Note"} #{note.id} · {note.title}',
-                      'note_id': note.id, 'kind': note.kind, 'text': excerpt, 'updated_at': note.updated_at}
+                      'note_id': note.id, 'kind': note.kind, 'text': excerpt, 'updated_at': note.updated_at,
+                      **({'share': True} if imported else {})}
             yield {'text': excerpt, 'sources': [source]}
 
 

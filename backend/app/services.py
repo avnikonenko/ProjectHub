@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from fastapi import HTTPException
-from sqlalchemy import select, text
+from sqlalchemy import JSON, func, select, text, type_coerce
 from .integrations.github_issues import github_repository, issues_url
 from .models import Project, Question, Answer, Decision, Task, Note, AuditEvent, CodexSession, utcnow
 
@@ -391,7 +391,8 @@ def overview(db, project_id, *, compact=False, note_content=True):
     else:
         # Select metadata directly: deferring ORM content but serializing the
         # entity would accidentally lazy-load every complete transcript again.
-        columns = [column for column in Note.__table__.columns if column.name != 'content']
+        columns = [column for column in Note.__table__.columns if column.name not in ('content', 'conversation')]
+        columns.append(type_coerce(func.json_remove(Note.conversation, '$.messages'), JSON).label('conversation'))
         data['notes'] = [{**dict(row), 'content_loaded': False} for row in db.execute(
             select(*columns).where(Note.project_id == project_id).order_by(Note.id)
         ).mappings()]

@@ -6,7 +6,7 @@ import sqlite3
 import uuid
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from typing import Literal
 from fastapi import FastAPI, Depends, HTTPException, Query, Request, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -15,7 +15,8 @@ from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 from .db import initialize, default_data_dir, get_db
-from .integrations import chatgpt_share, github_issues
+from .integrations import chatgpt_share, conversation_import, github_issues
+from . import conversation_ingest
 from .integrations.codex.history_search import search_history
 from .project_search import project_search
 from .project_export import audit_response, project_export_response
@@ -95,13 +96,13 @@ def _create_app(data_dir, restart_controller, ownership):
         if mutating:
             if request.headers.get('sec-fetch-site') == 'cross-site': return JSONResponse({'detail':'Cross-site request denied'},status_code=403)
             # Bound request bytes before JSON or multipart parsing, including chunked input.
-            # Note content can originate from a 16 MiB transcript import. JSON
-            # escaping can expand one byte to six; other writes keep the small cap.
-            note_write = ((request.method == 'POST' and re.fullmatch(
-                r'/api/projects/[1-9]\d*/notes', request.url.path))
+            # Notes and conversation imports support 16 MiB of UTF-8 content.
+            # JSON escaping can expand one byte to six; other writes keep the small cap.
+            large_text_write = ((request.method == 'POST' and re.fullmatch(
+                r'/api/projects/[1-9]\d*/(?:notes|conversations/(?:preview|import))', request.url.path))
                 or (request.method == 'PATCH' and re.fullmatch(
                     r'/api/projects/[1-9]\d*/notes/[1-9]\d*', request.url.path)))
-            limit = (6 * 16 + 3) * 1024 * 1024 if note_write else 3 * 1024 * 1024
+            limit = 3 * 1024 * 1024 + (6 * NOTE_CONTENT_MAX_BYTES if large_text_write else 0)
             chunks, size = [], 0
             async for chunk in request.stream():
                 size += len(chunk)
@@ -337,7 +338,85 @@ def _create_app(data_dir, restart_controller, ownership):
 
     @app.patch('/api/projects/{project_id}/notes/{note_id}')
     def update_note(project_id:int,note_id:int,payload:NotePatch,db:Session=db_dep):
-        n=scoped(db,Note,project_id,note_id);values=payload.model_dump(exclude_unset=True);before=serialize(n);apply_values(n,values);audit(db,project_id,n,'updated',before);db.commit();return serialize(n)
+        n=scoped(db,Note,project_id,note_id);values=payload.model_dump(exclude_unset=True)
+        if n.conversation is not None and any(key in values and values[key] != getattr(n, key)
+                                              for key in ('content', 'kind', 'reference')):
+            raise HTTPException(409, 'Use Import conversation to update this transcript and preserve its original source.')
+        before=serialize(n);apply_values(n,values);audit(db,project_id,n,'updated',before);db.commit();return serialize(n)
+
+    def prepare_conversation(project_id, payload, db):
+        require_project(db, project_id)
+        db.rollback()
+        try:
+            return conversation_ingest.prepare(payload)
+        except conversation_import.ConversationImportError as exc:
+            status = 403 if exc.code == 'access_denied' else 502 if exc.code == 'share_unavailable' else 422
+            raise HTTPException(status, str(exc)) from exc
+        except ValidationError as exc:
+            raise HTTPException(422, 'The transcript exceeds supported limits or contains invalid text.') from exc
+
+    @app.post('/api/projects/{project_id}/conversations/preview')
+    def preview_conversation(project_id: int, payload: ConversationPreviewInput, db: Session = db_dep):
+        values, source = prepare_conversation(project_id, payload, db)
+        require_project(db, project_id)
+        return conversation_ingest.preview(db, project_id, values, source)
+
+    @app.post('/api/projects/{project_id}/conversations/import', status_code=201)
+    def save_conversation(project_id: int, payload: ConversationSaveInput, db: Session = db_dep):
+        values, source = prepare_conversation(project_id, payload, db)
+        db.execute(text('BEGIN IMMEDIATE'))
+        require_project(db, project_id)
+        checked = conversation_ingest.preview(db, project_id, values, source)
+        if checked['fingerprint'] != payload.fingerprint:
+            raise HTTPException(409, 'The conversation or existing import changed. Check the source again before saving.')
+        existing = checked['existing']
+        if existing and existing['duplicate']:
+            raise HTTPException(409, 'This conversation is already saved in this project.')
+        if existing and not payload.replace_existing:
+            raise HTTPException(409, 'Confirm updating the existing conversation before saving.')
+        if checked['completeness'] == 'partial' and not payload.confirm_partial:
+            raise HTTPException(422, 'Confirm that you want to import a partial conversation.')
+        if existing:
+            note = scoped(db, Note, project_id, existing['id'])
+            before = serialize(note)
+            if note.conversation is None:
+                # Retain the pre-existing source when upgrading a legacy share.
+                from hashlib import sha256
+                original = note.content.encode()
+                db.add(ConversationImportSource(project_id=project_id, note_id=note.id,
+                    filename='legacy-conversation.txt', reference=note.reference, payload=original,
+                    content_hash=sha256(original).hexdigest()))
+            conversation_ingest.preserve_source_identity(values, note.reference, note.conversation)
+            apply_values(note, values)
+        else:
+            note = Note(project_id=project_id, **values)
+            db.add(note)
+            before = None
+        db.flush()
+        db.add(ConversationImportSource(project_id=project_id, note_id=note.id, **source))
+        audit(db, project_id, note, 'updated' if existing else 'imported', before)
+        db.commit()
+        return serialize(note)
+
+    @app.get('/api/projects/{project_id}/conversations/{note_id}/sources')
+    def conversation_sources(project_id: int, note_id: int, db: Session = db_dep):
+        scoped(db, Note, project_id, note_id)
+        source = ConversationImportSource
+        rows = db.execute(select(source.id, source.filename, source.reference, source.content_hash, source.created_at)
+            .where(source.project_id == project_id, source.note_id == note_id).order_by(source.id.desc())).mappings()
+        return [dict(row) for row in rows]
+
+    @app.get('/api/projects/{project_id}/conversations/{note_id}/sources/{source_id}')
+    def download_conversation_source(project_id: int, note_id: int, source_id: int, db: Session = db_dep):
+        scoped(db, Note, project_id, note_id)
+        source = db.scalar(select(ConversationImportSource).where(ConversationImportSource.project_id == project_id,
+            ConversationImportSource.note_id == note_id, ConversationImportSource.id == source_id))
+        if source is None:
+            raise HTTPException(404, 'Source copy not found in this conversation.')
+        return Response(source.payload, media_type='application/octet-stream', headers={
+            'Content-Disposition': "attachment; filename*=UTF-8''" + quote(source.filename, safe=''),
+            'X-Content-Type-Options': 'nosniff',
+        })
 
     @app.delete('/api/projects/{project_id}/notes/{note_id}', status_code=204)
     def delete_note(project_id: int, note_id: int, db: Session = db_dep):

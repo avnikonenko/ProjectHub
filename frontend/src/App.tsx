@@ -36,6 +36,10 @@ import { BriefSources, briefReferences, citedSources, type BriefSource } from '.
 import { AIResultHeader } from './AIResultHeader';
 import { Feedback } from './Feedback';
 import { ProjectSearchResults } from './ProjectSearchResults';
+import { ConversationImport } from './ConversationImport';
+import { ConversationSourceCopies } from './ConversationSourceCopies';
+import { conversationCompletenessLabels, conversationProviderLabel, conversationReference,
+  conversationSourceLabels, hasConversationMetadata, importedConversation } from './conversationImportData';
 import { SaveablePassage, type PassageNoteContext } from './SaveablePassage';
 import { ThemeToggle } from './ThemeToggle';
 import { groupSharedHistory } from './sharedHistory';
@@ -48,10 +52,6 @@ import { AIProfileConnections } from './AIProfileConnections';
 import { RestartControl } from './RestartControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, HistoryMarkdown, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
-
-const isChatGPTShare = (note: RecordData) => note.kind === 'document'
-  && typeof note.reference === 'string'
-  && /^https:\/\/chatgpt\.com\/share\/[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(note.reference);
 
 function sessionCaption(session: RecordData) {
   return [session.title || 'Untitled session', `#${session.id}`, session.topic].filter(Boolean).join(' · ');
@@ -585,6 +585,7 @@ function ProjectWorkspace({
       </main>
     );
   const { project, tasks, notes, activity } = overview;
+  const projectNotes = notes.filter((note) => !importedConversation(note));
   const remoteIssuesUrl = repository.status?.github_issues_url ?? githubIssuesUrl(project.git_remote ?? '');
   const latestActivity = [
     ...activity.map((event) => ({
@@ -606,7 +607,8 @@ function ProjectWorkspace({
   const activeTodos = matchingTodos.filter((task) => task.status !== 'completed' && task.status !== 'not_planned').sort(todoOrder);
   const notPlannedTodos = matchingTodos.filter((task) => task.status === 'not_planned').sort(todoOrder);
   const completedTodos = matchingTodos.filter((task) => task.status === 'completed').sort(todoOrder);
-  const matchingNotes = (searchTarget?.kind === 'notes' ? notes.filter((note) => note.id === searchTarget.id) : [...notes]).reverse();
+  const matchingNotes = (searchTarget?.kind === 'notes'
+    ? projectNotes.filter((note) => note.id === searchTarget.id) : projectNotes).reverse();
   const todoRow = (task: RecordData) => (
     <li className="record-row" key={task.id}>
       <div className="todo-content">
@@ -876,7 +878,7 @@ function ProjectWorkspace({
               <>
                 <div className="metrics">
                   <div className="metric">
-                    <strong>{notes.length}</strong>
+                    <strong>{projectNotes.length}</strong>
                     <span>Notes</span>
                   </div>
                 </div>
@@ -976,8 +978,7 @@ function ProjectWorkspace({
                   <div>
                     <h2>Notes</h2>
                     <p className="muted">
-                      Notes, assumptions, references, and imported text.
-                      Imported content is untrusted data.
+                      Notes, assumptions, references, and text documents.
                     </p>
                   </div>
                   <button
@@ -1051,7 +1052,7 @@ function ProjectWorkspace({
                 </div>
                 {!matchingNotes.length && <Empty>No notes yet.</Empty>}
                 <PagedItems label="Note pages">{matchingNotes.map((n) => (
-                  <NoteCard key={n.id} base={base} note={n} shared={isChatGPTShare(n)} busy={busy}
+                  <NoteCard key={n.id} base={base} note={n} busy={busy}
                     reveal={searchTarget?.kind === 'notes'}
                     editRequest={pendingNoteEdit?.id === n.id ? pendingNoteEdit.identity : undefined}
                     onEditIntent={() => requestNoteEdit(n.id)}
@@ -1068,9 +1069,7 @@ function ProjectWorkspace({
                     n.reference && (
                       <p>
                         <strong>Reference:</strong>{' '}
-                        {isChatGPTShare(n)
-                          ? <a href={n.reference} target="_blank" rel="noreferrer">Open shared chat</a>
-                          : typeof n.reference === 'string' && readHistoryLink(n.reference)?.projectId === projectId
+                        {typeof n.reference === 'string' && readHistoryLink(n.reference)?.projectId === projectId
                           ? <a href={n.reference}>Open source conversation</a>
                           : <span>{n.reference}</span>}
                       </p>
@@ -1091,7 +1090,18 @@ function ProjectWorkspace({
                     return load();
                   }}
                   onOpenGeneration={() => setView('Generation')} />
-                <ChatGPTShares base={base} notes={notes} showHistory={false} />
+                <ImportedConversations base={base} notes={notes} manage={{
+                  busy,
+                  rename: (conversation) => edit('Rename conversation', [titleField], `/notes/${conversation.id}`, conversation),
+                  remove: (conversation) => {
+                    if (window.confirm(`Remove imported conversation “${conversation.title}” and its saved source copies from this project?`)) {
+                      void run(async () => {
+                        await api(`${base}/notes/${conversation.id}`, { method: 'DELETE' });
+                        setGenerationResultsVersion((version) => version + 1);
+                      });
+                    }
+                  },
+                }} />
               </>
             )}
             {view === 'Reviews' && (
@@ -1801,98 +1811,77 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   );
 }
 
-function ChatGPTShares({ base, notes, onImported, showHistory = true, passageNotes, compact = false }: {
+function ImportedConversationInfo({ note }: { note: RecordData }) {
+  const summary = importedConversation(note);
+  if (!summary) return null;
+  const reference = conversationReference(note.reference);
+  return <p className="muted">
+    {conversationProviderLabel(summary.provider)} · {conversationCompletenessLabels[summary.completeness]}
+    {' · '}{conversationSourceLabels[summary.source_status]}
+    {reference && <> · <a href={reference} target="_blank" rel="noreferrer">Open source conversation</a></>}
+  </p>;
+}
+
+function ImportedConversations({ base, notes, passageNotes, manage }: {
   base: string;
   notes: RecordData[];
-  onImported?: () => Promise<void>;
-  showHistory?: boolean;
-  compact?: boolean;
   passageNotes?: PassageNoteContext;
+  manage?: { busy: boolean; rename: (conversation: RecordData) => void; remove: (conversation: RecordData) => void };
 }) {
-  const [adding, setAdding] = useState(false);
   const [page, setPage] = useState(0);
-  const importForm = adding && onImported && (
-        <Form title="Import shared chat"
-          fields={[{ name: 'url', label: 'Public ChatGPT share link', required: true }]}
-          saveLabel="Import" savingLabel="Importing…" onClose={() => setAdding(false)}
-          onSave={async ({ url }) => {
-            await post(`${base}/notes/chatgpt-share`, { url: url.trim() });
-            await onImported();
-            setPage(0);
-          }}
-        />
-      );
-  if (compact) return (
-    <div className="source-import">
-      <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
-      {importForm}
-    </div>
-  );
-  const shares = notes.filter(isChatGPTShare).sort((a, b) => b.id - a.id);
+  const shares = notes.filter(importedConversation).sort((a, b) => b.id - a.id);
   const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const start = currentPage * HISTORY_PAGE_SIZE;
-  if (!shares.length) return onImported ? (
-    <div className="source-import">
-      <span className="muted">No shared chats yet.</span>
-      <button type="button" className="secondary" onClick={() => setAdding(true)}>Add ChatGPT conversation</button>
-      {importForm}
-    </div>
-  ) : showHistory ? <p className="empty">No shared chats yet. Add conversations in Sources.</p> : null;
+  if (!shares.length) return passageNotes
+    ? <p className="empty">No imported conversations yet. Add conversations in Sources.</p> : null;
   return (
     <section className="card">
-      <div className="section-title">
-        <div>
-          <h2>ChatGPT shared conversations</h2>
-          <p className="muted">{onImported
-            ? 'Import a public share link to save its text for Project status and AI Q&A.'
-            : 'Saved transcripts. Add conversations in Sources.'}</p>
-        </div>
-        {onImported && <button className="secondary" onClick={() => setAdding(true)}>Import shared chat</button>}
-      </div>
-      {importForm}
-      {!showHistory && !!shares.length && (
-        <PagedItems label="Shared conversation pages">
-          {shares.map((share) => (
-            <article className="list-item" key={share.id}>
-              <strong>{share.title || 'Untitled conversation'}</strong>
-              <div className="actions left">
-                <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: share.id })}>
-                  Read saved transcript
-                </a>
-                <a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a>
-              </div>
-            </article>
-          ))}
-        </PagedItems>
-      )}
-      {showHistory && pageCount > 1 && (
-        <nav className="pagination" aria-label="Shared chat pages">
+      <h2>Imported conversations</h2>
+      {passageNotes && <p className="muted">Saved transcripts. Add conversations in Sources.</p>}
+      {passageNotes && pageCount > 1 && (
+        <nav className="pagination" aria-label="Imported conversation pages">
           <button className="secondary" disabled={currentPage === 0}
-            onClick={() => setPage(currentPage - 1)}>Newer chats</button>
+            onClick={() => setPage(currentPage - 1)}>Newer conversations</button>
           <span role="status">Page {currentPage + 1} of {pageCount}</span>
           <button className="secondary" disabled={currentPage === pageCount - 1}
-            onClick={() => setPage(currentPage + 1)}>Older chats</button>
+            onClick={() => setPage(currentPage + 1)}>Older conversations</button>
         </nav>
       )}
-      {showHistory && passageNotes && shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
-        <SharedChatTranscript key={share.id} base={base} share={share} passageNotes={passageNotes} />
-      ))}
+      {passageNotes ? shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
+        <ImportedTranscript key={share.id} base={base} share={share} passageNotes={passageNotes} />
+      )) : <PagedItems label="Imported conversation pages">{shares.map((share) => (
+        <article className="list-item" key={share.id}>
+          <div className="section-title">
+            <strong>{share.title || 'Untitled conversation'}</strong>
+            {manage && <div className="note-actions">
+              <EditButton label={`Rename conversation: ${share.title}`} disabled={manage.busy}
+                onClick={() => manage.rename(share)} />
+              <DeleteButton label={`Remove imported conversation: ${share.title}`} disabled={manage.busy}
+                onClick={() => manage.remove(share)} />
+            </div>}
+          </div>
+          <ImportedConversationInfo note={share} />
+          <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: share.id })}>Read saved transcript</a>
+          {hasConversationMetadata(share) && <ConversationSourceCopies base={base} note={share} />}
+        </article>
+      ))}</PagedItems>}
     </section>
   );
 }
 
-function SharedChatTranscript({ base, share, passageNotes }: {
+function ImportedTranscript({ base, share, passageNotes }: {
   base: string; share: RecordData; passageNotes: PassageNoteContext;
 }) {
   const [expanded, setExpanded] = useState(false);
   return <details className="history-turn" open={expanded}
     onToggle={event => setExpanded(event.currentTarget.open)}>
-    <summary>{share.title}</summary>
+    <summary>{share.title || 'Untitled conversation'}</summary>
     {expanded && <>
-      <p><a href={share.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
+      <ImportedConversationInfo note={share} />
+      {hasConversationMetadata(share) && <ConversationSourceCopies base={base} note={share} />}
       <LazyNote base={base} note={share}>{loaded => (
-        <SaveablePassage context={passageNotes} title={share.title ?? 'ChatGPT passage'}
+        <SaveablePassage context={passageNotes} title={share.title ?? 'Conversation passage'}
           reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id })}>
           <div className="shared-transcript">{loaded.content}</div>
         </SaveablePassage>
@@ -1932,8 +1921,8 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
       <HistorySearch base={base}
         onIndexed={() => setIndexVersion((value) => value + 1)} />
       {historyLink && 'noteId' in historyLink ? (
-        <IndexedChatGPTTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
-          note={notes.find((note) => note.id === historyLink.noteId && isChatGPTShare(note))}
+        <IndexedImportedTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
+          note={notes.find((note) => note.id === historyLink.noteId && importedConversation(note))}
           query={historyLink.query} onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : historyLink ? (
         <IndexedHistoryTurn key={`${historyLink.sessionId}/${historyLink.turnId}`}
@@ -1942,7 +1931,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
           onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : (
       <>
-      <ChatGPTShares base={base} notes={notes} passageNotes={passageNotes} />
+      <ImportedConversations base={base} notes={notes} passageNotes={passageNotes} />
       <section className="card">
         <h2>Project conversation history</h2>
         <p className="muted">Select conversation text to save it as a note. Add sessions in Sources.</p>
@@ -1970,14 +1959,14 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
   );
 }
 
-function IndexedChatGPTTranscript(props: {
+function IndexedImportedTranscript(props: {
   note?: RecordData; query?: string; onClose: () => void; passageNotes: PassageNoteContext;
 }) {
   const loaded = useLoadedNote(props.passageNotes.base, props.note ?? { id: 0 }, !!props.note);
-  if (!props.note || loaded.note) return <LoadedChatGPTTranscript {...props} note={loaded.note ?? undefined} />;
+  if (!props.note || loaded.note) return <LoadedImportedTranscript {...props} note={loaded.note ?? undefined} />;
   return <section className="card saved-history" aria-busy={loaded.loading}>
     <div className="section-title">
-      <h2>{props.note.title || 'Saved ChatGPT transcript'}</h2>
+      <h2>{props.note.title || 'Saved conversation transcript'}</h2>
       <button className="secondary" onClick={props.onClose}>Browse conversations</button>
     </div>
     {loaded.loading && <Feedback>Loading saved content…</Feedback>}
@@ -1986,7 +1975,7 @@ function IndexedChatGPTTranscript(props: {
   </section>;
 }
 
-function LoadedChatGPTTranscript({ note, query, onClose, passageNotes }: {
+function LoadedImportedTranscript({ note, query, onClose, passageNotes }: {
   note?: RecordData;
   query?: string;
   onClose: () => void;
@@ -2004,13 +1993,14 @@ function LoadedChatGPTTranscript({ note, query, onClose, passageNotes }: {
   return (
     <section className="card saved-history">
       <div className="section-title">
-        <h2 ref={heading} tabIndex={-1}>{note?.title || 'Saved ChatGPT transcript'}</h2>
+        <h2 ref={heading} tabIndex={-1}>{note?.title || 'Saved conversation transcript'}</h2>
         <button className="secondary" onClick={onClose}>Browse conversations</button>
       </div>
       {note ? (
         <>
-          <p><a href={note.reference} target="_blank" rel="noreferrer">Open shared chat</a></p>
-          <SaveablePassage context={passageNotes} title={note.title ?? 'ChatGPT passage'}
+          <ImportedConversationInfo note={note} />
+          {hasConversationMetadata(note) && <ConversationSourceCopies base={passageNotes.base} note={note} />}
+          <SaveablePassage context={passageNotes} title={note.title ?? 'Conversation passage'}
             reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: note.id })}>
           <div className="shared-transcript">
             {match ? (
@@ -2023,7 +2013,7 @@ function LoadedChatGPTTranscript({ note, query, onClose, passageNotes }: {
           </div>
           </SaveablePassage>
         </>
-      ) : <ErrorBox error="This ChatGPT transcript is not available in this project." />}
+      ) : <ErrorBox error="This transcript is not available in this project." />}
     </section>
   );
 }
@@ -2246,13 +2236,14 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
+  const [importingConversation, setImportingConversation] = useState(false);
   const [unlinkedSession, setUnlinkedSession] = useState('');
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
   const mounted = useRef(true);
   const refreshVersion = useRef(0);
   const sessions = sessionRows ?? [];
-  const chatCount = notes.filter(isChatGPTShare).length;
+  const chatCount = notes.filter(importedConversation).length;
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
   const filteredSessions = [...sessions].filter((session) => {
@@ -2343,7 +2334,9 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
             <button type="button" className="secondary" disabled={busy} onClick={onOpenGeneration}>Open Generation</button>
           </Feedback>}
           <div className="source-toolbar">
-            <ChatGPTShares base={base} notes={notes} onImported={onImported} compact />
+            <button type="button" className="secondary" onClick={() => setImportingConversation(true)}>Import conversation</button>
+            {importingConversation && <ConversationImport key={base} base={base} onImported={onImported}
+              onClose={() => setImportingConversation(false)} />}
             <details className="source-link">
               <summary className="button secondary">Link Codex session</summary>
           <label>

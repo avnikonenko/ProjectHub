@@ -52,11 +52,41 @@ and run `codex login` before linking a session or requesting generation. Local
 notes and browsing work without Codex.
 
 1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
-2. In **Sources**, link a Codex session or import a public ChatGPT share.
+2. In **Sources**, link a Codex session or use **Import conversation**.
 3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
 4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
 Press Ctrl+C in the terminal to stop ProjectHub.
+
+## Import conversations
+
+In **Sources → Import conversation**, choose a public share link or a UTF-8 file. Use the preview to check speaker roles, message counts, and source availability. After saving, manage the conversation in **Sources** or read the transcript in **History**. If a Claude link returns HTTP 403, download or export the conversation on Claude and use **Import from file**.
+
+JSON files can contain one conversation with messages in their original order. Use `role` and `content` for each message. Include `id` and `timestamp` when the export provides them.
+
+```json
+{
+  "title": "Import design discussion",
+  "messages": [
+    {"role": "user", "content": "Why validate before saving?"},
+    {"role": "assistant", "content": "So malformed imports leave the project untouched."}
+  ]
+}
+```
+
+For Markdown, put each speaker heading on its own line. Keep headings that are part of code inside fenced code blocks.
+
+```markdown
+# Import design discussion
+
+## User
+Why validate before saving?
+
+## Assistant
+So malformed imports leave the project untouched.
+```
+
+ProjectHub also accepts a single Claude JSON conversation with `chat_messages`. For a multi-conversation account export, extract the object for the conversation you want and save it as its own JSON file. If the export includes a conversation UUID, ProjectHub can recognize a later export of the same conversation and ask you to confirm the update. One-sided conversations require confirmation as partial. Use **Source copies** in the saved transcript to download the original file or a copy of an earlier import. The project JSON export also includes these copies.
 
 ## Configuration and backups
 

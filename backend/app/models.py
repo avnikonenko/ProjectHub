@@ -1,6 +1,6 @@
 """Persistent knowledge records. Provenance is retained in append-only audit events."""
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, ForeignKey, String, Text, JSON, Integer
+from sqlalchemy import Boolean, ForeignKey, String, Text, JSON, Integer, LargeBinary
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -112,6 +112,20 @@ class Note(Scoped, Base):
     content: Mapped[str] = mapped_column(Text, default='')
     kind: Mapped[str] = mapped_column(String, default='note')
     reference: Mapped[str] = mapped_column(Text, default='')
+    conversation: Mapped[dict | None] = mapped_column(JSON(none_as_null=True), nullable=True)
+
+
+class ConversationImportSource(Base):
+    """Immutable input retained for each saved import or replacement."""
+    __tablename__ = 'conversation_import_sources'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'))
+    note_id: Mapped[int] = mapped_column(ForeignKey('notes.id', ondelete='CASCADE'))
+    filename: Mapped[str] = mapped_column(String(255))
+    reference: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[bytes] = mapped_column(LargeBinary)
+    created_at: Mapped[str] = mapped_column(String, default=utcnow)
 
 
 class AuditEvent(Base):

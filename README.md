@@ -8,7 +8,7 @@
 
 **Keep your project knowledge organized and accessible across AI conversations and development sessions.**
 
-Working on long-running projects often means spreading important information across multiple Codex sessions, ChatGPT conversations, and Git repositories. Decisions get buried, explanations become difficult to find, and returning to a project requires reconstructing its history.
+Working on long-running projects often means spreading important information across Codex sessions, ChatGPT or Claude conversations, and Git repositories. Decisions get buried, explanations become difficult to find, and returning to a project requires reconstructing its history.
 
 **ProjectHub** is a local workspace that brings this information together.
 
@@ -25,7 +25,7 @@ Designed for developers, researchers, and anyone working on long-running project
 ## What AI generates
 
 Open **Generation** and choose what to make or update. **AI Q&A** uses linked
-Codex sessions and imported ChatGPT chats to create questions and answers.
+Codex sessions and imported conversations to create questions and answers.
 **Scheme** can use those conversations and read parts of a linked Git repository
 to make diagrams. Use the links in saved results to see where the information came from.
 
@@ -100,10 +100,20 @@ For Codex sessions or generation with Codex, install the [Codex CLI](https://lea
 and run `codex login`. Local notes and browsing work without Codex.
 
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
-2. In **Sources**, link a Codex session about Project X or use **Import shared chat** to add a past discussion.
+2. In **Sources**, link a Codex session about Project X or use **Import conversation** to add a past discussion.
 3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
 4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
 5. In **Generation**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
+
+## Import conversations
+
+Open **Sources → Import conversation**, paste a public share link or select a UTF-8 file, then review the message counts and sample before saving. Manage imported conversations under **Sources** and read them in **History**. They also appear in Search and can contribute to Knowledge. ProjectHub keeps a downloadable source copy for each saved import or update.
+
+- **ChatGPT** supports public share links directly.
+- **Claude** share links are best-effort. If Claude returns HTTP 403 or the messages are unavailable, select **Import from file**.
+- **Tested file formats** include JSON with a `messages` array containing `role` and `content`, a single Claude conversation with `chat_messages`, and Markdown with each turn headed `## User`, `## Assistant`, or `## Claude`. See the [file examples](docs/GETTING_STARTED.md#import-conversations).
+
+To import your Claude history, request the [official Claude data export](https://support.claude.com/en/articles/9450526-export-your-claude-data), unzip it, and save the one conversation you want as a JSON file. [Claude Exporter](https://github.com/secondfry/claude-exporter) and [Copy Chat](https://github.com/Neautrino/copy-gpt) can export individual chats. Their exact output formats are unverified in ProjectHub. Check the preview and use the tested JSON or Markdown structure if needed.
 
 ## Settings and AI
 

@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 from copy import deepcopy
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, create_model
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, create_model, model_validator
 
 Priority = Literal['low', 'medium', 'high', 'critical']
 QuestionStatus = Literal['open', 'under_discussion', 'awaiting_validation', 'resolved', 'reopened']
@@ -105,6 +105,29 @@ class NoteCreate(Input):
 
 class ChatGPTShareImport(Input):
     url: str = Field(min_length=1, max_length=2048)
+
+
+class ConversationPreviewInput(Input):
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+    filename: str | None = Field(default=None, min_length=1, max_length=255)
+    content: Annotated[str, StringConstraints(min_length=1, max_length=NOTE_CONTENT_MAX_BYTES,
+                       strip_whitespace=False), AfterValidator(_note_content_bytes)] | None = None
+    source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+
+    @model_validator(mode='after')
+    def one_source(self):
+        if self.url is not None:
+            if self.filename is not None or self.content is not None or self.source_url is not None:
+                raise ValueError('Choose a share link or a file.')
+        elif self.filename is None or self.content is None:
+            raise ValueError('Choose a share link or a file.')
+        return self
+
+
+class ConversationSaveInput(ConversationPreviewInput):
+    fingerprint: str = Field(pattern=r'^[0-9a-f]{64}$')
+    confirm_partial: bool = Field(default=False, strict=True)
+    replace_existing: bool = Field(default=False, strict=True)
 
 
 def patch_model(name, model):

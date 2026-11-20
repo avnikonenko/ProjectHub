@@ -1,21 +1,20 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useLoadedNote } from './LazyNote';
 import { NoteContent } from './NoteContent';
 import { Badge, DeleteButton, EditButton, ErrorBox } from './ui';
 import { Feedback } from './Feedback';
 import type { RecordData } from './types';
 
-export function NoteCard({ base, note, shared, busy, reveal, reference, editRequest, onEditIntent, onEditReady, onEditCancel, onDelete }: {
-  base: string; note: RecordData; shared: boolean; busy: boolean; reveal: boolean;
+export function NoteCard({ base, note, busy, reveal, reference, editRequest, onEditIntent, onEditReady, onEditCancel, onDelete }: {
+  base: string; note: RecordData; busy: boolean; reveal: boolean;
   reference?: ReactNode; editRequest?: number;
   onEditIntent: () => void; onEditReady: (note: RecordData, identity: number) => void;
   onEditCancel: (identity: number) => void; onDelete: () => void;
 }) {
-  const [expanded, setExpanded] = useState(false);
   const cancelEdit = useRef(onEditCancel);
   cancelEdit.current = onEditCancel;
   const pendingEdit = editRequest !== undefined;
-  const loaded = useLoadedNote(base, note, !shared || expanded || pendingEdit);
+  const loaded = useLoadedNote(base, note);
   useEffect(() => () => {
     // Pagination/unmount must not retain an edit intent that could reopen when
     // the card returns. Callback identity alone changes on ordinary renders.
@@ -42,13 +41,7 @@ export function NoteCard({ base, note, shared, busy, reveal, reference, editRequ
       </div>
     </div>
     {editRequest !== undefined && <button type="button" className="quiet" onClick={() => onEditCancel(editRequest)}>Cancel opening editor</button>}
-    {shared ? <>
-      {pendingEdit && !expanded && status}
-      <details open={expanded} onToggle={event => setExpanded(event.currentTarget.open)}>
-        <summary>Read transcript</summary>
-        {expanded && <>{status}{loaded.note && <div className="shared-transcript">{loaded.note.content}</div>}</>}
-      </details>
-    </> : <>{status}{loaded.note && <NoteContent content={loaded.note.content} reveal={reveal} />}</>}
+    {status}{loaded.note && <NoteContent content={loaded.note.content} reveal={reveal} />}
     {reference}
   </section>;
 }
