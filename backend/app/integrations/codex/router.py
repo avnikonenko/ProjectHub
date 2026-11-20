@@ -2,7 +2,8 @@
 from typing import Annotated, Literal
 from pathlib import Path
 import logging
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+import shutil
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
@@ -338,6 +339,53 @@ def list_ai_profiles(db: DB, provider: GenerationProvider = 'codex'):
         return {'options': account_options(engine), 'launch_label': launch_label(engine)}
     return {'options': [{'id': identifier, 'label': label} for identifier, label, path in claude_profile_entries(engine)
                         if path.is_dir()], 'launch_label': 'Claude Code launch account'}
+
+
+class AIProfileStatus(BaseModel):
+    state: Literal['connected', 'not_installed', 'unavailable']
+    detail: str | None = None
+
+
+@settings_router.get('/ai-profiles/status', response_model_exclude_none=True)
+def ai_profile_status(
+    db: DB, provider: GenerationProvider, profile: Annotated[str | None, Query(max_length=200)] = None,
+    sec_fetch_site: Annotated[str | None, Header(include_in_schema=False)] = None,
+) -> AIProfileStatus:
+    # Browser subresource requests may omit Origin. Probing still starts a process.
+    if sec_fetch_site in ('cross-site', 'same-site'):
+        raise HTTPException(403, 'Cross-origin request denied')
+    label = 'Claude Code' if provider == 'claude' else 'Codex'
+    unverified = f'Could not verify the {label} sign-in on the ProjectHub server.'
+    directory = None
+    if profile is not None:
+        try:
+            engine = db.get_bind()
+            if provider == 'claude':
+                _, directory = claude_profile(engine, profile)
+            else:
+                directory = account_home(profile, engine)
+        except (CodexError, OSError, RuntimeError, OverflowError):
+            return AIProfileStatus(state='unavailable', detail=f'The selected {label} profile is unavailable.')
+
+    try:
+        if provider == 'claude':
+            installed = bool(shutil.which('claude'))
+            if installed:
+                ClaudeGenerationManager(None, directory=directory).verify_account()
+                return AIProfileStatus(state='connected')
+        else:
+            capability = availability(directory) if directory else availability()
+            installed = capability['installed']
+            if installed and capability['authenticated']:
+                if capability['app_server']:
+                    return AIProfileStatus(state='connected')
+                return AIProfileStatus(state='unavailable', detail='This Codex installation does not support App Server.')
+    except (CodexError, OSError, UnicodeError):
+        # Provider output and local errors may contain account identities or paths.
+        return AIProfileStatus(state='unavailable', detail=unverified)
+    if not installed:
+        return AIProfileStatus(state='not_installed', detail=f'Install {label} on the ProjectHub server.')
+    return AIProfileStatus(state='unavailable', detail=unverified)
 
 
 @settings_router.get('/ai')

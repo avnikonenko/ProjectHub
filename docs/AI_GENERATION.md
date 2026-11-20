@@ -64,9 +64,9 @@ and their history.
 
 ### AI profiles
 
-An AI profile lets ProjectHub use an existing CLI sign-in. In **Settings → Add AI
-profile**, choose Codex or Claude Code, give the profile a name, and enter the
-absolute path to its configuration directory. This is the directory configured by
+An AI profile lets ProjectHub use an existing CLI sign-in. Open **Settings → AI
+profiles** to check Codex and Claude Code or choose **Add AI profile**. Give the
+profile a name and enter the absolute path to its configuration directory. This is the directory configured by
 `CODEX_HOME` for Codex or `CLAUDE_CONFIG_DIR` for Claude Code. Install the relevant
 CLI and sign in with `codex login` or `claude auth login` using that directory and
 the same OS user who runs ProjectHub.

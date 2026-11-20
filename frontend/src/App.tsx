@@ -43,6 +43,8 @@ import { TextSizeControl } from './TextSizeControl';
 import { ExtractionWorkersControl } from './ExtractionWorkersControl';
 import { PaletteControl } from './PaletteControl';
 import { SettingsHelp } from './SettingsHelp';
+import { DeferredDetails } from './DeferredDetails';
+import { AIProfileConnections } from './AIProfileConnections';
 import { RestartControl } from './RestartControl';
 import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, HistoryMarkdown, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
@@ -1268,9 +1270,10 @@ function AskProject({ base, projectId, generation, visible }: GenerationProps & 
   );
 }
 
-function useSettingsDismiss() {
+function useSettingsDismiss(dialogOpen = false) {
   const panel = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
+    if (dialogOpen) return;
     function dismiss(event: PointerEvent) {
       if (event.target instanceof Node && !panel.current?.contains(event.target)) {
         panel.current?.removeAttribute('open');
@@ -1278,15 +1281,15 @@ function useSettingsDismiss() {
     }
     document.addEventListener('pointerdown', dismiss);
     return () => document.removeEventListener('pointerdown', dismiss);
-  }, []);
+  }, [dialogOpen]);
   return panel;
 }
 
 function AppSettings() {
-  const panel = useSettingsDismiss();
+  const [addingProfile, setAddingProfile] = useState(false);
+  const panel = useSettingsDismiss(addingProfile);
   const [open, setOpen] = useState(false);
   const [aiSettingsVersion, setAISettingsVersion] = useState(0);
-  const [addingProfile, setAddingProfile] = useState(false);
   const [profileMessage, setProfileMessage] = useState('');
   return (
     <>
@@ -1300,11 +1303,16 @@ function AppSettings() {
             <p>Colour palette, light or dark mode, and text size can be adjusted independently. Your choices are saved in this browser.</p>
           </SettingsHelp>
           <ExtractionWorkersControl active={open} refreshVersion={aiSettingsVersion} />
-          <button type="button" className="secondary"
-            onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
-            Add AI profile
-          </button>
-          <AIProfileHelp />
+          <DeferredDetails className="settings-help" summary={<summary>AI profiles</summary>}>
+            {() => <>
+              {open && <AIProfileConnections refreshVersion={aiSettingsVersion} />}
+              <button type="button" className="secondary"
+                onClick={() => { setProfileMessage(''); setAddingProfile(true); }}>
+                Add AI profile
+              </button>
+              <AIProfileHelp />
+            </>}
+          </DeferredDetails>
           <Feedback tone="success">{profileMessage}</Feedback>
           <RestartControl active={open} onRestarted={() => setAISettingsVersion(version => version + 1)} />
         </div>
@@ -1322,6 +1330,7 @@ function AppSettings() {
           const providerId = provider === generationProviderLabels.claude ? 'claude' : 'codex';
           const result = await post('/settings/ai-profiles', { provider: providerId, name, directory });
           window.dispatchEvent(new Event('projecthub:profiles-changed'));
+          setAISettingsVersion(version => version + 1);
           const profileName = typeof result.label === 'string' ? result.label : 'Profile';
           setProfileMessage(result.is_launch
             ? `${profileName} is the ProjectHub launch account. Choose it in project AI settings.`
@@ -1336,8 +1345,7 @@ function AppSettings() {
 
 function AIProfileHelp() {
   return <SettingsHelp title="About AI profiles">
-    <p>Use your existing Codex or Claude Code sign-in. To use another account, add its signed-in directory and select the profile in the project’s AI settings. ProjectHub checks the login without copying credentials.</p>
-    <p>To sign in to a separate directory, set <code>CODEX_HOME</code> before running <code>codex login</code>, or set <code>CLAUDE_CONFIG_DIR</code> before running <code>claude auth login</code>.</p>
+    <p>Add a signed-in Codex or Claude Code directory, then select its profile in the project’s AI settings.</p>
   </SettingsHelp>;
 }
 
@@ -2236,12 +2244,12 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   onOpenGeneration: () => void;
   targetSessionId?: number;
 }) {
-  const [status, setStatus] = useState<any>(null);
   const [sessionRows, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
   useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessionRows]);
   const [threadId, setThreadId] = useState('');
   const [linkTitle, setLinkTitle] = useState('');
+  const [linkFeedback, setLinkFeedback] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
@@ -2249,9 +2257,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   const [busy, setBusy] = useState(false);
   const prefix = `${base}/codex`;
   const mounted = useRef(true);
-  const available = Boolean(
-    status?.installed && status?.app_server && status?.authenticated,
-  );
+  const refreshVersion = useRef(0);
   const sessions = sessionRows ?? [];
   const chatCount = notes.filter(isChatGPTShare).length;
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
@@ -2264,29 +2270,30 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
     || String(sessionActivity(b)).localeCompare(String(sessionActivity(a)))
     || b.id - a.id);
   const refresh = useCallback(async () => {
-    const rows = await api<RecordData[]>(`${prefix}/sessions`);
-    if (mounted.current) {
-      setSessions(rows);
-      setSessionId((current) =>
-        rows.some((s) => String(s.id) === current)
-          ? current
-          : String(rows[0]?.id ?? ''),
-      );
+    const version = ++refreshVersion.current;
+    const current = () => mounted.current && version === refreshVersion.current;
+    try {
+      const rows = await api<RecordData[]>(`${prefix}/sessions`);
+      if (current()) {
+        setSessions(rows);
+        setSessionId((selected) =>
+          rows.some((session) => String(session.id) === selected) ? selected : String(rows[0]?.id ?? ''),
+        );
+      }
+    } catch (error) {
+      if (current()) throw error;
     }
   }, [prefix]);
   useEffect(() => {
     mounted.current = true;
-    Promise.all([api(`${prefix}/status`), refresh()])
-      .then(([s]) => {
-        if (mounted.current) setStatus(s);
-      })
+    refresh()
       .catch((e) => {
         if (mounted.current) onError(e.message);
       });
     return () => {
       mounted.current = false;
     };
-  }, [prefix, refresh]);
+  }, [refresh, onError]);
   async function action(fn: () => Promise<unknown>, after?: () => Promise<void>) {
     setBusy(true);
     onError('');
@@ -2294,7 +2301,33 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
       await fn();
       await Promise.all([refresh(), after?.()]);
     } catch (e) {
-      onError((e as Error).message);
+      if (mounted.current) onError((e as Error).message);
+    } finally {
+      if (mounted.current) setBusy(false);
+    }
+  }
+  async function linkSession() {
+    const id = threadId.trim();
+    const title = linkTitle.trim();
+    if (busy || !id) return;
+    setLinkFeedback(null);
+    onError('');
+    setBusy(true);
+    try {
+      const linked = await post(`${prefix}/sessions`, { thread_id: id, ...(title ? { title } : {}) }) as RecordData;
+      if (!mounted.current) return;
+      setSessions((current) => [linked, ...(current ?? []).filter((session) => session.id !== linked.id)]);
+      setSessionId(String(linked.id));
+      setThreadId('');
+      setLinkTitle('');
+      setLinkFeedback({ tone: 'success', message: 'Codex session linked.' });
+      try {
+        await refresh();
+      } catch {
+        if (mounted.current) setLinkFeedback({ tone: 'success', message: 'Codex session linked. The session list could not be refreshed.' });
+      }
+    } catch (error) {
+      if (mounted.current) setLinkFeedback({ tone: 'error', message: (error as Error).message });
     } finally {
       if (mounted.current) setBusy(false);
     }
@@ -2308,10 +2341,9 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
               <h2>Project sessions</h2>
               <small>
                 {sessionRows && `${sessions.length.toLocaleString()} linked Codex session${sessions.length === 1 ? '' : 's'} · `}
-                {chatCount.toLocaleString()} imported ChatGPT conversation{chatCount === 1 ? '' : 's'}
+                {chatCount.toLocaleString()} imported conversation{chatCount === 1 ? '' : 's'}
               </small>
             </div>
-            <Badge value={available ? 'available' : status ? 'unavailable' : 'checking'} />
           </div>
           {unlinkedSession && <Feedback tone="success">
             <p>Unlinked {unlinkedSession}. Use Generation to retry unfinished results with the updated sources.</p>
@@ -2320,7 +2352,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           <div className="source-toolbar">
             <ChatGPTShares base={base} notes={notes} onImported={onImported} compact />
             <details className="source-link">
-              <summary className="button secondary">Add session</summary>
+              <summary className="button secondary">Link Codex session</summary>
           <label>
             Session name (optional)
             <input value={linkTitle} maxLength={200} disabled={busy}
@@ -2328,32 +2360,25 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
               placeholder="Use the Codex session name" />
           </label>
           <label>
-            Existing thread ID (optional)
+            Codex thread ID
             <input
               value={threadId}
-              onChange={(e) => setThreadId(e.target.value)}
+              disabled={busy}
+              onChange={(e) => { setThreadId(e.target.value); setLinkFeedback(null); }}
               placeholder="Thread ID to read saved conversation history"
             />
           </label>
           <button
             className="secondary"
             disabled={busy || !threadId.trim()}
-            onClick={() =>
-              action(async () => {
-                const session = await post(`${prefix}/sessions`, {
-                  thread_id: threadId.trim(),
-                  ...(linkTitle.trim() ? { title: linkTitle.trim() } : {}),
-                });
-                if (mounted.current) {
-                  setSessionId(String(session.id));
-                  setThreadId('');
-                  setLinkTitle('');
-                }
-              })
-            }
+            onClick={() => void linkSession()}
           >
             Add session for reading
           </button>
+          {linkFeedback && <Feedback tone={linkFeedback.tone}>
+            <p>{linkFeedback.message}</p>
+            {linkFeedback.tone === 'error' && <p>For connection issues, open Settings → AI profiles.</p>}
+          </Feedback>}
             </details>
           </div>
           <div className="source-filters">
@@ -2434,7 +2459,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
 
           <div className="actions left">
             <button
-              disabled={busy || !available}
+              disabled={busy}
               onClick={() =>
                 action(async () => {
                   const session = await post(`${prefix}/sessions`);
@@ -2456,47 +2481,6 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           </div>
         </section>
       </div>
-      <details className="card source-diagnostics">
-        <summary>Codex connection details</summary>
-        <div className="section-title">
-          <div>
-            <p className="eyebrow">CODEX CONNECTION</p>
-            <h2>Manage Codex sessions</h2>
-          </div>
-          <Badge
-            value={
-              available ? 'available' : status ? 'unavailable' : 'checking'
-            }
-          />
-        </div>
-        <p>
-          Sessions use the official local Codex App Server and existing ChatGPT
-          authentication. Requests are sent to OpenAI and use your account
-          limits. This MVP permits read-only work; code modification approvals
-          are unavailable.
-        </p>
-        {status && (
-          <div className="compact-row">
-            <p>
-              Codex {status.version || 'version unknown'} ·{' '}
-              {status.installed ? 'Installed' : 'Not installed'} ·{' '}
-              {status.authenticated
-                ? 'ChatGPT authentication available'
-                : 'Authentication unavailable'}
-            </p>
-            {status.error && <ErrorBox error={status.error} />}
-          </div>
-        )}
-        <button
-          className="secondary"
-          disabled={busy}
-          onClick={() =>
-            action(async () => setStatus(await api(`${prefix}/status`)))
-          }
-        >
-          Check connection
-        </button>
-      </details>
     </>
   );
 }
