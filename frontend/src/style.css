@@ -1000,6 +1000,13 @@ a:focus-visible {
   font-weight: 650;
   letter-spacing: 0.7px;
 }
+.history-ide-context {
+  margin-top: .25rem;
+}
+.history-ide-context .markdown :is(h1, h2, h3, h4, h5, h6) {
+  font-size: 1rem;
+  margin: .5rem 0 .25rem;
+}
 .list-item {
   border-bottom: 1px solid #edf0ed;
   padding: 12px 0;

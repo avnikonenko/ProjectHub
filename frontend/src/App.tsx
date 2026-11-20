@@ -44,7 +44,7 @@ import { ExtractionWorkersControl } from './ExtractionWorkersControl';
 import { PaletteControl } from './PaletteControl';
 import { SettingsHelp } from './SettingsHelp';
 import { RestartControl } from './RestartControl';
-import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, Markdown, PagedItems,
+import { Badge, DeleteButton, EditButton, Empty, ErrorBox, Form, HistoryMarkdown, Markdown, PagedItems,
   descriptionField, label, titleField, type Field } from './ui';
 
 const isChatGPTShare = (note: RecordData) => note.kind === 'document'
@@ -2072,7 +2072,7 @@ function IndexedHistoryTurn({ prefix, target, indexVersion, sessionTitle, onClos
           {turn.messages.map((message, index) => (
             <div className="history-message" key={index}>
               <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
-              <Markdown>{message.text}</Markdown>
+              <HistoryMarkdown text={message.text} role={message.role} />
             </div>
           ))}
           </SaveablePassage>
@@ -2169,7 +2169,7 @@ function SavedHistory({
       {turn.messages.map((message, index) => (
         <div className="history-message" key={`${turn.id}-${index}`}>
           <small>{message.role === 'user' ? 'USER' : 'CODEX'}</small>
-          <Markdown>{message.text}</Markdown>
+          <HistoryMarkdown text={message.text} role={message.role} />
         </div>
       ))}
       </SaveablePassage>

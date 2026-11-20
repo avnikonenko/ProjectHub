@@ -68,6 +68,36 @@ export function Markdown({ children, preview = false }: { children?: string; pre
     <span className="muted">None recorded.</span>
   );
 }
+
+export function HistoryMarkdown({ text, role }: { text: string; role: string }) {
+  const start = /^\s*#{1,6}[ \t]+Context from my IDE setup:[ \t]*\r?\n/.exec(text);
+  if (role !== 'user' || !start) return <Markdown>{text}</Markdown>;
+
+  const context = text.slice(start[0].length);
+  // A selected code block may itself contain a heading that looks like the
+  // request marker. Only use headings outside fenced Markdown as boundaries.
+  let fence = '';
+  for (const match of context.matchAll(/^(?: {0,3}(`{3,}|~{3,})([^\r\n]*)|#{1,6}[ \t]+My request for Codex:[ \t]*)(?:\r?\n|$)/gm)) {
+    const [, ticks, suffix] = match;
+    if (ticks) {
+      if (!fence) fence = ticks;
+      else if (ticks[0] === fence[0] && ticks.length >= fence.length && !suffix.trim()) fence = '';
+      continue;
+    }
+    if (fence) continue;
+    return <>
+      <details className="history-ide-context">
+        <summary>IDE context</summary>
+        <Markdown>{context.slice(0, match.index)}</Markdown>
+      </details>
+      <Markdown>{context.slice(match.index + match[0].length).trimStart()}</Markdown>
+    </>;
+  }
+
+  // A clipped or manually edited message may have no reliable split point.
+  return <div className="history-ide-context"><Markdown>{text}</Markdown></div>;
+}
+
 export function ErrorBox({ error }: { error: string }) {
   return <Feedback tone="error">{error}</Feedback>;
 }
