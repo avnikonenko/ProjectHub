@@ -30,7 +30,7 @@ export type GenerationRetryView = {
   showing_previous?: boolean;
 };
 const unfinishedGenerationStates = new Set([
-  'not_generated', 'earlier_result', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped',
+  'partial', 'not_generated', 'earlier_result', 'failed', 'timed_out', 'cancelled', 'interrupted', 'skipped',
 ]);
 
 /** Only unfinished views are retried. A successful view is never refreshed here. */
@@ -47,7 +47,7 @@ export function planRetryProjectGeneration(views: readonly GenerationRetryView[]
     return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
   if (start.includes('knowledge'))
     return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: true, schemeSkippedForKnowledge: false };
-  if (knowledge?.state !== 'saved')
+  if (knowledge?.state !== 'saved' && knowledge?.state !== 'partial')
     return { start: start.filter(kind => kind !== 'scheme'), waitForKnowledge: false, schemeSkippedForKnowledge: true };
   return { start, waitForKnowledge: false, schemeSkippedForKnowledge: false };
 }

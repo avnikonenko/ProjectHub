@@ -12,10 +12,10 @@ available to open earlier results.
 - **Regenerate all** runs available views in parallel. When both Scheme and
   Knowledge are queued, Scheme starts after Knowledge saves successfully. Scheme
   can run on its own using saved Knowledge, when available.
-- **Retry unfinished** reruns missing or unsuccessful views. Earlier results remain
-  visible alongside the latest attempt status. If this action retries Knowledge,
-  Scheme waits for it to save. Otherwise Scheme starts only when Knowledge has
-  status **Saved**. It is skipped while Knowledge is already running or waiting.
+- **Retry unfinished** reruns missing or unsuccessful views and saved results with
+  recoverable gaps, such as omitted batches or a Q&A ranking fallback. Saved
+  results remain visible. If the retry includes both Knowledge and Scheme,
+  Scheme waits for Knowledge to save.
 - **Generate AI tags** is a separate action on saved Knowledge and Q&A.
 
 ![Example Generation tab with saved Overview and Knowledge, a timed-out Q&A attempt, and retry controls](images/projecthub-generation.png)
@@ -33,7 +33,9 @@ Open **AI Q&A** to read answers from saved evidence and follow their citations.
 
 Progress shows the stage, completed batches and cache reuse when available.
 **Cancel generation** may take time to reach an active request. Failed and
-cancelled runs preserve earlier saved results.
+cancelled runs preserve earlier saved results. Attempt details retain the last
+stage and batch counts after a restart. Claude quota errors show the reset time
+when the provider supplies it in a recognized format.
 
 After a timeout or interruption, click **Retry unfinished**. Views with batch
 caches can reuse completed batches that match the current inputs, even after a
@@ -49,6 +51,20 @@ within the same time budget. Usage limits and authorization failures end the att
 
 **Settings → Overall time budget (seconds)** allows 30 to 7,200 seconds per run,
 with a default of 900 (15 minutes). Each response also has a separate timeout.
+
+If a conversation summary fails output validation, ProjectHub retries that batch
+twice and continues with the other batches. It rechecks deferred batches if time
+allows. A result can save with clearly marked partial coverage when the remaining
+omissions are small and every affected conversation still has cited evidence.
+Generation details list skipped batches. The next refresh reuses valid batches
+and can try the missing ones again.
+
+Q&A reuses completed drafts and rankings. During ranking, AI selects from IDs
+for validated draft answers. ProjectHub attaches those answers, their recorded
+alternatives, and their original citations. If ranking output still fails
+validation after retrying, ProjectHub can use the validated drafts in their
+existing order and record the fallback in coverage details. The next refresh
+retries those rankings while reusing successful drafts and rankings.
 Raise the overall budget if a run needs more time across stages. For stalled
 requests, try a different model or reasoning effort.
 
@@ -87,10 +103,10 @@ Implementation Choices & Limits uses code and configuration.
 | --- | --- |
 | **Thorough** (default) | Knowledge reads available original messages in smaller batches to retain detail. |
 | **Balanced** (experimental) | Shares the message budget across conversations and skips imported tool logs. Overview and Q&A use saved conversation overviews. Knowledge reads selected originals in larger batches. |
-| **Quick** (experimental) | Reuses conversation overviews. Knowledge uses them to select original passages for extraction within its source budget. |
+| **Summary-assisted** (experimental) | Reuses conversation overviews and builds missing ones. Knowledge uses them to select original passages within its source budget. |
 
-Quick builds overviews from the saved Codex history index and imported ChatGPT
-chats. The first run may make more calls to build the cache. Later runs reuse
+Summary-assisted builds overviews from the saved Codex history index and imported
+ChatGPT chats. Building missing overviews can take extra time and tokens. Later runs reuse
 matching batches across reviews. Refresh History to include recent Codex messages
 if the index is out of date. Check Coverage for missing sources and omitted text.
 
@@ -102,7 +118,7 @@ excerpts. Recognized imported tool logs remain searchable in History. Coverage
 shows when the limits leave other original material out. Use **Search original
 conversations** in Knowledge to find material directly in the local index.
 
-Explicit model and reasoning settings take precedence. Quick can use low
+Explicit model and reasoning settings take precedence. Summary-assisted can use low
 reasoning by default when the selected model supports it. Changing the profile,
 model or instructions can require fresh processing.
 

@@ -1,12 +1,25 @@
 import type { GenerationDiagnostics } from './generationDiagnostics';
-import { diagnosticCount } from './generationDiagnostics';
+import { diagnosticCount, generationProfileLabels, isGenerationProfileId } from './generationDiagnostics';
+
+const archivePhaseLabels: Record<string, string> = {
+  history: 'Conversation history',
+  conversation_overviews_v1: 'Conversation overviews',
+  reduction: 'Conversation summary reduction',
+};
+const archiveOmissionLabels = {
+  evidence_limit: 'Too many evidence points',
+  evidence_text: 'Invalid evidence text',
+  output_structure: 'Invalid summary format',
+};
 
 export function GenerationDetails({ diagnostics, embedded = false }: { diagnostics?: GenerationDiagnostics; embedded?: boolean }) {
   if (!diagnostics) return null;
   const usage = diagnostics.token_usage;
   const profile = diagnostics.profile;
+  const profileLabel = isGenerationProfileId(profile?.id) ? generationProfileLabels[profile.id] : profile?.label || profile?.id;
   const selection = diagnostics.source_selection;
   const overview = diagnostics.overview_selection;
+  const archiveOmissions = diagnostics.archive_omissions;
   const synthesisTimings = overview?.synthesis_batch_timings;
   const overviewCoverageAvailable = overview?.selected_items !== undefined
     && overview.available_items !== undefined && overview.selected_items <= overview.available_items
@@ -21,12 +34,14 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
       || selection.selected_primary_fragments + selection.omitted_primary_fragments === selection.available_primary_fragments);
   const content = <>
     <dl>
-      <dt>Profile</dt><dd>{profile?.label || profile?.id || 'Unavailable for this saved result'}</dd>
+      <dt>Profile</dt><dd>{profileLabel || 'Unavailable for this saved result'}</dd>
       <dt>Duration</dt><dd>{diagnostics.duration_seconds === undefined ? 'Unavailable' : `${diagnostics.duration_seconds.toFixed(1)} seconds`}</dd>
       {diagnostics.input_records !== undefined && <><dt>Input records</dt><dd>{diagnosticCount(diagnostics.input_records)}</dd></>}
       {diagnostics.input_chars !== undefined && <><dt>Input text characters</dt><dd>{diagnosticCount(diagnostics.input_chars)}</dd></>}
       {diagnostics.archive_generated_batches !== undefined && <><dt>Fresh conversation summary batches</dt><dd>{diagnosticCount(diagnostics.archive_generated_batches)}</dd></>}
       {diagnostics.archive_cache_hits !== undefined && <><dt>Reused conversation summary batches</dt><dd>{diagnosticCount(diagnostics.archive_cache_hits)}</dd></>}
+      {!!diagnostics.archive_deferred_batches && <><dt>Conversation batches deferred for retry</dt><dd>{diagnosticCount(diagnostics.archive_deferred_batches)}</dd></>}
+      {!!diagnostics.archive_recovered_batches && <><dt>Conversation batches recovered on retry</dt><dd>{diagnosticCount(diagnostics.archive_recovered_batches)}</dd></>}
       {diagnostics.extraction_windows !== undefined && <><dt>Extraction batches</dt><dd>{diagnosticCount(diagnostics.extraction_windows)}</dd></>}
       {diagnostics.extraction_workers !== undefined && <><dt>Extraction workers</dt><dd>{diagnosticCount(diagnostics.extraction_workers)}</dd></>}
       {diagnostics.archive_workers !== undefined && <><dt>Conversation summary workers</dt><dd>{diagnosticCount(diagnostics.archive_workers)}</dd></>}
@@ -42,6 +57,18 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
       </>}
       {profile?.effective_effort && <><dt>Effective reasoning effort</dt><dd>{profile.effective_effort}</dd></>}
     </dl>
+    {!!archiveOmissions?.length && <details>
+      <summary>Skipped conversation batches ({diagnosticCount(archiveOmissions.length)})</summary>
+      <p>These summaries still failed validation after retries.</p>
+      <ul>{archiveOmissions.map(({ phase, batch, source_count: sourceCount, sources, reason }, index) => <li key={index}>
+        {Object.hasOwn(archivePhaseLabels, phase) ? archivePhaseLabels[phase] : phase} · Batch {diagnosticCount(batch)}
+        {' · '}{diagnosticCount(sourceCount)} {sourceCount === 1 ? 'source' : 'sources'}
+        {' · '}{reason ? archiveOmissionLabels[reason] : 'Citations could not be validated'}
+        {!!sources.length && <ul>{sources.map((source, sourceIndex) => <li key={sourceIndex}>{source}</li>)}</ul>}
+        {!!sources.length && sourceCount > sources.length &&
+          <small>{diagnosticCount(sourceCount - sources.length)} more {sourceCount - sources.length === 1 ? 'source' : 'sources'}</small>}
+      </li>)}</ul>
+    </details>}
     {diagnostics.input_chars !== undefined && <p><small>Input text counts exclude instructions, schemas and repeated requests.</small></p>}
     {coverageAvailable && <p>Extraction coverage: {diagnosticCount(selection.selected_primary_fragments)} of {diagnosticCount(selection.available_primary_fragments)} primary fragments
       {(selection.partial || selection.selected_primary_fragments! < selection.available_primary_fragments!) && ' · Partial coverage'}</p>}

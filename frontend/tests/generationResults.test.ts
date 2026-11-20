@@ -26,6 +26,30 @@ test('unfinished defaults initialize once and polling never overwrites the user 
   assert.deepEqual(initializeGenerationSelection(userCleared, parseGenerationResults(other, 3)), { project_id: 3, selected: ['qa'] });
 });
 
+test('failed attempt details show retained phase progress from the summary API', () => {
+  const raw = fixture();
+  Object.assign(raw.views[1], { state: 'failed', retryable: true, latest_attempt: {
+    state: 'failed', error: 'Claude weekly limit reached.',
+    progress: { stage: 'Summarizing overview batches', batch_phase: 'overview synthesis',
+      batch_completed: 9, batch_total: 17, cache_hits: 8, elapsed_seconds: 32.1 },
+  } });
+  const data = parseGenerationResults(raw, 2);
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data }));
+  assert.match(html, /Last stage · Summarizing overview batches/);
+  assert.match(html, /overview synthesis · 9 of 17 batches completed · 8 cache hits/);
+});
+
+test('a retryable partial result remains current and selected by default', () => {
+  const raw = fixture();
+  Object.assign(raw.views[3], { state: 'partial', retryable: true });
+  const data = parseGenerationResults(raw, 2);
+  assert.deepEqual(initializeGenerationSelection(null, data), { project_id: 2, selected: ['qa'] });
+  const html = renderToStaticMarkup(createElement(GenerationResultRows, { data }));
+  assert.match(html, /Partial result saved/);
+  assert.match(html, /Retry unfinished to try the incomplete steps again/);
+  assert.doesNotMatch(html, /Showing the earlier saved result|No saved result yet/);
+});
+
 test('checkboxes expose accessible labels and busy or waiting views cannot be selected', () => {
   const raw = fixture();
   Object.assign(raw.views[1], { state: 'running', retryable: false });
@@ -134,7 +158,7 @@ test('generation rows identify settings for completed, failed and waiting attemp
   assert.match(rows[0], /<summary>Settings<\/summary>/);
   assert.match(rows[0], /<dt>Model<\/dt><dd>GPT-5<\/dd>/);
   assert.match(rows[0], /<dt>Reasoning effort<\/dt><dd>low<\/dd>/);
-  assert.match(rows[0], /<dt>AI generation profile<\/dt><dd>Economy<\/dd>/);
+  assert.match(rows[0], /<dt>AI generation profile<\/dt><dd>Summary-assisted<\/dd>/);
   assert.match(rows[0], /<dt>Overall time budget<\/dt><dd>900 seconds<\/dd>/);
   assert.match(rows[0], /<dt>AI workers per job<\/dt><dd>10<\/dd>/);
   assert.match(rows[0], /<dt>Project AI instructions<\/dt><dd>Default<\/dd>/);

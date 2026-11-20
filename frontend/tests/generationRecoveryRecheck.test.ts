@@ -196,16 +196,63 @@ test('the previous completed run cannot end recovery before a delayed replacemen
 
 
 test('starting one view does not clear a sibling view recovery error', async () => {
-  const run = fixture({ state: 'failed', started_at: 'brief-failed', error: 'Overview failed' });
+  const run = fixture();
   try {
     await settle();
+    run.responses.brief = { state: 'failed', started_at: 'brief-failed', error: 'Overview failed' };
     run.responses.qa = { state: 'failed', started_at: 'qa-failed', error: 'Questions failed' };
+    run.host.value.recheck('brief');
     run.host.value.recheck('qa'); await settle();
-    assert.match(run.host.value.error, /Overview failed/);
-    assert.match(run.host.value.error, /Questions failed/);
+    assert.match(run.host.value.error, /Project Overview · Overview failed/);
+    assert.match(run.host.value.error, /AI Q&A · Questions failed/);
     run.host.value.clearError('brief'); await settle();
     assert.doesNotMatch(run.host.value.error, /Overview failed/);
     assert.match(run.host.value.error, /Questions failed/);
+  } finally { run.dispose(); }
+});
+
+test('previous history and Scheme failures stay in their attempt records while a new dependency waits', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const run = fixture({ state: 'failed', started_at: 'history-old', error: 'History summary cited foreign evidence' },
+    undefined, { state: 'failed', started_at: 'scheme-old', error: 'Scheme was skipped because Knowledge failed', latest_attempt: { state: 'skipped' } });
+  try {
+    await settle();
+    assert.equal(run.host.value.error, '');
+    assert.equal(run.host.value.progress.brief.error, 'History summary cited foreign evidence');
+    assert.equal(run.host.value.progress.scheme.latest_attempt.state, 'skipped');
+    run.host.value.recheck('scheme'); await settle();
+    assert.equal(run.host.value.checkingByKind.scheme, true);
+    assert.equal(run.host.value.error, '');
+
+    run.responses.scheme = { state: 'idle', started_at: 'scheme-new', latest_attempt: { state: 'waiting' } };
+    t.mock.timers.tick(1500); await settle();
+    assert.equal(run.host.value.running.scheme, true);
+    assert.equal(run.host.value.error, '');
+
+    run.responses.qa = { state: 'failed', started_at: 'qa-new', error: 'Current Q&A failure' };
+    run.host.value.recheck('qa'); await settle();
+    assert.equal(run.host.value.error, 'AI Q&A · Current Q&A failure');
+    assert.equal(run.host.value.running.scheme, true);
+  } finally { run.dispose(); }
+});
+
+test('a new bulk request clears replaced failure banners and keeps unrelated errors', async () => {
+  const run = fixture({ state: 'idle' },
+    Response.json({ detail: 'Temporary Parameters failure' }, { status: 503 }));
+  try {
+    await settle();
+    run.responses.brief = { state: 'failed', started_at: 'brief-failed', error: 'Earlier failed attempt' };
+    run.responses.qa = { state: 'failed', started_at: 'qa-failed', error: 'Independent Q&A failure' };
+    run.host.value.recheck('brief'); await settle();
+    run.host.value.recheck('qa'); await settle();
+    assert.match(run.host.value.error, /Earlier failed attempt/);
+
+    run.host.value.clearAttemptErrors(['brief', 'parameters']); await settle();
+    assert.doesNotMatch(run.host.value.error, /Earlier failed attempt/);
+    assert.equal(run.host.value.progress.brief.error, 'Earlier failed attempt');
+    assert.match(run.host.value.error, /Temporary Parameters failure/);
+    assert.match(run.host.value.error, /Independent Q&A failure/);
+    assert.equal(run.host.value.checkingByKind.parameters, true);
   } finally { run.dispose(); }
 });
 

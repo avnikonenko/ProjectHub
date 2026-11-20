@@ -76,6 +76,20 @@ test('Retry unfinished keeps saved views and running jobs untouched', async () =
   });
 });
 
+test('Retry unfinished includes partial results and queues unfinished Scheme after partial Knowledge', async () => {
+  const { planRetryProjectGeneration } = await import('../src/generationBatch.ts');
+  const views = projectGenerationKinds.map(kind => ({ kind, state: 'saved', saved_at: 'saved', retryable: false }));
+  Object.assign(views.find(view => view.kind === 'qa')!, { state: 'partial', retryable: true });
+  assert.deepEqual(planRetryProjectGeneration(views, {}), {
+    start: ['qa'], waitForKnowledge: false, schemeSkippedForKnowledge: false,
+  });
+  Object.assign(views.find(view => view.kind === 'knowledge')!, { state: 'partial', retryable: true });
+  Object.assign(views.find(view => view.kind === 'scheme')!, { state: 'skipped', retryable: true });
+  assert.deepEqual(planRetryProjectGeneration(views, {}), {
+    start: ['knowledge', 'qa'], waitForKnowledge: true, schemeSkippedForKnowledge: false,
+  });
+});
+
 test('Retry unfinished retries Scheme alone when Knowledge was saved, and chains only when both unfinished', async () => {
   const { planRetryProjectGeneration } = await import('../src/generationBatch.ts');
   const views = projectGenerationKinds.map(kind => ({ kind, state: 'saved', saved_at: 'saved', retryable: false }));

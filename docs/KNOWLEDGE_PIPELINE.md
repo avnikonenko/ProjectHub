@@ -61,8 +61,8 @@ for the current interface.
 
 ## Extraction and synthesis
 
-Quality, Balanced, and Economy cap serialized extraction windows at 14,000,
-18,000, and 24,000 characters respectively. Economy caps distinct source text
+Thorough, Balanced, and Summary-assisted cap serialized extraction windows at
+14,000, 18,000, and 24,000 characters respectively. Summary-assisted caps distinct source text
 at 60,000 characters and reports partial coverage. All profiles distinguish
 primary fragments from repeated context and use the same evidence validation.
 Versioned changes to extraction instructions or schema require fresh processing

@@ -7,8 +7,13 @@ import { generationProviderLabels, type GenerationProvider } from './generationP
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
 type RecoveryKind = SavedGenerationKind | 'knowledge';
 export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
+const recoveryLabels: Record<RecoveryKind, string> = {
+  brief: 'Project Overview', knowledge: 'Knowledge Summary', scheme: 'Scheme',
+  qa: 'AI Q&A', parameters: 'Implementation Choices & Limits',
+};
 
 export type GenerationProvenance = { account: string; model: string; effort: string; provider?: GenerationProvider };
+type ProgressSettings = { provider?: GenerationProvider };
 export type Progress = {
   state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage: string;
@@ -24,7 +29,8 @@ export type Progress = {
   cache_hits?: number;
   budget_seconds?: number;
   elapsed_seconds?: number;
-  latest_attempt?: { state: string } | null;
+  settings?: ProgressSettings | null;
+  latest_attempt?: { state: string; started_at?: string; settings?: ProgressSettings | null } | null;
 };
 
 // The status API preserves its legacy idle state for queued dependencies.
@@ -32,7 +38,10 @@ export type Progress = {
 const pendingGeneration = (status: Progress) => status.state === 'running'
   || status.latest_attempt?.state === 'waiting';
 
-type RecoveryState = { checking: boolean; running: boolean; version: number; error: string; progress?: Progress };
+type RecoveryState = {
+  checking: boolean; running: boolean; version: number; error: string;
+  errorKind?: 'attempt' | 'status'; progress?: Progress;
+};
 const initialRecovery: RecoveryState = { checking: true, running: false, version: 0, error: '' };
 
 function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
@@ -51,25 +60,30 @@ function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
         if (abort.signal.aborted) return;
         const running = pendingGeneration(status);
         // A lost POST response can precede the server starting its run.
-        if (!recovering && request && !running
-            && status.started_at === request.previousStartedAt && handoffChecks < 2) {
+        const beforeReplacement = request !== null && status.started_at === request.previousStartedAt;
+        if (!recovering && beforeReplacement && !running && handoffChecks < 2) {
           handoffChecks++;
           timer = setTimeout(() => void poll(), 1500);
           return;
         }
-        const error = status.state === 'failed'
+        // Failed attempts found on mount or still present during a retry
+        // belong in the view's saved attempt details.
+        const failedCurrentAttempt = status.state === 'failed'
+          && (recovering || (request !== null && !beforeReplacement));
+        const error = failedCurrentAttempt
           ? status.error || 'AI generation failed. The previous result is preserved.'
           : status.state === 'idle' && recovering && !running
             ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
             : '';
         setState(previous => ({
-          checking: false, running, progress: status, error,
+          checking: false, running, progress: status, error, errorKind: error ? 'attempt' : undefined,
           version: previous.version + Number(!running && (recovering || request !== null)),
         }));
         if (running) timer = setTimeout(() => void poll(true), 1500);
       } catch (error) {
         if (abort.signal.aborted) return;
-        setState(previous => ({ ...previous, checking: true, error: `Could not recover AI progress: ${(error as Error).message}` }));
+        setState(previous => ({ ...previous, checking: true, errorKind: 'status',
+          error: `Could not recover AI progress: ${(error as Error).message}` }));
         timer = setTimeout(() => void poll(recovering), 1500);
       }
     }
@@ -78,8 +92,9 @@ function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
     return () => { abort.abort(); if (timer !== undefined) clearTimeout(timer); };
   }, [base, kind, enabled, request]);
 
-  const clearError = useCallback(() => {
-    setState(previous => previous.error ? { ...previous, error: '' } : previous);
+  const clearError = useCallback((attemptOnly = false) => {
+    setState(previous => previous.error && (!attemptOnly || previous.errorKind === 'attempt')
+      ? { ...previous, error: '', errorKind: undefined } : previous);
   }, []);
 
   return {
@@ -87,6 +102,7 @@ function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
     checking: enabled && state.checking,
     clearError,
     recheck: () => {
+      clearError(true);
       setState(previous => ({ ...previous, checking: true }));
       setRequest({ previousStartedAt: state.progress?.started_at });
     },
@@ -117,17 +133,19 @@ export function useGenerationRecovery(base: string, { includeBrief = true, inclu
     version: { brief: brief.version, qa: qa.version, scheme: scheme.version, knowledge: knowledge.version, parameters: parameters.version },
     progress: { brief: brief.progress, qa: qa.progress, scheme: scheme.progress,
       knowledge: knowledge.progress, parameters: parameters.progress },
-    error: [...new Set(Object.values(states).map(state => state.error).filter(Boolean))].join(' '),
+    error: (Object.keys(states) as RecoveryKind[]).flatMap(kind => states[kind].error
+      ? [`${recoveryLabels[kind]} · ${states[kind].error}`] : []).join(' '),
     clearError,
+    clearAttemptErrors: (kinds: readonly RecoveryKind[]) => kinds.forEach(kind => states[kind].clearError(true)),
     recheck: (kind: RecoveryKind) => states[kind].recheck(),
   };
 }
 
-function describeProgress(stage: string, kind: GenerationKind) {
+function describeProgress(stage: string, kind: GenerationKind, provider: string) {
   const session = /^Reading session (\d+) of (\d+)$/.exec(stage);
   if (session) return `Reading conversation ${session[1]} of ${session[2]}`;
   const batch = /^Generating Q&A batch (\d+) of (\d+)$/.exec(stage);
-  if (batch) return `Waiting for Codex to write questions and answers (group ${batch[1]} of ${batch[2]})`;
+  if (batch) return `Waiting for ${provider} to write questions and answers (group ${batch[1]} of ${batch[2]})`;
   switch (stage) {
     case 'Reading project sessions': return 'Finding linked conversations';
     case 'Summarizing history batch': return 'Summarizing conversations';
@@ -135,14 +153,14 @@ function describeProgress(stage: string, kind: GenerationKind) {
     case 'Summarizing overview batches': return 'Summarizing overview sections in parallel';
     case 'Combining overview batches': return 'Combining overview sections';
     case 'Reusing cached evidence batch': return 'Reusing a previously saved summary';
-    case 'Combining evidence': return 'Waiting for Codex to combine the evidence';
+    case 'Combining evidence': return `Waiting for ${provider} to combine the evidence`;
     case 'Summarizing project notes and decisions': return 'Gathering project notes and decisions';
     case 'Collecting Scheme evidence': return 'Inspecting selected code and saved discussions';
-    case 'Generating Scheme': return 'Waiting for Codex to explain architecture and workflow';
+    case 'Generating Scheme': return `Waiting for ${provider} to explain architecture and workflow`;
     case 'Validating Scheme': return 'Checking diagrams and source references';
-    case 'Generating project brief': return 'Waiting for Codex to write the project summary';
+    case 'Generating project brief': return `Waiting for ${provider} to write the project summary`;
     case 'Completed': return 'Finished. Loading the result…';
-    case 'Cancelling': return 'Cancelling… Waiting for Codex to stop.';
+    case 'Cancelling': return `Cancelling… Waiting for ${provider} to stop.`;
     case 'Cancelled': return 'Cancelled. Saved results are unchanged.';
     case 'Failed': return 'Generation failed';
     case '':
@@ -276,6 +294,9 @@ export function GenerationStatus({
   }
   const cancelling = progress?.state === 'running'
     && (progress.cancel_requested || cancellingFor === progress.started_at);
+  const attempt = progress?.latest_attempt;
+  const settings = progress?.settings ?? (attempt?.started_at === progress?.started_at ? attempt?.settings : null);
+  const provider = settings ? generationProviderLabels[settings.provider ?? 'codex'] ?? 'AI' : 'AI';
   const measuredElapsed = progress?.state === 'running' ? elapsed : progress?.elapsed_seconds ?? elapsed;
   const elapsedLabel = durationLabel(measuredElapsed);
   const batchStarted = Date.parse(progress?.batch_started_at ?? '');
@@ -298,8 +319,7 @@ export function GenerationStatus({
       </p>
       <div>
         <p>{error ? 'Progress updates are temporarily unavailable. Still waiting for the result.'
-          : cancelling ? 'Cancelling… Waiting for Codex to stop.'
-          : describeProgress(progress?.stage ?? '', kind)}</p>
+          : describeProgress(cancelling ? 'Cancelling' : progress?.stage ?? '', kind, provider)}</p>
         {!error && progress?.state === 'failed' && progress.error && <p>{progress.error}</p>}
         {!error && hasBatchTotal && (
           <p>{batchPhase}: {progress?.batch_completed ?? 0} of {progress?.batch_total} batches completed.

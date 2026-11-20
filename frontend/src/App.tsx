@@ -431,6 +431,8 @@ function ProjectWorkspace({
     ? planSelectedProjectGeneration(selectedGenerations, currentGenerationResults.data.views, generationBusy) : null;
   const allPlan = planProjectGeneration(generationBusy);
   function dispatchGenerationPlan(plan: GenerationPlan) {
+    recovery.clearAttemptErrors(plan.waitForKnowledge || plan.schemeSkippedForKnowledge
+      ? [...plan.start, 'scheme'] : plan.start);
     setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
     setBulkAttemptCount(plan.start.length + Number(plan.waitForKnowledge));
     if (plan.waitForKnowledge || plan.start.includes('scheme')) setQueuedSchemeFocus(schemeFocus);

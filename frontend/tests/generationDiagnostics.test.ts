@@ -157,6 +157,27 @@ test('malformed batch and coverage diagnostics are omitted without making up zer
   assert.deepEqual(result.source_selection, { context_only_fragments: 0 });
 });
 
+test('archive retry diagnostics keep valid counts and source labels while discarding malformed data', () => {
+  const result = parseGenerationDiagnostics({
+    archive_deferred_batches: 2, archive_recovered_batches: 0,
+    archive_omissions: [
+      { phase: 'history', batch: 4, source_count: 9, sources: ['Original conversation', null, ''] },
+      { phase: 'history', batch: 6, source_count: 1, sources: [], reason: 'evidence_limit' },
+      { phase: 'history', batch: 0, source_count: 1, sources: ['Invalid batch'] },
+      { phase: '', batch: 1, source_count: 1, sources: ['Invalid phase'] },
+      { phase: 'history', batch: 1, source_count: -1, sources: [] },
+    ],
+  });
+  assert.deepEqual(result, {
+    archive_deferred_batches: 2, archive_recovered_batches: 0,
+    archive_omissions: [{ phase: 'history', batch: 4, source_count: 9, sources: ['Original conversation'] },
+      { phase: 'history', batch: 6, source_count: 1, sources: [], reason: 'evidence_limit' }],
+  });
+  assert.deepEqual(parseGenerationDiagnostics({
+    archive_deferred_batches: -1, archive_recovered_batches: '2', archive_omissions: {},
+  }), {});
+});
+
 test('staged overview diagnostics preserve processed inputs, real calls and reused stages through preview export', () => {
   const diagnostics = {
     model_requests: 4, synthesis_requests: 3, synthesis_cache_hits: 2,

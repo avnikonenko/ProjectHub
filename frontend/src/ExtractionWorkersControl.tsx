@@ -3,7 +3,7 @@ import { api, patch } from './api';
 import { ErrorBox } from './ui';
 import { Feedback } from './Feedback';
 import { SettingsHelp } from './SettingsHelp';
-import { parseAdvancedSchemeSettings, parseGenerationProfileSettings, parseSchemeSourceSettings, type GenerationProfileSettings } from './generationDiagnostics';
+import { generationProfileLabels, parseAdvancedSchemeSettings, parseGenerationProfileSettings, parseSchemeSourceSettings, type GenerationProfileSettings } from './generationDiagnostics';
 
 type WorkerSettings = {
   extraction_workers: number;
@@ -262,7 +262,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
         onChange={event => changeSetting('generation_profile', event.target.value)}>
         {!profileSettings && <option value="">{loading ? 'Loading…' : 'Profiles unavailable'}</option>}
         {profileSettings?.generation_profiles.map((option) => <option key={option.id} value={option.id}>
-          {option.label}{option.id === 'quality' ? ' (default)' : option.experimental ? ' (experimental)' : ''}
+          {generationProfileLabels[option.id]}{option.id === 'quality' ? ' (default)' : option.experimental ? ' (experimental)' : ''}
         </option>)}
       </select>
     </label>
@@ -270,14 +270,13 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
       <ul>
         <li><strong>Thorough (default).</strong> Knowledge reads available original messages in smaller batches to preserve detail.</li>
         <li><strong>Balanced (experimental).</strong> Knowledge shares the source budget across conversations and skips imported tool logs.</li>
-        <li><strong>Quick (experimental).</strong> Reuses saved conversation overviews across reviews. Knowledge checks selected original messages.</li>
+        <li><strong>Summary-assisted (experimental).</strong> Reuses conversation overviews and builds missing ones. Knowledge checks selected original messages.</li>
       </ul>
-      <p>Your model and explicit reasoning choice stay the same. Quick uses low reasoning when your model supports it and you leave effort unset.
-        The first Quick run needs to build conversation overviews. Later runs reuse matching batches.</p>
+      <p>Building missing overviews can add time and tokens. Summary-assisted uses low reasoning when the model supports it and you leave effort unset.</p>
     </SettingsHelp>
     {saveFeedback('generation_profile')}
     {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile
-      && <p><small>Startup environment overrides the saved profile ({profileSettings.configured_generation_profile}).</small></p>}
+      && <p><small>Startup environment overrides the saved profile ({generationProfileLabels[profileSettings.configured_generation_profile]}).</small></p>}
     <label>
       AI workers per job
       <input type="number" min={settings?.min_extraction_workers ?? 1}

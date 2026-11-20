@@ -2,11 +2,11 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { api } from './api';
 import { ErrorBox } from './ui';
 import { projectGenerationKinds, schemeFocusLabels, type GenerationRetryView, type ProjectGenerationKind, type SchemeFocus } from './generationBatch';
-import type { GenerationProfileId } from './generationDiagnostics';
+import { generationProfileLabels, isGenerationProfileId, type GenerationProfileId } from './generationDiagnostics';
 import { generationDestination, generationProviderLabels, type GenerationProvider } from './generationProvider';
 import './generationResults.css';
 
-export type GenerationResultState = 'saved' | 'not_generated' | 'running' | 'waiting' | 'failed'
+export type GenerationResultState = 'saved' | 'partial' | 'not_generated' | 'running' | 'waiting' | 'failed'
   | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped' | 'earlier_result';
 const numericalSettingLabels = {
   generation_budget: 'Overall time budget',
@@ -26,8 +26,16 @@ type AttemptSettings = {
   scheme_focus?: SchemeFocus;
   project_instructions?: boolean;
 } & Partial<Record<NumericalSetting, number>>;
+type AttemptProgress = {
+  stage?: string;
+  batch_phase?: string;
+  batch_completed?: number;
+  batch_total?: number;
+  cache_hits?: number;
+  elapsed_seconds?: number;
+  model_requests?: number;
+};
 const numericalSettings = Object.keys(numericalSettingLabels) as NumericalSetting[];
-const profileLabels: Record<GenerationProfileId, string> = { quality: 'Quality', balanced: 'Balanced', economy: 'Economy' };
 export type GenerationResultView = GenerationRetryView & {
   state: GenerationResultState;
   history_at?: string | null;
@@ -39,6 +47,7 @@ export type GenerationResultView = GenerationRetryView & {
     error?: string | null;
     saves_result?: boolean;
     settings?: AttemptSettings | null;
+    progress?: AttemptProgress | null;
   } | null;
 };
 export type GenerationResultsData = { project_id: number; views: GenerationResultView[] };
@@ -47,10 +56,15 @@ export type GenerationSelection = { project_id: number; selected: ProjectGenerat
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown, max = 10000): value is string => typeof value === 'string' && value.length <= max;
 const nullableText = (value: unknown) => value === undefined || value === null || text(value);
+const validAttemptProgress = (value: unknown) => value === undefined || value === null || (object(value)
+  && [value.stage, value.batch_phase].every(part => part === undefined || text(part, 160))
+  && [value.batch_completed, value.batch_total, value.cache_hits, value.model_requests].every(part =>
+    part === undefined || (typeof part === 'number' && Number.isSafeInteger(part) && part >= 0))
+  && (value.elapsed_seconds === undefined || (typeof value.elapsed_seconds === 'number'
+    && Number.isFinite(value.elapsed_seconds) && value.elapsed_seconds >= 0)));
 const validAttemptSettings = (value: unknown) => value === undefined || value === null
   || (object(value) && [value.account, value.model, value.effort].every(part => text(part) && part.trim())
-    && (value.generation_profile === undefined || (typeof value.generation_profile === 'string'
-      && Object.hasOwn(profileLabels, value.generation_profile)))
+    && (value.generation_profile === undefined || isGenerationProfileId(value.generation_profile))
     && (value.project_instructions === undefined || typeof value.project_instructions === 'boolean')
     && (value.provider === undefined || (typeof value.provider === 'string'
       && Object.hasOwn(generationProviderLabels, value.provider)))
@@ -64,7 +78,7 @@ const labels: Record<ProjectGenerationKind, string> = {
   brief: 'Overview', knowledge: 'Knowledge', scheme: 'Scheme', qa: 'Q&A', parameters: 'Implementation Choices & Limits',
 };
 const states: Record<GenerationResultState, string> = {
-  saved: 'Saved', not_generated: 'Not generated', running: 'Running', waiting: 'Waiting for Knowledge',
+  saved: 'Saved', partial: 'Partial result saved', not_generated: 'Not generated', running: 'Running', waiting: 'Waiting for Knowledge',
   failed: 'Failed', timed_out: 'Timed out', cancelled: 'Cancelled', interrupted: 'Interrupted', skipped: 'Skipped',
   earlier_result: 'Earlier result available',
 };
@@ -103,7 +117,7 @@ export function parseGenerationResults(raw: unknown, projectId: number): Generat
         || (attempt.kind !== undefined && attempt.kind !== value.kind)
         || !nullableText(attempt.started_at) || !nullableText(attempt.finished_at) || !nullableText(attempt.error)
         || (attempt.saves_result !== undefined && typeof attempt.saves_result !== 'boolean')
-        || !validAttemptSettings(attempt.settings)))
+        || !validAttemptSettings(attempt.settings) || !validAttemptProgress(attempt.progress)))
       throw new Error('The latest generation attempt is invalid.');
     return { kind: value.kind, state: value.state, saved_at: value.saved_at, history_at: historyAt,
       showing_previous: value.showing_previous, retryable: value.retryable, latest_attempt: attempt } as GenerationResultView;
@@ -148,7 +162,7 @@ function GenerationAttemptSettings({ settings, title }: { settings: AttemptSetti
       <div><dt>Model</dt><dd>{settings.model}</dd></div>
       <div><dt>Reasoning effort</dt><dd>{settings.effort}</dd></div>
       {settings.generation_profile && <div>
-        <dt>AI generation profile</dt><dd>{profileLabels[settings.generation_profile]}</dd>
+        <dt>AI generation profile</dt><dd>{generationProfileLabels[settings.generation_profile]}</dd>
       </div>}
       {settings.project_instructions !== undefined && <div>
         <dt>Project AI instructions</dt><dd>{settings.project_instructions ? 'Custom' : 'Default'}</dd>
@@ -192,6 +206,7 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
         : view.saved_at ? <small>Saved {dateLabel(view.saved_at) ?? 'result available'}.</small>
           : view.history_at ? <small>Earlier saved version · {dateLabel(view.history_at)}.</small>
           : view.state !== 'saved' && <small>No saved result yet.</small>}
+      {view.state === 'partial' && <small>Use Retry unfinished to try the incomplete steps again.</small>}
       {view.latest_attempt?.settings && <GenerationAttemptSettings settings={view.latest_attempt.settings}
         title={view.state === 'waiting' || view.state === 'skipped' ? 'Requested settings'
           : view.showing_previous || view.latest_attempt.saves_result === false ? 'Latest attempt settings' : 'Settings'} />}
@@ -200,6 +215,14 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
           {dateLabel(view.latest_attempt.started_at) && <p>Started {dateLabel(view.latest_attempt.started_at)}</p>}
           {dateLabel(view.latest_attempt.finished_at) && <p>Finished {dateLabel(view.latest_attempt.finished_at)}</p>}
           {view.latest_attempt.error && <p>{view.latest_attempt.error}</p>}
+          {view.latest_attempt.progress?.stage && <p>Last stage · {view.latest_attempt.progress.stage}</p>}
+          {view.latest_attempt.progress?.batch_completed !== undefined && <p>
+            {view.latest_attempt.progress.batch_phase && <>{view.latest_attempt.progress.batch_phase} · </>}
+            {view.latest_attempt.progress.batch_completed}
+            {view.latest_attempt.progress.batch_total !== undefined && <> of {view.latest_attempt.progress.batch_total}</>}
+            {' batches completed'}
+            {view.latest_attempt.progress.cache_hits !== undefined && <> · {view.latest_attempt.progress.cache_hits} cache hits</>}
+          </p>}
         </details>}
     </div>
   </li>)}</ul>;

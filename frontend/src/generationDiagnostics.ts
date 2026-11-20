@@ -1,6 +1,9 @@
 import { parseArchiveConversations, parseEvidenceCoverage, type ArchiveConversations, type EvidenceCoverage } from './evidenceCoverage.ts';
 
 export type GenerationProfileId = 'quality' | 'balanced' | 'economy';
+export const generationProfileLabels: Record<GenerationProfileId, string> = {
+  quality: 'Thorough', balanced: 'Balanced', economy: 'Summary-assisted',
+};
 export type GenerationProfileOption = {
   id: GenerationProfileId; label: string; description: string;
   window_chars: number; source_budget_chars: number | null;
@@ -16,6 +19,8 @@ export type SynthesisBatchTiming = {
   seconds: number; model_seconds: number; cache_lookup_seconds: number; local_seconds: number;
   cached: boolean; completed: boolean;
 };
+type ArchiveOmission = { phase: string; batch: number; source_count: number; sources: string[];
+  reason?: 'evidence_limit' | 'evidence_text' | 'output_structure' };
 const MAX_SYNTHESIS_TIMINGS = 4096;
 export type GenerationDiagnostics = {
   evidence_coverage?: EvidenceCoverage;
@@ -23,6 +28,7 @@ export type GenerationDiagnostics = {
   duration_seconds?: number; ai_requests?: number; cache_hits?: number;
   input_records?: number; input_chars?: number; cited_source_count?: number;
   archive_workers?: number; archive_generated_batches?: number; archive_cache_hits?: number;
+  archive_deferred_batches?: number; archive_recovered_batches?: number; archive_omissions?: ArchiveOmission[];
   synthesis_requests?: number; synthesis_cache_hits?: number; model_requests?: number;
   extraction_windows?: number; extraction_workers?: number; default_generation_configuration?: boolean;
   batch_timings?: { batch: number; seconds: number; cached: boolean }[];
@@ -56,8 +62,8 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const text = (value: unknown): value is string => typeof value === 'string' && value.length <= 500;
-const profileId = (value: unknown): value is GenerationProfileId =>
-  value === 'quality' || value === 'balanced' || value === 'economy';
+export const isGenerationProfileId = (value: unknown): value is GenerationProfileId =>
+  typeof value === 'string' && Object.hasOwn(generationProfileLabels, value);
 const seconds = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
 
@@ -75,12 +81,12 @@ export function parseGenerationProfileSettings(raw: unknown): GenerationProfileS
   if (!object(raw)) throw new Error('AI settings returned invalid generation profiles.');
   const fields = ['generation_profile', 'configured_generation_profile', 'generation_profiles'];
   if (fields.every((field) => !(field in raw))) return null;
-  if (!profileId(raw.generation_profile) || !profileId(raw.configured_generation_profile)
+  if (!isGenerationProfileId(raw.generation_profile) || !isGenerationProfileId(raw.configured_generation_profile)
       || !Array.isArray(raw.generation_profiles))
     throw new Error('AI settings returned invalid generation profiles.');
   const seen = new Set<string>();
   const profiles = raw.generation_profiles.map((value): GenerationProfileOption => {
-    if (!object(value) || !profileId(value.id) || seen.has(value.id)
+    if (!object(value) || !isGenerationProfileId(value.id) || seen.has(value.id)
         || !text(value.label) || !value.label.trim() || !text(value.description)
         || !count(value.window_chars) || value.window_chars < 1000
         || (value.source_budget_chars !== null && (!count(value.source_budget_chars) || value.source_budget_chars < 1))
@@ -99,7 +105,7 @@ export function parseGenerationProfileSettings(raw: unknown): GenerationProfileS
 }
 
 export function generationProfilePatch(id: unknown) {
-  if (!profileId(id)) throw new Error('Choose a supported generation profile.');
+  if (!isGenerationProfileId(id)) throw new Error('Choose a supported generation profile.');
   return { generation_profile: id };
 }
 
@@ -140,8 +146,18 @@ export function parseGenerationDiagnostics(raw: unknown): GenerationDiagnostics 
   if (typeof raw.duration_seconds === 'number' && Number.isFinite(raw.duration_seconds) && raw.duration_seconds >= 0)
     result.duration_seconds = raw.duration_seconds;
   for (const field of ['ai_requests', 'cache_hits', 'synthesis_requests', 'synthesis_cache_hits', 'model_requests', 'extraction_windows', 'extraction_workers', 'input_records', 'input_chars', 'cited_source_count',
-    'archive_workers', 'archive_generated_batches', 'archive_cache_hits'] as const)
+    'archive_workers', 'archive_generated_batches', 'archive_cache_hits', 'archive_deferred_batches', 'archive_recovered_batches'] as const)
     if (count(raw[field])) result[field] = raw[field];
+  if (Array.isArray(raw.archive_omissions)) {
+    result.archive_omissions = raw.archive_omissions.flatMap((value): ArchiveOmission[] =>
+      object(value) && text(value.phase) && value.phase.trim() && count(value.batch) && value.batch > 0
+        && count(value.source_count) && Array.isArray(value.sources)
+        ? [{ phase: value.phase, batch: value.batch, source_count: value.source_count,
+          ...(value.reason === 'evidence_limit' || value.reason === 'evidence_text' || value.reason === 'output_structure'
+            ? { reason: value.reason } : {}),
+          sources: value.sources.filter((source): source is string => text(source) && !!source.trim()).slice(0, value.source_count) }]
+        : []);
+  }
   if (typeof raw.default_generation_configuration === 'boolean') result.default_generation_configuration = raw.default_generation_configuration;
   if (Array.isArray(raw.batch_timings)) result.batch_timings = raw.batch_timings.flatMap((value) =>
     object(value) && count(value.batch) && value.batch > 0
