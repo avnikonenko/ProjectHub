@@ -53,7 +53,7 @@ notes and browsing work without Codex.
 
 1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
 2. In **Sources**, link a Codex session or use **Import conversation**.
-3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
+3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
 4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
 Press Ctrl+C in the terminal to stop ProjectHub.

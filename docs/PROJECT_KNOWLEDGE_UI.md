@@ -27,7 +27,7 @@ readable if the original source becomes unavailable.
 
 ## Generate and use a result
 
-In **Generation**, select **Overview**, **Knowledge**, or **Implementation
+In **Generate**, select **Overview**, **Knowledge**, or **Implementation
 Choices & Limits**, then click **Regenerate selected**. Return to the view to
 read its saved result. Overview and Implementation Choices & Limits offer
 **Previous versions**. In Knowledge, **Earlier saved versions** shows the

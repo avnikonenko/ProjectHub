@@ -314,7 +314,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
     <ErrorBox error={error} /><Feedback>{notice}</Feedback>
     {loading && <Feedback>Loading saved implementation choices…</Feedback>}
     {(generating || recovering) && <GenerationStatus base={base} kind="parameters" label="Implementation Choices & Limits" />}
-    {!loading && !snapshot && <Empty>No saved implementation choices yet. Register a repository, then select Implementation Choices &amp; Limits on the Generation tab.</Empty>}
+    {!loading && !snapshot && <Empty>No saved implementation choices yet. Register a repository, then select Implementation Choices &amp; Limits on the Generate tab.</Empty>}
     {snapshot && <>
       <div className="knowledge-filters">
         <label>Search implementation choices<input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="Limit, behavior, consequence, location or default…" /></label>

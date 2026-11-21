@@ -726,7 +726,7 @@ function ProjectWorkspace({
             }}
           >
             <ProjectTabIcon tab={t} />
-            {t === 'Dashboard' ? 'Overview' : t}
+            {t === 'Dashboard' ? 'Overview' : t === 'Generation' ? 'Generate' : t}
           </button>
         ))}
       </nav>
@@ -1771,7 +1771,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
         </div>}
         {saved && targetQuestion !== undefined && <p className="muted">Choose Show all above to filter Q&A by tags.</p>}
         {loading && <Feedback>Loading saved Q&A…</Feedback>}
-        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet. Select Q&A on the Generation tab to create it.'}</Empty>}
+        {!loading && !error && !items.length && <Empty>{targetQuestion ? 'This question is no longer available. Search again or choose Show all.' : saved?.items.length ? 'No questions match this tag.' : saved ? 'No supported answers were found.' : 'No saved Q&A yet. Select Q&A on the Generate tab to create it.'}</Empty>}
         {totalPages > 1 && (
           <nav className="pagination" aria-label="Q&A pages">
             <button className="secondary" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}>Previous</button>
@@ -2333,7 +2333,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           </div>
           {unlinkedSession && <Feedback tone="success">
             <p>Unlinked {unlinkedSession}. Use Generation to retry unfinished results with the updated sources.</p>
-            <button type="button" className="secondary" disabled={busy} onClick={onOpenGeneration}>Open Generation</button>
+            <button type="button" className="secondary" disabled={busy} onClick={onOpenGeneration}>Open Generate</button>
           </Feedback>}
           <div className="source-toolbar">
             <button type="button" className="secondary" onClick={() => setImportingConversation(true)}>Import conversation</button>

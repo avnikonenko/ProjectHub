@@ -365,7 +365,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     <details className="brief-details">
       <summary>How focus works</summary>
       <p><strong>Balanced</strong> draws on code and discussions. <strong>Code first</strong> emphasizes how the current checkout works. <strong>Sessions first</strong> emphasizes decisions, reasons, and proposed workflows.</p>
-      <p>Dependencies come from the repository scan. This choice also applies when Scheme runs after Knowledge from the Generation tab.</p>
+      <p>Dependencies come from the repository scan. This choice also applies when Scheme runs after Knowledge from the Generate tab.</p>
     </details>
     {snapshot?.focus && <small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small>}
     {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}
@@ -396,7 +396,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
         <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
           onClick={() => setView(name)}>{name}</button>)}
     </nav>
-    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme on the Generation tab to create one.</Empty>}
+    {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme on the Generate tab to create one.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
       <p><AIEmphasis text={graph.explanation} /></p>

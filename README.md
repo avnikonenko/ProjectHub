@@ -24,7 +24,7 @@ Designed for developers, researchers, and anyone working on long-running project
 
 ## What AI generates
 
-Open **Generation** and choose what to make or update. **AI Q&A** uses linked
+Open **Generate** and choose what to make or update. **AI Q&A** uses linked
 Codex sessions and imported conversations to create questions and answers.
 **Scheme** can use those conversations and read parts of a linked Git repository
 to make diagrams. Use the links in saved results to see where the information came from.
@@ -101,9 +101,9 @@ and run `codex login`. Local notes and browsing work without Codex.
 
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
 2. In **Sources**, link a Codex session about Project X or use **Import conversation** to add a past discussion.
-3. In **Generation**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
+3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
 4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
-5. In **Generation**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
+5. In **Generate**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
 
 ## Import conversations
 

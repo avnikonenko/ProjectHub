@@ -5,7 +5,7 @@ local data. Follow source links to check claims against the original evidence.
 
 ## Generate or retry
 
-Open **Generation**, select the views you want, and click **Regenerate selected**.
+Open **Generate**, select the views you want, and click **Regenerate selected**.
 Results save automatically after validation. Use **Previous versions** where
 available to open earlier results.
 
@@ -18,7 +18,7 @@ available to open earlier results.
   Scheme waits for Knowledge to save.
 - **Generate AI tags** is a separate action on saved Knowledge and Q&A.
 
-![Example Generation tab with saved Overview and Knowledge, a timed-out Q&A attempt, and retry controls](images/projecthub-generation.png)
+![Example Generate tab with saved Overview and Knowledge, a timed-out Q&A attempt, and retry controls](images/projecthub-generation.png)
 
 See [Project Overview and Knowledge](PROJECT_KNOWLEDGE_UI.md) and
 [Scheme](SCHEME.md) for the individual views.
@@ -124,7 +124,7 @@ model or instructions can require fresh processing.
 
 ### Scheme focus for next run
 
-Choose a focus in **Scheme** or **Generation → Scheme**. It controls what the
+Choose a focus in **Scheme** or **Generate → Scheme**. It controls what the
 diagrams emphasize. **Balanced** (default) combines code and discussions,
 **Code first** emphasizes the current implementation, and **Sessions first**
 emphasizes decisions, reasons, and proposed workflows.

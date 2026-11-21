@@ -1,6 +1,6 @@
 # Project evidence and freshness
 
-Refresh the project summary from **Generation → Overview → Regenerate selected**.
+Refresh the project summary from **Generate → Overview → Regenerate selected**.
 Open **Overview** for the result, citations, **Coverage**, and **Previous versions**.
 
 ## What Overview uses
