@@ -335,6 +335,14 @@ small,
   border-bottom-color: #2f795f;
   font-weight: 650;
 }
+.project-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+}
+.project-tab-icon {
+  flex: none;
+}
 main {
   padding: 20px 28px 36px;
   max-width: 1280px;

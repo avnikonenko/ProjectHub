@@ -30,6 +30,7 @@ import {
 import { HistorySearch } from './HistorySearch';
 import type { Overview, Project, RecordData } from './types';
 import { ProjectBrief } from './ProjectBrief';
+import { ProjectTabIcon } from './ProjectTabIcon';
 import { Scheme } from './Scheme';
 import { GitHubIssues, githubIssuesUrl, RepositoryOverview, useRepositoryOverview } from './RepositoryOverview';
 import { BriefSources, briefReferences, citedSources, type BriefSource } from './BriefReferences';
@@ -709,7 +710,7 @@ function ProjectWorkspace({
           <GenerationSettings base={base} settings={generationSettings} providerLocked={!!bulkPending.length || bulkScheme === 'waiting'} />
         </div>
       </div>
-      <nav className="tabs" aria-label="Project sections">
+      <nav className="tabs project-tabs" aria-label="Project sections">
         {tabs.map((t) => (
           <button
             key={t}
@@ -724,6 +725,7 @@ function ProjectWorkspace({
               setResults(null);
             }}
           >
+            <ProjectTabIcon tab={t} />
             {t === 'Dashboard' ? 'Overview' : t}
           </button>
         ))}
