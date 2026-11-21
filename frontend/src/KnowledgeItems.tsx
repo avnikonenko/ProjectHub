@@ -1,5 +1,6 @@
 import { AIEmphasis } from './AIEmphasis';
 import { DeferredDetails } from './DeferredDetails';
+import { SearchSnippet, type SearchSnippetData } from './SearchSnippet';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api } from './api';
 import { chatGPTTranscriptHref, historyTurnHref } from './historyLinks';
@@ -11,8 +12,10 @@ import './knowledge.css';
 
 const display = (value: string) => value.replaceAll('_', ' ');
 
-type ConversationHit = { kind: 'codex'; session_id: number; session_title: string; turn_id: string; snippet: string }
-  | { kind: 'chatgpt'; note_id: number; title: string; snippet: string };
+type ConversationHit = SearchSnippetData & (
+  { kind: 'codex'; session_id: number; session_title: string; turn_id: string }
+  | { kind: 'chatgpt'; note_id: number; title: string }
+);
 type ConversationPage = { results: ConversationHit[]; next_offset: number | null };
 
 export function searchKnowledgeHistory(projectId: number, query: string, offset: number, signal: AbortSignal,
@@ -55,7 +58,7 @@ export function KnowledgeHistorySearch({ projectId, query }: { projectId: number
         : historyTurnHref({ projectId, sessionId: hit.session_id, turnId: hit.turn_id });
       return <article key={href} className="list-item">
         <a href={href}>{hit.kind === 'chatgpt' ? hit.title : hit.session_title}</a>
-        <p>{hit.snippet}</p>
+        <SearchSnippet snippet={hit.snippet} snippet_parts={hit.snippet_parts} />
       </article>;
     })}
     {page && (offsets.length > 1 || page.next_offset != null) && <nav className="pagination" aria-label="Original conversation pages">

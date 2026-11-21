@@ -2,12 +2,13 @@ import { Feedback } from './Feedback';
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Empty, ErrorBox } from './ui';
+import { SearchSnippet, type SearchSnippetData } from './SearchSnippet';
 
 type Kind = 'all' | 'tasks' | 'notes' | 'conversations' | 'qa' | 'knowledge' | 'sessions' | 'other';
 type Group = {
   kind: Exclude<Kind, 'all'>;
   title: string;
-  results: { id: string; title: string; snippet: string; href?: string }[];
+  results: (SearchSnippetData & { id: string; title: string; href?: string })[];
   next_offset: number | null;
 };
 const filters: [Kind, string][] = [
@@ -57,7 +58,7 @@ export function ProjectSearchResults({ base, query, onOpenRecord, onOpenSource }
       {group.results.map((result) => <article className="list-item" key={result.id}>
         <h4>{result.href && (result.href.startsWith('#history?') || result.href.startsWith('#knowledge?'))
           ? <a href={result.href} onClick={onOpenSource}>{result.title}</a> : result.title}</h4>
-        <p>{result.snippet}</p>
+        <SearchSnippet snippet={result.snippet} snippet_parts={result.snippet_parts} />
         {['tasks', 'notes', 'qa', 'sessions'].includes(group.kind) && <button type="button" className="quiet"
           onClick={() => onOpenRecord(group.kind, result.id, result.title)}>Open</button>}
       </article>)}

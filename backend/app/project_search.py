@@ -20,6 +20,21 @@ def _page(kind, rows, offset):
             'next_offset': offset + PAGE_SIZE if len(rows) > PAGE_SIZE else None}
 
 
+def _clip_conversation_snippet(parts, limit=600):
+    if len(parts) > 1 and not parts[0]['match'] and len(parts[0]['text']) >= limit:
+        # A long preceding token should not push every match outside the preview.
+        parts = [{'text': '…' + parts[0]['text'][-(limit // 5):], 'match': False}, *parts[1:]]
+    clipped = []
+    for part in parts:
+        value = part['text'][:limit]
+        if value:
+            clipped.append({**part, 'text': value})
+        limit -= len(value)
+        if not limit:
+            break
+    return clipped
+
+
 def _records(db, project_id, kind, match, offset):
     # Only fixed SQL fragments are interpolated; all values are bound parameters.
     if kind in ('tasks', 'notes'):
@@ -184,6 +199,8 @@ def project_search(db, project_id, query, kind='all', offset=0):
                                                    {'session': item['session_id'], 'turn': item['turn_id']})}
                 rows.append({'id': f"chatgpt:{item['note_id']}" if shared else f"codex:{item['session_id']}:{item['turn_id']}",
                              'title': (item['title'] if shared else item['session_title'] or 'Untitled session')[:500],
-                             'snippet': item['snippet'][:600], 'href': '#history?' + urlencode(params)})
+                             'snippet': item['snippet'][:600],
+                             'snippet_parts': _clip_conversation_snippet(item['snippet_parts']),
+                             'href': '#history?' + urlencode(params)})
             groups.append({'kind': key, 'title': TITLES[key], 'results': rows, 'next_offset': page['next_offset']})
     return {'groups': groups}

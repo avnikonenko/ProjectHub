@@ -4,9 +4,12 @@ from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend.app.db import initialize
+from backend.app.integrations.codex.history_search import search_history
 from backend.app.main import create_app
 from backend.app.models import Project, Task, Note, ProjectQA, CodexSession, ProjectKnowledge
 from backend.app.integrations.codex.manager import CodexManager
+from backend.app.project_search import project_search
 
 
 @pytest.fixture
@@ -26,6 +29,37 @@ def get(client, kind='all', query='ligand', offset=0, pid=1):
     response = client.get(f'/api/projects/{pid}/search/all', params={'q': query, 'kind': kind, 'offset': offset})
     assert response.status_code == 200, response.text
     return {group['kind']: group for group in response.json()['groups']}
+
+
+def test_history_highlights_fts_matches_in_codex_and_imported_chat(tmp_path):
+    engine, _ = initialize(tmp_path)
+    try:
+        with Session(engine) as db:
+            db.add(Project(id=1, name='Project'))
+            db.flush()
+            db.add(CodexSession(id=1, project_id=1, title='Codex discussion', thread_id='thread'))
+            db.flush()
+            codex_text = '[literal] Ligánd Geometry and ligand'
+            db.execute(text("INSERT INTO codex_history_turns(project_id,session_id,session_title,turn_id,status,messages,content) "
+                            "VALUES(1,1,'Codex discussion','turn','completed','[]',:content)"), {'content': codex_text})
+            db.add(Note(project_id=1, title='Shared chat', content='x' * 700 + ' ligand geometry [tail]',
+                        kind='document',
+                        reference='https://chatgpt.com/share/11111111-1111-1111-1111-111111111111'))
+            db.commit()
+            codex = search_history(db, 1, 'ligand geometry')['results'][0]
+            assert codex['snippet'] == '[literal] [Ligánd] [Geometry] and [ligand]'
+            assert codex['snippet_parts'] == [
+                {'text': '[literal] ', 'match': False}, {'text': 'Ligánd Geometry', 'match': True},
+                {'text': ' and ', 'match': False}, {'text': 'ligand', 'match': True},
+            ]
+            group = project_search(db, 1, 'ligand geometry', 'conversations')['groups'][0]
+            shared = next(row for row in group['results'] if row['id'].startswith('chatgpt:'))
+            assert len(shared['snippet']) <= 600
+            assert sum(len(part['text']) for part in shared['snippet_parts']) <= 600
+            assert [part['text'] for part in shared['snippet_parts'] if part['match']] == ['ligand geometry']
+            assert shared['snippet_parts'][-1] == {'text': ' [tail]', 'match': False}
+    finally:
+        engine.dispose()
 
 
 def test_search_groups_current_qa_and_completed_tasks_are_isolated(search_app):

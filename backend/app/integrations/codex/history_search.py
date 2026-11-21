@@ -1,6 +1,7 @@
 """Explicit, atomic indexing of full saved user/assistant conversation text."""
 import json
 import re
+from secrets import token_hex
 import tempfile
 import threading
 
@@ -17,7 +18,7 @@ _HEX = '[0-9a-f]'
 _SHARE_REFERENCE = 'https://chatgpt.com/share/' + '-'.join(_HEX * n for n in (8, 4, 4, 4, 12))
 _CODEX_MATCHES = (
     'SELECT h.session_id,s.title AS session_title,h.turn_id, '
-    "snippet(codex_history_fts,0,'[',']','…',40) AS snippet, codex_history_fts.rank AS score "
+    "snippet(codex_history_fts,0,:highlight_start,:highlight_end,'…',40) AS snippet, codex_history_fts.rank AS score "
     'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
     'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
     'WHERE codex_history_fts MATCH :query AND h.project_id=:pid AND s.is_linked=1'
@@ -27,7 +28,7 @@ _ACTIVE_COUNT = (
     'ON s.id=h.session_id AND s.project_id=h.project_id WHERE h.project_id=:pid AND s.is_linked=1'
 )
 _CHATGPT_MATCHES = (
-    "SELECT NULL,NULL,NULL,snippet(search_index,-1,'[',']','…',40),search_index.rank, "
+    "SELECT NULL,NULL,NULL,snippet(search_index,-1,:highlight_start,:highlight_end,'…',40),search_index.rank, "
     "'chatgpt',n.id,n.title "
     'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
     "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
@@ -148,6 +149,24 @@ def update_active_count(db, project_id):
                {'pid': project_id})
 
 
+def _snippet_parts(snippet, start, end):
+    parts = []
+    plain, *matches = snippet.split(start)
+    if plain:
+        parts.append({'text': plain, 'match': False})
+    for entry in matches:
+        highlighted, _, plain = entry.partition(end)
+        if highlighted:
+            if len(parts) >= 2 and parts[-2]['match'] and parts[-1]['text'].isspace():
+                gap = parts.pop()['text']
+                parts[-1]['text'] += gap + highlighted
+            else:
+                parts.append({'text': highlighted, 'match': True})
+        if plain:
+            parts.append({'text': plain, 'match': False})
+    return parts
+
+
 def search_history(db, project_id, query, offset=0, *, include_shared=False):
     state = db.execute(text('SELECT indexed_at,indexed_turns FROM codex_history_index WHERE project_id=:pid'),
                        {'pid': project_id}).mappings().first()
@@ -157,7 +176,12 @@ def search_history(db, project_id, query, offset=0, *, include_shared=False):
     if not terms:
         return result
     match = ' AND '.join('"' + term + '"' for term in terms)
-    params = {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset}
+    # Per-query delimiters let us distinguish SQLite match ranges from literal
+    # brackets, markup and other punctuation in imported conversation content.
+    marker = token_hex(16)
+    start, end = f'<{marker}>', f'</{marker}>'
+    params = {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset,
+              'highlight_start': start, 'highlight_end': end}
     if include_shared:
         # Apply the page limit after merging both sources so offsets never skip a match.
         query_sql = (
@@ -176,7 +200,10 @@ def search_history(db, project_id, query, offset=0, *, include_shared=False):
             keys = ('session_id', 'session_title', 'turn_id', 'snippet')
             if include_shared:
                 keys += ('kind',)
-        result['results'].append({key: row[key] for key in keys})
+        item = {key: row[key] for key in keys}
+        item['snippet_parts'] = _snippet_parts(row['snippet'], start, end)
+        item['snippet'] = row['snippet'].replace(start, '[').replace(end, ']')
+        result['results'].append(item)
     if len(rows) > PAGE_SIZE:
         result['next_offset'] = offset + PAGE_SIZE
     return result
