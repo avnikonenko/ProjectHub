@@ -88,6 +88,18 @@ So malformed imports leave the project untouched.
 
 ProjectHub also accepts a single Claude JSON conversation with `chat_messages`. For a multi-conversation account export, extract the object for the conversation you want and save it as its own JSON file. If the export includes a conversation UUID, ProjectHub can recognize a later export of the same conversation and ask you to confirm the update. One-sided conversations require confirmation as partial. Use **Source copies** in the saved transcript to download the original file or a copy of an earlier import. The project JSON export also includes these copies.
 
+## Export a project
+
+Open **Export project** in the project header and choose a format.
+
+- **ZIP archive.** Extract it and open `index.md` to browse your saved results.
+  It also includes Mermaid diagrams, structured records and revisions in
+  `project.json`, and available copies of original sources.
+- **JSON file.** Download the structured project records as a standalone file.
+  This option is also available in Notes.
+
+Export uses saved data and runs without AI.
+
 ## Configuration and backups
 
 - **Settings.** Run `projecthub config` for the file path. The default is `~/.config/projecthub/config.toml`. Environment variables take precedence at startup. Restart after file edits. [Example configuration](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)

@@ -256,6 +256,11 @@ button:disabled {
   background: white;
   box-shadow: 0 6px 20px #24312a22;
 }
+.project-export-options {
+  display: grid;
+  gap: 0.4rem;
+  width: max-content;
+}
 .settings-help {
   margin: 0.35rem 0 0.8rem;
 }

@@ -703,6 +703,7 @@ function ProjectWorkspace({
           >
             Edit overview
           </button>
+          <ProjectExport base={base} name={project.name} />
           <button type="button" className="secondary" disabled={busy || removingProject !== null}
             onClick={() => void onRemoveProject(project)}>
             {removingProject === project.id ? 'Removing…' : 'Remove project'}
@@ -1284,7 +1285,7 @@ function AskProject({ base, projectId, generation, visible }: GenerationProps & 
   );
 }
 
-function useSettingsDismiss(dialogOpen = false) {
+function useDisclosureDismiss(dialogOpen = false) {
   const panel = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     if (dialogOpen) return;
@@ -1299,9 +1300,30 @@ function useSettingsDismiss(dialogOpen = false) {
   return panel;
 }
 
+function ProjectExport({ base, name }: { base: string; name: string }) {
+  const panel = useDisclosureDismiss();
+  const trigger = useRef<HTMLElement>(null);
+  function dismiss() {
+    panel.current?.removeAttribute('open');
+    trigger.current?.focus();
+  }
+  return (
+    <details ref={panel} className="generation-settings" onKeyDown={(event) => {
+      if (event.key === 'Escape' && event.currentTarget.open) dismiss();
+    }}>
+      <summary ref={trigger} className="button secondary">Export project <span aria-hidden="true">▾</span></summary>
+      <div className="generation-options project-export-options">
+        <a className="button secondary" href={`/api${base}/export.zip`} download onClick={dismiss}>ZIP archive</a>
+        <a className="button secondary" href={`/api${base}/export`} download={`${name}-project.json`}
+          onClick={dismiss}>JSON file</a>
+      </div>
+    </details>
+  );
+}
+
 function AppSettings() {
   const [addingProfile, setAddingProfile] = useState(false);
-  const panel = useSettingsDismiss(addingProfile);
+  const panel = useDisclosureDismiss(addingProfile);
   const [open, setOpen] = useState(false);
   const [aiSettingsVersion, setAISettingsVersion] = useState(0);
   const [profileMessage, setProfileMessage] = useState('');
@@ -1415,7 +1437,7 @@ function GenerationSettings({ base, settings, providerLocked }: {
   base: string; settings: ReturnType<typeof useProjectGenerationSettings>;
   providerLocked: boolean;
 }) {
-  const panel = useSettingsDismiss();
+  const panel = useDisclosureDismiss();
   const [open, setOpen] = useState(false);
   const [visited, setVisited] = useState(false);
   const [instructions, setInstructions] = useState<string | null>(null);

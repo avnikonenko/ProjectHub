@@ -19,7 +19,7 @@ from .integrations import chatgpt_share, conversation_import, github_issues
 from . import conversation_ingest
 from .integrations.codex.history_search import search_history
 from .project_search import project_search
-from .project_export import audit_response, project_export_response
+from .project_export import audit_response, project_archive_response, project_export_response
 from .models import *
 from .project_removal import ProjectRemovalGate, next_project_id, remove_project, retry_removed_uploads
 from .schemas import *
@@ -92,9 +92,13 @@ def _create_app(data_dir, restart_controller, ownership):
             except ValueError:
                 allowed = False
             if not allowed: return JSONResponse({'detail':'Cross-origin access denied'},status_code=403)
+        fetch_site = request.headers.get('sec-fetch-site')
+        if (fetch_site in ('cross-site', 'same-site')
+                and re.fullmatch(r'/api/projects/[^/]+/export(?:\.zip)?', request.url.path)):
+            return JSONResponse({'detail': 'Cross-origin request denied'}, status_code=403)
         mutating = request.method not in ('GET','HEAD','OPTIONS')
         if mutating:
-            if request.headers.get('sec-fetch-site') == 'cross-site': return JSONResponse({'detail':'Cross-site request denied'},status_code=403)
+            if fetch_site == 'cross-site': return JSONResponse({'detail':'Cross-site request denied'},status_code=403)
             # Bound request bytes before JSON or multipart parsing, including chunked input.
             # Notes and conversation imports support 16 MiB of UTF-8 content.
             # JSON escaping can expand one byte to six; other writes keep the small cap.
@@ -485,6 +489,10 @@ def _create_app(data_dir, restart_controller, ownership):
     @app.get('/api/projects/{project_id}/export')
     def export(project_id:int,db:Session=db_dep):
         return project_export_response(db, project_id)
+
+    @app.get('/api/projects/{project_id}/export.zip')
+    def export_zip(project_id: int, db: Session = db_dep):
+        return project_archive_response(db, project_id)
 
     @app.post('/api/projects/{project_id}/documents',status_code=201)
     async def import_document(project_id:int,file:UploadFile=File(...),db:Session=db_dep):
