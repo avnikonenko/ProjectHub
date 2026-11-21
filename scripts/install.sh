@@ -7,7 +7,7 @@ for argument in "$@"; do
     --skip-skill) skill_mode=no ;;
     --help|-h)
       echo 'Usage: bash scripts/install.sh [--install-skill | --skip-skill]'
-      echo 'Interactive installs offer the optional Codex notes skill; unattended installs skip it by default.'
+      echo 'Interactive installs offer the optional skill for Codex and Claude Code found on PATH.'
       exit 0
       ;;
     *) echo "Unknown install option: $argument" >&2; exit 1 ;;
@@ -19,9 +19,9 @@ bash scripts/setup.sh
 bash scripts/install-local.sh
 if [[ "$skill_mode" == ask ]]; then
   if [[ -t 0 ]]; then
-    echo 'Optional: link the ProjectHub notes skill into ~/.agents/skills for Codex.'
+    echo 'Optional: install the ProjectHub skill for Codex and Claude Code found on PATH.'
     response=''
-    read -r -p 'Install Codex skill? [y/N] ' response || true
+    read -r -p 'Install ProjectHub skill? [y/N] ' response || true
     case "$response" in
       y|Y|yes|YES) skill_mode=yes ;;
     esac
@@ -30,5 +30,5 @@ fi
 if [[ "$skill_mode" == yes ]]; then
   bash scripts/install-skill.sh
 else
-  echo 'Codex skill skipped. Install later with: bash scripts/install-skill.sh'
+  echo 'ProjectHub skill skipped. Install later with: projecthub install-skill'
 fi

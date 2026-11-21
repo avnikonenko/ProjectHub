@@ -102,7 +102,7 @@ and run `codex login`. Local notes and browsing work without Codex.
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
 2. In **Sources**, link a Codex session about Project X or use **Import conversation** to add a past discussion.
 3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
-4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional Codex skill, you can also ask “Read ProjectHub context for Project X before we continue.”
+4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional terminal-agent skill, you can also ask Codex or Claude Code “Read ProjectHub context for Project X before we continue.”
 5. In **Generate**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.
 
 ## Import conversations
@@ -132,14 +132,18 @@ Open **Coverage** below a generated result to see what evidence was included and
 
 ## Terminal-agent skill
 
-The optional Codex skill lets a terminal agent read project context and manage notes,
-TODOs, and session links on request. Run `projecthub install-skill` to enable it.
-With ProjectHub running, open a new Codex session and try these prompts:
+The optional skill lets Codex and Claude Code read project context and manage notes
+and TODOs on request. Run `projecthub install-skill` to install it for any assistants
+found on your `PATH`. Use `--agent codex` or `--agent claude` to select one explicitly.
+With ProjectHub running, open a new session in your chosen assistant and try these prompts.
 
 - “Read ProjectHub context for Project X.”
 - “Save this explanation as a note in Project X.”
 - “Add a TODO to Project X: test the import.”
 - “Mark ‘test the import’ finished in Project X.”
+
+In Codex, you can also manage Codex session links.
+
 - “Link this session to Project X.”
 - “Unlink this session from Project X.”
 - “Find all codex sessions related to X and link them to Project X.”
@@ -147,7 +151,7 @@ With ProjectHub running, open a new Codex session and try these prompts:
 <details>
 <summary>Optional terminal commands</summary>
 
-Run these directly if you want to read the same project context outside a Codex session.
+Run these directly from your terminal to read the same project context.
 
 ```bash
 projecthub context --project 'Project X'

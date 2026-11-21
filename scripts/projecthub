@@ -13,7 +13,7 @@ Commands:
   check    Run the project checks
   setup    Install or refresh local dependencies
   config   Create the local config if missing and show its path
-  install-skill  Install the optional Codex notes skill
+  install-skill  Install the optional skill for detected agents [--agent codex claude]
   projects List local project IDs and names
   context  Read a compact saved project briefing
   read     Read a page of saved project information
@@ -59,7 +59,11 @@ case "$command_name" in
     fi
     exec .venv/bin/python -m backend.app.cli start
     ;;
-  config|install-skill)
+  install-skill)
+    shift
+    exec bash "$project_root/scripts/install-skill.sh" "$@"
+    ;;
+  config)
     cd "$project_root"
     if [[ $# -gt 1 ]]; then
       echo "projecthub: $command_name does not accept arguments" >&2
