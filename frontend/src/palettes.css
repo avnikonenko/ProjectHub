@@ -27,7 +27,7 @@
   border-color: var(--palette-button);
   color: #fff;
 }
-:root[data-palette] :is(.project-option, .add-project, .quiet, .local-label, .tabs button, .icon-edit, .metric strong, .brief-reference, a, .markdown a) {
+:root[data-palette] :is(.project-option, .add-project, .quiet, .local-label, .tabs button, .icon-edit, .metric strong, .brief-reference, a:not(.button), .markdown a) {
   color: var(--accent);
 }
 :root[data-palette] .tabs button {

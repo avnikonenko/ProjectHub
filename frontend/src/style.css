@@ -1253,7 +1253,7 @@ a:focus-visible {
 [data-theme='dark'] .icon-edit,
 [data-theme='dark'] .metric strong,
 [data-theme='dark'] .brief-reference,
-[data-theme='dark'] a,
+[data-theme='dark'] a:not(.button),
 [data-theme='dark'] .markdown a {
   color: var(--accent);
 }
