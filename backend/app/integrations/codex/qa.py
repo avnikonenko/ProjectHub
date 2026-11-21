@@ -21,7 +21,7 @@ from .brief import BriefBusy, generation_lock
 from .brief import note_evidence, recorded_evidence, generation_metadata, saved_run_metadata, generation_for_read
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
 from . import progress
-from .revisions import save_revision
+from .revisions import active_revision_id, save_revision
 from .protocol import CodexError, JSONFormattingError
 
 _FIELDS = {'question': 180, 'answer': 800}
@@ -59,6 +59,13 @@ def read_qa(db, project_id):
         'topic_grouping': stored.get('topic_grouping', {}),
         **saved_run_metadata(row.generation),
     }
+
+
+def read_active_qa(db, project_id):
+    # Pin the Q&A contents and their identity to the same SQLite snapshot.
+    with db.begin_nested():
+        result = read_qa(db, project_id)
+        return None if result is None else {**result, 'revision_id': active_revision_id(db, project_id, 'qa')}
 
 
 def generate_items(manager, batch, *, engine=None, project_id=None):
@@ -754,7 +761,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
             save_revision(db, project_id, 'qa', read_qa(db, project_id))
             progress.complete(project_id, db.commit, db=db)
             progress.finish(project_id)
-            return read_qa(db, project_id)
+            return read_active_qa(db, project_id)
     except Exception as exc:
         progress.record_diagnostics(project_id, diagnostics())
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError) else 'Q&A generation failed. The previous saved Q&A is preserved.')

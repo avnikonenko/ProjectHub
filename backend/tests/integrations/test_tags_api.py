@@ -59,7 +59,7 @@ def test_generation_passes_scoped_manager_options_and_instructions(api, monkeypa
     def generate(engine, project_id, passed_manager, **kwargs):
         assert engine is api.app.state.engine and project_id == api.pid
         assert passed_manager is selected and instructions in ai_instructions()
-        assert kwargs == {'target': 'knowledge_preview', 'publication_id': 'pub', 'generated_at': None}
+        assert kwargs == {'target': 'knowledge_preview', 'publication_id': 'pub', 'generated_at': None, 'revision_id': None}
         return {'target': 'knowledge_preview', 'publication_id': 'pub', 'topic_groups': [], 'topic_grouping': {}}
     monkeypatch.setattr(routes, 'generate_tags', generate)
     response = api.client.post(api.base + '/tags', json={

@@ -330,6 +330,14 @@ def read_knowledge(db, project_id):
     return knowledge_with_legacy_summary(db, project_id, row.snapshot)
 
 
+def _legacy_summary_revision(project_id, publication_id):
+    return select(GenerationRevision).where(
+        GenerationRevision.project_id == project_id, GenerationRevision.kind == 'brief',
+        func.json_extract(GenerationRevision.snapshot, '$.project_state.publication_id') == publication_id,
+        func.json_extract(GenerationRevision.snapshot, '$.project_state.pipeline') == 'knowledge-v1',
+    ).order_by(GenerationRevision.id.desc()).limit(1)
+
+
 def knowledge_with_legacy_summary(db, project_id, snapshot):
     if not isinstance(snapshot, dict) or 'summary' in snapshot:
         return snapshot
@@ -338,11 +346,7 @@ def knowledge_with_legacy_summary(db, project_id, snapshot):
         return snapshot
     # Older publications stored the detailed summary as a brief revision. Keep
     # it available when the independent general Overview is later refreshed.
-    revision = db.scalar(select(GenerationRevision).where(
-        GenerationRevision.project_id == project_id, GenerationRevision.kind == 'brief',
-        func.json_extract(GenerationRevision.snapshot, '$.project_state.publication_id') == publication_id,
-        func.json_extract(GenerationRevision.snapshot, '$.project_state.pipeline') == 'knowledge-v1',
-    ).order_by(GenerationRevision.id.desc()).limit(1))
+    revision = db.scalar(_legacy_summary_revision(project_id, publication_id))
     summary = revision.snapshot if revision is not None else None
     if summary is None:
         from .brief import read_brief
@@ -353,6 +357,30 @@ def knowledge_with_legacy_summary(db, project_id, snapshot):
     if isinstance(summary, dict) and summary.get('generated_at') == snapshot.get('generated_at'):
         return {**deepcopy(snapshot), 'summary': deepcopy(summary)}
     return snapshot
+
+
+def _legacy_summary_identity(summary, project_id):
+    state = summary.get('project_state') if isinstance(summary, dict) else None
+    if not isinstance(state, dict):
+        return None
+    publication_id, generated_at = state.get('publication_id'), summary.get('generated_at')
+    if (not isinstance(publication_id, str) or not publication_id.strip()
+            or not isinstance(generated_at, str) or not generated_at.strip()
+            or summary.get('project_id', project_id) != project_id
+            or state.get('project_id', project_id) != project_id or state.get('pipeline') != 'knowledge-v1'
+            or not isinstance(summary.get('sections'), dict)
+            or not isinstance(summary['sections'].get('overview'), list)
+            or any(not isinstance(entries, list) or any(
+                not isinstance(entry, dict) or not isinstance(entry.get('text'), str)
+                or not isinstance(entry.get('source_ids'), list)
+                or any(not isinstance(identifier, str) for identifier in entry['source_ids'])
+                for entry in entries) for entries in summary['sections'].values())
+            or not isinstance(summary.get('sources'), list)
+            or not isinstance(summary.get('coverage'), list)
+            or any(not isinstance(source, dict) or source.get('project_id', project_id) != project_id
+                   for source in summary['sources'])):
+        return None
+    return publication_id, generated_at
 
 
 def preserve_legacy_knowledge_summary(db, project_id):
@@ -368,28 +396,34 @@ def preserve_legacy_knowledge_summary(db, project_id):
         return False
     recovered = read_knowledge(db, project_id)
     summary = recovered.get('summary') if isinstance(recovered, dict) else None
-    state = summary.get('project_state') if isinstance(summary, dict) else None
-    publication_id, generated_at = snapshot.get('publication_id'), snapshot.get('generated_at')
-    if (not isinstance(publication_id, str) or not publication_id.strip()
-            or not isinstance(generated_at, str) or not generated_at.strip()
-            or not isinstance(summary, dict) or summary.get('project_id', project_id) != project_id
-            or not isinstance(state, dict) or state.get('project_id', project_id) != project_id
-            or state.get('pipeline') != 'knowledge-v1' or state.get('publication_id') != publication_id
-            or summary.get('generated_at') != generated_at
-            or not isinstance(summary.get('sections'), dict)
-            or not isinstance(summary['sections'].get('overview'), list)
-            or any(not isinstance(entries, list) or any(
-                not isinstance(entry, dict) or not isinstance(entry.get('text'), str)
-                or not isinstance(entry.get('source_ids'), list)
-                or any(not isinstance(identifier, str) for identifier in entry['source_ids'])
-                for entry in entries) for entries in summary['sections'].values())
-            or not isinstance(summary.get('sources'), list)
-            or not isinstance(summary.get('coverage'), list)
-            or any(not isinstance(source, dict) or source.get('project_id', project_id) != project_id
-                   for source in summary['sources'])):
+    if _legacy_summary_identity(summary, project_id) != (snapshot.get('publication_id'), snapshot.get('generated_at')):
         return False
     row.snapshot = {**deepcopy(snapshot), 'summary': deepcopy(summary)}
     return True
+
+
+def preserve_legacy_knowledge_revision_summaries(db, project_id, brief_revision):
+    """Copy a historical publication's backing summary before deleting its Overview revision."""
+    if brief_revision.project_id != project_id or brief_revision.kind != 'brief':
+        return
+    summary = brief_revision.snapshot
+    identity = _legacy_summary_identity(summary, project_id)
+    if identity is None:
+        return
+    publication_id, generated_at = identity
+    selected = _legacy_summary_revision(project_id, publication_id).with_only_columns(GenerationRevision.id)
+    if db.scalar(selected) != brief_revision.id:
+        return
+    rows = db.scalars(select(GenerationRevision).where(
+        GenerationRevision.project_id == project_id, GenerationRevision.kind == 'knowledge',
+        GenerationRevision.generated_at == generated_at,
+        func.json_extract(GenerationRevision.snapshot, '$.publication_id') == publication_id,
+        func.json_extract(GenerationRevision.snapshot, '$.generated_at') == generated_at,
+        func.json_type(GenerationRevision.snapshot, '$.summary').is_(None),
+    ))
+    for row in rows:
+        if row.snapshot.get('project_id', project_id) == project_id:
+            row.snapshot = {**row.snapshot, 'summary': deepcopy(summary)}
 
 
 def _source_excerpt(quote, text):

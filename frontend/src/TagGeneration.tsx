@@ -10,12 +10,12 @@ import { generationBody, generationDestination, type Generation } from './genera
 
 export type TagResult = {
   target: 'knowledge_preview' | 'knowledge' | 'qa';
-  publication_id?: string; generated_at?: string;
+  publication_id?: string; generated_at?: string; revision_id?: number | null;
   topic_groups: TopicGroup[]; topic_grouping: Record<string, unknown>;
 };
 
 type Props = {
-  base: string; target: TagResult['target']; publicationId?: string; generatedAt?: string;
+  base: string; target: TagResult['target']; publicationId?: string; generatedAt?: string; revisionId?: number | null;
   itemIds: string[]; hasTags: boolean; disabled?: boolean;
   generation: Generation;
   onResult: (result: TagResult) => void; onRecovered: () => void;
@@ -24,7 +24,7 @@ type Props = {
 
 // Opening a result only reads progress.
 export function TagGeneration(props: Props) {
-  const { base, target, publicationId, generatedAt, itemIds, hasTags, disabled, generation, visible = true } = props;
+  const { base, target, publicationId, generatedAt, revisionId, itemIds, hasTags, disabled, generation, visible = true } = props;
   const [busy, setBusy] = useState(false);
   const [localBusy, setLocalBusy] = useState(false);
   const [error, setError] = useState('');
@@ -34,7 +34,7 @@ export function TagGeneration(props: Props) {
   const callbacks = useRef(props);
   callbacks.current = props;
   const request = useRef<AbortController | null>(null);
-  const identity = JSON.stringify([base, target, publicationId, generatedAt]);
+  const identity = JSON.stringify([base, target, publicationId, generatedAt, revisionId]);
   useEffect(() => {
     callbacks.current.onBusyChange?.(busy || localBusy);
   }, [busy, localBusy]);
@@ -80,10 +80,12 @@ export function TagGeneration(props: Props) {
     tagProgress.begin(base);
     try {
       const result = await api<TagResult>(`${base}/codex/tags`, { method: 'POST', signal: controller.signal,
-        body: JSON.stringify({ confirmed: true, target, publication_id: publicationId, generated_at: generatedAt,
+        body: JSON.stringify({ confirmed: true, target, publication_id: publicationId, generated_at: generatedAt, revision_id: revisionId,
           ...generationBody(generation) }) });
       if (controller.signal.aborted) return;
-      if (result.target !== target || (target === 'qa' ? result.generated_at !== generatedAt : result.publication_id !== publicationId)
+      if (result.target !== target || (target === 'qa'
+        ? result.generated_at !== generatedAt || (revisionId != null && result.revision_id !== revisionId)
+        : result.publication_id !== publicationId)
           || !Array.isArray(result.topic_groups) || !result.topic_grouping || typeof result.topic_grouping !== 'object' || Array.isArray(result.topic_grouping))
         throw new Error('AI tags do not match the selected saved version. Reload before retrying.');
       callbacks.current.onResult({ ...result, topic_groups: parseTopicGroups(result.topic_groups, itemIds) });

@@ -52,6 +52,16 @@ def active_revision_id(db, project_id, kind):
     return db.scalar(revisions.order_by(GenerationRevision.id.desc()).limit(1))
 
 
+def qa_revision_matches(db, project_id, generated_at, active_id, requested_id):
+    if requested_id is not None:
+        return requested_id == active_id
+    # Older clients sent only a timestamp. Accept it when it identifies at
+    # most one saved version, including old results without revision rows.
+    matches = _revisions(project_id, 'qa', GenerationRevision.id).where(
+        GenerationRevision.generated_at == generated_at).limit(2)
+    return len(db.scalars(matches).all()) < 2
+
+
 def list_revisions(db, project_id, kind, offset):
     # Extract only the listing metadata in SQLite. Loading whole ORM entities
     # deserializes eleven potentially large snapshots just to return ten labels.

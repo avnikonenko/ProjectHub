@@ -107,21 +107,25 @@ export function BriefCoverage({ brief, sourceCount }: { brief: Brief; sourceCoun
 
 type BriefViewProps = {
   brief: Brief; prefix: string; perspective?: 'project' | 'knowledge'; sourceLabel?: string;
+  allowSourceNavigation?: boolean;
 };
 
-export function BriefSupport({ brief, prefix, perspective = 'project', sourceLabel = 'Preview sources' }: BriefViewProps) {
+export function BriefSupport({ brief, prefix, perspective = 'project', sourceLabel = 'Preview sources',
+  allowSourceNavigation = true }: BriefViewProps) {
   const sources = citedSources(brief.sources, briefSections(brief, perspective).flatMap(({ entries }) => entries.flatMap(entry => entry.source_ids)));
   return <div className="card result-support">
     <BriefCoverage brief={brief} sourceCount={sources.length} />
     <details className="brief-sources"><summary>{sourceLabel} ({sources.length})</summary>
-      <BriefSources sources={sources} prefix={prefix} />
+      {!allowSourceNavigation && <p>Current source availability has not been checked.</p>}
+      <BriefSources sources={sources} prefix={prefix} allowSourceNavigation={allowSourceNavigation} />
     </details>
   </div>;
 }
 
-export function BriefPreview({ brief, prefix, perspective = 'project', sourceLabel }: BriefViewProps) {
+export function BriefPreview({ brief, prefix, perspective = 'project', sourceLabel, allowSourceNavigation }: BriefViewProps) {
   return <>
     <BriefContent brief={brief} prefix={prefix} perspective={perspective} />
-    <BriefSupport brief={brief} prefix={prefix} perspective={perspective} sourceLabel={sourceLabel} />
+    <BriefSupport brief={brief} prefix={prefix} perspective={perspective} sourceLabel={sourceLabel}
+      allowSourceNavigation={allowSourceNavigation} />
   </>;
 }

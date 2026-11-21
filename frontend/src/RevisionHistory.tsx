@@ -8,7 +8,7 @@ type Revision = { id: number; generated_at: string; generation?: GenerationProve
 type RevisionPage = { results: Revision[]; next_offset: number | null; active_id?: number | null };
 
 export function RevisionHistory<T>({
-  base, kind, version, disabled, selectedId, onSelect, onLoadingChange, onActivated,
+  base, kind, version, disabled, selectedId, onSelect, onLoadingChange, onActivated, onActiveRead,
 }: {
   base: string;
   kind: 'brief' | 'qa' | 'scheme' | 'parameters' | 'knowledge';
@@ -18,6 +18,7 @@ export function RevisionHistory<T>({
   onSelect: (snapshot: T | null, revisionId: number | null) => void;
   onLoadingChange: (loading: boolean, activating?: boolean) => void;
   onActivated?: () => void;
+  onActiveRead?: (result: unknown) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<RevisionPage | null>(null);
@@ -28,8 +29,8 @@ export function RevisionHistory<T>({
   const [notice, setNotice] = useState('');
   const busy = useRef(false);
   const request = useRef(0);
-  const current = useRef({ onSelect, onLoadingChange, onActivated, disabled });
-  current.current = { onSelect, onLoadingChange, onActivated, disabled };
+  const current = useRef({ onSelect, onLoadingChange, onActivated, onActiveRead, disabled });
+  current.current = { onSelect, onLoadingChange, onActivated, onActiveRead, disabled };
   const prefix = `${base}/codex`;
 
   useEffect(() => {
@@ -67,6 +68,14 @@ export function RevisionHistory<T>({
     setError('');
     setNotice('');
     try {
+      if (id === null && current.current.onActiveRead) {
+        const result = await api<unknown>(`${prefix}/${kind}`);
+        if (request.current === requestId) {
+          current.current.onActiveRead?.(result);
+          setOffsets([0]);
+        }
+        return;
+      }
       let snapshot: T | null;
       if (id === null) {
         snapshot = kind === 'scheme' || kind === 'parameters' || kind === 'knowledge'

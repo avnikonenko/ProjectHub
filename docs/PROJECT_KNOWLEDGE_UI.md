@@ -23,15 +23,16 @@ search finds saved records across views.
 
 **Coverage** lists the inputs recorded for the saved result. **Current source
 availability** shows which originals you can check now. Saved excerpts remain
-readable if the original source becomes unavailable.
+readable if the original source becomes unavailable. Previous Knowledge versions
+show evidence status at the time of generation and retain saved excerpts.
 
 ## Generate and use a result
 
 In **Generate**, select **Overview**, **Knowledge**, or **Implementation
 Choices & Limits**, then click **Regenerate selected**. Return to the view to
-read its saved result. Overview and Implementation Choices & Limits offer
-**Previous versions**. In Knowledge, **Earlier saved versions** shows the
-latest legacy preview when available.
+read its saved result. **Previous versions** lets you browse saved results.
+Choose a version, then select **Use this version** to make it active.
+**Unpublished Knowledge previews** shows the latest legacy preview when available.
 
 Generation uses the project's Codex account, model, reasoning effort and
 instructions. See [AI generation](AI_GENERATION.md) for progress, cancellation

@@ -60,10 +60,11 @@ export function briefReferences(ids: string[], numbers: Map<string, number>, pre
   return <CitationGroup ids={ids} numbers={numbers} prefix={prefix} sources={sources} />;
 }
 
-export function BriefSources({ sources, prefix, openInNewTab = false }: {
+export function BriefSources({ sources, prefix, openInNewTab = false, allowSourceNavigation = true }: {
   sources: BriefSource[];
   prefix: string;
   openInNewTab?: boolean;
+  allowSourceNavigation?: boolean;
 }) {
   const projectId = Number(prefix.split('-')[0]);
   const linkOptions = openInNewTab ? { target: '_blank', rel: 'noopener' } : {};
@@ -80,12 +81,12 @@ export function BriefSources({ sources, prefix, openInNewTab = false }: {
             </summary>
             {source.turn_id && <small>{source.label}</small>}
             <pre className="json-report">{source.text}</pre>
-            {source.session_id !== undefined && source.turn_id && (
+            {allowSourceNavigation && source.session_id !== undefined && source.turn_id && (
               <a {...linkOptions} href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>
                 Read full turn
               </a>
             )}
-            {!!source.shared_sessions?.length && (
+            {allowSourceNavigation && !!source.shared_sessions?.length && (
               <div>
                 <small>Also in{' '}
                   {source.shared_sessions.map((session, index) => (
@@ -101,7 +102,7 @@ export function BriefSources({ sources, prefix, openInNewTab = false }: {
                 </small>
               </div>
             )}
-            {source.share && source.note_id !== undefined && (
+            {allowSourceNavigation && source.share && source.note_id !== undefined && (
               <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id })}>Read full transcript</a>
             )}
           </details>

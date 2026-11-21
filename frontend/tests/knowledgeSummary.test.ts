@@ -94,6 +94,18 @@ test('legacy and mismatched summary displays never render unrelated content', ()
   assert.doesNotMatch(html, /Detailed chemical requirements|result-support/);
 });
 
+test('archived Knowledge Summary cites saved excerpts without offering unchecked original links', () => {
+  const summary = brief();
+  Object.assign(summary.sources[0], { note_id: 14, share: true });
+  const current = parseKnowledgeResponse({ snapshot: snapshot(summary) }, 2).snapshot!;
+  const active = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: current }));
+  const historical = renderToStaticMarkup(createElement(PublishedKnowledgeSummary, { snapshot: current, historical: true }));
+  assert.match(active, /Read full transcript/);
+  assert.match(historical, /Retain the molecular graph\./);
+  assert.match(historical, /Current source availability has not been checked/);
+  assert.doesNotMatch(historical, /Read full transcript/);
+});
+
 test('earlier saved Knowledge retains content, sources and coverage as a read-only version', () => {
   const result = { published: false, publication_id: 'knowledge-one',
     knowledge: { ...snapshot(), generated_at: brief().generated_at, coverage: { limitations: ['Earlier bounded extraction.'] },
@@ -113,7 +125,7 @@ test('earlier saved Knowledge retains content, sources and coverage as a read-on
   assert.equal((html.match(/<summary>Coverage<\/summary>/g) ?? []).length, 2);
   assert.match(html, /Earlier version sources \(1\)/);
   assert.match(html, /Extraction version <code>earlier-extractor<\/code>/);
-  assert.doesNotMatch(html, /Knowledge coverage|Current source availability/);
+  assert.doesNotMatch(html, /Knowledge coverage|<summary>Current source availability<\/summary>/);
   assert.doesNotMatch(html.replace(/<[^>]*>/g, ' '), /[Pp]ublished|[Uu]npublished|[Pp]review|Save Knowledge Summary|Use this result/);
   assert.doesNotMatch(html, /<details[^>]*\bopen\b/);
   const buttons = [...html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button>/g)].map(match => match[1].replace(/<[^>]*>/g, ' '));

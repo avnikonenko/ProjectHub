@@ -1200,6 +1200,7 @@ type SavedQA = {
   diagnostics?: GenerationDiagnostics; coverage?: string[];
   topic_grouping?: Record<string, unknown>;
   generated_at: string;
+  revision_id?: number | null;
   generation?: GenerationProvenance | null;
   topic_groups?: TopicGroup[];
   items: { id?: string; question: string; answer: string; source_ids: string[];
@@ -1707,6 +1708,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     if (!saved || tagsBusy || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
     if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;
     const query = new URLSearchParams({ question, generated_at: saved.generated_at });
+    if (saved.revision_id != null) query.set('revision_id', String(saved.revision_id));
     invalidateRead();
     const identity = viewIdentity.current.begin();
     deletingRef.current = true;
@@ -1787,8 +1789,8 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
             if (id === null) setLatestVersion(snapshot?.generated_at ?? null);
           }} />
         </details>
-        {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${revisionId}`} base={base} target="qa" visible={visible}
-          generatedAt={saved.generated_at} itemIds={saved.items.map(qaId)} generation={generation}
+        {saved && <TagGeneration key={`${base}:qa-tags:${saved.generated_at}:${saved.revision_id}:${revisionId}`} base={base} target="qa" visible={visible}
+          generatedAt={saved.generated_at} revisionId={saved.revision_id} itemIds={saved.items.map(qaId)} generation={generation}
           hasTags={!!saved.topic_groups?.length} disabled={revisionId !== null || loading || generating || recoveryBusy || deleting || revisionLoading}
           onBusyChange={setTagsBusy} onRecovered={() => {
             if (selectedRevision.current === null && !selectingRevision.current && !generatingRef.current && !deletingRef.current)
@@ -1796,9 +1798,10 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           }}
           onResult={result => {
             if (!mounted.current || selectedRevision.current !== null || selectingRevision.current || generatingRef.current || deletingRef.current
-                || result.generated_at !== saved.generated_at) return;
+                || result.generated_at !== saved.generated_at
+                || (saved.revision_id != null && result.revision_id !== saved.revision_id)) return;
             invalidateRead();
-            setSaved(previous => previous && previous.generated_at === result.generated_at
+            setSaved(previous => previous && previous.generated_at === result.generated_at && previous.revision_id === saved.revision_id
               ? { ...previous, topic_groups: result.topic_groups, topic_grouping: result.topic_grouping } : previous);
           }} />}
         {saved && revisionId !== null && <small>AI tags can be generated for the current Q&A only.</small>}

@@ -37,7 +37,7 @@ type Props = {
   onBusyChange?: (state: { busy: boolean; running: boolean }) => void;
 };
 
-export function PublishedKnowledgeSummary({ snapshot }: { snapshot: KnowledgeSnapshot }) {
+export function PublishedKnowledgeSummary({ snapshot, historical = false }: { snapshot: KnowledgeSnapshot; historical?: boolean }) {
   if (!snapshot.summary && !snapshot.summary_error) return null;
   const summary = snapshot.summary && matchesPublication(snapshot, snapshot.project_id,
     snapshot.summary.project_state?.publication_id) ? snapshot.summary : null;
@@ -52,7 +52,8 @@ export function PublishedKnowledgeSummary({ snapshot }: { snapshot: KnowledgeSna
       <ErrorBox error={summaryError} />
       {summary && <BriefContent brief={summary} prefix={prefix} perspective="knowledge" />}
     </section>
-    {summary && <BriefSupport brief={summary} prefix={prefix} perspective="knowledge" sourceLabel="Knowledge Summary sources" />}
+    {summary && <BriefSupport brief={summary} prefix={prefix} perspective="knowledge" sourceLabel="Knowledge Summary sources"
+      allowSourceNavigation={!historical} />}
   </>;
 }
 
@@ -98,10 +99,10 @@ export function EarlierKnowledgeResult({ result, onDownload }: {
     <div role="tabpanel" aria-label="Earlier Knowledge Summary" hidden={view !== 'summary'}>
       <BriefPreview brief={{ ...result.brief, diagnostics: result.brief.diagnostics ?? result.diagnostics }}
         prefix={`${result.knowledge.project_id}-knowledge-preview-${result.brief.project_state?.publication_id ?? 'legacy'}`}
-        perspective="knowledge" sourceLabel="Earlier version sources" />
+        perspective="knowledge" sourceLabel="Earlier version sources" allowSourceNavigation={false} />
     </div>
     <div role="tabpanel" aria-label="Knowledge records" hidden={view !== 'knowledge'}>
-      <KnowledgeItems snapshot={result.knowledge} />
+      <KnowledgeItems snapshot={result.knowledge} historical />
       <KnowledgeRecordCoverage snapshot={result.knowledge} diagnostics={result.knowledge.diagnostics ?? result.diagnostics} />
     </div>
   </details>;
@@ -130,7 +131,8 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
   const outcomeCallback = useRef(onGenerationOutcome); outcomeCallback.current = onGenerationOutcome;
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [revisionBusy, setRevisionBusy] = useState(false);
-  const [historical, setHistorical] = useState<{ base: string; id: number; snapshot: KnowledgeSnapshot } | null>(null);
+  const [historical, setHistorical] = useState<{ route: string; id: number; snapshot: KnowledgeSnapshot } | null>(null);
+  const revisionRoute = useRef('');
   function reportOutcome(state: KnowledgeGenerationOutcome['state'], publicationId?: string, schemeRequested?: boolean) {
     const pending = pendingOutcome.current;
     if (!pending || pending.base !== base) return;
@@ -139,30 +141,40 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
       schemeRequested: state === 'saved' ? schemeRequested ?? pending.schemeRequested : false });
   }
   const snapshot = load.key === loadKey ? load.data?.snapshot : null;
-  const earlier = historical?.base === base ? historical : null;
   const currentPreview = preview.base === base ? preview : null;
   const currentLegacy = legacy.base === base ? legacy : null;
   const currentNotice = notice.base === base ? notice : null;
   const busy = !!currentPreview?.busy;
   const candidate = currentLegacy?.result && currentLegacy.result.knowledge.publication_id !== snapshot?.publication_id
     ? currentLegacy.result : null;
-  const requestKey = `${base}:${projectLink?.publicationId ?? ''}:${projectLink?.itemId ?? ''}`;
+  const requestKey = JSON.stringify([base, publicationKey, projectLink?.itemId]);
+  const earlier = historical?.route === requestKey ? historical : null;
   const expectedPublication = dismissedLink === requestKey ? undefined : projectLink?.publicationId;
   const mismatch = !!snapshot && !!expectedPublication
     && !matchesPublication(snapshot, projectId, expectedPublication);
   const selectedItemId = dismissedLink === requestKey ? undefined : projectLink?.itemId;
 
+  function restartPendingRecovery() {
+    if (!recovery.current) return;
+    recovery.current.abort();
+    setRecoveryAttempt(value => value + 1);
+  }
+
+  useEffect(() => {
+    setHistorical(null);
+    setDismissedLink('');
+  }, [requestKey]);
   useEffect(() => subscribePublishedKnowledge(base, state => {
     setLoad({ base, key: loadKey, ...state });
   }), [base, loadKey]);
   const lastRefresh = useRef('');
   useEffect(() => {
     if (!visible && !refreshRequest) return;
-    const refreshKey = `${base}:${retry}:${showRecords}`;
+    const refreshKey = `${requestKey}:${retry}:${showRecords}`;
     const refresh = !!lastRefresh.current && lastRefresh.current !== refreshKey;
     lastRefresh.current = refreshKey;
     void readPublishedKnowledge(base, { refresh, publicationId: publicationKey || undefined });
-  }, [base, retry, visible, publicationKey, showRecords, refreshRequest]);
+  }, [base, retry, visible, publicationKey, requestKey, showRecords, refreshRequest]);
 
   useEffect(() => () => {
     active.current?.controller.abort();
@@ -220,6 +232,8 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
         setPreview((previous) => ({ ...previous, busy: false, started: 0, loading: false,
           error: `Could not load the saved result: ${error.message}` }));
       }
+    }).finally(() => {
+      if (recovery.current === controller) recovery.current = null;
     });
     return () => {
       controller.abort();
@@ -317,22 +331,36 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
   return <section className="knowledge-page">
     {showRecords && <RevisionHistory<KnowledgeSnapshot> key={base} base={base} kind="knowledge"
       version={snapshot?.generated_at ?? null} selectedId={earlier?.id ?? null}
-      disabled={!!(externalBusy || tagsBusy || busy || currentPreview?.loading || isLoading)} onLoadingChange={setRevisionBusy}
+      disabled={!!(externalBusy || tagsBusy || busy || currentPreview?.loading || isLoading)}
+      onLoadingChange={loading => {
+        if (loading) revisionRoute.current = requestKey;
+        setRevisionBusy(loading);
+      }}
       onSelect={(saved, id) => {
+        if (revisionRoute.current !== requestKey) return;
         const snapshot = saved && id !== null ? parseKnowledgeResponse({ snapshot: saved }, projectId).snapshot : null;
-        setHistorical(snapshot && id !== null ? { base, id, snapshot } : null);
+        setHistorical(snapshot && id !== null ? { route: requestKey, id, snapshot } : null);
+      }}
+      onActiveRead={result => {
+        if (revisionRoute.current !== requestKey) return;
+        const response = parseKnowledgeResponse(result, projectId);
+        restartPendingRecovery();
+        updatePublishedKnowledge(base, () => response);
+        setHistorical(null);
+        setDismissedLink(requestKey);
       }}
       onActivated={() => {
-        setDismissedLink(requestKey);
+        if (revisionRoute.current === requestKey) setDismissedLink(requestKey);
+        restartPendingRecovery();
         updatePublishedKnowledge(base, () => null);
         void readPublishedKnowledge(base, { refresh: true });
         onPublished?.();
       }} />}
     {showRecords && earlier && <>
-      <PublishedKnowledgeSummary snapshot={earlier.snapshot} />
+      <PublishedKnowledgeSummary snapshot={earlier.snapshot} historical />
       <section className="card">
         <h2>Knowledge records</h2>
-        <KnowledgeItems key={earlier.id} snapshot={earlier.snapshot} />
+        <KnowledgeItems key={earlier.id} snapshot={earlier.snapshot} historical />
       </section>
       <KnowledgeRecordCoverage snapshot={earlier.snapshot} />
     </>}

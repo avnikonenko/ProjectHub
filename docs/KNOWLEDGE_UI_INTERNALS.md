@@ -77,13 +77,14 @@ related records. Context-review notes are separate from historical design status
 - Knowledge dropdowns use exact status and category values. The scope field
   matches a substring and offers recorded scope suggestions. Project-wide search
   is separate and provides no semantic retrieval or scope equivalence inference.
-- The Knowledge tab browses the current saved snapshot. **Earlier saved versions**
-  shows the latest legacy preview when available. Regular Knowledge revisions are
-  accessible through the revisions API. Historical item links report publication
-  mismatches.
+- The Knowledge tab browses the current saved snapshot. **Previous versions**
+  opens saved revisions for browsing and activation. **Unpublished Knowledge
+  previews** shows the latest legacy preview when available. Item links open the
+  current view and report publication mismatches.
 - Failed or cancelled generation preserves saved Knowledge and successful extraction caches; only a complete validated result replaces normal saved Knowledge. Earlier previews retain their separate storage.
-- Source navigation depends on stored descriptors and current availability. Saved
-  excerpts remain accessible when original navigation cannot be offered.
+- Source navigation depends on stored descriptors and current availability.
+  Archived views show saved excerpts and label the evidence status recorded at
+  generation time.
 
 Use an isolated data directory and port for development as described in
 [the pipeline guide](KNOWLEDGE_PIPELINE.md#isolated-testing).

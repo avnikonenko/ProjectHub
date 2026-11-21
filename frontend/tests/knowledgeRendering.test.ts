@@ -46,6 +46,19 @@ test('a selected related record beyond the first page mounts immediately while u
   assert.ok(!html.includes('Exact source quotation'));
 });
 
+test('a historical result shows saved evidence status separately from the active view', () => {
+  const snapshot = makeSnapshot();
+  snapshot.items = snapshot.items.slice(0, 1);
+  const selectedItemId = snapshot.items[0].id;
+  const historical = renderToStaticMarkup(createElement(KnowledgeItems, { snapshot, selectedItemId, historical: true }));
+  const active = renderToStaticMarkup(createElement(KnowledgeItems, {
+    snapshot, selectedItemId, availability: { [selectedItemId]: 'unavailable' },
+  }));
+  assert.match(historical, /<dt>Evidence at time of generation<\/dt><dd>valid<\/dd>/);
+  assert.doesNotMatch(historical, /Current evidence/);
+  assert.match(active, /<dt>Current evidence<\/dt><dd>unavailable/);
+});
+
 test('related pagination preserves each distinct record and selected identity without merging', () => {
   const items = makeSnapshot().items;
   assert.deepEqual(visibleRelatedKnowledge(items, 10).map(item => item.id), items.slice(0, 10).map(item => item.id));

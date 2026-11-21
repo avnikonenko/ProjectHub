@@ -22,21 +22,24 @@ from .protocol import CodexError
 from .qa import read_qa
 from .topic_groups import group_records, FIELDS, MAX_BATCH_CHARS, MAX_BATCH_ITEMS
 from .manager import tag_generation_context
+from .revisions import active_revision_id, qa_revision_matches
 
 
 class TagGenerationConflict(CodexError):
     """The selected saved result changed before tags could be committed."""
 
 
-def _selected(db, project_id, target, publication_id, generated_at):
+def _selected(db, project_id, target, publication_id, generated_at, revision_id=None):
     if db.get(Project, project_id) is None:
         raise CodexError('Project not found.')
     if target == 'qa':
         row = db.get(ProjectQA, project_id)
         value = read_qa(db, project_id)
-        if value is None or value['generated_at'] != generated_at:
+        active_id = active_revision_id(db, project_id, 'qa')
+        if (value is None or value['generated_at'] != generated_at
+                or not qa_revision_matches(db, project_id, generated_at, active_id, revision_id)):
             raise TagGenerationConflict('The selected Q&A changed. Refresh before generating tags.')
-        return row, value
+        return row, {**value, 'revision_id': active_id}
     if target == 'knowledge_preview':
         value = read_knowledge_preview(db, project_id)
         row = db.scalar(select(GenerationRevision).where(
@@ -51,7 +54,7 @@ def _selected(db, project_id, target, publication_id, generated_at):
     return row, value
 
 
-def generate_tags(engine, project_id, manager, *, target, publication_id=None, generated_at=None):
+def generate_tags(engine, project_id, manager, *, target, publication_id=None, generated_at=None, revision_id=None):
     if target not in ('knowledge', 'knowledge_preview', 'qa'):
         raise CodexError('Unknown tag generation target.')
     job_lock = generation_lock.for_job(project_id, 'tags')
@@ -70,8 +73,8 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
             session = getattr(manager, 'generation_session', None)
             if callable(session):
                 scope.enter_context(session())
-            with Session(engine) as db:
-                row, previous = _selected(db, project_id, target, publication_id, generated_at)
+            with Session(engine) as db, db.begin_nested():
+                row, previous = _selected(db, project_id, target, publication_id, generated_at, revision_id)
                 # Include the complete paired preview in the concurrency token.
                 token = deepcopy(row.snapshot if target != 'qa' else previous)
                 row_id = row.id if target == 'knowledge_preview' else None
@@ -99,7 +102,7 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
 
             with Session(engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))
-                row, current = _selected(db, project_id, target, publication_id, generated_at)
+                row, current = _selected(db, project_id, target, publication_id, generated_at, revision_id)
                 current_token = row.snapshot if target != 'qa' else current
                 if current_token != token or (row_id is not None and row.id != row_id):
                     raise TagGenerationConflict('The selected saved result changed during tag generation. Previous tags are preserved; retry.')
@@ -113,7 +116,8 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                     row.snapshot = {**deepcopy(row.snapshot), **deepcopy(grouping)}
                 progress.complete(project_id, db.commit, db=db)
             return {'target': target, **grouping, **(
-                {'generated_at': generated_at} if target == 'qa' else {'publication_id': publication_id})}
+                {'generated_at': generated_at, 'revision_id': current['revision_id']}
+                if target == 'qa' else {'publication_id': publication_id})}
     except Exception as exc:
         progress.finish(project_id, error=str(exc) if isinstance(exc, CodexError)
                         else 'Tag generation failed. Previous saved tags are preserved.')

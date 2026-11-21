@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import router as routes
 from backend.app.integrations.codex.revisions import save_revision
+from backend.app.integrations.codex.tag_generation import TagGenerationConflict, generate_tags
 from backend.app.models import (
     GenerationRevision, Project, ProjectBrief, ProjectGenerationAttempt,
     ProjectKnowledge, ProjectQA, ProjectScheme,
@@ -138,15 +139,62 @@ def test_qa_and_scheme_activate_their_own_saved_artifacts(application):
     for kind, revision_id, snapshot in [('qa', qa_id, old_qa), ('scheme', scheme_id, old_scheme)]:
         response = _activate(client, revision_id)
         assert response.status_code == 200, response.text
+        if kind == 'qa':
+            snapshot = {**snapshot, 'revision_id': revision_id}
         assert response.json() == {'kind': kind, 'snapshot': snapshot}
         assert _history(client, kind)['active_id'] == revision_id
-    assert client.get(f'{BASE}/qa').json() == old_qa
+    assert client.get(f'{BASE}/qa').json() == {**old_qa, 'revision_id': qa_id}
     with Session(engine) as db:
         assert db.get(ProjectScheme, 1).snapshot == old_scheme
         archived_qa = db.scalar(select(GenerationRevision).where(
             GenerationRevision.project_id == 1, GenerationRevision.kind == 'qa',
             GenerationRevision.generated_at == NEWER))
         assert archived_qa.snapshot['topic_groups'] == tags
+
+
+def test_same_timestamp_qa_mutations_require_the_active_revision(application, monkeypatch):
+    client, engine = application
+    question = 'Which revision is active?'
+    old = {'generated_at': OLDER, 'items': [{'question': question, 'answer': 'Old answer', 'source_ids': []}],
+           'sources': [], 'generation': None}
+    new = {**old, 'items': [{**old['items'][0], 'answer': 'New answer'}]}
+    with Session(engine) as db:
+        old_id, new_id = _revisions(db, 'qa', old, new)
+        db.add(ProjectQA(project_id=1, **new))
+        db.commit()
+
+    stale = client.get(f'{BASE}/qa').json()
+    assert stale['revision_id'] == new_id
+    assert _activate(client, old_id).json()['snapshot']['revision_id'] == old_id
+
+    params = {'question': question, 'generated_at': stale['generated_at']}
+    for revision in ({}, {'revision_id': stale['revision_id']}):
+        assert client.delete(f'{BASE}/qa/items', params={**params, **revision}).status_code == 409
+        with pytest.raises(TagGenerationConflict, match='selected Q&A changed'):
+            generate_tags(engine, 1, object(), target='qa', generated_at=OLDER, **revision)
+    assert client.get(f'{BASE}/qa').json()['items'][0]['answer'] == 'Old answer'
+
+    group_records = 'backend.app.integrations.codex.tag_generation.group_records'
+    grouping = {'topic_groups': [], 'topic_grouping': {}}
+
+    def switch_during_generation(*_args, **_kwargs):
+        assert _activate(client, new_id).status_code == 200
+        return grouping
+
+    monkeypatch.setattr(group_records, switch_during_generation)
+    with pytest.raises(TagGenerationConflict, match='selected Q&A changed'):
+        generate_tags(engine, 1, object(), target='qa', generated_at=OLDER, revision_id=old_id)
+    assert client.get(f'{BASE}/qa').json()['revision_id'] == new_id
+
+    assert _activate(client, old_id).status_code == 200
+    monkeypatch.setattr(group_records, lambda *_args, **_kwargs: grouping)
+    tagged = generate_tags(engine, 1, object(), target='qa', generated_at=OLDER, revision_id=old_id)
+    assert tagged['revision_id'] == old_id
+    response = client.delete(f'{BASE}/qa/items', params={**params, 'revision_id': old_id})
+    assert response.status_code == 200, response.text
+    assert response.json()['revision_id'] == old_id
+    assert response.json()['items'] == []
+    assert client.get(f'{BASE}/revisions/{new_id}').json()['snapshot'] == new
 
 
 def test_activation_rolls_back_current_artifact_if_selection_cannot_be_saved(application):

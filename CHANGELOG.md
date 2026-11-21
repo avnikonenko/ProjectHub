@@ -12,6 +12,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - See provider-reported token usage during generation, with the number of requests that supplied a total.
 - Download a project archive with readable Markdown, Mermaid diagrams, structured JSON, and saved source files.
 - Make a previous generated result active again from its version history.
+- Preserve older Knowledge summaries when deleting an Overview, and keep Q&A actions tied to the selected version.
 - Collapse IDE context in saved Codex history so conversation messages are easier to scan.
 - Keep regular documents separate from conversation updates and reject invalid transcript text before saving.
 

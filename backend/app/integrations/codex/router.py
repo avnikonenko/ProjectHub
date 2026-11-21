@@ -16,7 +16,7 @@ from .ai_instructions import MAX_PROJECT_INSTRUCTIONS, read_project_instructions
 from .brief import BriefBusy, generation_lock, read_brief, refresh_brief
 from .accounts import (account_options, account_home, launch_home, launch_label, profile_entries,
                        validate_profile_directory, claude_launch_home, claude_profile, claude_profile_entries)
-from .qa import DEFAULT_QA_MAX_ITEMS, read_qa, refresh_qa
+from .qa import DEFAULT_QA_MAX_ITEMS, read_active_qa, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import SchemeFocus, SchemeQueueSuperseded, read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
@@ -30,7 +30,8 @@ from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
 from . import generation_attempts as attempts
-from .revisions import REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id, list_revisions
+from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id,
+                        list_revisions, qa_revision_matches)
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 from .session_reassignment import reassign_session
@@ -143,14 +144,15 @@ class TagGenerationInput(GenerationInput):
     target: Literal['knowledge_preview', 'knowledge', 'qa']
     publication_id: str | None = Field(default=None, min_length=1, max_length=200, strict=True)
     generated_at: str | None = Field(default=None, min_length=1, max_length=100, strict=True)
+    revision_id: int | None = Field(default=None, gt=0, strict=True)
 
     @model_validator(mode='after')
     def exact_target(self):
         if self.target == 'qa':
             if self.generated_at is None or self.publication_id is not None:
                 raise ValueError('Q&A tags require generated_at and no publication_id.')
-        elif self.publication_id is None or self.generated_at is not None:
-            raise ValueError('Knowledge tags require publication_id and no generated_at.')
+        elif self.publication_id is None or self.generated_at is not None or self.revision_id is not None:
+            raise ValueError('Knowledge tags require publication_id and accept no Q&A version fields.')
         return self
 
 
@@ -505,6 +507,8 @@ def activate_saved_revision(project_id: int, revision_id: int, db: DB):
             raise HTTPException(404, 'This saved version is unavailable.')
         snapshot = activate_revision(db, row)
         db.commit()
+        if kind == 'qa':
+            snapshot = {**snapshot, 'revision_id': revision_id}
         return {'kind': kind, 'snapshot': snapshot}
     except RevisionUnavailable as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -522,13 +526,14 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
     # Pin current publication/Overview while copying any legacy summary and
     # deleting its backing revision, so another publisher cannot be overwritten.
     from sqlalchemy import text
-    from .knowledge import preserve_legacy_knowledge_summary
+    from .knowledge import preserve_legacy_knowledge_revision_summaries, preserve_legacy_knowledge_summary
     db.execute(text('BEGIN IMMEDIATE'))
     db.expire_all()
     row = scoped(db, GenerationRevision, project_id, revision_id)
     if active_revision_id(db, project_id, 'brief') == row.id:
         raise HTTPException(409, 'The current overview cannot be deleted.')
     preserve_legacy_knowledge_summary(db, project_id)
+    preserve_legacy_knowledge_revision_summaries(db, project_id, row)
     db.delete(row)
     db.commit()
 
@@ -838,21 +843,24 @@ def generate_parameters(project_id: int, body: GenerationInput, request: Request
 @router.get('/qa')
 def get_qa(project_id: int, db: DB):
     project(db, project_id)
-    return read_qa(db, project_id)
+    return read_active_qa(db, project_id)
 
 
 @router.delete('/qa/items')
 def delete_qa_item(project_id: int, db: DB,
                    question: Annotated[str, Query(min_length=1, max_length=180)],
-                   generated_at: Annotated[str, Query(min_length=1, max_length=100)]):
+                   generated_at: Annotated[str, Query(min_length=1, max_length=100)],
+                   revision_id: Annotated[int | None, Query(gt=0)] = None):
     if not generation_lock.acquire(blocking=False):
         raise HTTPException(409, 'Wait for AI generation to finish before deleting an answer.')
     try:
+        begin_session_write(db)
         project(db, project_id)
         row = db.get(ProjectQA, project_id)
         if row is None:
             raise HTTPException(404, 'No saved Q&A for this project.')
-        if row.generated_at != generated_at:
+        active_id = active_revision_id(db, project_id, 'qa')
+        if row.generated_at != generated_at or not qa_revision_matches(db, project_id, generated_at, active_id, revision_id):
             raise HTTPException(409, 'The saved Q&A changed. Reload before deleting an answer.')
         remaining = [item for item in row.items if item['question'] != question]
         if len(remaining) == len(row.items):
@@ -879,8 +887,10 @@ def delete_qa_item(project_id: int, db: DB,
                 metadata['taxonomy'] = [topic for topic in metadata['taxonomy']
                                         if topic['id'] in active_topics]
             row.generation = {**row.generation, 'topic_groups': groups, 'topic_grouping': metadata}
+        db.flush()
+        result = {**read_qa(db, project_id), 'revision_id': active_id}
         db.commit()
-        return read_qa(db, project_id)
+        return result
     finally:
         generation_lock.release()
 
@@ -897,7 +907,8 @@ def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
         db.rollback()
         with use_project_instructions(instructions):
             return generate_tags(request.app.state.engine, project_id, selected, target=body.target,
-                                 publication_id=body.publication_id, generated_at=body.generated_at)
+                                 publication_id=body.publication_id, generated_at=body.generated_at,
+                                 revision_id=body.revision_id)
     except (BriefBusy, TagGenerationConflict) as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

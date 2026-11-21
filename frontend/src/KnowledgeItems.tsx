@@ -71,9 +71,10 @@ export function KnowledgeHistorySearch({ projectId, query }: { projectId: number
   </section>;
 }
 
-export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, onSelectItem }: {
+export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, onSelectItem, historical = false }: {
   snapshot: KnowledgeSnapshot; availability?: Record<string, string>;
   selectedItemId?: string; onSelectItem?: (id: string) => void;
+  historical?: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [topic, setTopic] = useState(ALL_TOPICS);
@@ -136,7 +137,8 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           {item.rationale && <><dt>Rationale</dt><dd><AIEmphasis text={item.rationale} /></dd></>}
           {item.alternatives && <><dt>Alternatives</dt><dd>{item.alternatives}</dd></>}
           {item.limitations && <><dt>Limitations & trade-offs</dt><dd>{item.limitations}</dd></>}
-          <dt>Current evidence</dt><dd>{display(current)}{current !== 'valid' && ' — historical design status is preserved.'}</dd>
+          <dt>{historical ? 'Evidence at time of generation' : 'Current evidence'}</dt>
+          <dd>{display(current)}{!historical && current !== 'valid' && ' — historical design status is preserved.'}</dd>
           {item.reconciliation_state && <><dt>Reconciliation</dt><dd>{display(item.reconciliation_state)}</dd></>}
           {item.reconciliation_note && <><dt>Context review</dt><dd>{item.reconciliation_note}</dd></>}
         </dl>
@@ -153,7 +155,7 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
           {!item.evidence.length && <p>No recorded evidence excerpts.</p>}
           {item.evidence.map((evidence, index) => {
             const source = sources.get(evidence.source_id);
-            const href = knowledgeSourceHref(snapshot.project_id, source, current);
+            const href = historical ? null : knowledgeSourceHref(snapshot.project_id, source, current);
             return <article key={`${evidence.source_id}:${index}`}>
               <strong>{evidence.label || source?.label || evidence.source_id}</strong>
               <p><small>Original source — {evidence.role}{evidence.order !== undefined && ` · source order ${evidence.order}`}</small></p>
@@ -165,7 +167,8 @@ export function KnowledgeItems({ snapshot, availability = {}, selectedItemId, on
                 {evidence.timestamp && <><dt>Source timestamp</dt><dd>{evidence.timestamp}</dd></>}
               </dl></details>
               {href ? <a href={href}>Open original conversation</a>
-                : <small>Original navigation unavailable; the saved excerpt remains available.</small>}
+                : <small>{historical ? 'Current source availability has not been checked.'
+                  : 'Original navigation unavailable. The saved excerpt remains available.'}</small>}
             </article>;
           })}
         </>}</DeferredDetails>
