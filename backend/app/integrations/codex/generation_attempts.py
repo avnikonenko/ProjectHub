@@ -10,6 +10,7 @@ from ...models import (GenerationRevision, ProjectBrief, ProjectGenerationAttemp
                        ProjectKnowledge, ProjectQA, ProjectScheme, utcnow)
 from ...services import require_project
 from .accounts import launch_label, profile_entries
+from .revisions import active_parameter_revision
 
 KINDS = ('brief', 'knowledge', 'scheme', 'qa', 'parameters')
 _STATES = {'running', 'waiting', 'completed', 'failed', 'cancelled', 'interrupted', 'skipped'}
@@ -160,8 +161,7 @@ def _saved_artifacts(db, pid):
         'qa': select(ProjectQA.generated_at, _has_recoverable_gaps(
             ProjectQA.generation, 'qa_consolidate_fallback_batches', 'qa_rank_fallback_batches'))
             .where(ProjectQA.project_id == pid),
-        'parameters': select(GenerationRevision.generated_at).where(
-            GenerationRevision.project_id == pid, GenerationRevision.kind == 'parameters').order_by(GenerationRevision.id.desc()).limit(1),
+        'parameters': active_parameter_revision(pid, GenerationRevision.generated_at),
     }
     times, present, recoverable = {}, {}, set()
     for kind, query in queries.items():

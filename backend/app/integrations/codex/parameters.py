@@ -5,7 +5,6 @@ from pathlib import PurePosixPath
 import re
 import time
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ...models import GenerationRevision, Project, utcnow
@@ -15,7 +14,7 @@ from .brief import BriefBusy, generation_lock, generation_metadata
 from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
-from .revisions import save_revision
+from .revisions import active_parameter_revision, save_revision
 
 MAX_ITEMS = 100
 MAX_INPUT_CHARS = 160_000
@@ -108,11 +107,7 @@ PROMPT = (
 def read_parameters(db, project_id):
     """Read this project's latest successful result without inspecting or generating."""
     require_project(db, project_id)
-    row = db.scalar(select(GenerationRevision).where(
-        GenerationRevision.project_id == project_id,
-        GenerationRevision.kind == 'parameters',
-    ).order_by(GenerationRevision.id.desc()).limit(1))
-    return None if row is None else row.snapshot
+    return db.scalar(active_parameter_revision(project_id, GenerationRevision.snapshot))
 
 
 def _text(value, limit, *, empty=True):

@@ -327,7 +327,10 @@ def read_knowledge(db, project_id):
     row = db.get(ProjectKnowledge, project_id)
     if row is None:
         return None
-    snapshot = row.snapshot
+    return knowledge_with_legacy_summary(db, project_id, row.snapshot)
+
+
+def knowledge_with_legacy_summary(db, project_id, snapshot):
     if not isinstance(snapshot, dict) or 'summary' in snapshot:
         return snapshot
     publication_id = snapshot.get('publication_id')

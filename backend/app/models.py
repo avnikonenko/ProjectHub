@@ -232,6 +232,13 @@ class GenerationRevision(Base):
     snapshot: Mapped[dict] = mapped_column(JSON)
 
 
+class ActiveGenerationRevision(Base):
+    __tablename__ = 'active_generation_revisions'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), primary_key=True)
+    revision_id: Mapped[int] = mapped_column(ForeignKey('generation_revisions.id', ondelete='CASCADE'))
+
+
 class ProjectGenerationAttempt(Base):
     """Latest execution outcome, separate from a previously saved artifact."""
     __tablename__ = 'project_generation_attempts'

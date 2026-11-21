@@ -392,6 +392,7 @@ function ProjectWorkspace({
   const onGenerationSelection = useCallback((selected: ProjectGenerationKind[]) => {
     setGenerationSelection({ project_id: projectId, selected });
   }, [projectId]);
+  const onResultActivated = useCallback(() => setGenerationResultsVersion(value => value + 1), []);
   const recovery = useGenerationRecovery(base, { includeBrief: true, includeKnowledge: true, includeParameters: true });
   const recheckGeneration = useRef(recovery.recheck); recheckGeneration.current = recovery.recheck;
   const observedGeneration = useRef<Record<ProjectGenerationKind, boolean>>({ brief: false, knowledge: false, scheme: false, qa: false, parameters: false });
@@ -807,6 +808,7 @@ function ProjectWorkspace({
           <div hidden={view !== 'Dashboard' || !!results}>
             <ProjectBrief base={base} evidenceVersion={project.updated_at}
               visible={view === 'Dashboard' && !results} generation={generation}
+              onResultActivated={onResultActivated}
               recoveryVersion={recovery.version.brief} recoveryBusy={generationRecoveryBusy.brief}
               onRecoveryNeeded={() => recovery.recheck('brief')}
               generationRequest={bulkRequests.brief} onGenerationRequestHandled={started => bulkHandled('brief', started)}
@@ -826,7 +828,7 @@ function ProjectWorkspace({
             <div hidden={knowledgeSubview !== 'knowledge'}>
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}
               visible={view === 'Knowledge' && knowledgeSubview === 'knowledge' && !results}
-              showRecords onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
+              showRecords onPublished={onResultActivated} onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               onGenerationOutcome={onKnowledgeOutcome}
               generateSchemeAfter={bulkScheme === 'waiting'} schemeFocus={queuedSchemeFocus} />
@@ -835,13 +837,14 @@ function ProjectWorkspace({
               <ProjectParameters base={base} generation={generation}
                 visible={view === 'Knowledge' && knowledgeSubview === 'parameters' && !results}
                 generationRequest={bulkRequests.parameters} onGenerationRequestHandled={started => bulkHandled('parameters', started)}
-                onBusyChange={onParameterState} />
+                onBusyChange={onParameterState} onResultActivated={onResultActivated} />
             </div>}
           </div>
         )}
         {(visited.qa || view === 'AI Q&A') && (
           <div hidden={view !== 'AI Q&A' || !!results}>
             <ProjectQA base={base} generation={generation} visible={view === 'AI Q&A' && !results}
+              onResultActivated={onResultActivated}
               generationRequest={bulkRequests.qa} onGenerationRequestHandled={started => bulkHandled('qa', started)}
               targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
               recoveryVersion={recovery.version.qa} recoveryBusy={generationRecoveryBusy.qa}
@@ -851,6 +854,7 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              onResultActivated={onResultActivated}
               focus={schemeFocus} queuedFocus={queuedSchemeFocus} onFocusChange={setSchemeFocus}
               waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
@@ -1580,7 +1584,7 @@ function isValidQALimit(value: number) {
   return Number.isSafeInteger(value) && value >= 1;
 }
 
-function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true, generationRequest = 0, onGenerationRequestHandled }: GenerationProps & GenerationRequestProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean; onResultActivated?: () => void }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [tagsBusy, setTagsBusy] = useState(false);
   const [tagRecovery, setTagRecovery] = useState(0);
@@ -1605,6 +1609,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const latestRead = useRef<AbortController | null>(null);
   const selectedRevision = useRef<number | null>(null);
   const selectingRevision = useRef(false);
+  const activatingRevision = useRef<{ reload: boolean } | null>(null);
   const revisionRequestIdentity = useRef<number | null>(null);
   const previousTargetQuestion = useRef(targetQuestion);
   const deletingRef = useRef(false);
@@ -1637,11 +1642,15 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       previousTargetQuestion.current = targetQuestion;
       // Search changes the view, but must not discard an in-flight mutation
       // whose result will supply the current saved Q&A.
-      if (!generatingRef.current && !deletingRef.current) invalidateRead();
+      if (!generatingRef.current && !deletingRef.current && !activatingRevision.current) invalidateRead();
       selectedRevision.current = null;
-      selectingRevision.current = false;
       setRevisionId(null);
-      setRevisionLoading(false);
+      if (activatingRevision.current) {
+        activatingRevision.current.reload = true;
+      } else {
+        selectingRevision.current = false;
+        setRevisionLoading(false);
+      }
     }
     if (selectedRevision.current !== null || selectingRevision.current || generatingRef.current || deletingRef.current) return;
     const abort = new AbortController();
@@ -1727,7 +1736,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || deleting}>
+      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || deleting || revisionLoading}>
         <AIResultHeader title="AI Q&A" savedAt={saved?.generated_at} previous={revisionId !== null}
           freshness={saved && revisionId === null ? 'Freshness not checked' : undefined} />
         {!validLimit && <Feedback>Enter a positive whole number in Q&A details & options.</Feedback>}
@@ -1753,13 +1762,20 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
           </div>
         <p className="brief-note">Questions and answers drawn from imported conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
-          disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={active => {
+          onActivated={() => {
+            setTagRecovery(value => value + 1);
+            onResultActivated?.();
+          }}
+          disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={(active, activating) => {
             if (active) {
               invalidateRead();
               revisionRequestIdentity.current = viewIdentity.current.begin();
             }
             selectingRevision.current = active;
+            const reload = !active && activatingRevision.current?.reload;
+            activatingRevision.current = active && activating ? { reload: false } : null;
             setRevisionLoading(active);
+            if (reload) setTagRecovery(value => value + 1);
           }}
           onSelect={(snapshot, id) => {
             if (revisionRequestIdentity.current === null || !viewIdentity.current.current(revisionRequestIdentity.current)) return;

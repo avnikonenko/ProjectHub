@@ -48,9 +48,10 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, onGenerationRequestHandled }: GenerationProps & GenerationRequestProps & {
+export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & {
   visible: boolean; generation: Generation; onGenerating: (active: boolean) => void;
   onRecoveryNeeded?: () => void;
+  onResultActivated?: () => void;
   recoveryVersion: number; recoveryBusy: boolean; externalBusy?: boolean;
 }) {
   const [saved, setSaved] = useState<{ base: string; brief: Brief | null }>({ base, brief: null });
@@ -62,6 +63,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [evidence, setEvidence] = useState<EvidenceFreshness | null>(null);
+  const [evidenceRefresh, setEvidenceRefresh] = useState(0);
   const [evidenceError, setEvidenceError] = useState('');
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState('');
@@ -98,7 +100,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
         if (!abort.signal.aborted) setEvidenceError(`Could not check Project Overview freshness: ${e.message}`);
       });
     return () => abort.abort();
-  }, [base, latestVersion, loading, evidenceVersion, visible]);
+  }, [base, latestVersion, loading, evidenceVersion, visible, evidenceRefresh]);
   useEffect(() => {
     if ((!visible && !generationRequest) || selectingRevision.current || activeGeneration.current) return;
     const abort = new AbortController();
@@ -155,7 +157,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
   ));
   return (
     <>
-      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy}>
+      <section className="card project-brief" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
         <AIResultHeader title="Project Overview" savedAt={brief?.generated_at} previous={revisionId !== null}
           freshness={brief && revisionId === null ? evidence?.stale === true ? 'Project changes detected. Regenerate Overview to include them.'
             : evidence?.stale === false ? 'No changes detected in checked evidence' : 'Freshness not checked' : undefined} />
@@ -184,6 +186,11 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
             historical decisions, architecture, and the previous summary to {generationDestination(generation.provider)}.
           </p>
           <RevisionHistory<Brief> base={base} kind="brief" version={latestVersion}
+            onActivated={() => {
+              setEvidence(null);
+              setEvidenceRefresh(value => value + 1);
+              onResultActivated?.();
+            }}
             disabled={loading || generating || recoveryBusy || externalBusy} selectedId={revisionId} onLoadingChange={active => {
               selectingRevision.current = active;
               if (active) { request.current++; setLoading(false); }

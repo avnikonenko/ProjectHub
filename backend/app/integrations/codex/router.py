@@ -21,7 +21,7 @@ from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import SchemeFocus, SchemeQueueSuperseded, read_scheme, refresh_scheme, scheme_snapshot_for_display
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
-from .knowledge import read_knowledge, reconcile
+from .knowledge import knowledge_with_legacy_summary, read_knowledge, reconcile
 from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .knowledge_sources import load_sources, prior_context_ids
 from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
@@ -30,7 +30,7 @@ from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
 from . import progress
 from . import generation_attempts as attempts
-from .revisions import list_revisions
+from .revisions import REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id, list_revisions
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 from .session_reassignment import reassign_session
@@ -473,7 +473,7 @@ def project_evidence(project_id: int, request: Request, db: DB):
 def revisions(project_id: int, db: DB, kind: str = 'brief',
               offset: Annotated[int, Query(ge=0, le=2_147_483_647)] = 0):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'parameters'):
+    if kind not in REVISION_KINDS:
         raise HTTPException(422, 'Unknown generation kind.')
     return list_revisions(db, project_id, kind, offset)
 
@@ -483,7 +483,34 @@ def revision_snapshot(project_id: int, revision_id: int, db: DB):
     project(db, project_id)
     row = scoped(db, GenerationRevision, project_id, revision_id)
     snapshot = scheme_snapshot_for_display(row.snapshot) if row.kind == 'scheme' else row.snapshot
+    if row.kind == 'knowledge':
+        snapshot = knowledge_with_legacy_summary(db, project_id, snapshot)
     return {'kind': row.kind, 'snapshot': snapshot}
+
+
+@router.post('/revisions/{revision_id}/activate')
+def activate_saved_revision(project_id: int, revision_id: int, db: DB):
+    project(db, project_id)
+    kind = scoped(db, GenerationRevision, project_id, revision_id).kind
+    if kind not in REVISION_KINDS:
+        raise HTTPException(404, 'This saved version is unavailable.')
+    db.rollback()
+    lease = generation_lock.for_job(project_id, kind)
+    if not lease.acquire(blocking=False):
+        raise HTTPException(409, 'Wait for this view to finish generating before switching versions.')
+    try:
+        begin_session_write(db)
+        row = scoped(db, GenerationRevision, project_id, revision_id)
+        if row.kind != kind:
+            raise HTTPException(404, 'This saved version is unavailable.')
+        snapshot = activate_revision(db, row)
+        db.commit()
+        return {'kind': kind, 'snapshot': snapshot}
+    except RevisionUnavailable as exc:
+        raise HTTPException(409, str(exc)) from exc
+    finally:
+        db.rollback()
+        lease.release()
 
 
 @router.delete('/revisions/{revision_id}', status_code=204)
@@ -499,8 +526,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
     db.execute(text('BEGIN IMMEDIATE'))
     db.expire_all()
     row = scoped(db, GenerationRevision, project_id, revision_id)
-    latest = read_brief(db, project_id)
-    if latest and latest['generated_at'] == row.generated_at:
+    if active_revision_id(db, project_id, 'brief') == row.id:
         raise HTTPException(409, 'The current overview cannot be deleted.')
     preserve_legacy_knowledge_summary(db, project_id)
     db.delete(row)

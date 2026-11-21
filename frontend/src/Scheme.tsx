@@ -255,10 +255,11 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   waitingForKnowledge?: boolean;
+  onResultActivated?: () => void;
   focus: SchemeFocus; queuedFocus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
@@ -267,6 +268,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
   const [revisionLoading, setRevisionLoading] = useState(false);
+  const [refresh, setRefresh] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -293,7 +295,7 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       .catch((e: Error) => { if (!abort.signal.aborted && resultRead.current === identity) setError(e.message); })
       .finally(() => { if (!abort.signal.aborted && resultRead.current === identity) setLoading(false); });
     return () => abort.abort();
-  }, [path, recoveryVersion, visible, generationRequest]);
+  }, [path, recoveryVersion, visible, generationRequest, refresh]);
 
   async function generate(requestedFocus: SchemeFocus) {
     if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge) return;
@@ -378,7 +380,8 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       {snapshot && <SchemeKnowledgeContext context={snapshot.knowledge_context} />}
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
-        disabled={loading || generating || recoveryBusy} selectedId={revisionId} onLoadingChange={value => {
+        disabled={loading || generating || recoveryBusy || waitingForKnowledge} selectedId={revisionId}
+        onActivated={onResultActivated} onLoadingChange={value => {
           selectingRevision.current = value;
           if (value) { resultRead.current++; setLoading(false); }
           setRevisionLoading(value);
@@ -387,8 +390,15 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           resultRead.current++;
           selectedRevision.current = id;
           setLoading(false);
-          setResult((previous) => previous ? { ...previous, snapshot: selected } : previous);
+          setResult((previous) => previous ? { ...previous, snapshot: selected,
+            freshness: id !== null ? previous.freshness : { state: 'unknown', partial: selected?.coverage.partial ?? false,
+              limitations: selected?.coverage.limitations ?? [] },
+          } : previous);
           setRevisionId(id);
+          if (id === null) {
+            setLatestVersion(selected?.generated_at ?? null);
+            setRefresh(value => value + 1);
+          }
         }} />
     </details>
     <nav className="tabs scheme-tabs" aria-label="Scheme views">

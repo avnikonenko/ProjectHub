@@ -6,8 +6,10 @@ local data. Follow source links to check claims against the original evidence.
 ## Generate or retry
 
 Open **Generate**, select the views you want, and click **Regenerate selected**.
-Results save automatically after validation. Use **Previous versions** where
-available to open earlier results.
+Results save automatically after validation. Open **Previous versions**, select
+an earlier result, and choose **Use this version** to make it active again.
+Switching versions keeps both results in history and makes no AI request. A later
+successful generation becomes active automatically.
 
 - **Regenerate all** runs available views in parallel. When both Scheme and
   Knowledge are queued, Scheme starts after Knowledge saves successfully. Scheme

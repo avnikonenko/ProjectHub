@@ -211,9 +211,8 @@ def _saved_results(db, project_id):
         elif key != 'ai_instructions':
             row = db.get(model, project_id)
             result[key] = (row.snapshot if key == 'scheme' else serialize(row)) if row is not None else None
-    result['parameters'] = db.scalar(select(GenerationRevision.snapshot).where(
-        GenerationRevision.project_id == project_id, GenerationRevision.kind == 'parameters')
-        .order_by(GenerationRevision.id.desc()).limit(1))
+    from .integrations.codex.revisions import active_parameter_revision
+    result['parameters'] = db.scalar(active_parameter_revision(project_id, GenerationRevision.snapshot))
     return result
 
 

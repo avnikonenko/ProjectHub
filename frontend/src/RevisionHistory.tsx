@@ -5,18 +5,19 @@ import { DeleteButton } from './ui';
 import { SavedGeneration, type GenerationProvenance } from './GenerationStatus';
 
 type Revision = { id: number; generated_at: string; generation?: GenerationProvenance | null };
-type RevisionPage = { results: Revision[]; next_offset: number | null };
+type RevisionPage = { results: Revision[]; next_offset: number | null; active_id?: number | null };
 
 export function RevisionHistory<T>({
-  base, kind, version, disabled, selectedId, onSelect, onLoadingChange,
+  base, kind, version, disabled, selectedId, onSelect, onLoadingChange, onActivated,
 }: {
   base: string;
-  kind: 'brief' | 'qa' | 'scheme' | 'parameters';
+  kind: 'brief' | 'qa' | 'scheme' | 'parameters' | 'knowledge';
   version: string | null;
   disabled: boolean;
   selectedId: number | null;
   onSelect: (snapshot: T | null, revisionId: number | null) => void;
-  onLoadingChange: (loading: boolean) => void;
+  onLoadingChange: (loading: boolean, activating?: boolean) => void;
+  onActivated?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<RevisionPage | null>(null);
@@ -24,10 +25,11 @@ export function RevisionHistory<T>({
   const [loading, setLoading] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const busy = useRef(false);
   const request = useRef(0);
-  const current = useRef({ onSelect, onLoadingChange, disabled });
-  current.current = { onSelect, onLoadingChange, disabled };
+  const current = useRef({ onSelect, onLoadingChange, onActivated, disabled });
+  current.current = { onSelect, onLoadingChange, onActivated, disabled };
   const prefix = `${base}/codex`;
 
   useEffect(() => {
@@ -52,25 +54,40 @@ export function RevisionHistory<T>({
 
   useEffect(() => () => { request.current += 1; }, []);
 
-  async function select(id: number | null) {
+  function isActive(revision: Revision) {
+    return page?.active_id === undefined ? revision.generated_at === version : revision.id === page.active_id;
+  }
+
+  async function select(id: number | null, activate = false) {
     if (current.current.disabled || busy.current) return;
     busy.current = true;
     setSelecting(true);
     const requestId = ++request.current;
-    current.current.onLoadingChange(true);
+    current.current.onLoadingChange(true, activate);
     setError('');
+    setNotice('');
     try {
       let snapshot: T | null;
       if (id === null) {
-        snapshot = kind === 'scheme' || kind === 'parameters'
+        snapshot = kind === 'scheme' || kind === 'parameters' || kind === 'knowledge'
           ? (await api<{ snapshot: T | null }>(`${prefix}/${kind}`)).snapshot
           : await api<T | null>(`${prefix}/${kind}`);
       } else {
-        const result = await api<{ kind: string; snapshot: T }>(`${prefix}/revisions/${id}`);
+        const url = `${prefix}/revisions/${id}`;
+        const result = await api<{ kind: string; snapshot: T }>(
+          activate ? `${url}/activate` : url, activate ? { method: 'POST' } : undefined,
+        );
         if (result.kind !== kind) throw new Error('This saved version belongs to a different view.');
         snapshot = result.snapshot;
       }
-      if (request.current === requestId) current.current.onSelect(snapshot, id);
+      if (request.current === requestId) {
+        current.current.onSelect(snapshot, activate ? null : id);
+        if (activate) {
+          setOffsets([0]);
+          setNotice('This version is now active.');
+          current.current.onActivated?.();
+        }
+      }
     } catch (e) {
       if (request.current === requestId) setError((e as Error).message);
     } finally {
@@ -83,16 +100,17 @@ export function RevisionHistory<T>({
   }
 
   async function remove(revision: Revision) {
-    if (disabled || busy.current || revision.generated_at === version) return;
+    if (disabled || busy.current || isActive(revision)) return;
     if (!window.confirm(`Delete the saved overview from ${new Date(revision.generated_at).toLocaleString()}?`)) return;
     busy.current = true;
     setSelecting(true);
     onLoadingChange(true);
     setError('');
+    setNotice('');
     try {
-      const latest = selectedId === revision.id ? await api<T | null>(`${prefix}/brief`) : undefined;
+      const active = selectedId === revision.id ? await api<T | null>(`${prefix}/brief`) : undefined;
       await api(`${prefix}/revisions/${revision.id}`, { method: 'DELETE' });
-      if (latest !== undefined) current.current.onSelect(latest, null);
+      if (active !== undefined) current.current.onSelect(active, null);
       setPage(null);
       setOffsets([0]);
     } catch (e) {
@@ -107,13 +125,17 @@ export function RevisionHistory<T>({
   return (
     <div className="revision-history">
       {selectedId !== null && (
-        <p role="status">
-          <strong>Viewing saved version</strong>{' '}
-          <button className="quiet" disabled={disabled || selecting} onClick={() => select(null)}>
-            Return to latest
+        <div className="toolbar">
+          <strong role="status">Viewing saved version</strong>
+          <button className="secondary" disabled={disabled || selecting} onClick={() => select(selectedId, true)}>
+            Use this version
           </button>
-        </p>
+          <button className="quiet" disabled={disabled || selecting} onClick={() => select(null)}>
+            Return to active version
+          </button>
+        </div>
       )}
+      <Feedback tone="success">{notice}</Feedback>
       <Feedback tone="error">{error}</Feedback>
       <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
         <summary>Previous versions</summary>
@@ -121,21 +143,24 @@ export function RevisionHistory<T>({
         {!loading && page && !page.results.length && <p>No previous versions saved.</p>}
         {!!page?.results.length && (
           <ul>
-            {page.results.map((revision) => (
-              <li key={revision.id}>
-                <button className="quiet" disabled={disabled || selecting || selectedId === revision.id}
-                  onClick={() => select(revision.id)}>
-                  {new Date(revision.generated_at).toLocaleString()}
-                  {revision.generated_at === version ? ' · Latest' : ''}
-                  {selectedId === revision.id ? ' · Viewing' : ''}
-                </button>
-                {kind === 'brief' && revision.generated_at !== version && (
-                  <DeleteButton label={`Delete overview from ${new Date(revision.generated_at).toLocaleString()}`}
-                    disabled={disabled || selecting || loading} onClick={() => void remove(revision)} />
-                )}
-                <SavedGeneration generation={revision.generation} />
-              </li>
-            ))}
+            {page.results.map((revision) => {
+              const active = isActive(revision);
+              return (
+                <li key={revision.id}>
+                  <button className="quiet" disabled={disabled || selecting || selectedId === revision.id
+                    || (active && selectedId === null)} onClick={() => select(active ? null : revision.id)}>
+                    {new Date(revision.generated_at).toLocaleString()}
+                    {active ? ' · Active' : ''}
+                    {selectedId === revision.id ? ' · Viewing' : ''}
+                  </button>
+                  {kind === 'brief' && !active && (
+                    <DeleteButton label={`Delete overview from ${new Date(revision.generated_at).toLocaleString()}`}
+                      disabled={disabled || selecting || loading} onClick={() => void remove(revision)} />
+                  )}
+                  <SavedGeneration generation={revision.generation} />
+                </li>
+              );
+            })}
           </ul>
         )}
         {(offsets.length > 1 || page?.next_offset != null) && (

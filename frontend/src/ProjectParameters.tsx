@@ -207,9 +207,10 @@ export function ParameterList({ snapshot, prefix, query = '', component = '' }: 
   </>;
 }
 
-export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, onGenerationRequestHandled }: GenerationRequestProps & {
+export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean; externalBusy?: boolean;
   onBusyChange?: (state: Busy) => void;
+  onResultActivated?: () => void;
 }) {
   const projectId = Number(base.split('/')[2]);
   const [saved, setSaved] = useState<{ base: string; result: ParameterResult | null }>({ base, result: null });
@@ -328,6 +329,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       <details><summary>Generation & saved versions</summary>
         <SavedGeneration generation={snapshot.generation} />
         <RevisionHistory<ParameterSnapshot> base={base} kind="parameters" version={latestVersion}
+          onActivated={onResultActivated}
           disabled={busy || externalBusy} selectedId={revisionId} onLoadingChange={value => {
             selectingRevision.current = value; if (value) { requestVersion.current++; reader.current?.abort(); setLoading(false); }
             setRevisionLoading(value);
