@@ -48,6 +48,8 @@ def _unique_object(pairs):
 def _text(value):
     if not isinstance(value, str):
         _error('Conversation text must be a string.')
+    if '\x00' in value:
+        _error('Conversation text contains unsupported NUL characters.')
     try:
         size = len(value.encode('utf-8'))
     except UnicodeError:

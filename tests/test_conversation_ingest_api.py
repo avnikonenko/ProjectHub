@@ -205,6 +205,59 @@ def test_file_duplicate_matches_legacy_chatgpt_labels(api, monkeypatch):
         assert save(client, base, body, checked).status_code == 409
     assert len(client.get(base + '/notes').json()) == 1
 
+    changed = file_payload([messages[0], {'role': 'assistant', 'content': 'Revised answer.'}], source=url)
+    replacement = check(client, base, changed)
+    assert replacement['existing'] == {'id': saved.json()['id'], 'title': 'Legacy', 'duplicate': False}
+    response = save(client, base, changed, replacement, replace_existing=True)
+    assert response.status_code == 201, response.text
+    assert response.json()['id'] == saved.json()['id']
+    assert len(client.get(base + '/notes').json()) == 1
+    source_path = base + f"/conversations/{saved.json()['id']}/sources"
+    source_copies = client.get(source_path).json()
+    assert [source['filename'] for source in source_copies] == ['chat.json', 'legacy-conversation.txt']
+    assert client.get(source_path + f"/{source_copies[1]['id']}").content == b'User:\nQuestion.\n\nChatGPT:\nAnswer.'
+
+
+def test_matching_reference_detects_an_identical_one_sided_legacy_share(api, monkeypatch):
+    client, base, _ = api
+    url = 'https://chatgpt.com/share/c265b990-bef4-4d55-bbdd-1e87bd03d8b5'
+    monkeypatch.setattr(chatgpt_share, 'read_transcript', lambda url: ('Legacy', 'User:\nQuestion.'))
+    saved = client.post(base + '/notes/chatgpt-share', json={'url': url})
+    assert saved.status_code == 201, saved.text
+    body = file_payload([{'role': 'user', 'content': 'Question.'}], source=url)
+    assert check(client, base, body)['existing'] == {'id': saved.json()['id'], 'title': 'Legacy', 'duplicate': True}
+
+
+@pytest.mark.parametrize(('url', 'content'), [
+    ('https://example.test/ordinary-document', 'Original prose'),
+    ('https://chatgpt.com/share/c265b990-bef4-4d55-bbdd-1e87bd03d8b5', 'Original prose'),
+    ('https://chatgpt.com/share/c265b990-bef4-4d55-bbdd-1e87bd03d8b5', 'User:\nOriginal prose'),
+])
+def test_import_does_not_target_an_ordinary_document_with_matching_reference(api, url, content):
+    client, base, _ = api
+    document = client.post(base + '/notes', json={'kind': 'document', 'title': 'Ordinary document',
+                           'content': content, 'reference': url}).json()
+    body = file_payload([{'role': 'user', 'content': 'Question.'},
+                         {'role': 'assistant', 'content': 'Answer.'}], source=url)
+    preview = check(client, base, body)
+    assert preview['existing'] is None
+    saved = save(client, base, body, preview)
+    assert saved.status_code == 201, saved.text
+    assert saved.json()['id'] != document['id']
+    assert client.get(base + f"/notes/{document['id']}").json() == document
+    assert check(client, base, body)['existing']['id'] == saved.json()['id']
+
+
+def test_preview_and_save_reject_nul_before_saving_sources(api):
+    client, base, _ = api
+    body = file_payload([{'role': 'user', 'content': 'prefix\x00' + 'x' * 500_000},
+                         {'role': 'assistant', 'content': 'Answer.'}])
+    preview = client.post(base + '/conversations/preview', json=body)
+    assert preview.status_code == 422 and 'NUL characters' in preview.json()['detail']
+    result = save(client, base, body, {'fingerprint': '0' * 64})
+    assert result.status_code == 422 and 'NUL characters' in result.json()['detail']
+    assert client.get(base + '/notes').json() == []
+
 
 def test_import_accepts_valid_markdown_above_generic_request_limit(api):
     client, base, _ = api

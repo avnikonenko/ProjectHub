@@ -118,6 +118,27 @@ def test_corrupt_message_ranges_do_not_fall_back_to_inferred_roles(imported):
     assert bundle['coverage']['unavailable'] == ['chatgpt:note:1']
 
 
+def test_older_import_with_nul_is_unavailable_without_editing_its_transcript(imported):
+    engine, messages = imported
+    source = knowledge_sources.load_sources(engine, 1)['sources'][-1]
+    ref = {'source_id': source['id'], 'excerpt': messages[-1][2], 'role': 'assistant'}
+    first_id, first_role, first_text = messages[0]
+    content, metadata = transcript([(first_id, first_role, first_text + '\x00suffix'), *messages[1:]])
+    with Session(engine) as db:
+        note = db.get(Note, 1)
+        note.content, note.conversation = content, metadata
+        db.commit()
+        origin = scheme_knowledge._origin(db, 1, ref, source)
+        assert origin[:2] == ({'note_id': 1, 'share': True}, 'unavailable')
+        assert origin[2]['quote_present'] is False
+    bundle = knowledge_sources.load_sources(engine, 1)
+    assert bundle['sources'] == []
+    assert bundle['coverage']['unavailable'] == ['chatgpt:note:1']
+    assert bundle['manifest']['entries'][0]['reason'] == 'invalid_transcript_extent'
+    with Session(engine) as db:
+        assert db.get(Note, 1).content == content
+
+
 @pytest.mark.parametrize('balanced', [False, True])
 def test_large_import_admits_exact_messages_within_budget(imported, monkeypatch, balanced):
     engine, messages = imported

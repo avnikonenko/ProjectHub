@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text
 
 from ...services import require_project
-from .knowledge_sources import CONVERSATION_NOTE_SQL
+from .knowledge_sources import CONVERSATION_EXTENT_SQL, CONVERSATION_NOTE_SQL
 
 
 BUDGET_CHARS = 12_000
@@ -112,7 +112,9 @@ def _origin(db, project_id, ref, descriptor):
         end = f"json_extract({message},'$.end')"
         row = db.execute(text(f'WITH note AS (SELECT id,updated_at,reference,content,conversation, '
             f"kind='document' AND {CONVERSATION_NOTE_SQL} AS imported FROM notes WHERE project_id=:pid AND id=:nid) "
-            'SELECT id,updated_at,reference,imported,CASE WHEN imported THEN EXISTS (SELECT 1 '
+            'SELECT id,updated_at,reference,imported,'
+            f'(imported AND {CONVERSATION_EXTENT_SQL}>length(content)) AS invalid_extent,'
+            'CASE WHEN imported THEN EXISTS (SELECT 1 '
             "FROM json_each(conversation,'$.messages') m WHERE "
             f"((:message_id IS NOT NULL AND json_extract({message},'$.id')=:message_id) OR m.key=:ordinal) "
             f"AND json_extract({message},'$.role')=:role AND json_type({message},'$.start')='integer' "
@@ -127,8 +129,9 @@ def _origin(db, project_id, ref, descriptor):
         if row['imported'] or (isinstance(row['reference'], str) and re.fullmatch(
                 r'https://chatgpt\.com/share/[0-9a-f-]{36}/?', row['reference'], re.I)):
             navigation['share'] = True
-        return navigation, 'available' if row['present'] else 'stale', {
-            'note_id': note_id, 'updated_at': row['updated_at'], 'quote_present': bool(row['present'])}
+        validity = 'unavailable' if row['invalid_extent'] else 'available' if row['present'] else 'stale'
+        return navigation, validity, {'note_id': note_id, 'updated_at': row['updated_at'],
+                                       'quote_present': validity == 'available'}
     if isinstance(session_id, int) and not isinstance(session_id, bool) and session_id > 0:
         session = db.execute(text('SELECT id,is_linked,history_indexed_at,history_indexed_activity,'
                                   'codex_activity_at,last_error FROM codex_sessions '

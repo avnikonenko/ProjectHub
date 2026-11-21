@@ -116,6 +116,30 @@ def test_claude_reads_only_fixed_anonymous_endpoint(monkeypatch):
     assert result['reference'] == CLAUDE
 
 
+@pytest.mark.parametrize(('filename', 'text'), [
+    ('transcript.json', json.dumps({'messages': [{'role': 'user', 'content': 'before\x00after'}]})),
+    ('transcript.md', '## User\nbefore\x00after'),
+])
+def test_conversation_files_reject_nul(filename, text):
+    with pytest.raises(imports.ConversationImportError, match='NUL characters'):
+        imports.parse_file(filename, text)
+
+
+def test_claude_share_rejects_decoded_nul(monkeypatch):
+    body = json.dumps({'chat_messages': [{'sender': 'human', 'text': 'before\x00after'}]}).encode()
+    monkeypatch.setattr(imports, 'build_opener', lambda handler: SimpleNamespace(
+        open=lambda request, timeout: Response(body)))
+    with pytest.raises(imports.ConversationImportError, match='NUL characters'):
+        imports.read_share(CLAUDE)
+
+
+@pytest.mark.parametrize('return_messages', [False, True])
+def test_chatgpt_share_parser_rejects_visible_nul(return_messages):
+    html = '<title>ChatGPT - Shared</title><div data-user-message-copy>before\x00after</div>'
+    with pytest.raises(chatgpt_share.ShareReadError, match='NUL characters'):
+        chatgpt_share.parse_transcript(html, return_messages=return_messages)
+
+
 @pytest.mark.parametrize('status', [401, 403, 404, 302])
 def test_claude_access_errors_are_actionable_without_private_response(monkeypatch, status):
     def fail(request, timeout):

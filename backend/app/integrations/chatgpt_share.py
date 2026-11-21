@@ -245,6 +245,8 @@ def parse_transcript(html, *, return_messages=False):
         raise ShareReadError(
             'No readable transcript was found. Check that the share opens without signing in.'
         )
+    if '\x00' in title or any('\x00' in message for message in messages):
+        raise ShareReadError('The shared conversation contains unsupported NUL characters.')
     title = title.strip().removeprefix('ChatGPT - ').strip()
     result = (title[:500] or 'Shared ChatGPT conversation', '\n\n'.join(messages))
     return (*result, messages) if return_messages else result

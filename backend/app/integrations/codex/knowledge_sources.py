@@ -26,6 +26,10 @@ _MARKER = re.compile(r'(?m)^(User|ChatGPT):[ \t]*(?:\r?\n)?')
 _SHARE = re.compile(r'https://chatgpt\.com/share/[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}/?', re.I)
 _IMPORTED_TOOL_HEADER = re.compile(r'\[(external_agent_tool_call|external_agent_tool_result)(?::[^\]\r\n]*)?\]')
 CONVERSATION_NOTE_SQL = "json_type(CASE WHEN json_valid(conversation) THEN conversation END) IS 'object'"
+# SQLite's text length stops at a NUL. Imported message offsets describe the
+# full transcript and can identify older malformed rows before loading them.
+CONVERSATION_EXTENT_SQL = ("json_extract(CASE WHEN json_valid(conversation) THEN conversation END,"
+                           "'$.messages[#-1].end')")
 
 # SQLite metadata-only equivalent of _SHARE.fullmatch. A prefix LIKE alone would
 # count ordinary references as imported chats and overstate the denominator.
@@ -257,7 +261,8 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
         project_data = {key: getattr(project, key) for key in ('id', 'name', 'description', 'goals', 'repository_path')}
         sessions = list(db.scalars(select(CodexSession).where(
             CodexSession.project_id == project_id).order_by(CodexSession.id).limit(MAX_PARENTS + 1)))
-        notes = list(db.execute(text(f'SELECT id,title,reference,length(content) AS size,{CONVERSATION_NOTE_SQL} AS canonical '
+        notes = list(db.execute(text(f'SELECT id,title,reference,length(content) AS size,{CONVERSATION_NOTE_SQL} AS canonical, '
+            f'{CONVERSATION_EXTENT_SQL} AS transcript_end '
             "FROM notes WHERE project_id=:pid AND kind='document' ORDER BY id LIMIT :lim"),
             {'pid': project_id, 'lim': MAX_PARENTS + 1}).mappings())
         inventory = _source_inventory(db, project_id, sessions, notes)
@@ -365,6 +370,13 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
             if shared:
                 entry['url'] = note['reference']
             entries.append(entry)
+            if (note['canonical'] and type(note['transcript_end']) is int
+                    and note['transcript_end'] > note['size']):
+                omitted('invalid_documents')
+                entry.update(availability='unavailable', reason='invalid_transcript_extent')
+                coverage['unavailable'].append(parent)
+                coverage['limitations'].append(f'{parent}: saved transcript text does not match its message offsets.')
+                return
             if not note['canonical'] and (note['size'] > MAX_DOCUMENT_CHARS or chars + note['size'] > text_limit):
                 omitted('oversized_documents' if note['size'] > MAX_DOCUMENT_CHARS else 'global_text_budget_documents')
                 entry['availability'] = 'excluded'

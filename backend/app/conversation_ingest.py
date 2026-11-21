@@ -5,7 +5,7 @@ from collections import Counter
 
 from sqlalchemy import func, literal_column, or_, select
 
-from .integrations import conversation_import
+from .integrations import chatgpt_share, conversation_import
 from .models import ConversationImportSource, Note
 from .schemas import NoteCreate
 
@@ -80,7 +80,18 @@ def _find_existing(db, project_id, values):
         Note.project_id == project_id, Note.kind == 'document').order_by(Note.id).limit(1)
     reference = values['reference']
     if reference:
-        found = db.execute(matches.where(Note.reference == reference)).first()
+        saved_conversation = Note.conversation.is_not(None)
+        try:
+            legacy_share = chatgpt_share.canonical_url(reference) == reference
+        except ValueError:
+            legacy_share = False
+        if legacy_share:
+            # Preserve exact duplicates of a one-sided share. Replacing changed
+            # text also requires the original import's two-speaker framing.
+            saved_conversation = or_(saved_conversation, Note.content == _legacy_chatgpt_content(values),
+                                     Note.content.op('GLOB')('User:\n?*\n\nChatGPT:\n?*'),
+                                     Note.content.op('GLOB')('ChatGPT:\n?*\n\nUser:\n?*'))
+        found = db.execute(matches.where(Note.reference == reference, saved_conversation)).first()
         if found is not None:
             return found
         matches = matches.where(Note.reference == '')
