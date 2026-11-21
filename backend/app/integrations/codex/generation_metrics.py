@@ -1,4 +1,4 @@
-"""Best-effort, request-local usage from official App Server notifications.
+"""Best-effort, request-local usage from provider reports.
 
 No prompt, response, account or thread identifiers are exposed by snapshots.
 The context is copied to extraction workers; callbacks keep their own recorder
@@ -70,18 +70,19 @@ class _ModelRequest:
             if self._turn_id is None:
                 # Bound untrusted pre-ack turn IDs without retaining source data.
                 if turn_id in self._pending or len(self._pending) < 16:
-                    previous = self._pending.get(turn_id)
-                    if not _older(usage, previous):
-                        self._pending[turn_id] = usage
-            elif turn_id == self._turn_id and not _older(usage, self._usage):
-                self._usage = usage
+                    self._pending[turn_id] = _latest_usage(usage, self._pending.get(turn_id))
+            elif turn_id == self._turn_id:
+                self._usage = _latest_usage(usage, self._usage)
 
 
-def _older(current, previous):
-    # A fresh ephemeral thread is used for each request. Its cumulative total
-    # cannot decrease; ignore a delayed earlier sample rather than double-count.
-    return (previous is not None and 'total_tokens' in current and 'total_tokens' in previous
-            and current['total_tokens'] < previous['total_tokens'])
+def _latest_usage(current, previous):
+    if previous is None or 'total_tokens' not in previous:
+        return current
+    # Keep the last cumulative report intact when a later message omits its
+    # total or carries an older total from the same ephemeral thread.
+    if 'total_tokens' not in current or current['total_tokens'] < previous['total_tokens']:
+        return previous
+    return current
 
 
 class GenerationMetrics:
@@ -94,6 +95,13 @@ class GenerationMetrics:
         with self._lock:
             self._requests.append(request)
         return request
+
+    def live_usage(self):
+        with self._lock:
+            totals = [request._usage['total_tokens'] for request in self._requests
+                      if request._usage is not None and 'total_tokens' in request._usage]
+            return {'total_tokens': sum(totals) if totals else None, 'reported_requests': len(totals),
+                    'model_requests': len(self._requests)}
 
     def snapshot(self):
         with self._lock:
@@ -129,4 +137,7 @@ def collect_generation_metrics(collection):
 def begin_model_request(thread_id):
     """Return a recorder when collection is enabled, otherwise remain a no-op."""
     collection = _current.get()
+    if collection is None:
+        from .progress import current_metrics
+        collection = current_metrics()
     return collection.begin_model_request(thread_id) if collection is not None else None

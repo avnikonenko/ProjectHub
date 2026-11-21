@@ -318,7 +318,7 @@ def refresh_brief(engine, project_id, manager):
 
     try:
         profile = current_knowledge_profile()
-        progress.begin(project_id, 'brief', engine=engine, manager=manager, generation_profile=profile.id)
+        progress.begin(project_id, 'brief', engine=engine, manager=manager, metrics=metrics, generation_profile=profile.id)
         transport_scope.enter_context(collect_generation_metrics(metrics))
         workers = transport_scope.enter_context(archive_worker_scope())
         progress.record_settings(project_id, extraction_workers=workers)

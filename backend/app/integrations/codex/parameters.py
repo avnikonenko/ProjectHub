@@ -12,6 +12,7 @@ from ...models import GenerationRevision, Project, utcnow
 from ...services import require_project
 from . import progress
 from .brief import BriefBusy, generation_lock, generation_metadata
+from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
 from .revisions import save_revision
@@ -245,8 +246,9 @@ def refresh_parameters(engine, project_id, manager):
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
+    metrics = GenerationMetrics()
     try:
-        progress.begin(project_id, 'parameters', engine=engine, manager=manager,
+        progress.begin(project_id, 'parameters', engine=engine, manager=manager, metrics=metrics,
                        generation_profile=current_knowledge_profile().id)
         progress.update(project_id, stage='Inspecting implementation choices and usage sites')
         evidence = collect_parameter_evidence(engine, project_id)
@@ -282,7 +284,7 @@ def refresh_parameters(engine, project_id, manager):
             'fingerprint': evidence['fingerprint'], 'generation': generation_metadata(manager),
             'diagnostics': {**deepcopy(evidence.get('diagnostics', {})), 'input_chars': len(prompt),
                 'duration_seconds': round(time.monotonic() - started, 3), 'ai_requests': 1,
-                'parameter_count': len(items), 'explained_parameters': explained}}
+                'parameter_count': len(items), 'explained_parameters': explained, **metrics.snapshot()}}
         progress.record_diagnostics(project_id, snapshot['diagnostics'])
         with Session(engine) as db:
             if db.get(Project, project_id) is None:

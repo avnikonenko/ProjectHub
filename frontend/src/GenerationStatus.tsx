@@ -14,6 +14,7 @@ const recoveryLabels: Record<RecoveryKind, string> = {
 
 export type GenerationProvenance = { account: string; model: string; effort: string; provider?: GenerationProvider };
 type ProgressSettings = { provider?: GenerationProvider };
+type LiveTokenUsage = { total_tokens: number | null; reported_requests: number; model_requests: number };
 export type Progress = {
   state: 'idle' | 'running' | 'completed' | 'failed' | 'cancelled';
   stage: string;
@@ -29,9 +30,19 @@ export type Progress = {
   cache_hits?: number;
   budget_seconds?: number;
   elapsed_seconds?: number;
+  live_token_usage?: LiveTokenUsage;
   settings?: ProgressSettings | null;
   latest_attempt?: { state: string; started_at?: string; settings?: ProgressSettings | null } | null;
 };
+
+function parseLiveTokenUsage(value: unknown): LiveTokenUsage | null {
+  if (!value || typeof value !== 'object') return null;
+  const { total_tokens, reported_requests, model_requests } = value as Partial<LiveTokenUsage>;
+  const count = (part: unknown): part is number => typeof part === 'number' && Number.isSafeInteger(part) && part >= 0;
+  if (!count(reported_requests) || !count(model_requests) || reported_requests > model_requests ||
+    (reported_requests === 0 ? total_tokens !== null : !count(total_tokens))) return null;
+  return { total_tokens: total_tokens ?? null, reported_requests, model_requests };
+}
 
 // The status API preserves its legacy idle state for queued dependencies.
 // Their durable waiting state still needs polling and duplicate protection.
@@ -310,6 +321,7 @@ export function GenerationStatus({
   const hasBatchTotal = Number.isFinite(progress?.batch_total) && (progress?.batch_total ?? 0) > 0;
   const budget = progress?.budget_seconds;
   const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;
+  const liveUsage = progress?.state === 'running' ? parseLiveTokenUsage(progress.live_token_usage) : null;
   if (kind === 'ask' && (!progress || progress.state === 'idle' || progress.state === 'completed')) return null;
   return (
     <>
@@ -336,6 +348,12 @@ export function GenerationStatus({
           <p>Overall time budget: {durationLabel(budget)}
             {progress?.state === 'running' ? ` · ${durationLabel(budget - measuredElapsed)} remaining` : ''}</p>
         )}
+        {!error && liveUsage && <p aria-live="off">
+          {liveUsage.total_tokens === null ? 'Waiting for a reported token total'
+            : `Reported tokens so far: ${liveUsage.total_tokens.toLocaleString()}`}
+          {liveUsage.model_requests > 0 &&
+            ` · ${liveUsage.reported_requests.toLocaleString()} of ${liveUsage.model_requests.toLocaleString()} model ${liveUsage.model_requests === 1 ? 'request' : 'requests'} reported a total`}
+        </p>}
         {!error && progress?.state === 'running' && progress.sessions > 0 && (
           <p>{progress.sessions.toLocaleString()} {progress.sessions === 1 ? 'conversation processed' : 'conversations processed'}</p>
         )}

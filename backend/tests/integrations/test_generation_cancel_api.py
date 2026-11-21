@@ -13,6 +13,7 @@ from backend.app.db import initialize
 from backend.app.main import create_app
 from backend.app.models import GenerationRevision, Project, ProjectQA
 from backend.app.integrations.codex import progress, qa, router as routes
+from backend.app.integrations.codex.generation_metrics import begin_model_request
 
 
 def test_cancel_ask_targets_exact_project_run_and_releases_generation_lock(tmp_path, monkeypatch):
@@ -22,6 +23,10 @@ def test_cancel_ask_targets_exact_project_run_and_releases_generation_lock(tmp_p
     entered, release = Event(), Event()
 
     def answer(*args):
+        usage = begin_model_request('fixture-thread')
+        usage.bind_turn('fixture-turn')
+        usage.record({'threadId': 'fixture-thread', 'turnId': 'fixture-turn',
+                      'tokenUsage': {'total': {'totalTokens': 42}}})
         entered.set()
         while not release.wait(0.01):
             progress.check_cancelled()
@@ -38,16 +43,24 @@ def test_cancel_ask_targets_exact_project_run_and_releases_generation_lock(tmp_p
                 try:
                     assert entered.wait(3)
                     status = client.get(base + '/generation/status?kind=ask').json()
+                    assert status['live_token_usage'] == {
+                        'total_tokens': 42, 'reported_requests': 1, 'model_requests': 1,
+                    }
+                    other_status = client.get(f'/api/projects/{other}/codex/generation/status?kind=ask').json()
+                    assert 'live_token_usage' not in other_status
                     body = {'kind': 'ask', 'started_at': status['started_at']}
                     assert client.post(f'/api/projects/{other}/codex/generation/cancel', json=body).status_code == 409
                     assert client.post(base + '/generation/cancel', json={**body, 'started_at': 'stale'}).status_code == 409
                     accepted = client.post(base + '/generation/cancel', json=body)
                     assert accepted.status_code == 200
                     assert accepted.json()['cancel_requested'] is True
+                    assert accepted.json()['live_token_usage'] == status['live_token_usage']
                     assert pending.result(timeout=3).status_code == 503
                 finally:
                     release.set()
-            assert client.get(base + '/generation/status?kind=ask').json()['state'] == 'cancelled'
+            cancelled = client.get(base + '/generation/status?kind=ask').json()
+            assert cancelled['state'] == 'cancelled'
+            assert 'live_token_usage' not in cancelled
             assert not routes.generation_lock.locked()
             assert client.post(base + '/generation/cancel', json=body).status_code == 409
             assert client.post(base + '/ask', json={'confirmed': True, 'question': 'Try again'}).json()['answer'] == 'Answer'

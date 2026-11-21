@@ -11,6 +11,7 @@ from backend.app.db import initialize
 from backend.app.models import GenerationRevision, Project, ProjectBrief, ProjectKnowledge, ProjectScheme
 from backend.app.integrations.codex import parameters, progress
 from backend.app.integrations.codex.brief import BriefBusy, generation_lock
+from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
 
 
@@ -209,6 +210,10 @@ class Manager:
 
     def generate_brief(self, prompt, schema):
         self.calls += 1
+        usage = begin_model_request('parameters-thread')
+        usage.bind_turn('parameters-turn')
+        usage.record({'threadId': 'parameters-thread', 'turnId': 'parameters-turn',
+                      'tokenUsage': {'total': {'totalTokens': 70}}})
         assert 'code/configuration' in prompt and 'textbook caveats' in prompt
         assert 'undocumented rationale must be empty' in prompt
         assert 'Do not execute or evaluate project code' in prompt
@@ -238,6 +243,8 @@ def test_one_generation_saves_all_declared_values_independently_and_failure_pres
     assert manager.calls == 1 and calls == [1, 1]
     assert saved['generation'] == manager.generation_metadata
     assert saved['diagnostics']['parameter_count'] == 2 and saved['diagnostics']['explained_parameters'] == 1
+    assert saved['diagnostics']['model_requests'] == 1
+    assert saved['diagnostics']['token_usage']['total_tokens'] == 70
     assert saved['coverage']['partial']
     state = saved_state(engine)
     assert state[0] == saved and state[1:4] == before[1:4]

@@ -95,8 +95,9 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
     {!!profile?.notes.length && <ul>{profile.notes.map((note, index) => <li key={index}>{note}</li>)}</ul>}
     {!usage || usage.status === 'unavailable' ? <p>Token usage is unavailable for this run.</p> : <>
       <p>{usage.status === 'partial' ? 'Partial reported token usage' : 'Reported token usage'}
-        {usage.reported_requests !== null && ` · ${diagnosticCount(usage.reported_requests)} requests reported`}
-        {usage.unreported_requests !== null && usage.unreported_requests > 0 && ` · ${diagnosticCount(usage.unreported_requests)} unreported`}</p>
+        {usage.reported_requests !== null &&
+          ` · usage from ${diagnosticCount(usage.reported_requests)} ${usage.reported_requests === 1 ? 'request' : 'requests'}`}
+        {usage.unreported_requests !== null && usage.unreported_requests > 0 && ` · ${diagnosticCount(usage.unreported_requests)} without usage`}</p>
       <dl>
         <dt>Total tokens</dt><dd>{diagnosticCount(usage.total_tokens)}</dd>
         <dt>Input tokens</dt><dd>{diagnosticCount(usage.input_tokens)}</dd>
@@ -104,7 +105,7 @@ export function GenerationDetails({ diagnostics, embedded = false }: { diagnosti
         <dt>Cached input tokens</dt><dd>{diagnosticCount(usage.cached_input_tokens)}</dd>
         <dt>Reasoning output tokens</dt><dd>{diagnosticCount(usage.reasoning_output_tokens)}</dd>
       </dl>
-      <p><small>Counts are reported by Codex. Partial totals do not include unreported requests. Cached input and reasoning tokens are breakdowns, not extra tokens to add to the total.</small></p>
+      <p><small>Each count includes only requests that reported that field. Cached input and reasoning tokens are breakdowns of the reported counts.</small></p>
     </>}
   </>;
   return embedded ? content : <details className="generation-details"><summary>Generation details</summary>{content}</details>;

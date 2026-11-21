@@ -75,3 +75,14 @@ test('timing disclosure bounds visible rows and discloses omissions', () => {
   assert.match(html, /first 100 of/);
   assert.match(html, /Some timing records were omitted/);
 });
+
+test('saved usage counts requests with a reported field even when a total is missing', () => {
+  const html = renderToStaticMarkup(createElement(GenerationDetails, { diagnostics: {
+    token_usage: { status: 'partial', reported_requests: 1, unreported_requests: 1,
+      total_tokens: null, input_tokens: null, output_tokens: 42, cached_input_tokens: null, reasoning_output_tokens: null },
+  } }));
+  assert.match(html, /Partial reported token usage · usage from 1 request · 1 without usage/);
+  assert.match(html, /<dt>Total tokens<\/dt><dd>Unavailable<\/dd>/);
+  assert.match(html, /<dt>Output tokens<\/dt><dd>42<\/dd>/);
+  assert.match(html, /Each count includes only requests that reported that field/);
+});

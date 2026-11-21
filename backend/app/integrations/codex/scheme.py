@@ -14,6 +14,7 @@ from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
 from . import generation_attempts, progress
 from .brief import BriefBusy, generation_lock, generation_metadata
+from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
 from .revisions import save_revision
@@ -324,6 +325,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
     if not job_lock.acquire(blocking=False):
         raise BriefBusy('Another AI generation for this project view is running, or maintenance is active.')
     started = time.monotonic()
+    metrics = GenerationMetrics()
     try:
         if dependency_token is not None:
             # A manual run or a newer queued job can replace this request before
@@ -336,7 +338,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                     or attempt['started_at'] != dependency_token):
                 raise SchemeQueueSuperseded('A newer Scheme run replaced this queued request.')
         profile = current_knowledge_profile()
-        progress.begin(project_id, 'scheme', engine=engine, manager=manager,
+        progress.begin(project_id, 'scheme', engine=engine, manager=manager, metrics=metrics,
                        generation_profile=profile.id, scheme_focus=focus)
         progress.update(project_id, stage='Collecting Scheme evidence')
         limits = scheme_inspection_limits()
@@ -487,13 +489,15 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'generation': generation_metadata(manager),
             'diagnostics': {**evidence.get('diagnostics', {}), **overview_diagnostics, 'input_chars': len(prompt),
                             'duration_seconds': round(time.monotonic() - started, 3),
-                            'ai_requests': 1 + overview_diagnostics.get('archive_generated_batches', 0)},
+                            'ai_requests': 1 + overview_diagnostics.get('archive_generated_batches', 0),
+                            **metrics.snapshot()},
         }
         if 'dependency_inventory' in evidence:
             snapshot['dependency_inventory'] = inventory_with_purposes(
                 evidence['dependency_inventory'], dependencies, evidence['sources'])
         if isinstance(knowledge_context, dict):
             snapshot['knowledge_context'] = deepcopy(knowledge_context)
+        progress.record_diagnostics(project_id, snapshot['diagnostics'])
         with Session(engine) as db:
             if expected_publication_id is not None:
                 begin_session_write(db)

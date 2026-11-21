@@ -1,5 +1,6 @@
 """One-shot Claude Code generation without project tools or saved sessions."""
 from contextlib import contextmanager
+from functools import partial
 import hashlib
 import json
 import os
@@ -202,7 +203,7 @@ def _generation_failure(returncode, output, errors, error_bytes):
     return failure
 
 
-def _exchange(process, data, timeout):
+def _exchange(process, data, timeout, *, record_failed_usage=None):
     """Feed stdin and drain stdout concurrently under bounded deadline and memory."""
     deadline = time.monotonic() + timeout
     output = bytearray()
@@ -254,6 +255,8 @@ def _exchange(process, data, timeout):
                     continue
     progress.check_cancelled()
     if process.returncode != 0 or _failure_details(output) is not None:
+        if record_failed_usage is not None:
+            record_failed_usage(output, errors)
         raise _generation_failure(process.returncode, output, errors, error_bytes)
     return output
 
@@ -266,23 +269,26 @@ def _terminate(process):
     process.wait()
 
 
-def _result(output):
+def _result(output, request, request_id):
     try:
         result = json.loads(output)
+        _record_usage(request, request_id, result)
         if not (isinstance(result, dict) and result.get('type') == 'result'
                 and result.get('subtype') == 'success' and result.get('is_error') is False
                 and isinstance(result.get('structured_output'), dict)):
             raise CodexError('Claude Code did not return a completed structured result.')
-        return result, json.dumps(result['structured_output'], ensure_ascii=True,
-                                  separators=(',', ':'), allow_nan=False)
+        return json.dumps(result['structured_output'], ensure_ascii=True, separators=(',', ':'), allow_nan=False)
     except (ValueError, UnicodeError, RecursionError):
         raise CodexError('Claude Code returned invalid structured output.') from None
 
 
 def _record_usage(request, request_id, result):
+    if (request is None or not isinstance(result, dict) or result.get('type') != 'result'
+            or type(result.get('is_error')) is not bool or not isinstance(result.get('subtype'), str)):
+        return False
     values = result.get('usage')
-    if request is None or not isinstance(values, dict):
-        return
+    if not isinstance(values, dict):
+        return False
     fields = {'input_tokens': 'inputTokens', 'output_tokens': 'outputTokens',
               'cache_read_input_tokens': 'cachedInputTokens'}
     recorded = {target: values[field] for field, target in fields.items()
@@ -297,8 +303,23 @@ def _record_usage(request, request_id, result):
             recorded['totalTokens'] = recorded['inputTokens'] + recorded['outputTokens']
     else:
         recorded.pop('inputTokens', None)
+    if not recorded:
+        return False
     request.bind_turn(request_id)
     request.record({'threadId': request_id, 'turnId': request_id, 'tokenUsage': {'total': recorded}})
+    return True
+
+
+def _record_failed_usage(request, request_id, output, errors):
+    # Prefer the CLI result on stdout. A confirmed result on bounded stderr
+    # can supply usage when stdout is missing it, without counting both.
+    for raw in (output, errors):
+        try:
+            result = json.loads(raw)
+        except (ValueError, UnicodeError, RecursionError):
+            continue
+        if _record_usage(request, request_id, result):
+            return
 
 
 class ClaudeGenerationManager:
@@ -411,12 +432,11 @@ class ClaudeGenerationManager:
                                       start_new_session=True) as process:
                     request = begin_model_request(request_id)
                     try:
-                        output = _exchange(process, data, timeout)
+                        failed_usage = partial(_record_failed_usage, request, request_id) if request is not None else None
+                        output = _exchange(process, data, timeout, record_failed_usage=failed_usage)
                     except BaseException:
                         _terminate(process)
                         raise
             except OSError:
                 raise CodexError('Could not run the Claude Code CLI.') from None
-        result, answer = _result(output)
-        _record_usage(request, request_id, result)
-        return answer
+        return _result(output, request, request_id)

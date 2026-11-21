@@ -685,7 +685,7 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
 
     try:
         profile = current_knowledge_profile()
-        progress.begin(project_id, 'qa', engine=engine, manager=manager, generation_profile=profile.id,
+        progress.begin(project_id, 'qa', engine=engine, manager=manager, metrics=metrics, generation_profile=profile.id,
                        max_items=max_items)
         transport_scope.enter_context(collect_generation_metrics(metrics))
         workers = transport_scope.enter_context(archive_worker_scope())

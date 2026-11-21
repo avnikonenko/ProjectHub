@@ -1,12 +1,13 @@
 """Usage accounting contracts with official-shaped events, not billed cost."""
 from concurrent.futures import ThreadPoolExecutor
-from contextvars import copy_context
+from contextvars import Context, copy_context
 from copy import deepcopy
 import json
 import threading
 
 import pytest
 
+from backend.app.integrations.codex import progress
 from backend.app.integrations.codex.generation_metrics import (
     GenerationMetrics, begin_model_request, collect_generation_metrics,
 )
@@ -107,6 +108,51 @@ def test_partial_usage_retains_field_coverage_and_unreported_request_count():
     assert actual['unreported_requests'] == 1
     assert actual['field_coverage']['input_tokens'] == 2
     assert actual['field_coverage']['total_tokens'] == 1
+
+
+def test_live_progress_uses_latest_reported_totals_and_resets_per_run():
+    project_id = 1729
+    metrics = GenerationMetrics()
+    other = Context()
+    progress.begin(project_id, 'brief', metrics=metrics)
+    old_context = copy_context()
+    other.run(progress.begin, project_id, 'scheme')
+    try:
+        assert progress.read(project_id, 'brief')['live_token_usage'] == {
+            'total_tokens': None, 'reported_requests': 0, 'model_requests': 0,
+        }
+        first = begin_model_request('one')
+        first.record(notification(thread='one', total=0, inputTokens=0, outputTokens=0))
+        first.bind_turn('private-turn')
+        assert progress.read(project_id, 'brief')['live_token_usage']['total_tokens'] == 0
+        second = begin_model_request('two')
+        second.bind_turn('private-turn')
+        second.record({'threadId': 'two', 'turnId': 'private-turn', 'tokenUsage': {'total': {'inputTokens': 7}}})
+        first.record(notification(thread='one', total=40))
+        first.record(notification(thread='one', total=30))
+        first.record({'threadId': 'one', 'turnId': 'private-turn', 'tokenUsage': {'total': {'outputTokens': 20}}})
+        assert progress.read(project_id, 'brief')['live_token_usage'] == {
+            'total_tokens': 40, 'reported_requests': 1, 'model_requests': 2,
+        }
+        assert metrics.snapshot()['token_usage']['total_tokens'] == 40
+        scheme_request = other.run(begin_model_request, 'scheme-only')
+        scheme_request.bind_turn('private-turn')
+        scheme_request.record(notification(thread='scheme-only', total=100))
+        assert progress.read(project_id, 'scheme')['live_token_usage']['total_tokens'] == 100
+        assert progress.read(project_id + 1, 'brief').get('live_token_usage') is None
+    finally:
+        other.run(progress.finish, project_id)
+        progress.finish(project_id)
+
+    assert 'live_token_usage' not in progress.read(project_id, 'brief')
+    progress.begin(project_id, 'brief')
+    try:
+        assert old_context.run(begin_model_request, 'late-request') is None
+        assert progress.read(project_id, 'brief')['live_token_usage'] == {
+            'total_tokens': None, 'reported_requests': 0, 'model_requests': 0,
+        }
+    finally:
+        progress.finish(project_id)
 
 
 def test_context_is_request_local_and_copied_workers_share_only_their_collector():

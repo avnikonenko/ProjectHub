@@ -11,6 +11,7 @@ import weakref
 from sqlalchemy.orm import Session
 
 from ...models import utcnow
+from .generation_metrics import GenerationMetrics
 from .protocol import CodexError
 
 _lock = threading.Lock()
@@ -21,6 +22,7 @@ _events = {}
 _clocks = {}
 _stage_clocks = {}
 _run_locks = {}
+_live_metrics = {}
 # Weak references avoid retaining disposed test/application engines with snapshots.
 _stores = {}
 log = logging.getLogger('uvicorn.error')
@@ -86,7 +88,7 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
-def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, **options):
+def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None, **options):
     from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
@@ -105,6 +107,7 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, **o
         _active[key] = event
         _events[key] = event
         _run_locks[key] = threading.Lock()
+        _live_metrics[key] = metrics if metrics is not None else GenerationMetrics()
         _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation',
                            'started_at': utcnow(), 'budget_seconds': budget}
         if settings is not None:
@@ -120,6 +123,14 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, **o
                 if _active.get(key) is event:
                     _finish_locked(project_id, 'Could not save generation attempt status. No generation was started.')
             raise CodexError('Could not save generation attempt status. No generation was started.') from exc
+
+
+def current_metrics():
+    current = _current.get()
+    if current is not None:
+        with _lock:
+            return _live_metrics.get(_owned_key(current[0]))
+    return None
 
 
 def record_settings(project_id, manager=None, **options):
@@ -204,7 +215,11 @@ def cancel(project_id, kind, started_at):
             _events[key].set()
             _record_stage(key, snapshot)
             snapshot.update(stage='Cancelling', cancel_requested=True)
-            return deepcopy(snapshot)
+            result = deepcopy(snapshot)
+            metrics = _live_metrics.get(key)
+        if metrics is not None:
+            result['live_token_usage'] = metrics.live_usage()
+        return result
 
 
 def record_diagnostics(project_id, diagnostics):
@@ -251,6 +266,7 @@ def _finish_locked(project_id, error=None):
         _stage_clocks.pop(key, None)
         _active.pop(key, None)
         _run_locks.pop(key, None)
+        _live_metrics.pop(key, None)
         event = _events.pop(key, None)
         cancelled = event is not None and event.is_set()
         snapshot.update(state='cancelled' if cancelled else 'completed' if error is None else 'failed',
@@ -356,6 +372,7 @@ def _stored_progress(engine, project_id, kind):
 
 def read(project_id, kind, engine=None):
     key = (project_id, kind)
+    metrics = None
     with _lock:
         reference = _stores.get(key)
         owner = reference() if reference is not None else None
@@ -367,6 +384,9 @@ def read(project_id, kind, engine=None):
         active = key in _active
         if result is not None and active:
             result['elapsed_seconds'] = round(max(0, time.monotonic() - _clocks[key][0]), 3)
+            metrics = _live_metrics.get(key)
+    if metrics is not None:
+        result['live_token_usage'] = metrics.live_usage()
     if engine is None:
         return result if result is not None else _idle()
     stored = _stored_progress(engine, project_id, kind)

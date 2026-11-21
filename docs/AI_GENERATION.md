@@ -32,6 +32,10 @@ Open **AI Q&A** to read answers from saved evidence and follow their citations.
 ## Progress, cancellation and timeouts
 
 Progress shows the stage, completed batches and cache reuse when available.
+The running token count adds the totals reported so far and shows how many model
+requests supplied a total. Codex can report during a request. Claude Code
+usage arrives with completed responses when available. Requests without a
+reported total are left out.
 **Cancel generation** may take time to reach an active request. Failed and
 cancelled runs preserve earlier saved results. Attempt details retain the last
 stage and batch counts after a restart. Claude quota errors show the reset time

@@ -116,6 +116,46 @@ def test_claude_redacts_failure_output(fake_cli):
     assert 'private' not in repr(caught.value.provider_diagnostics)
 
 
+@pytest.mark.parametrize(('exit_code', 'stream', 'subtype', 'error'), [
+    (0, 'stdout', 'error_max_structured_output_retries', JSONFormattingError),
+    (1, 'stdout', 'error_max_structured_output_retries', JSONFormattingError),
+    (1, 'stderr', 'error_max_structured_output_retries', JSONFormattingError),
+    (1, 'both', 'error_max_structured_output_retries', JSONFormattingError),
+    (0, 'stdout', 'unrecognized_failure', CodexError),
+])
+def test_claude_records_one_usage_report_from_failed_result(fake_cli, exit_code, stream, subtype, error):
+    payload = {'type': 'result', 'subtype': subtype, 'is_error': True,
+               'usage': {'input_tokens': 30, 'output_tokens': 5, 'cache_read_input_tokens': 7,
+                         'cache_creation_input_tokens': 3}, 'result': 'private provider output'}
+    secondary = {**payload, 'usage': {**payload['usage'], 'output_tokens': 10}}
+    commands = ['import sys', 'sys.stdin.read()']
+    if stream in ('stdout', 'both'):
+        commands.append(f'print({json.dumps(payload)!r})')
+    if stream in ('stderr', 'both'):
+        envelope = secondary if stream == 'both' else payload
+        commands.append(f'print({json.dumps(envelope)!r}, file=sys.stderr)')
+    commands.append(f'sys.exit({exit_code})')
+    fake_cli('\n'.join(commands) + '\n')
+    metrics = GenerationMetrics()
+    with collect_generation_metrics(metrics), pytest.raises(error) as caught:
+        claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+    assert type(caught.value) is error
+    assert 'private' not in str(caught.value) + repr(metrics.snapshot())
+    assert metrics.live_usage() == {'total_tokens': 45, 'reported_requests': 1, 'model_requests': 1}
+    assert metrics.snapshot()['token_usage']['cached_input_tokens'] == 7
+
+
+def test_claude_ignores_usage_not_attached_to_a_cli_result(fake_cli):
+    payload = {'type': 'error', 'error': {'type': 'authentication_error'},
+               'usage': {'input_tokens': 30, 'output_tokens': 5}}
+    fake_cli(f'import sys\nprint({json.dumps(payload)!r})\nsys.exit(1)\n')
+    metrics = GenerationMetrics()
+    with collect_generation_metrics(metrics), pytest.raises(CodexError) as caught:
+        claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+    assert caught.value.provider_diagnostics['category'] == 'authorization_denied'
+    assert metrics.live_usage() == {'total_tokens': None, 'reported_requests': 0, 'model_requests': 1}
+
+
 @pytest.mark.parametrize('message,limit,reset', [
     ("You've hit your weekly limit · resets Nov 23, 1pm (Europe/Prague)",
      'weekly', 'Nov 23, 1pm (Europe/Prague)'),

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.integrations.codex import scheme
+from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectKnowledge, ProjectScheme
 
@@ -135,6 +136,10 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
 
         def generate_brief(self, prompt, schema):
             self.calls += 1
+            usage = begin_model_request('scheme-thread')
+            usage.bind_turn('scheme-turn')
+            usage.record({'threadId': 'scheme-thread', 'turnId': 'scheme-turn',
+                          'tokenUsage': {'total': {'totalTokens': 100}}})
             if self.calls == 1:
                 assert prompt.startswith(guidance)
             assert 'primary end-to-end' in prompt
@@ -158,6 +163,8 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
     assert saved['focus'] == focus
     assert gathered == [1] and manager.calls == 1
     assert saved['diagnostics']['ai_requests'] == 1
+    assert saved['diagnostics']['model_requests'] == 1
+    assert saved['diagnostics']['token_usage']['total_tokens'] == 100
     assert saved['sources'] == evidence()['sources']
     assert saved['coverage']['partial']
     assert saved['generation'] == manager.generation_metadata
