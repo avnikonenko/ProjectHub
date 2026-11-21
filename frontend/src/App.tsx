@@ -1727,7 +1727,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
                 }} />
             </label>
           </div>
-        <p className="brief-note">Questions and answers drawn from imported ChatGPT conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
+        <p className="brief-note">Questions and answers drawn from imported conversations, linked Codex sessions, accepted solutions and decisions, and saved architecture. Generation may return fewer questions.</p>
         <RevisionHistory<SavedQA> base={base} kind="qa" version={latestVersion}
           disabled={tagsBusy || loading || generating || recoveryBusy || deleting} selectedId={revisionId} onLoadingChange={active => {
             if (active) {

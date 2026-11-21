@@ -32,7 +32,7 @@ Saved notes and conversations remain eligible.
 
 ## Read saved conversations
 
-Open **History** to expand a saved ChatGPT transcript or select a linked Codex
+Open **History** to expand an imported transcript or select a linked Codex
 session.
 
 ![Example History tab with an expanded ChatGPT transcript about how to import field records](images/projecthub-history.png)

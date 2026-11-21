@@ -23,7 +23,7 @@ Designed for developers, researchers, and anyone working on long-running project
 ## What AI generates
 
 Open **Generation** and choose what to make or update. **AI Q&A** uses linked
-Codex sessions and imported ChatGPT chats to create questions and answers.
+Codex sessions and imported conversations to create questions and answers.
 **Scheme** can use those conversations and read parts of a linked Git repository
 to make diagrams. Use the links in saved results to see where the information came from.
 

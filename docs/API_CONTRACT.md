@@ -29,6 +29,12 @@ Every path below beginning `/{pid}` means `/api/projects/{pid}`.
 
 Project fields are `{id,name,pinned,codex_account,description,goals,status,repository_path,git_remote,tags,architecture_mermaid,created_at,updated_at}`. Set the account through the Codex account route.
 
+## Conversation imports
+
+- `POST /{pid}/conversations/preview` accepts `{url}` for a public share link or `{filename,content,source_url?}` for a UTF-8 file. It returns the detected provider, completeness, roles, sample, and a fingerprint. Preview leaves the project data unchanged. An inaccessible share can return 403. Invalid input returns 422.
+- `POST /{pid}/conversations/import` accepts the same source and its `fingerprint`. It requires `confirm_partial:true` to save a partial import and `replace_existing:true` to update an existing conversation. A changed preview or exact duplicate returns 409.
+- `GET /{pid}/conversations/{nid}/sources` lists the saved source copies. Append `/{source_id}` to download a copy. Both routes check project ownership.
+
 ## Legacy questions and answers
 
 - `POST /{pid}/questions`: `{title,description?,category?,priority?,status?}`; returns question with answers.
@@ -81,6 +87,7 @@ Task fields are `{id,project_id,pinned,title,description,priority,status,questio
 - `GET /{pid}/codex/account`: returns the project's selected account key and available local profile labels. `PATCH` with `{account:string|null}` saves the selection; null uses the launch account. Unknown profiles are rejected. Switching while generation or a managed turn is running is rejected.
 - `GET /{pid}/codex/models`: lists models and supported `efforts`. By default it lists models from the signed-in Codex account. Pass `?provider=claude` to list the supported Claude Code choices.
 - `GET /api/settings/ai-profiles?provider=claude` lists registered Claude Code profile labels and IDs plus the launch account label. `POST /api/settings/ai-profiles` accepts `provider` (`codex` or `claude`), `name`, and the absolute `directory` of an existing CLI sign-in. The existing `/api/settings/codex-profiles` registration endpoint remains supported.
+- `GET /api/settings/ai-profiles/status?provider=codex` checks a provider's launch account or the requested `profile` ID. It returns `{state,detail?}` with state `connected`, `not_installed`, or `unavailable`.
 - AI generation requests for Overview, Knowledge, Q&A, Scheme, Implementation Choices & Limits, tags, and Ask Project accept optional `provider` (`codex` by default, or `claude`) with `model` and `effort` overrides. Claude requests also accept `ai_profile`, a registered Claude Code profile ID. Omitting it uses the launch account. Codex turns and explicit delivery attempts keep their existing model and effort overrides and use Codex.
 - `GET /{pid}/codex/qa`: latest saved Q&A or `null`, with items, sources, and saved generation and topic metadata when available. `POST` with `{confirmed:true}` generates a separate snapshot in batches. A failed refresh keeps the prior Q&A.
 - `POST /{pid}/codex/brief` requires `confirmed:true`. It reads linked history in bounded, cached batches and uses project records and inspected repository evidence when available. ProjectHub inspects the linked repository locally without running its code or tests. Successful generation saves the Overview and its revision. Errors preserve the previous snapshot.

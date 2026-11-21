@@ -106,7 +106,7 @@ Implementation Choices & Limits uses code and configuration.
 | **Summary-assisted** (experimental) | Reuses conversation overviews and builds missing ones. Knowledge uses them to select original passages within its source budget. |
 
 Summary-assisted builds overviews from the saved Codex history index and imported
-ChatGPT chats. Building missing overviews can take extra time and tokens. Later runs reuse
+conversations. Building missing overviews can take extra time and tokens. Later runs reuse
 matching batches across reviews. Refresh History to include recent Codex messages
 if the index is out of date. Check Coverage for missing sources and omitted text.
 

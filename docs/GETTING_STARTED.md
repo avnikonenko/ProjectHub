@@ -2,7 +2,7 @@
 
 ## Install a wheel
 
-For most users, start with the [v0.2.4 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.4/projecthub_local-0.2.4-py3-none-any.whl).
+For most users, start with the [v0.2.5 wheel](https://github.com/avnikonenko/ProjectHub/releases/download/v0.2.5/projecthub_local-0.2.5-py3-none-any.whl).
 It includes the interface and migrations and runs on Linux with Python 3.11+.
 Open a terminal in the download directory. Pick pipx or Conda and use the
 filename you downloaded.
@@ -12,7 +12,7 @@ filename you downloaded.
 [Install pipx](https://pipx.pypa.io/latest/how-to/install-pipx.html) if needed.
 
 ```bash
-pipx install ./projecthub_local-0.2.4-py3-none-any.whl
+pipx install ./projecthub_local-0.2.5-py3-none-any.whl
 projecthub
 ```
 
@@ -26,7 +26,7 @@ Use this option if you already use Conda.
 ```bash
 conda create -n projecthub -c conda-forge python=3.12 pip
 conda activate projecthub
-python -m pip install ./projecthub_local-0.2.4-py3-none-any.whl
+python -m pip install ./projecthub_local-0.2.5-py3-none-any.whl
 projecthub
 ```
 

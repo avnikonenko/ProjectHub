@@ -4,6 +4,14 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.5] - 2026-11-21
+
+- Import public ChatGPT and Claude chats, JSON exports, and structured Markdown from Sources. Preview imports, manage saved conversations, and keep original source copies in project exports.
+- Generate with a signed-in Claude Code or Codex account. Check either provider in Settings and select the active project's AI profile.
+- Resume generation with valid cached batches, save progress across restarts, and retry results with recoverable gaps. Summary-assisted review builds and reuses conversation overviews.
+- Collapse IDE context in saved Codex history so conversation messages are easier to scan.
+- Keep regular documents separate from conversation updates and reject invalid transcript text before saving.
+
 ## [0.2.4] - 2026-11-19
 
 - Choose Balanced, Code first, or Sessions first from Scheme or Generation. Queued runs keep the requested focus, and saved Schemes and attempt settings show it.
