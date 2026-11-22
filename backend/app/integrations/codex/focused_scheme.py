@@ -24,6 +24,8 @@ PROMPT = (
     'Zoom into the requested area. Name concrete modules, operations, calls, data, branching conditions, '
     'or handoffs that the supplied evidence supports. Include enough technical detail to make the '
     'requested part understandable and keep surrounding project context brief. '
+    'When supplied evidence names the table, trigger, route, or handler at a relevant handoff, '
+    'use that concrete name and cite the evidence for the handoff. '
     'Return structured graph JSON. Every node and edge must cite 1 to 6 source IDs from sources. '
     'Cite original sources along with any published Knowledge interpretation. Use observed for static '
     'evidence, proposed for plans, and uncertain for conflicting evidence. Static evidence does not '

@@ -28,6 +28,7 @@ from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_js_scope import focused_call_owner
 from .scheme_knowledge import collect_published_knowledge
+from .scheme_migration_sql import compact_migration_sql, migration_sql_declarations
 from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 
@@ -129,10 +130,10 @@ class _EvidenceScope:
                 continue  # A dotted identifier such as module.function can also be a search term.
             yield {'path': name, 'reason': reason}
 
-    def source_key(self, source):
+    def source_key(self, source, *, schema_evidence=False):
         path = source.get('path', '')
         exact, path_score = self.path_rank(path) if path else (0, 0)
-        return (source['id'] != 'project:objective', -exact, _historical_path(path),
+        return (source['id'] != 'project:objective', -exact, _historical_path(path), not schema_evidence,
                 -self.score(source['text']), -path_score, -self.score(source['label']))
 
     @property
@@ -356,6 +357,14 @@ _AUXILIARY = {'script', 'scripts', 'migration', 'migrations', 'test', 'tests',
               'tool', 'tools', 'benchmark', 'benchmarks', 'example', 'examples', 'docs'}
 _ENTRYPOINTS = {'main', 'app', 'index', 'server', 'cli', 'router', 'routes', 'services', 'models'}
 _CODE_EXTENSIONS = ('.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
+_MIGRATION_SCOPE_WORDS = frozenset('database db fts fts5 index migration schema search sqlite table trigger'.split())
+_MAX_FOCUSED_MIGRATIONS = 48
+_MAX_FOCUSED_SCHEMA_SOURCES = 3
+
+
+def _python_migration(relative):
+    path = PurePosixPath(relative.lower())
+    return path.suffix == '.py' and bool({'migrations', 'alembic'} & set(path.parts[:-1]))
 
 
 def _scheme_category(relative):
@@ -991,13 +1000,16 @@ def _predicate_shape(node, depth=0):
 
 def _structural_excerpt(value, relative, *, focus=None):
     """Balanced declarations/imports/static call names; no argument or initializer literals."""
-    imports, declarations, calls = [], [], []
+    imports, declarations, calls, migration_sql = [], [], [], []
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
         except (SyntaxError, ValueError, RecursionError):
             parsed = None
         if parsed is not None:
+            if focus and _python_migration(relative):
+                migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
+
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
                     self.scope = []
@@ -1126,13 +1138,13 @@ def _structural_excerpt(value, relative, *, focus=None):
     # import blocks or private helpers. Interleave groups within the same hard cap.
     declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
     calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
-    buckets = [declarations, calls, imports]
+    buckets = [migration_sql, declarations, calls, imports] if migration_sql else [declarations, calls, imports]
     if focus:
         for bucket in buckets:
             bucket.sort(key=lambda item: -focus(item[1]))
     rendered = ['Static syntax only; call names do not prove runtime execution.']
     used = len(rendered[0]) + 1
-    positions = [0, 0, 0]
+    positions = [0] * len(buckets)
     while any(positions[i] < len(bucket) for i, bucket in enumerate(buckets)):
         for i, bucket in enumerate(buckets):
             if positions[i] >= len(bucket):
@@ -1380,19 +1392,25 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
     limitations.update(repo_limits)
     path_ranks = {}
     requested_paths, named_files = set(), set()
+    scoped_migrations = set()
     if focus:
         path_ranks = {relative: focus.path_rank(relative) for relative in paths}
         requested_paths = {relative for relative, (exact, _) in path_ranks.items() if exact}
         named_files = {relative for relative in requested_paths if named_file_kind(relative)}
+        if focus.terms & _MIGRATION_SCOPE_WORDS:
+            migration_paths = sorted(relative for relative in paths if _python_migration(relative))
+            half = _MAX_FOCUSED_MIGRATIONS // 2
+            scoped_migrations = set(migration_paths[:half] + migration_paths[-half:])
 
         def focus_order(relative):
             exact, rank = path_ranks[relative]
-            return -exact, _historical_path(relative), -rank
+            return -exact, _historical_path(relative), -rank, relative not in scoped_migrations
 
         promoted = [relative for relative in paths if any(path_ranks[relative])
                     and (_manifest(relative) or _scheme_category(relative) in {'code', 'docs', 'tests'}
                          or relative in named_files
                          or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS)]
+        promoted.extend(sorted(scoped_migrations))
         candidates = sorted(dict.fromkeys([*candidates, *promoted]), key=focus_order)
         paths.sort(key=focus_order)
     eligible = set(candidates)
@@ -1414,7 +1432,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 4, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 6, 'requested_paths': sorted(focus.paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
@@ -1462,7 +1480,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 break
             pick = 0
             declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
-            if focus and any(path_ranks[pending[0]]):
+            if focus and (any(path_ranks[pending[0]]) or pending[0] in scoped_migrations):
                 # Do not let general entrypoints displace an explicitly named
                 # or scope-matching file before the byte/time budget is spent.
                 pick = 0
@@ -1623,7 +1641,17 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         # whole excerpts and return any unused repository allowance to records.
         repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))
         if focus:
-            priority_order = sorted([*repository_sources, *records], key=focus.source_key)
+            schema_sources = []
+            if scoped_migrations:
+                for source in repository_sources:
+                    if source.get('path') not in scoped_migrations:
+                        continue
+                    statements = '\n'.join(re.findall(r'(?m)^L\d+: ((?:CREATE|ALTER) .+)$', source['text']))
+                    if (score := focus.score(statements)):
+                        schema_sources.append((-score, source['id']))
+            schema_refs = {identifier for _, identifier in sorted(schema_sources)[:_MAX_FOCUSED_SCHEMA_SOURCES]}
+            priority_order = sorted([*repository_sources, *records],
+                                    key=lambda source: focus.source_key(source, schema_evidence=source['id'] in schema_refs))
         else:
             deferred = []
             for source in records:

@@ -1,5 +1,6 @@
 """Scope ranking uses saved, project-owned evidence within Scheme's limits."""
 import json
+from pathlib import Path
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -7,6 +8,28 @@ from sqlalchemy.orm import Session
 from backend.app.integrations.codex import scheme_evidence as evidence
 from backend.app.models import CodexSession, Note
 from backend.tests.integrations.test_scheme_evidence import repository, setup
+
+
+def test_search_scope_supplies_projecthub_indexing_migration(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'main.py').write_text('def save_conversation():\n    return commit()\n')
+    path = 'migrations/versions/0001_initial.py'
+    target = repo / path
+    target.parent.mkdir(parents=True)
+    target.write_bytes((Path(__file__).resolve().parents[1] / path).read_bytes())
+    engine = setup(tmp_path, repo)
+    try:
+        scope = 'Show how imported conversations become searchable, from saving the transcript to opening a result.'
+        result = evidence.collect_evidence(engine, 1, scope=scope)
+        source = next(source for source in result['sources'] if source.get('path') == path)
+        assert 'CREATE VIRTUAL TABLE search_index' in source['text']
+        assert 'fts5' in source['text'].lower()
+        assert all(f'notes_search_{action}' in source['text'] for action in ('insert', 'update', 'delete'))
+        assert any('search_index' in line and 'notes_search_insert' in line for line in source['text'].splitlines())
+        general = evidence.collect_evidence(engine, 1)
+        assert all(source.get('path') != path for source in general['sources'])
+    finally:
+        engine.dispose()
 
 
 def test_scope_matches_common_word_families_and_prefers_exact_words():

@@ -46,6 +46,8 @@ omitted. **Coverage → Requested files skipped** explains any named files that
 did not supply evidence. Scope matching recognizes forms such as “cache” and
 “cached”. When a matching paragraph in a long saved conversation is too large to
 include, the diagram can use a short excerpt around the match.
+Storage and indexing scopes can include table and trigger declarations from
+Python migrations. These excerpts describe schema structure without SQL values.
 
 The current diagram and its instruction are
 saved together. A successful rerun replaces that focused result. To rerun a
