@@ -26,6 +26,7 @@ from ...project_evidence import (
 from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
+from .scheme_js_scope import focused_call_owner
 from .scheme_knowledge import collect_published_knowledge
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 
@@ -890,6 +891,42 @@ def _call_summary(names, preferred=(), *, focus=None):
     return ', '.join(sorted(names, key=priority)[:12])
 
 
+_COMPARISONS = {
+    ast.Eq: '==', ast.NotEq: '!=', ast.Lt: '<', ast.LtE: '<=', ast.Gt: '>', ast.GtE: '>=',
+    ast.Is: 'is', ast.IsNot: 'is not', ast.In: 'in', ast.NotIn: 'not in',
+}
+
+
+def _predicate_shape(node, depth=0):
+    """Describe control flow without including argument or configuration values."""
+    if depth >= 6:
+        return '<expression>'
+    if isinstance(node, (ast.Name, ast.Attribute)):
+        return _qualified_name(node) or '<expression>'
+    if isinstance(node, ast.Constant):
+        return repr(node.value) if node.value is None or type(node.value) is bool else '<literal>'
+    if isinstance(node, ast.Call):
+        return (_qualified_name(node.func) or '<call>') + '(...)'
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return f'not ({_predicate_shape(node.operand, depth + 1)})'
+    if isinstance(node, ast.BoolOp):
+        operator = ' and ' if isinstance(node.op, ast.And) else ' or '
+        operands = operator.join(_predicate_shape(value, depth + 1) for value in node.values[:8])
+        return f'({operands}{" …" if len(node.values) > 8 else ""})'
+    if isinstance(node, ast.Compare):
+        if (isinstance(node.left, ast.Name) and node.left.id == '__name__'
+                and len(node.ops) == 1 and isinstance(node.ops[0], (ast.Eq, ast.NotEq))
+                and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value == '__main__'):
+            return f'__name__ {_COMPARISONS[type(node.ops[0])]} "__main__"'
+        comparison = [_predicate_shape(node.left, depth + 1)]
+        for operator, operand in zip(node.ops[:8], node.comparators[:8]):
+            comparison.extend((_COMPARISONS[type(operator)], _predicate_shape(operand, depth + 1)))
+        if len(node.ops) > 8:
+            comparison.append('…')
+        return ' '.join(comparison)
+    return '<expression>'
+
+
 def _structural_excerpt(value, relative, *, focus=None):
     """Balanced declarations/imports/static call names; no argument or initializer literals."""
     imports, declarations, calls = [], [], []
@@ -900,8 +937,14 @@ def _structural_excerpt(value, relative, *, focus=None):
             parsed = None
         if parsed is not None:
             class Visitor(ast.NodeVisitor):
-                scope = []
-                observed_calls = {}
+                def __init__(self):
+                    self.scope = []
+                    self.branches = []
+                    self.conditions = []
+                    self.observed_calls = {}
+
+                def owner(self):
+                    return '.'.join(self.scope) or 'module level'
 
                 def visit_Import(self, node):
                     imports.append((node.lineno, 'import ' + ', '.join(alias.name for alias in node.names)))
@@ -913,9 +956,11 @@ def _structural_excerpt(value, relative, *, focus=None):
                 def visit_FunctionDef(self, node):
                     declarations.append((node.lineno, 'def ' + node.name + '(...)'))
                     self.scope.append(node.name)
+                    outer_branches, self.branches = self.branches, []
                     # Defaults/decorators are not function-body runtime evidence.
                     for child in node.body:
                         self.visit(child)
+                    self.branches = outer_branches
                     self.scope.pop()
 
                 visit_AsyncFunctionDef = visit_FunctionDef
@@ -927,10 +972,28 @@ def _structural_excerpt(value, relative, *, focus=None):
                         self.visit(child)
                     self.scope.pop()
 
+                def visit_If(self, node):
+                    if not focus:
+                        self.generic_visit(node)
+                        return
+                    predicate = _predicate_shape(node.test)
+                    self.conditions.append((node.lineno, f'{self.owner()} condition: if {predicate}'))
+                    self.visit(node.test)
+                    for condition, statements in ((f'if {predicate}', node.body),
+                                                  (f'else of if {predicate}', node.orelse)):
+                        self.branches.append((node.lineno, condition))
+                        for child in statements:
+                            self.visit(child)
+                        self.branches.pop()
+
+                def visit_Lambda(self, node):
+                    if not focus:
+                        self.generic_visit(node)
+
                 def visit_Call(self, node):
                     name = _qualified_name(node.func)
-                    if name and self.scope:
-                        key = '.'.join(self.scope)
+                    if name and (self.scope or focus):
+                        key = self.owner(), tuple(self.branches)
                         names = self.observed_calls.setdefault(key, [node.lineno, []])[1]
                         if name not in names:
                             if len(names) < 64:
@@ -952,9 +1015,11 @@ def _structural_excerpt(value, relative, *, focus=None):
                     preferred.add(_qualified_name(node.func))
             visitor = Visitor()
             visitor.visit(parsed)
-            calls = [(line, scope + ' uses call syntax: ' + _call_summary(names, preferred, focus=focus))
-                     for scope, (line, names) in visitor.observed_calls.items()]
-    if not declarations and not imports:
+            calls = visitor.conditions
+            for (scope, branches), (line, names) in visitor.observed_calls.items():
+                context = ' within ' + '; '.join(condition for _, condition in branches) if branches else ''
+                calls.append((line, scope + context + ' uses call syntax: ' + _call_summary(names, preferred, focus=focus)))
+    if not declarations and not imports and not calls:
         masked = _mask_js(value)
         declared_positions = set()
         declaration_pattern = re.compile(r'\b(?:export\s+(?:default\s+)?)?(?:(?:async\s+)?(?:function|def)\s+|class\s+|(?:const|let|var|interface|type|enum)\s+)([A-Za-z_$][\w$]*)')
@@ -971,7 +1036,8 @@ def _structural_excerpt(value, relative, *, focus=None):
                 target = '[external module location omitted]'
             imports.append((value.count('\n', 0, match.start()) + 1, 'import ' + target))
         seen_calls = set()
-        function_marks = [(match.start(1), match[1]) for match in re.finditer(
+        owner_at = focused_call_owner(masked) if focus else None
+        function_marks = [] if focus else [(match.start(1), match[1]) for match in re.finditer(
             r'\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', masked)]
         grouped_calls = {}
         for match in re.finditer(r'\b([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)(?:<[^<>;{}\n]{1,120}>)?\s*\(', masked):
@@ -980,7 +1046,10 @@ def _structural_excerpt(value, relative, *, focus=None):
                     or name in {'if', 'for', 'while', 'switch', 'catch', 'function', 'import', 'super', 'return', 'async'}
                     or match.start(1) in declared_positions):
                 continue
-            scope = next((name for start, name in reversed(function_marks) if start < match.start()), 'module')
+            scope = (owner_at(match.start(1)) if owner_at else
+                     next((name for start, name in reversed(function_marks) if start < match.start()), 'module'))
+            if scope is None:
+                continue
             key = (scope, name) if focus else name
             if key in seen_calls:
                 continue
@@ -1207,7 +1276,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value} if focus else {}
+        scope_identity = {'scope': focus.value, 'scope_policy': 2} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,

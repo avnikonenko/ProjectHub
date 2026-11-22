@@ -4,10 +4,15 @@ import { createServer, type ViteDevServer } from 'vite';
 
 let server: ViteDevServer;
 let useGenerationRecovery: any;
+let useFocusedSchemeRecovery: any;
+let Scheme: any;
+let RevisionHistory: any;
 // A small hook host executes the real recovery hook without adding a DOM or
 // test-renderer dependency. Tests assert requests and observable state changes.
 class HookHost {
   includeParameters = false;
+  focusedVisible: boolean | undefined;
+  renderView?: () => any;
   slots: any[] = []; effects: any[] = []; pending: (() => void)[] = [];
   cursor = 0; queued = false; mounted = true; value: any;
   useState = (initial: any) => {
@@ -24,6 +29,10 @@ class HookHost {
       }
     }];
   };
+  useRef = (initial: any) => {
+    const index = this.cursor++;
+    return this.slots[index] ??= { current: initial };
+  };
   useEffect = (effect: () => any, dependencies: any[]) => {
     const index = this.cursor++;
     const previous = this.effects[index];
@@ -35,7 +44,9 @@ class HookHost {
   };
   render() {
     this.cursor = 0; (globalThis as any).__generationRecoveryHooks = this;
-    this.value = useGenerationRecovery('/projects/1', { includeBrief: true, includeKnowledge: true, includeParameters: this.includeParameters });
+    this.value = this.renderView ? this.renderView() : this.focusedVisible === undefined
+      ? useGenerationRecovery('/projects/1', { includeBrief: true, includeKnowledge: true, includeParameters: this.includeParameters })
+      : useFocusedSchemeRecovery('/projects/1', this.focusedVisible);
     for (const commit of this.pending.splice(0)) commit();
   }
   dispose() { this.mounted = false; for (const effect of this.effects) effect?.cleanup?.(); }
@@ -43,28 +54,35 @@ class HookHost {
 const settle = () => new Promise<void>(resolve => setImmediate(resolve));
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, entries: [] },
-    ssr: { noExternal: ['react'] },
     server: { middlewareMode: true, hmr: false }, appType: 'custom',
     plugins: [{ name: 'generation-hook-host', enforce: 'pre',
+      transform(source, id) {
+        if (/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|generationBatch\.ts)$/.test(id)) {
+          return source.replace("from 'react'", "from 'virtual:generation-hooks'");
+        }
+      },
       resolveId(id, importer) {
-        if (!importer?.endsWith('/src/GenerationStatus.tsx')) return;
+        if (id === 'virtual:generation-hooks') return '\0generation-hook-host';
+        if (!importer?.match(/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|generationBatch\.ts)$/)) return;
         if (id === 'react') return '\0generation-hook-host';
         if (id.startsWith('react/jsx')) return '\0generation-jsx-stub';
-        if (id === './Feedback' || id === './ui') return '\0generation-ui-stub';
+        if (importer.endsWith('/GenerationStatus.tsx') && (id === './Feedback' || id === './ui')) return '\0generation-ui-stub';
       },
       load(id) {
-        if (id === '\0generation-hook-host') return `export const useState=(...args)=>globalThis.__generationRecoveryHooks.useState(...args);export const useEffect=(...args)=>globalThis.__generationRecoveryHooks.useEffect(...args);export const useRef=value=>({current:value});export const useCallback=fn=>fn;`;
+        if (id === '\0generation-hook-host') return `export const useState=(...args)=>globalThis.__generationRecoveryHooks.useState(...args);export const useEffect=(...args)=>globalThis.__generationRecoveryHooks.useEffect(...args);export const useRef=value=>globalThis.__generationRecoveryHooks.useRef(value);export const useCallback=fn=>fn;export const useId=()=>':test:';`;
         if (id === '\0generation-ui-stub') return 'export const Feedback=()=>null;export const ErrorBox=()=>null;';
-        if (id === '\0generation-jsx-stub') return 'export const jsx=()=>null;export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment=Symbol();';
+        if (id === '\0generation-jsx-stub') return 'export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment=Symbol();';
       },
     }],
   });
-  useGenerationRecovery = (await server.ssrLoadModule('/src/GenerationStatus.tsx')).useGenerationRecovery;
+  ({ useGenerationRecovery, useFocusedSchemeRecovery } = await server.ssrLoadModule('/src/GenerationStatus.tsx'));
+  ({ Scheme } = await server.ssrLoadModule('/src/Scheme.tsx'));
+  ({ RevisionHistory } = await server.ssrLoadModule('/src/RevisionHistory.tsx'));
 });
 after(async () => { await server?.close(); delete (globalThis as any).__generationRecoveryHooks; });
-function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any, initialScheme?: any) {
+function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any, initialScheme?: any, focusedVisible?: boolean) {
   const original = globalThis.fetch;
-  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: initialScheme ?? { state: 'idle' }, parameters: initialParameters ?? { state: 'idle' } };
+  const responses: Record<string, any> = { brief: initialBrief, knowledge: { state: 'idle' }, qa: { state: 'idle' }, scheme: initialScheme ?? { state: 'idle' }, parameters: initialParameters ?? { state: 'idle' }, focused_scheme: { state: 'idle' } };
   const calls: { kind: string; method: string }[] = [];
   globalThis.fetch = async (input, options) => {
     const kind = new URL(String(input), 'http://test.local').searchParams.get('kind')!;
@@ -72,7 +90,8 @@ function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any,
     const response = responses[kind];
     return response instanceof Response ? response.clone() : Response.json(response);
   };
-  const host = new HookHost(); host.includeParameters = initialParameters !== undefined; host.render();
+  const host = new HookHost(); host.includeParameters = initialParameters !== undefined;
+  host.focusedVisible = focusedVisible; host.render();
   return { host, responses, calls, dispose() { host.dispose(); globalThis.fetch = original; } };
 }
 test('an unavailable status keeps only its own view locked and polls it until recovery', async t => {
@@ -97,6 +116,25 @@ test('an unavailable status keeps only its own view locked and polls it until re
     assert.deepEqual(run.calls.slice(callsBeforeRetry), [{ kind: 'parameters', method: 'GET' }]);
     assert.equal(run.host.value.checking, false);
     assert.equal(run.host.value.error, '');
+  } finally { run.dispose(); }
+});
+
+test('focused status rechecks on return and reloads a run cancelled while the tab switches', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const run = fixture(undefined, undefined, undefined, true);
+  try {
+    await settle();
+    run.host.focusedVisible = false; run.host.render(); await settle();
+    run.responses.focused_scheme = { state: 'running', started_at: 'external-run' };
+    run.host.focusedVisible = true; run.host.render(); await settle();
+    assert.equal(run.host.value.running, true);
+
+    run.responses.focused_scheme = { state: 'cancelled', started_at: 'external-run' };
+    run.host.focusedVisible = false; run.host.render(); await settle();
+    assert.equal(run.host.value.running, false);
+    assert.equal(run.host.value.progress.state, 'cancelled');
+    assert.equal(run.host.value.version, 1);
+    assert.ok(run.calls.every(call => call.kind === 'focused_scheme' && call.method === 'GET'));
   } finally { run.dispose(); }
 });
 test('opt-in workspace recovery follows Parameters completion without generating another result', async t => {
@@ -177,6 +215,37 @@ test('a never-started request has a bounded handoff and failed/cancelled request
     }
     assert.ok(run.calls.every(call => call.method === 'GET'));
   } finally { run.dispose(); }
+});
+
+test('switching to Focused Scheme preserves the pending normal revision view', async () => {
+  function find(tree: any, predicate: (node: any) => boolean): any {
+    if (!tree) return undefined;
+    if (Array.isArray(tree)) return tree.map(node => find(node, predicate)).find(Boolean);
+    return predicate(tree) ? tree : find(tree.props?.children, predicate);
+  }
+  const original = globalThis.fetch;
+  const host = new HookHost();
+  globalThis.fetch = async () => Response.json({
+    snapshot: null, inspection: { tree: [], coverage: {} }, freshness: { state: 'unknown' },
+  });
+  host.renderView = () => Scheme({
+    base: '/projects/1', generation: {}, visible: true, onGenerating() {},
+    recoveryVersion: 0, recoveryBusy: false, focus: 'balanced', queuedFocus: 'balanced', onFocusChange() {},
+  });
+  const findButton = (label: string) => find(host.value, node => node.type === 'button' && node.props.children === label);
+  try {
+    host.render(); await settle();
+    const revision = find(host.value, node => node.type === RevisionHistory);
+    revision.props.onLoadingChange(true); await settle();
+    assert.equal(findButton('Generate Scheme').props.disabled, true);
+
+    findButton('Focused Scheme').props.onClick(); await settle();
+    const regularView = find(host.value, node => node.props?.className === 'scheme-overview');
+    assert.equal(regularView.props.hidden, true);
+    find(regularView, node => node.type === RevisionHistory).props.onLoadingChange(false);
+    findButton('Architecture').props.onClick(); await settle();
+    assert.equal(findButton('Generate Scheme').props.disabled, false);
+  } finally { host.dispose(); globalThis.fetch = original; }
 });
 
 test('the previous completed run cannot end recovery before a delayed replacement appears', async t => {

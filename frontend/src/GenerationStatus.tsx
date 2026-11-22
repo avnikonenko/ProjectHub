@@ -55,12 +55,15 @@ type RecoveryState = {
 };
 const initialRecovery: RecoveryState = { checking: true, running: false, version: 0, error: '' };
 
-function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', enabled: boolean) {
-  const [request, setRequest] = useState<{ previousStartedAt?: string } | null>(null);
+function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', enabled: boolean, visible?: boolean) {
+  const requestRef = useRef<{ previousStartedAt?: string } | null>(null);
+  const [refresh, setRefresh] = useState(0);
   const [state, setState] = useState(initialRecovery);
 
   useEffect(() => {
     if (!enabled) return;
+    const request = requestRef.current;
+    if (visible) setState(previous => ({ ...previous, checking: true }));
     const abort = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let handoffChecks = 0;
@@ -87,9 +90,10 @@ function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', en
           : status.state === 'idle' && recovering && !running
             ? 'Generation is no longer running. The server may have restarted; check the saved result before retrying.'
             : '';
+        if (!running && requestRef.current === request) requestRef.current = null;
         setState(previous => ({
           checking: false, running, progress: status, error, errorKind: error ? 'attempt' : undefined,
-          version: previous.version + Number(!running && (recovering || request !== null)),
+          version: previous.version + Number(!running && (recovering || request !== null || previous.running)),
         }));
         if (running) timer = setTimeout(() => void poll(true), 1500);
       } catch (error) {
@@ -102,7 +106,7 @@ function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', en
 
     void poll();
     return () => { abort.abort(); if (timer !== undefined) clearTimeout(timer); };
-  }, [base, kind, enabled, request]);
+  }, [base, kind, enabled, refresh, visible]);
 
   const clearError = useCallback((attemptOnly = false) => {
     setState(previous => previous.error && (!attemptOnly || previous.errorKind === 'attempt')
@@ -116,13 +120,14 @@ function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', en
     recheck: () => {
       clearError(true);
       setState(previous => ({ ...previous, checking: true }));
-      setRequest({ previousStartedAt: state.progress?.started_at });
+      requestRef.current = { previousStartedAt: state.progress?.started_at };
+      setRefresh(value => value + 1);
     },
   };
 }
 
-export function useFocusedSchemeRecovery(base: string) {
-  return useKindRecovery(base, 'focused_scheme', true);
+export function useFocusedSchemeRecovery(base: string, visible: boolean) {
+  return useKindRecovery(base, 'focused_scheme', true, visible);
 }
 
 export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false, includeParameters = false }: {

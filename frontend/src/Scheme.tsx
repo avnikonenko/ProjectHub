@@ -272,18 +272,30 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
   const [retryLoad, setRetryLoad] = useState(0);
   const [generating, setGenerating] = useState(false);
   const [loadError, setLoadError] = useState('');
-  const [error, setError] = useState('');
+  const [submissionError, setSubmissionError] = useState<{
+    message: string; instruction: string; savedAt?: string; previousStartedAt?: string;
+  } | null>(null);
   const [notice, setNotice] = useState('');
   const draftEdited = useRef(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
-  const recovery = useFocusedSchemeRecovery(base);
+  const recovery = useFocusedSchemeRecovery(base, visible);
   const active = generating || recovery.running;
+  const previousAttempt = useRef<string | undefined>(undefined);
+  const status = recovery.progress;
+  const recoveredCancellation = !active && !recovery.checking && status?.state === 'cancelled'
+    && status.started_at !== previousAttempt.current;
+  const recoveredSubmission = submissionError && !recovery.checking && status?.started_at
+    && status.started_at !== submissionError.previousStartedAt
+    && (status.state === 'cancelled' || (status.state === 'completed'
+      && snapshot?.instruction === submissionError.instruction && snapshot.generated_at !== submissionError.savedAt));
   const path = base + '/codex/scheme/focused';
   const prefix = base.split('/')[2] + '-focused-scheme';
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => { onGenerating?.(active); }, [active, onGenerating]);
+  useEffect(() => { if (recoveredSubmission) setSubmissionError(null); }, [recoveredSubmission]);
   useEffect(() => {
+    if (!visible || inFlight.current) return;
     const abort = new AbortController();
     setLoading(true);
     setLoadError('');
@@ -296,15 +308,16 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
       .catch((error: Error) => { if (!abort.signal.aborted) setLoadError(error.message); })
       .finally(() => { if (!abort.signal.aborted) setLoading(false); });
     return () => abort.abort();
-  }, [path, recovery.version, retryLoad]);
+  }, [path, recovery.version, retryLoad, visible]);
 
   async function generate() {
     const requested = instruction.trim();
     if (!requested || loading || loadError || recovery.checking || active || inFlight.current) return;
     inFlight.current = true;
+    previousAttempt.current = status?.started_at;
     setGenerating(true);
     recovery.clearError();
-    setError('');
+    setSubmissionError(null);
     setNotice('');
     try {
       const saved = await post(path, { confirmed: true, instruction: requested, ...generationBody(generation) }) as FocusedSchemeSnapshot;
@@ -312,12 +325,17 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
         setSnapshot(saved);
         setInstruction(saved.instruction);
         draftEdited.current = false;
+        recovery.recheck();
       }
     } catch (error) {
       if (mounted.current) {
-        if (isGenerationCancelled(error)) setNotice(cancelledGenerationMessage);
+        if (isGenerationCancelled(error)) {
+          setNotice(cancelledGenerationMessage);
+          recovery.recheck();
+        }
         else {
-          setError((error as Error).message);
+          setSubmissionError({ message: (error as Error).message, instruction: requested,
+            savedAt: snapshot?.generated_at, previousStartedAt: previousAttempt.current });
           recovery.recheck();
         }
       }
@@ -343,9 +361,9 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
       </button>
     </form>
     <small className="muted">Generation sends your instruction and selected project evidence to {generationDestination(generation.provider)}.</small>
-    <ErrorBox error={loadError || error || recovery.error} />
+    <ErrorBox error={loadError || recovery.error || (recoveredSubmission ? '' : submissionError?.message ?? '')} />
     {loadError && <button type="button" className="secondary" onClick={() => setRetryLoad(value => value + 1)}>Retry loading</button>}
-    <Feedback>{notice}</Feedback>
+    <Feedback>{notice || (recoveredCancellation && cancelledGenerationMessage)}</Feedback>
     {loading && !snapshot && <Feedback>Loading Focused Scheme…</Feedback>}
     {visible && active && <GenerationStatus base={base} kind="focused_scheme" label="Focused Scheme"
       sharedProgress={recovery.running ? recovery.progress : undefined} />}
@@ -473,8 +491,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
             setView(name);
           }}>{name}</button>)}
     </nav>
-    {visitedFocused && <FocusedScheme base={base} generation={generation} visible={focused && visible} onGenerating={onFocusedGenerating} />}
-    {!focused && <>
+    {visitedFocused && <FocusedScheme key={base} base={base} generation={generation} visible={focused && visible} onGenerating={onFocusedGenerating} />}
+    <div className="scheme-overview" hidden={focused}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
     <label>Scheme focus for next run
@@ -527,7 +545,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
         }} />
     </details>
     {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme on the Generate tab to create one.</Empty>}
-    {view !== 'Dependencies' && graph && <>
+    {!focused && view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
       <p><AIEmphasis text={graph.explanation} /></p>
       {!!graph.nodes.length && <>
@@ -547,6 +565,6 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
           {source.revision ? ' · revision ' + source.revision.slice(0, 12) : ''}{source.date ? ' · ' + source.date : ''}</li>)}</ul></details>
     </details>}
     {result && <SchemeResultCoverage snapshot={snapshot} current={result.inspection} showCurrent={revisionId === null} />}
-    </>}
+    </div>
   </section>;
 }

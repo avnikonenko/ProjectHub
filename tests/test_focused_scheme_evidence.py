@@ -9,6 +9,43 @@ from backend.app.models import CodexSession, Note
 from backend.tests.integrations.test_scheme_evidence import repository, setup
 
 
+def test_focused_python_excerpt_preserves_startup_and_predicates_without_literals():
+    scope = evidence._EvidenceScope('Trace startup and when the queue is rebuilt.')
+    source = (
+        'from worker import initialize\n'
+        'def rebuild_index(queue):\n'
+        '    if queue:\n'
+        '        dispatch_index(queue)\n'
+        '    else:\n'
+        '        report_empty()\n'
+        '    if password == "PRIVATE_PREDICATE_LITERAL":\n'
+        '        save_state()\n'
+        'if __name__ == "__main__":\n'
+        '    initialize()\n'
+    )
+    focused = evidence._structural_excerpt(source, 'main.py', focus=scope.score)
+    assert 'module level within if __name__ == "__main__" uses call syntax: initialize' in focused
+    assert 'rebuild_index within if queue uses call syntax: dispatch_index' in focused
+    assert 'rebuild_index within else of if queue uses call syntax: report_empty' in focused
+    assert 'if password == <literal>' in focused
+    assert 'PRIVATE_PREDICATE_LITERAL' not in focused
+    inverse = evidence._structural_excerpt(source.replace('if queue:', 'if not queue:'), 'main.py', focus=scope.score)
+    assert 'rebuild_index within if not (queue) uses call syntax: dispatch_index' in inverse
+    assert 'module level' not in evidence._structural_excerpt(source, 'main.py')
+
+
+def test_focused_typescript_excerpt_keeps_calls_with_their_own_scope():
+    scope = evidence._EvidenceScope('Trace flushQueue and registration.')
+    source = ('function status() { return readStatus(); }\n'
+              'const flushQueue = () => { persistBatch(); };\n'
+              'registerHandler(flushQueue);\n')
+    focused = evidence._structural_excerpt(source, 'queue.ts', focus=scope.score)
+    assert 'status lexical call syntax: readStatus' in focused
+    assert 'flushQueue lexical call syntax: persistBatch' in focused
+    assert 'module lexical call syntax: registerHandler' in focused
+    assert 'status lexical call syntax: readStatus, persistBatch' not in focused
+
+
 def test_scope_promotes_named_file_and_late_symbols_without_exporting_literals(tmp_path, monkeypatch):
     repo = repository(tmp_path)
     (repo / 'main.py').write_text('def main():\n    return unrelated_process()\n')
