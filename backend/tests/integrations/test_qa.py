@@ -78,9 +78,11 @@ def test_qa_selects_canonical_answers_and_preserves_alternatives_on_invalid_sele
     assert replay['diagnostics']['qa_rank_cache_hits'] == 1 and replay['diagnostics']['qa_rank_retries'] == 0
     assert manager.consolidations == 4
     with Session(engine) as db:
-        assert qa.read_qa(db, 1) == replay and qa.read_qa(db, 2) is None
+        assert qa.read_active_qa(db, 1) == replay and qa.read_active_qa(db, 2) is None
         revisions = list(db.scalars(select(GenerationRevision)))
-        assert len(revisions) == 4 and any(row.snapshot == saved for row in revisions)
+        assert len(revisions) == 4
+        original = next(row for row in revisions if row.id == saved['revision_id'])
+        assert original.snapshot == {key: value for key, value in saved.items() if key != 'revision_id'}
     engine.dispose()
 
 
@@ -119,7 +121,7 @@ def test_qa_uses_shared_discussions_accepted_records_and_architecture(tmp_path, 
     assert saved['items'][0]['source_ids'] == ['note:1:1']
     assert saved['generation'] == Generator.generation_metadata
     with Session(engine) as db:
-        assert qa.read_qa(db, 1) == saved
+        assert qa.read_active_qa(db, 1) == saved
     engine.dispose()
 
 

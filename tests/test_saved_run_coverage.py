@@ -86,6 +86,7 @@ def test_qa_persists_coverage_and_diagnostics_with_each_revision(tmp_path, monke
         assert 'diagnostics' not in manager.generation_metadata
         with Session(engine) as db:
             revision = db.scalars(select(GenerationRevision)).one()
+            assert revision.id == saved['revision_id']
             assert revision.snapshot['coverage'] == saved['coverage']
             assert revision.snapshot['diagnostics'] == saved['diagnostics']
         manager.fail = True
@@ -94,7 +95,7 @@ def test_qa_persists_coverage_and_diagnostics_with_each_revision(tmp_path, monke
         engine.dispose()
         monkeypatch.setattr(progress, 'read', lambda *args: pytest.fail('Read borrowed current progress'))
         with Session(engine) as db:
-            assert qa.read_qa(db, 1) == saved
+            assert qa.read_active_qa(db, 1) == saved
     finally:
         engine.dispose()
 

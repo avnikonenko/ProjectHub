@@ -174,6 +174,11 @@ def test_unified_history_search_and_pagination(env):
     assert before['results'] == [{
         'kind': 'chatgpt', 'note_id': shared, 'title': 'Shared chat',
         'snippet': 'User:\nWhere is the [needle]?',
+        'snippet_parts': [
+            {'text': 'User:\nWhere is the ', 'match': False},
+            {'text': 'needle', 'match': True},
+            {'text': '?', 'match': False},
+        ],
     }]
 
     manager.turns['a'] = [turn(i, 'needle') for i in range(25)]
@@ -184,7 +189,10 @@ def test_unified_history_search_and_pagination(env):
     assert second['next_offset'] is None and first['indexed_turns'] == 25
     results = first['results'] + second['results']
     assert [r['note_id'] for r in results if r['kind'] == 'chatgpt'] == [shared]
-    assert {r['turn_id'] for r in results if r['kind'] == 'codex'} == {str(i) for i in range(25)}
+    codex_results = [r for r in results if r['kind'] == 'codex']
+    assert {r['turn_id'] for r in codex_results} == {str(i) for i in range(25)}
+    assert all([part['text'] for part in r['snippet_parts'] if part['match']] == ['needle']
+               for r in codex_results)
 
     # Imported conversations update through the existing notes FTS triggers.
     assert client.patch(f'{base}/notes/{shared}', json={'content': 'Fresh transcript'}).status_code == 200

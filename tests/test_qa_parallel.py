@@ -200,7 +200,9 @@ def test_refresh_reversed_order_atomic_revision_and_cache_replay(engine, monkeyp
     assert manager.children == 6
     with Session(engine) as db:
         revisions = list(db.scalars(select(GenerationRevision)))
-        assert len(revisions) == 1 and revisions[0].snapshot == saved
+        assert len(revisions) == 1
+        assert revisions[0].id == saved['revision_id']
+        assert revisions[0].snapshot == {key: value for key, value in saved.items() if key != 'revision_id'}
         assert db.get(ProjectQA, 2) is None
     def fail_consolidation(prompt, payload):
         if 'Select and rank existing project Q&A IDs' in prompt:
@@ -211,7 +213,7 @@ def test_refresh_reversed_order_atomic_revision_and_cache_replay(engine, monkeyp
         qa.refresh_qa(engine, 1, manager, max_items=24)
     assert manager.children == 7  # Five cached drafts and one failed new ranking call.
     with Session(engine) as db:
-        assert qa.read_qa(db, 1) == saved
+        assert qa.read_active_qa(db, 1) == saved
         assert len(list(db.scalars(select(GenerationRevision)))) == 1
 
 

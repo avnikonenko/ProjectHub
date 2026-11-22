@@ -82,7 +82,7 @@ def test_refresh_never_generates_topics(prepared):
     assert saved['topic_groups'] == []
     assert saved['topic_grouping'] == {}
     with Session(engine) as db:
-        assert qa.read_qa(db, 1) == saved
+        assert qa.read_active_qa(db, 1) == saved
         assert len(list(db.scalars(select(GenerationRevision)))) == 1
 
 
