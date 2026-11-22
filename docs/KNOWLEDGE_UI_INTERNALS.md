@@ -78,9 +78,9 @@ related records. Context-review notes are separate from historical design status
   matches a substring and offers recorded scope suggestions. Project-wide search
   is separate and provides no semantic retrieval or scope equivalence inference.
 - The Knowledge tab browses the current saved snapshot. **Previous versions**
-  opens saved revisions for browsing and activation. **Unpublished Knowledge
-  previews** shows the latest legacy preview when available. Item links open the
-  current view and report publication mismatches.
+  opens saved revisions for browsing and activation. **Earlier Knowledge
+  Summary** appears when a separate result saved before automatic saving exists.
+  Item links open the current view and report publication mismatches.
 - Failed or cancelled generation preserves saved Knowledge and successful extraction caches; only a complete validated result replaces normal saved Knowledge. Earlier previews retain their separate storage.
 - Source navigation depends on stored descriptors and current availability.
   Archived views show saved excerpts and label the evidence status recorded at

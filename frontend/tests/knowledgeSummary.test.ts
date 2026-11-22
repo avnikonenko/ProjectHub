@@ -64,14 +64,21 @@ test('saving a result returns its durable matching summary through the existing 
 });
 
 let server: ViteDevServer;
+let KnowledgePage: any;
 let PublishedKnowledgeSummary: any;
 let EarlierKnowledgeResult: any;
 before(async () => {
   server = await createServer({ configFile: false, optimizeDeps: { noDiscovery: true, entries: [] },
     server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-  ({ PublishedKnowledgeSummary, EarlierKnowledgeResult } = await server.ssrLoadModule('/src/KnowledgePage.tsx'));
+  ({ KnowledgePage, PublishedKnowledgeSummary, EarlierKnowledgeResult } = await server.ssrLoadModule('/src/KnowledgePage.tsx'));
 });
 after(async () => { await server?.close(); });
+
+test('Knowledge omits the earlier summary section when there is no legacy result', () => {
+  const html = renderToStaticMarkup(createElement(KnowledgePage, { base: '/projects/2', generation: null }));
+  assert.match(html, /Project Knowledge/);
+  assert.doesNotMatch(html, /Unpublished Knowledge previews|No unpublished preview is available|Earlier Knowledge Summary/);
+});
 
 test('the saved Knowledge Summary has a narrative card followed by a supporting details card', () => {
   const current = parseKnowledgeResponse({ snapshot: snapshot() }, 2).snapshot!;
