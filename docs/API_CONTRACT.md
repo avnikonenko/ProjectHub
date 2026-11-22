@@ -71,7 +71,7 @@ Task fields are `{id,project_id,pinned,title,description,priority,status,questio
 - `GET /{pid}/summary`: deterministic `{project_id,source,sections,markdown,generated_at}`.
 - `GET /{pid}/review`: deterministic `{project_id,source,findings,limitations,generated_at,markdown}`. Findings cover incomplete tasks and limitation notes. Each finding includes `category`, `message`, `entity_id`, `status`, `severity`, `title`, and `detail`.
 - `GET /{pid}/search?q=...`: up to 100 project-scoped FTS5 matches with `{entity_type,entity_id,title,snippet}`, ordered by rank, then type and ID.
-- `GET /{pid}/search/all?q=...&kind=all&offset=0`: grouped project search with a `groups` array. Each group has `kind`, `title`, `results`, and `next_offset`.
+- `GET /{pid}/search/all?q=...&kind=all&offset=0`: grouped project search with a `groups` array. Each group has `kind`, `title`, `results`, and `next_offset`. Results can include `title_parts` and `snippet_parts` arrays of `{text,match}` for highlighting.
 - `POST /api/backup`: writes a consistent SQLite copy under the managed data directory and returns `{filename,path}`.
 
 ## Codex interface

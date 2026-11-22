@@ -1,12 +1,18 @@
 import { Fragment } from 'react';
 
+export type SearchTextPart = { text: string; match: boolean };
+
 export type SearchSnippetData = {
   snippet: string;
-  snippet_parts?: { text: string; match: boolean }[];
+  snippet_parts?: SearchTextPart[];
 };
 
+export function SearchText({ text, parts }: { text: string; parts?: SearchTextPart[] }) {
+  return parts?.length ? parts.map(({ text: value, match }, index) => (
+    <Fragment key={index}>{match ? <mark>{value}</mark> : value}</Fragment>
+  )) : text;
+}
+
 export function SearchSnippet({ snippet, snippet_parts: parts }: SearchSnippetData) {
-  return <p>{parts?.length ? parts.map(({ text, match }, index) => (
-    <Fragment key={index}>{match ? <mark>{text}</mark> : text}</Fragment>
-  )) : snippet}</p>;
+  return <p><SearchText text={snippet} parts={parts} /></p>;
 }

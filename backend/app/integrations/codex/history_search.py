@@ -149,6 +149,15 @@ def update_active_count(db, project_id):
                {'pid': project_id})
 
 
+def append_search_match(parts, highlighted):
+    # Keep message and line boundaries out of phrase highlights.
+    if len(parts) >= 2 and parts[-2]['match'] and re.fullmatch(r'[ \t]{1,8}', parts[-1]['text']):
+        gap = parts.pop()['text']
+        parts[-1]['text'] += gap + highlighted
+    else:
+        parts.append({'text': highlighted, 'match': True})
+
+
 def _snippet_parts(snippet, start, end):
     parts = []
     plain, *matches = snippet.split(start)
@@ -157,14 +166,17 @@ def _snippet_parts(snippet, start, end):
     for entry in matches:
         highlighted, _, plain = entry.partition(end)
         if highlighted:
-            if len(parts) >= 2 and parts[-2]['match'] and parts[-1]['text'].isspace():
-                gap = parts.pop()['text']
-                parts[-1]['text'] += gap + highlighted
-            else:
-                parts.append({'text': highlighted, 'match': True})
+            append_search_match(parts, highlighted)
         if plain:
             parts.append({'text': plain, 'match': False})
     return parts
+
+
+def search_markers():
+    # A fresh delimiter distinguishes SQLite highlights from literal brackets
+    # or markup in saved content.
+    marker = token_hex(16)
+    return f'<{marker}>', f'</{marker}>'
 
 
 def search_history(db, project_id, query, offset=0, *, include_shared=False):
@@ -176,10 +188,7 @@ def search_history(db, project_id, query, offset=0, *, include_shared=False):
     if not terms:
         return result
     match = ' AND '.join('"' + term + '"' for term in terms)
-    # Per-query delimiters let us distinguish SQLite match ranges from literal
-    # brackets, markup and other punctuation in imported conversation content.
-    marker = token_hex(16)
-    start, end = f'<{marker}>', f'</{marker}>'
+    start, end = search_markers()
     params = {'query': match, 'pid': project_id, 'limit': PAGE_SIZE + 1, 'offset': offset,
               'highlight_start': start, 'highlight_end': end}
     if include_shared:

@@ -42,7 +42,7 @@ def test_history_highlights_fts_matches_in_codex_and_imported_chat(tmp_path):
             codex_text = '[literal] Ligánd Geometry and ligand'
             db.execute(text("INSERT INTO codex_history_turns(project_id,session_id,session_title,turn_id,status,messages,content) "
                             "VALUES(1,1,'Codex discussion','turn','completed','[]',:content)"), {'content': codex_text})
-            db.add(Note(project_id=1, title='Shared chat', content='x' * 700 + ' ligand geometry [tail]',
+            db.add(Note(project_id=1, title='Shared chat', content='x' * 598 + ' ligand geometry [tail]',
                         kind='document',
                         reference='https://chatgpt.com/share/11111111-1111-1111-1111-111111111111'))
             db.commit()
@@ -58,6 +58,44 @@ def test_history_highlights_fts_matches_in_codex_and_imported_chat(tmp_path):
             assert sum(len(part['text']) for part in shared['snippet_parts']) <= 600
             assert [part['text'] for part in shared['snippet_parts'] if part['match']] == ['ligand geometry']
             assert shared['snippet_parts'][-1] == {'text': ' [tail]', 'match': False}
+            db.execute(text("UPDATE codex_history_turns SET content=:content WHERE session_id=1"),
+                       {'content': 'ligand\n\ngeometry'})
+            db.commit()
+            assert search_history(db, 1, 'ligand geometry')['results'][0]['snippet_parts'] == [
+                {'text': 'ligand', 'match': True}, {'text': '\n\n', 'match': False},
+                {'text': 'geometry', 'match': True},
+            ]
+    finally:
+        engine.dispose()
+
+
+def test_project_search_highlights_titles_and_previews_across_result_types(tmp_path):
+    engine, _ = initialize(tmp_path)
+    try:
+        with Session(engine) as db:
+            db.add(Project(id=1, name='Project'))
+            db.flush()
+            db.add_all([
+                Task(project_id=1, title='Straße Map', description='[literal] Straße map draft'),
+                Note(project_id=1, title='Straße Map', content='Local Straße map'),
+                Note(project_id=1, title='Reference', content='x' * 700, reference='Straße Map'),
+                ProjectQA(project_id=1, generated_at='now', items=[
+                    {'question': 'Straße Map?', 'answer': 'x' * 700 + ' Straße Map'}], sources=[]),
+                ProjectKnowledge(project_id=1, snapshot={'project_id': 1, 'items': [
+                    {'id': 'map', 'statement': 'Straße Map', 'rationale': 'Refer to the map'}]}),
+                CodexSession(project_id=1, title='Straße Map', topic='Straße map', thread_id='thread'),
+            ])
+            db.commit()
+            groups = {group['kind']: group for group in project_search(db, 1, 'map')['groups']}
+            for kind in ('tasks', 'notes', 'qa', 'knowledge', 'sessions'):
+                assert any(part['match'] for row in groups[kind]['results'] for part in row['title_parts']), kind
+                assert any(part['match'] for row in groups[kind]['results'] for part in row['snippet_parts']), kind
+            assert groups['tasks']['results'][0]['snippet_parts'][0] == {'text': '[literal] Straße ', 'match': False}
+            folded = {group['kind']: group for group in project_search(db, 1, 'STRASSE MAP')['groups']}
+            for kind in ('qa', 'knowledge', 'sessions'):
+                assert {'match': True, 'text': 'Straße Map'} in folded[kind]['results'][0]['title_parts']
+            reference = next(row for row in folded['notes']['results'] if row['title'] == 'Reference')
+            assert {'match': True, 'text': 'Straße Map'} in reference['snippet_parts']
     finally:
         engine.dispose()
 
