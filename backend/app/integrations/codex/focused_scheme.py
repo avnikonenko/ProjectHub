@@ -26,6 +26,8 @@ PROMPT = (
     'requested part understandable and keep surrounding project context brief. '
     'When supplied evidence names the table, trigger, route, or handler at a relevant handoff, '
     'use that concrete name and cite the evidence for the handoff. '
+    'Quote an HTTP method and path only from a supplied route declaration and keep its placeholders. '
+    'A handler name alone does not establish a URL. Distinguish API requests from client navigation links. '
     'Return structured graph JSON. Every node and edge must cite 1 to 6 source IDs from sources. '
     'Cite original sources along with any published Knowledge interpretation. Use observed for static '
     'evidence, proposed for plans, and uncertain for conflicting evidence. Static evidence does not '

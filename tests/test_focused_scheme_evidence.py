@@ -10,6 +10,39 @@ from backend.app.models import CodexSession, Note
 from backend.tests.integrations.test_scheme_evidence import repository, setup
 
 
+def test_scope_supplies_registered_search_routes_and_transcript_link(tmp_path):
+    repo = repository(tmp_path)
+    paths = ('backend/app/main.py', 'backend/app/project_search.py', 'frontend/src/historyLinks.ts')
+    for path in paths:
+        target = repo / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((Path(__file__).resolve().parents[1] / path).read_bytes())
+    engine = setup(tmp_path, repo)
+    try:
+        scope = 'Show how imported conversations become searchable, from saving the transcript to opening a result.'
+        result = evidence.collect_evidence(engine, 1, scope=scope)
+        excerpts = {source.get('path'): source['text'] for source in result['sources']}
+        assert 'HTTP route GET /api/projects/{project_id}/history/search' in excerpts[paths[0]]
+        assert 'HTTP route GET /api/projects/{project_id}/search/all' in excerpts[paths[0]]
+        assert 'project_search builds navigation link #history?' in excerpts[paths[1]]
+        assert 'Client navigation readHistoryLink checks #history?' in excerpts[paths[2]]
+    finally:
+        engine.dispose()
+
+
+def test_client_navigation_evidence_uses_structural_fragments_only():
+    source = (
+        "// return '#from-comment?'\n"
+        "function readHistoryLink(hash) { return hash.startsWith('#history?'); }\n"
+        "function buildLink() { return `#history?${privateQuery}`; }\n"
+        "function privateLink() { return '#history?token=PRIVATE_VALUE'; }\n"
+    )
+    output = evidence._structural_excerpt(source, 'historyLinks.ts', focus=evidence._EvidenceScope('History link').score)
+    assert 'readHistoryLink checks #history?' in output
+    assert 'buildLink returns #history?' in output
+    assert 'PRIVATE_VALUE' not in output and 'from-comment' not in output
+
+
 def test_search_scope_supplies_projecthub_indexing_migration(tmp_path):
     repo = repository(tmp_path)
     (repo / 'main.py').write_text('def save_conversation():\n    return commit()\n')

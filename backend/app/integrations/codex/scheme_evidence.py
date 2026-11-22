@@ -31,6 +31,7 @@ from .scheme_knowledge import collect_published_knowledge
 from .scheme_migration_sql import compact_migration_sql, migration_sql_declarations
 from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
+from .scheme_route_evidence import python_route_declarations
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
@@ -130,10 +131,10 @@ class _EvidenceScope:
                 continue  # A dotted identifier such as module.function can also be a search term.
             yield {'path': name, 'reason': reason}
 
-    def source_key(self, source, *, schema_evidence=False):
+    def source_key(self, source, *, structural_evidence=False):
         path = source.get('path', '')
         exact, path_score = self.path_rank(path) if path else (0, 0)
-        return (source['id'] != 'project:objective', -exact, _historical_path(path), not schema_evidence,
+        return (source['id'] != 'project:objective', -exact, _historical_path(path), not structural_evidence,
                 -self.score(source['text']), -path_score, -self.score(source['label']))
 
     @property
@@ -356,15 +357,43 @@ def _markers(root_fd, candidates):
 _AUXILIARY = {'script', 'scripts', 'migration', 'migrations', 'test', 'tests',
               'tool', 'tools', 'benchmark', 'benchmarks', 'example', 'examples', 'docs'}
 _ENTRYPOINTS = {'main', 'app', 'index', 'server', 'cli', 'router', 'routes', 'services', 'models'}
-_CODE_EXTENSIONS = ('.py', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
+_JS_EXTENSIONS = ('.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs')
+_CODE_EXTENSIONS = ('.py', *_JS_EXTENSIONS)
 _MIGRATION_SCOPE_WORDS = frozenset('database db fts fts5 index migration schema search sqlite table trigger'.split())
 _MAX_FOCUSED_MIGRATIONS = 48
 _MAX_FOCUSED_SCHEMA_SOURCES = 3
+_ROUTE_SCOPE_WORDS = frozenset('api click endpoint history link navigat open result route search transcript url'.split())
+_MAX_FOCUSED_ROUTE_CHARS = 800
+_ROUTE_SOURCE_GROUPS = (
+    (re.compile(r'(?m)^L\d+: (HTTP route .+)$'), 2),
+    (re.compile(r'(?m)^L\d+: (\w+ builds navigation link .+)$'), 1),
+    (re.compile(r'(?m)^L\d+: (Client navigation .+)$'), 2),
+)
+_JS_HASH_ROUTE = re.compile(
+    r"""(?P<operation>\breturn\s+|\.startsWith\(\s*)(?P<quote>['"`])(?P<fragment>#[a-zA-Z][\w-]{0,39}\?)""")
 
 
 def _python_migration(relative):
     path = PurePosixPath(relative.lower())
     return path.suffix == '.py' and bool({'migrations', 'alembic'} & set(path.parts[:-1]))
+
+
+def _scoped_route_source_refs(sources, focus):
+    """Keep evidence from each handoff even when one file declares many routes."""
+    selected = set()
+    if focus.terms & _ROUTE_SCOPE_WORDS:
+        wants_history = bool(focus.terms & {'conversation', 'transcript', 'history'})
+        for pattern, limit in _ROUTE_SOURCE_GROUPS:
+            ranked = []
+            for source in sources:
+                statements = '\n'.join(pattern.findall(source['text']))
+                score = focus.score(statements)
+                if wants_history and '#history?' in statements:
+                    score += 2 + min(3, statements.count('#history?'))
+                if score:
+                    ranked.append((-score, source['id']))
+            selected.update(identifier for _, identifier in sorted(ranked)[:limit])
+    return selected
 
 
 def _scheme_category(relative):
@@ -998,9 +1027,22 @@ def _predicate_shape(node, depth=0):
     return '<expression>'
 
 
+def _client_navigation_declarations(value, masked, owner_at):
+    declarations = []
+    for match in _JS_HASH_ROUTE.finditer(value):
+        if (not masked[match.start():match.start('quote')].strip()
+                or not (value.startswith(match['quote'], match.end()) or value.startswith('${', match.end()))):
+            continue
+        owner = owner_at(match.start())
+        operation = 'returns' if match['operation'].startswith('return') else 'checks'
+        subject = f'{owner} {operation}' if owner and owner != 'module' else operation
+        declarations.append((value.count('\n', 0, match.start()) + 1, f'Client navigation {subject} {match["fragment"]}'))
+    return declarations
+
+
 def _structural_excerpt(value, relative, *, focus=None):
     """Balanced declarations/imports/static call names; no argument or initializer literals."""
-    imports, declarations, calls, migration_sql = [], [], [], []
+    imports, declarations, calls, migration_sql, routes = [], [], [], [], []
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
@@ -1009,6 +1051,8 @@ def _structural_excerpt(value, relative, *, focus=None):
         if parsed is not None:
             if focus and _python_migration(relative):
                 migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
+            elif focus:
+                routes = python_route_declarations(parsed)
 
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
@@ -1111,6 +1155,8 @@ def _structural_excerpt(value, relative, *, focus=None):
             imports.append((value.count('\n', 0, match.start()) + 1, 'import ' + target))
         seen_calls = set()
         owner_at = focused_call_owner(masked) if focus else None
+        if owner_at and PurePosixPath(relative).suffix.lower() in _JS_EXTENSIONS:
+            routes = _client_navigation_declarations(value, masked, owner_at)
         function_marks = [] if focus else [(match.start(1), match[1]) for match in re.finditer(
             r'\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(', masked)]
         grouped_calls = {}
@@ -1138,12 +1184,20 @@ def _structural_excerpt(value, relative, *, focus=None):
     # import blocks or private helpers. Interleave groups within the same hard cap.
     declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
     calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
-    buckets = [migration_sql, declarations, calls, imports] if migration_sql else [declarations, calls, imports]
+    buckets = [migration_sql, declarations, calls, imports] if focus else [declarations, calls, imports]
     if focus:
         for bucket in buckets:
             bucket.sort(key=lambda item: -focus(item[1]))
     rendered = ['Static syntax only; call names do not prove runtime execution.']
     used = len(rendered[0]) + 1
+    if routes:
+        # Reserve part of a focused excerpt for actual routes before dense
+        # declarations and call groups can fill the whole file budget.
+        for number, statement in sorted(routes, key=lambda item: -focus(item[1]))[:8]:
+            line = f'L{number}: {statement[:320]}'
+            if used + len(line) + 1 <= min(_MAX_FOCUSED_ROUTE_CHARS, _MAX_EXCERPT):
+                rendered.append(line)
+                used += len(line) + 1
     positions = [0] * len(buckets)
     while any(positions[i] < len(bucket) for i, bucket in enumerate(buckets)):
         for i, bucket in enumerate(buckets):
@@ -1432,7 +1486,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 6, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 8, 'requested_paths': sorted(focus.paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
@@ -1650,8 +1704,9 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     if (score := focus.score(statements)):
                         schema_sources.append((-score, source['id']))
             schema_refs = {identifier for _, identifier in sorted(schema_sources)[:_MAX_FOCUSED_SCHEMA_SOURCES]}
+            structural_refs = schema_refs | _scoped_route_source_refs(repository_sources, focus)
             priority_order = sorted([*repository_sources, *records],
-                                    key=lambda source: focus.source_key(source, schema_evidence=source['id'] in schema_refs))
+                                    key=lambda source: focus.source_key(source, structural_evidence=source['id'] in structural_refs))
         else:
             deferred = []
             for source in records:

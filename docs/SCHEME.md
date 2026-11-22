@@ -48,6 +48,8 @@ did not supply evidence. Scope matching recognizes forms such as “cache” and
 include, the diagram can use a short excerpt around the match.
 Storage and indexing scopes can include table and trigger declarations from
 Python migrations. These excerpts describe schema structure without SQL values.
+Search and navigation scopes can include declared HTTP routes and local links,
+with query values omitted from the excerpts.
 
 The current diagram and its instruction are
 saved together. A successful rerun replaces that focused result. To rerun a
