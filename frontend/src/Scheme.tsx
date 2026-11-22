@@ -353,7 +353,7 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
       <label>
         What should the diagram show?
         <textarea value={instruction} maxLength={2000} rows={4} required disabled={loading || active}
-          placeholder="Trace how an imported conversation becomes a searchable result."
+          placeholder="Example: Trace how an imported conversation becomes a searchable result."
           onChange={event => { draftEdited.current = true; setInstruction(event.target.value); }} />
       </label>
       <button type="submit" className="secondary" disabled={busy || !!loadError || !instruction.trim()}>
