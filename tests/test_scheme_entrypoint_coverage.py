@@ -196,3 +196,43 @@ def test_feature_section_keeps_nested_subheadings_until_peer_section():
     assert section.rstrip() in excerpt
     assert '## Installation' not in excerpt and 'Install unrelated packages.' not in excerpt
     assert omitted
+
+
+def test_general_scheme_reserves_matching_index_writer_and_query(tmp_path, monkeypatch):
+    repo = crowded_repository(tmp_path)
+    (repo / 'app.py').write_text(
+        'from z_search_results import query_records\n'
+        '@app.post("/records/import")\ndef load_records():\n'
+        '    db.add(Record())\n    db.commit()\n'
+        '@app.get("/records/search")\ndef find_records():\n    return query_records()\n'
+    )
+    (repo / 'z_search_results.py').write_text(
+        'def query_records():\n'
+        '    return db.execute(text("SELECT rowid FROM records_fts WHERE records_fts MATCH :query"))\n'
+    )
+    migrations = repo / 'migrations' / 'versions'
+    migrations.mkdir(parents=True)
+    (migrations / '001_index.py').write_text(
+        'from alembic import op\n'
+        'def upgrade():\n'
+        '    op.execute("CREATE VIRTUAL TABLE records_fts USING fts5(content)")\n'
+        '    op.execute("CREATE TRIGGER records_insert AFTER INSERT ON records BEGIN "'
+        '"INSERT INTO records_fts(rowid,content) VALUES(new.id,new.content); END")\n'
+    )
+    engine = setup(tmp_path, repo)
+
+    def records(db, project):
+        notes = [evidence._source(f'note:{index}', 'Long discussion', str(index) * 5600, 'project note')
+                 for index in range(8)]
+        return notes, [], [], 0
+
+    monkeypatch.setattr(evidence, '_records', records)
+    result = evidence.collect_evidence(engine, 1)
+    by_path = {source.get('path'): source['text'] for source in result['sources']}
+    assert 'records_insert AFTER INSERT ON records: INSERT INTO records_fts' in by_path['migrations/versions/001_index.py']
+    assert 'records_fts MATCH' in by_path['z_search_results.py']
+    assert '/records/import' in by_path['app.py'] and 'db.commit' in by_path['app.py']
+    assert '/records/search' in by_path['app.py'] and 'query_records' in by_path['app.py']
+    assert 'sample/zeta_prepare.py' in by_path
+    assert sum(len(source['text']) for source in result['sources']) <= evidence.scheme_inspection_limits()[0]
+    engine.dispose()

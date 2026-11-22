@@ -34,6 +34,7 @@ from .scheme_namelist import namelist_excerpt
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations
 from .scheme_route_evidence import python_route_declarations
+from .scheme_workflow_sql import workflow_sql_rows
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
@@ -367,6 +368,10 @@ _CODE_EXTENSIONS = ('.py', *_JS_EXTENSIONS)
 _MIGRATION_SCOPE_WORDS = frozenset('database db fts fts5 index migration schema search sqlite table trigger'.split())
 _MAX_FOCUSED_MIGRATIONS = 48
 _MAX_FOCUSED_SCHEMA_SOURCES = 3
+_WORKFLOW_ROUTE = re.compile(r'/(?:import|search|generate|generation|scheme)(?=[/ ?])')
+_VIRTUAL_INDEX = re.compile(r'(?m)^L\d+: CREATE VIRTUAL TABLE (\w+) USING fts[345]\b', re.I)
+_INDEX_WRITE = re.compile(r'(?m)^L\d+: CREATE TRIGGERS? [^\n]+: [^\n]*\bINSERT INTO (\w+)\b', re.I)
+_INDEX_QUERY = re.compile(r'(?m)^L\d+: SELECT FROM \w+ WHERE (\w+) MATCH\b', re.I)
 _ROUTE_SCOPE_WORDS = frozenset('api click endpoint history link navigat open result route search transcript url'.split())
 _MAX_FOCUSED_ROUTE_CHARS = 800
 _MAX_FOCUSED_FLOW_CHARS = 850
@@ -527,13 +532,14 @@ def _import_targets(value, relative, available, *, called_names=None):
     return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
 
 
-def _general_repository_order(sources, entrypoints, declared_modules, handoffs, reachable, configurations, guides):
+def _general_repository_order(sources, entrypoints, declared_modules, handoffs, reachable, configurations, guides, route_targets):
     """Give entry points, linked code, configurations and guides independent turns."""
-    lanes = [deque() for _ in range(7)]
+    lanes = [deque() for _ in range(9)]
     for source in sources:
         path = source['path']
         lane = (0 if path in entrypoints else 1 if path in handoffs else 2 if path in configurations
-                else 3 if path in guides else 4 if _manifest(path) else 5 if path in reachable else 6)
+                else 3 if path in guides else 4 if _manifest(path) else 5 if 'HTTP route ' in source['text']
+                else 6 if path in route_targets else 7 if path in reachable else 8)
         lanes[lane].append(source)
     lanes[0] = deque(sorted(lanes[0], key=lambda source: declared_modules.get(source['path'], len(declared_modules))))
     order = []
@@ -544,6 +550,26 @@ def _general_repository_order(sources, entrypoints, declared_modules, handoffs, 
         if lane:
             pending.append(lane)
     return order
+
+
+def _index_workflows(sources):
+    """Pair SQLite index maintenance with runtime queries on the same index."""
+    for schema in sorted(sources, key=lambda source: source['path']):
+        if not _python_migration(schema['path']):
+            continue
+        indexes = set(_VIRTUAL_INDEX.findall(schema['text'])) & set(_INDEX_WRITE.findall(schema['text']))
+        if not indexes:
+            continue
+        matches = []
+        for source in sources:
+            if source is schema or source['provenance'] != 'observed in code':
+                continue
+            queried = set(_INDEX_QUERY.findall(source['text']))
+            if indexes & queried:
+                matches.append((len(indexes & queried), len(queried), source))
+        if matches:
+            matches.sort(key=lambda item: (-item[0], -item[1]))
+            yield [schema, matches[0][2]]
 
 
 def _repository(repository_path, patterns, *, inventory=None, requested=None):
@@ -1080,17 +1106,17 @@ def _client_navigation_declarations(value, masked, owner_at):
     return declarations
 
 
-def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None):
+def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
-    flow = []
+    flow, workflow, route_owners = [], [], set()
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
         except (SyntaxError, ValueError, RecursionError):
             parsed = None
         if parsed is not None:
-            if focus and _python_migration(relative):
+            if _python_migration(relative):
                 migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
             elif focus:
                 routes = python_route_declarations(parsed)
@@ -1098,6 +1124,21 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
             elif trace_imports is not None:
                 flow, called = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
                 trace_imports.update(called)
+                workflow = workflow_sql_rows(parsed)
+                candidates = [row for row in python_route_declarations(parsed)
+                              if row[1].startswith('HTTP route ') and _WORKFLOW_ROUTE.search(row[1])]
+                if candidates:
+                    # Give POST and GET handlers room before auxiliary endpoints.
+                    candidates.sort(key=lambda row: ('{' in row[1].split(' -> ')[0].rsplit('/', 1)[-1],
+                                                     '/preview ' in row[1], row[0]))
+                    routes = candidates[:5]
+                    route_owners = {row.split(' -> ')[-1] for _, row in routes}
+                    if route_imports is not None:
+                        for handler in ast.walk(parsed):
+                            if isinstance(handler, (ast.FunctionDef, ast.AsyncFunctionDef)) and handler.name in route_owners:
+                                route_imports.update(call.value.func.id for call in ast.walk(handler)
+                                    if isinstance(call, ast.Return) and isinstance(call.value, ast.Call)
+                                    and isinstance(call.value.func, ast.Name))
 
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
@@ -1230,16 +1271,19 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
     # import blocks or private helpers. Interleave groups within the same hard cap.
     declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
     calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
-    buckets = [migration_sql, declarations, calls, imports] if focus else [declarations, calls, imports]
+    buckets = [migration_sql, declarations, calls, imports]
     if focus:
         for bucket in buckets:
             bucket.sort(key=lambda item: -focus(item[1]))
     rendered = ['Static syntax only; call names do not prove runtime execution.']
     used = len(rendered[0]) + 1
     # Keep room for explicit routes and concrete handoffs ahead of call-name lists.
-    ordered_routes = sorted(routes, key=lambda item: -focus(item[1])) if routes else []
+    ordered_routes = sorted(routes, key=lambda item: -focus(item[1])) if focus else routes
     flow_allowance = _MAX_FOCUSED_FLOW_CHARS if focus else 1400
-    for rows, allowance, count in ((ordered_routes, _MAX_FOCUSED_ROUTE_CHARS, 8),
+    route_calls = [row for row in calls if row[1].split(' uses call syntax:')[0].rsplit('.', 1)[-1] in route_owners]
+    for rows, allowance, count in ((workflow, 480, 8),
+                                    (ordered_routes, _MAX_FOCUSED_ROUTE_CHARS, 8),
+                                    (route_calls, 700, 5),
                                     (flow, flow_allowance, 8 if focus else 16)):
         ceiling = min(used + allowance, _MAX_EXCERPT)
         for number, statement in rows[:count]:
@@ -1518,6 +1562,15 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         promoted.extend(sorted(scoped_migrations))
         candidates = sorted(dict.fromkeys([*candidates, *promoted]), key=focus_order)
         paths.sort(key=focus_order)
+    else:
+        migrations = sorted(relative for relative in paths if _python_migration(relative))
+        # A small schema sample and explicit index migrations share the same
+        # inspection budget as application code.
+        migration_candidates = sorted(migrations, key=lambda path: (
+            not re.search(r'(?:^|[_-])(?:fts\d*|search|index)(?:[_.-]|$)', PurePosixPath(path).name, re.I),
+            path))[:16]
+        scoped_migrations.update(migration_candidates)
+        candidates = list(dict.fromkeys([*candidates[:8], *migration_candidates, *candidates[8:]]))
     eligible = set(candidates)
     try:
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW) if root else None
@@ -1539,7 +1592,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             candidates = [relative for relative in candidates if relative in marked_paths]
         scope_identity = {'scope': focus.value, 'scope_policy': 9, 'requested_paths': sorted(focus.paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v15', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v16', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1579,6 +1632,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         entrypoint_functions = {}
         reachable_paths = set()
         handoff_paths = set()
+        route_targets = set()
         configuration_paths = set()
         configurations = {}
         if not focus:
@@ -1616,6 +1670,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             try:
                 is_code = (_scheme_category(relative) == 'code'
                            or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py'
+                           or not focus and relative in scoped_migrations
                            or focus and (_scheme_category(relative) == 'tests'
                                or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS))
                 marker = marker_by_path.get(relative)
@@ -1681,12 +1736,16 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     if isinstance(marker, list) and marker[3] > file_limit:
                         limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
                     called_names = set()
+                    returned_calls = set()
                     syntax = (_structural_excerpt(value, relative, focus=focus.score)
                               if focus else _structural_excerpt(value, relative,
-                                  entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names))
+                                  entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names,
+                                  route_imports=returned_calls))
                     if not focus and called_names:
                         entrypoint_paths.add(relative)
                     linked = _import_targets(value, relative, code_paths)
+                    if returned_calls:
+                        route_targets.update(_import_targets(value, relative, code_paths, called_names=returned_calls))
                     if not focus and called_names:
                         reachable_paths.update(_import_targets(value, relative, code_paths, called_names=called_names))
                         visible_calls = {name for line in syntax.splitlines() if 'Python entrypoint flow ' in line
@@ -1802,7 +1861,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             source.get('path') not in command_guides))
         if not focus:
             repository_sources = _general_repository_order(repository_sources, entrypoint_paths, declared_modules,
-                                                           handoff_paths, reachable_paths, configuration_paths, command_guides)
+                                                           handoff_paths, reachable_paths, configuration_paths, command_guides,
+                                                           route_targets)
         # Reserve half for repository evidence when both kinds are present. Keep
         # whole excerpts and return any unused repository allowance to records.
         repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))
@@ -1824,7 +1884,14 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             for source in records:
                 if not add_source(source, source_budget - repository_reserve):
                     deferred.append(source)
-            priority_order = [*repository_sources, *deferred]
+            workflow_limit = size + repository_reserve // 4
+            for workflow in _index_workflows(repository_sources):
+                missing = [source for source in workflow if source['id'] not in included_ids]
+                if size + sum(len(source['text']) for source in missing) <= workflow_limit:
+                    for source in missing:
+                        add_source(source, workflow_limit)
+            priority_order = [*(source for source in repository_sources if source['path'] not in scoped_migrations),
+                              *deferred]
         for source in priority_order:
             if not add_source(source, source_budget):
                 omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1

@@ -452,3 +452,39 @@ def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp
         assert json.loads(JSONResponse(shown).body) == shown
         assert db.get(ProjectScheme, 1).snapshot == legacy
     engine.dispose()
+
+
+@pytest.mark.parametrize('repair_works', [True, False])
+def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair_works):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Search'))
+        db.commit()
+    inspected = evidence()
+    inspected['sources'] += [
+        {'id': 'migration', 'path': 'migrations/index.py', 'provenance': 'observed in code',
+         'label': 'Index migration',
+         'text': 'L1: CREATE VIRTUAL TABLE doc_fts USING fts5\n'
+                 'L2: CREATE TRIGGER index_doc AFTER INSERT ON docs: INSERT INTO doc_fts'},
+        {'id': 'query', 'path': 'query.py', 'provenance': 'observed in code',
+         'label': 'Runtime query', 'text': 'L8: SELECT FROM doc_fts WHERE doc_fts MATCH'},
+    ]
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: deepcopy(inspected))
+    prompts = []
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            prompts.append(prompt)
+            graph = output()
+            if len(prompts) > 1 and repair_works:
+                graph['workflow']['nodes'] = [
+                    {**node('find', refs=['migration', 'query']), 'type': 'operation'},
+                ]
+            return json.dumps(graph)
+
+    saved = scheme.refresh_scheme(engine, 1, Manager())
+    assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
+    assert '["migration", "query"]' in prompts[-1]
+    warning = any('did not fully cite' in value for value in saved['coverage']['limitations'])
+    assert warning is not repair_works
+    engine.dispose()

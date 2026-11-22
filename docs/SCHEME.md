@@ -34,6 +34,10 @@ Focus leaves the repository dependency scan independent of the diagrams.
 General Scheme prioritizes declared commands, their code handoffs, and
 referenced configuration sections alongside project guides. Longer entrypoint
 files can use a larger per-file read within the same overall inspection budget.
+General Scheme also reserves part of that budget for matching full-text index
+declarations, trigger writes, and application queries when found in the repository.
+If the workflow omits citations for an inspected indexing handoff, Scheme can
+retry once. Remaining citation gaps appear under coverage.
 Find earlier results under **Scheme details → Previous versions**.
 When Scheme cites published Knowledge, ProjectHub can fill in its recorded
 original source references. If these would exceed the citation limit, it retries

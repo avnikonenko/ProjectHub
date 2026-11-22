@@ -18,7 +18,7 @@ from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
 from .revisions import save_revision
-from .scheme_evidence import collect_evidence
+from .scheme_evidence import _index_workflows, collect_evidence
 
 MAX_NODES = 20
 SchemeFocus = Literal['balanced', 'code', 'sessions']
@@ -43,6 +43,18 @@ _NODE_TYPES = {
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
 }
 _NODE_TYPES['focused'] = (*_NODE_TYPES['architecture'], *_NODE_TYPES['workflow'])
+
+
+def _missing_index_workflows(workflow, sources):
+    """Check citations on a node or handoff for the inspected index/query pair."""
+    nodes = {node['id']: set(node['source_ids']) for node in workflow['nodes'] if node['status'] == 'observed'}
+    citations = list(nodes.values())
+    citations.extend(set(edge['source_ids']) | nodes[edge['source']] | nodes[edge['target']]
+                     for edge in workflow['edges'] if edge['status'] == 'observed'
+                     and edge['source'] in nodes and edge['target'] in nodes)
+    return [(schema['id'], query['id']) for schema, query in _index_workflows(
+                [source for source in sources if source.get('path')])
+            if not any({schema['id'], query['id']} <= refs for refs in citations)]
 
 
 class SchemeQueueSuperseded(CodexError):
@@ -437,6 +449,10 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'branches explicitly. When a consulted configuration or code guard establishes a default, explain '
             'what runs by default and what requires an option or a separate command. For an active handoff, cite '
             'the entrypoint or caller that invokes it. A helper definition alone does not establish that handoff. '
+            'When a saved record, an index-maintenance trigger, and a search query are all supplied, show the '
+            'connection from the saved record to the matching index and search result, citing the writer, '
+            'trigger, and query. Keep separate indexes distinct. When a generation handler delegates to '
+            'implementation that validates and saves results, show that handoff too. '
             'Use about 8–15 major nodes when useful, never more than 20 '
             'nodes or 40 edges per graph. Every node and edge must cite supplied source_ids. '
             'For every source_ids list, copy 1–6 distinct IDs exactly from the top-level sources list. '
@@ -505,24 +521,38 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         scheme_requests = 1
         raw = manager.generate_brief(prompt, schema)
         progress.update(project_id, stage='Validating Scheme')
+        citation_error = None
         try:
             architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
         except SchemeKnowledgeCitationError as exc:
-            retry_prompt = (
+            citation_error = exc
+            repair = (
                 f'The previous response failed validation. {exc} '
                 'For every affected claim, cite the original sources directly and omit the derived Knowledge ID '
                 'if all its recorded original citations cannot fit within six references. '
-                'Keep supported claims and return a complete replacement that follows the same contract.\n'
-                + prompt
             )
-            if len(retry_prompt) > MAX_INPUT_CHARS:
-                raise
+        else:
+            missing = _missing_index_workflows(workflow, evidence['sources'])
+            repair = ('The previous workflow omitted a supported index handoff. For each of the following '
+                      'migration and query citation pairs, show how the record named in the trigger is indexed '
+                      'and returned through the matching query. Cite both IDs in the workflow and keep distinct '
+                      'indexes separate. Citation pairs: ' + json.dumps(missing) + '. ') if missing else ''
+        retry_prompt = repair + 'Keep supported claims and return a complete replacement.\n' + prompt if repair else ''
+        if repair and len(retry_prompt) <= MAX_INPUT_CHARS:
             progress.check_cancelled()
-            progress.update(project_id, stage='Retrying Scheme citations')
+            progress.update(project_id, stage='Retrying Scheme citations' if citation_error else 'Checking Scheme index handoffs')
             scheme_requests += 1
             raw = manager.generate_brief(retry_prompt, schema)
             progress.update(project_id, stage='Validating Scheme')
             architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+        elif citation_error is not None:
+            raise citation_error
+        if _missing_index_workflows(workflow, evidence['sources']):
+            evidence['coverage']['partial'] = True
+            evidence['coverage']['limitations'] = [
+                *evidence['coverage']['limitations'],
+                'The generated workflow did not fully cite an inspected full-text indexing and search handoff.',
+            ]
         snapshot = {
             'generated_at': utcnow(), 'architecture': architecture, 'workflow': workflow,
             'focus': focus,
