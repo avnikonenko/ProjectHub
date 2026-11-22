@@ -1375,6 +1375,8 @@ a:focus-visible {
 .scheme-freshness { display: flex; align-items: baseline; flex-wrap: wrap; gap: .6rem 1rem; margin: 1rem 0; }
 .scheme-freshness details { flex-basis: 100%; }
 .scheme-tabs { margin: 1rem 0; }
+.focused-scheme form { margin-bottom: .5rem; }
+.focused-scheme-instruction { white-space: pre-wrap; overflow-wrap: anywhere; }
 .scheme-diagram { padding: 1rem 0; min-width: 0; margin-inline: auto; }
 .scheme-diagram svg { display: block; width: 100%; min-width: 0; height: auto; margin: 0 auto; }
 .scheme-components, .scheme-code-tree, .scheme-sources, .scheme-development { margin-top: 1.3rem; }

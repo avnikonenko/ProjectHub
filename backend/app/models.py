@@ -217,6 +217,12 @@ class ProjectScheme(Base):
     snapshot: Mapped[dict] = mapped_column(JSON)
 
 
+class ProjectFocusedScheme(Base):
+    __tablename__ = 'project_focused_schemes'
+    project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
+    snapshot: Mapped[dict] = mapped_column(JSON)
+
+
 class ProjectKnowledge(Base):
     __tablename__ = 'project_knowledge'
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)

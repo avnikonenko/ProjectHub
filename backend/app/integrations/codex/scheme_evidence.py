@@ -42,6 +42,54 @@ _MAX_DEPENDENCIES = 100
 _MAX_RECORDED_FILE_OMISSIONS = 100
 _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,. -]+\])?\s*([<>=!~;@].*|\(.*\))?$')
 
+_SCOPE_WORD = re.compile(r'[^\W_]+')
+_SCOPE_CAMEL_CASE = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
+_SCOPE_STOP_WORDS = frozenset(
+    'about also both can code could describe diagram explain from give have how include into just '
+    'like make only part please project scheme see show should that the their them there these they '
+    'this those through want what when where which will with would your'.split())
+
+
+def _scope_words(value):
+    for part in _SCOPE_WORD.findall(_SCOPE_CAMEL_CASE.sub(' ', value).casefold()):
+        if (len(part) < 3 and part not in {'db', 'ci', 'ui'}) or part.isdecimal() or part in _SCOPE_STOP_WORDS:
+            continue
+        for suffix in ('able', 'ing', 'ed'):
+            if len(part) - len(suffix) >= 4 and part.endswith(suffix):
+                part = part[:-len(suffix)]
+                break
+        else:
+            if part.endswith(('ches', 'shes', 'sses', 'xes', 'zzes')) and len(part) >= 6:
+                part = part[:-2]
+            elif part.endswith('s') and not part.endswith(('ss', 'us', 'is')) and len(part) >= 5:
+                part = part[:-1]
+        yield part
+
+
+class _EvidenceScope:
+    def __init__(self, value):
+        self.value = ' '.join(value.split())
+        self.terms = frozenset(list(dict.fromkeys(_scope_words(self.value)))[:24])
+        self.paths = frozenset(match.casefold().removeprefix('./')
+                               for match in re.findall(r'[\w./-]+\.[\w-]+', self.value))
+
+    def score(self, value):
+        return len(self.terms.intersection(_scope_words(value))) if self.terms else 0
+
+    def path_rank(self, path):
+        folded = path.casefold()
+        return (int(folded in self.paths or PurePosixPath(folded).name in self.paths), self.score(path))
+
+    def source_key(self, source):
+        path = source.get('path', '')
+        exact, path_score = self.path_rank(path) if path else (0, 0)
+        return (source['id'] != 'project:objective', -exact, _historical_path(path),
+                -self.score(source['text']), -path_score, -self.score(source['label']))
+
+    @property
+    def fts_query(self):
+        return ' OR '.join(f'"{term}"*' for term in sorted(self.terms))
+
 
 def _source(identifier, label, value, provenance, **metadata):
     return {'id': identifier, 'label': label[:240], 'text': value,
@@ -833,15 +881,16 @@ _ROUTINE_CALLS = {'isinstance', 'len', 'set', 'list', 'dict', 'tuple', 'str', 'i
                   'ValueError', 'TypeError', 'RuntimeError', 'Error', 'setTimeout', 'clearTimeout'}
 
 
-def _call_summary(names, preferred=()):
+def _call_summary(names, preferred=(), *, focus=None):
     def priority(name):
         leaf = name.rsplit('.', 1)[-1]
-        return (name in _ROUTINE_CALLS or leaf in {'append', 'extend', 'strip', 'get', 'items', 'values', 'keys', 'join'},
+        return (-(focus(name) if focus else 0),
+                name in _ROUTINE_CALLS or leaf in {'append', 'extend', 'strip', 'get', 'items', 'values', 'keys', 'join'},
                 name not in preferred, leaf.startswith(('use', 'set')), name.startswith('_'))
     return ', '.join(sorted(names, key=priority)[:12])
 
 
-def _structural_excerpt(value, relative):
+def _structural_excerpt(value, relative, *, focus=None):
     """Balanced declarations/imports/static call names; no argument or initializer literals."""
     imports, declarations, calls = [], [], []
     if PurePosixPath(relative).suffix.lower() == '.py':
@@ -883,8 +932,13 @@ def _structural_excerpt(value, relative):
                     if name and self.scope:
                         key = '.'.join(self.scope)
                         names = self.observed_calls.setdefault(key, [node.lineno, []])[1]
-                        if name not in names and len(names) < 64:
-                            names.append(name)
+                        if name not in names:
+                            if len(names) < 64:
+                                names.append(name)
+                            elif focus and focus(name):
+                                least = min(range(len(names)), key=lambda index: focus(names[index]))
+                                if focus(names[least]) < focus(name):
+                                    names[least] = name
                     self.generic_visit(node)
 
             preferred = set()
@@ -898,7 +952,7 @@ def _structural_excerpt(value, relative):
                     preferred.add(_qualified_name(node.func))
             visitor = Visitor()
             visitor.visit(parsed)
-            calls = [(line, scope + ' uses call syntax: ' + _call_summary(names, preferred))
+            calls = [(line, scope + ' uses call syntax: ' + _call_summary(names, preferred, focus=focus))
                      for scope, (line, names) in visitor.observed_calls.items()]
     if not declarations and not imports:
         masked = _mask_js(value)
@@ -922,22 +976,29 @@ def _structural_excerpt(value, relative):
         grouped_calls = {}
         for match in re.finditer(r'\b([A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*)(?:<[^<>;{}\n]{1,120}>)?\s*\(', masked):
             name = re.sub(r'\s+', '', match[1])
-            if (name in seen_calls or name in {'if', 'for', 'while', 'switch', 'catch', 'function', 'import', 'super', 'return', 'async'}
+            if ((not focus and name in seen_calls)
+                    or name in {'if', 'for', 'while', 'switch', 'catch', 'function', 'import', 'super', 'return', 'async'}
                     or match.start(1) in declared_positions):
                 continue
-            seen_calls.add(name)
             scope = next((name for start, name in reversed(function_marks) if start < match.start()), 'module')
+            key = (scope, name) if focus else name
+            if key in seen_calls:
+                continue
+            seen_calls.add(key)
             number = value.count('\n', 0, match.start()) + 1
             group = grouped_calls.setdefault(scope, [number, []])
-            if len(group[1]) < 64:
+            if len(group[1]) < 64 or focus and focus(name):
                 group[1].append(name)
-        calls = [(number, scope + ' lexical call syntax: ' + _call_summary(names))
+        calls = [(number, scope + ' lexical call syntax: ' + _call_summary(names, focus=focus))
                  for scope, (number, names) in grouped_calls.items()]
     # Public declarations and their call groups should not disappear behind long
     # import blocks or private helpers. Interleave groups within the same hard cap.
     declarations.sort(key=lambda item: (item[1].startswith('def _'), item[0]))
     calls.sort(key=lambda item: (item[1].startswith('_'), item[0]))
     buckets = [declarations, calls, imports]
+    if focus:
+        for bucket in buckets:
+            bucket.sort(key=lambda item: -focus(item[1]))
     rendered = ['Static syntax only; call names do not prove runtime execution.']
     used = len(rendered[0]) + 1
     positions = [0, 0, 0]
@@ -954,7 +1015,7 @@ def _structural_excerpt(value, relative):
     return '\n'.join(rendered) if len(rendered) > 1 else ''
 
 
-def _records(db, project):
+def _records(db, project, *, scope=None):
     from .history_duplicates import deduplicate_sources
     sources, markers, limitations = [], [], []
     if len(project.description) > 1600 or len(project.goals) > 1600:
@@ -973,7 +1034,8 @@ def _records(db, project):
     if len(sessions) > 32:
         limitations.append('Freshness checks include only the first 33 linked session metadata records.')
     if sessions:
-        limitations.append('Conversation coverage uses at most 12 recent stored excerpts; earlier discussion may be omitted.')
+        limitations.append('Conversation coverage uses at most 12 relevant or recent stored excerpts; other discussions may be omitted.'
+                           if scope else 'Conversation coverage uses at most 12 recent stored excerpts; earlier discussion may be omitted.')
     if any(not row['history_indexed_at'] or not row['history_indexed_activity']
            or not row['codex_activity_at'] or row['history_indexed_activity'] != row['codex_activity_at']
            for row in sessions):
@@ -986,6 +1048,22 @@ def _records(db, project):
                            'length(content) AS content_length,length(title) AS title_length '
                            'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'),
                        {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    if scope and scope.fts_query:
+        params = {'pid': project.id, 'read_chars': READ_CHARS, 'query': scope.fts_query}
+        focused_turns = db.execute(text(
+            'SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS excerpt,length(h.content) AS content_length '
+            'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
+            'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
+            "WHERE codex_history_fts MATCH :query AND h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' "
+            'ORDER BY codex_history_fts.rank,h.id DESC LIMIT 12'), params).mappings().all()
+        focused_notes = db.execute(text(
+            'SELECT n.id,substr(n.title,1,160) AS title,substr(n.content,1,:read_chars) AS content,n.kind,n.updated_at, '
+            'length(n.content) AS content_length,length(n.title) AS title_length '
+            'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
+            "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
+            'ORDER BY search_index.rank,n.id DESC LIMIT 7'), params).mappings().all()
+        turns = list({row['id']: row for row in [*focused_turns, *turns]}.values())[:12]
+        notes = list({row['id']: row for row in [*focused_notes, *notes]}.values())[:7]
     # Bound discussion context independently so larger notes cannot crowd out all
     # repository evidence from the existing 40,000-character source package.
     turn_budget = 12_000 if notes else 24_000
@@ -998,7 +1076,8 @@ def _records(db, project):
             # suffix is not a complete passage merely because it is end-of-input.
             boundaries = list(re.finditer(r'\n[ \t]*\n', value))
             complete = value[:boundaries[-1].end()] if boundaries else ''
-        selected = select_passages(complete, min(EXCERPT_CHARS, max(0, remaining)))
+        selected = select_passages(complete, min(EXCERPT_CHARS, max(0, remaining)),
+                                    priority=scope.score if scope else None)
         if selected['omitted']:
             limitations.append('Some discussion sections were omitted from bounded whole-passage selection; omitted text is not evidence of absence.')
         if original_length > len(value):
@@ -1023,7 +1102,8 @@ def _records(db, project):
             turn_budget -= len(selected['text'])
             excerpt_count += 1
     if len(notes) > 6:
-        limitations.append('Only the six most recent notes or imported documents were included.')
+        limitations.append('At most six relevant or recent notes or imported documents were included.'
+                           if scope else 'Only the six most recent notes or imported documents were included.')
     if any(row['title_length'] > 160 for row in notes[:6]):
         limitations.append('Some note titles were truncated to 160 characters.')
     for row in notes[:6]:
@@ -1043,18 +1123,22 @@ def _records(db, project):
     return sources, markers, limitations, excerpt_count
 
 
-def collect_evidence(engine, project_id, limits=None):
+def collect_evidence(engine, project_id, limits=None, *, scope=None):
     """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
     started = time.monotonic()
+    focus = _EvidenceScope(scope) if scope and scope.strip() else None
     source_budget, read_budget, package_budget = scheme_inspection_limits() if limits is None else limits
     limitations = set()
+    if focus:
+        limitations.add('Focused inspection prioritizes scope terms within the existing evidence limits. Relevant files or discussions may be omitted.')
     freshness_unknown = False
     with Session(engine) as db:
         project = require_project(db, project_id)
         repository_path = project.repository_path
         objective = project.name
         try:
-            records, session_markers, record_limits, excerpt_count = _records(db, project)
+            records, session_markers, record_limits, excerpt_count = (
+                _records(db, project, scope=focus) if focus else _records(db, project))
         except SQLAlchemyError:
             db.rollback()
             records = [_source('project:objective', 'Project name', objective, 'project metadata')]
@@ -1091,6 +1175,19 @@ def collect_evidence(engine, project_id, limits=None):
         patterns = ()
         limitations.add(str(exc) if isinstance(exc, EvidenceReadError) else 'The repository is unavailable.')
     limitations.update(repo_limits)
+    path_ranks = {}
+    if focus:
+        path_ranks = {relative: focus.path_rank(relative) for relative in paths}
+
+        def focus_order(relative):
+            exact, rank = path_ranks[relative]
+            return -exact, _historical_path(relative), -rank
+
+        promoted = [relative for relative in paths if any(path_ranks[relative])
+                    and (_manifest(relative) or _scheme_category(relative) in {'code', 'docs', 'tests'}
+                         or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS)]
+        candidates = sorted(dict.fromkeys([*candidates, *promoted]), key=focus_order)
+        paths.sort(key=focus_order)
     eligible = set(candidates)
     try:
         root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW) if root else None
@@ -1110,20 +1207,22 @@ def collect_evidence(engine, project_id, limits=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
+        scope_identity = {'scope': focus.value} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
-            'freshness_unknown': freshness_unknown})
+            'freshness_unknown': freshness_unknown, **scope_identity})
         with Session(engine) as db:
             cached = db.get(ProjectHistoryBatch, (project_id, key))
             if not metadata_stop and cached is not None and isinstance(cached.evidence, list) and len(cached.evidence) == 1:
                 result = deepcopy(cached.evidence[0])
                 result['diagnostics'].update(cache_hits=1, duration_ms=round((time.monotonic() - started) * 1000))
                 return result
-        dependency_inventory, imported_names, dependency_stop = _dependency_inventory(
-            root_fd, dependency_paths, bool(repository_path))
+        dependency_inventory, imported_names, dependency_stop = (
+            (None, set(), None) if focus else _dependency_inventory(
+                root_fd, dependency_paths, bool(repository_path)))
         sources, dependencies = list(records), []
         scanned = set()
         files_read = 0
@@ -1155,7 +1254,11 @@ def collect_evidence(engine, project_id, limits=None):
                 break
             pick = 0
             declared = [i for i, candidate in enumerate(pending) if candidate in entrypoint_paths]
-            if declared:
+            if focus and any(path_ranks[pending[0]]):
+                # Do not let general entrypoints displace an explicitly named
+                # or scope-matching file before the byte/time budget is spent.
+                pick = 0
+            elif declared:
                 pick = min(declared, key=lambda i: priorities[pending[i]])
             elif pending and _scheme_category(pending[0]) == 'code' and PurePosixPath(pending[0]).name != 'setup.py':
                 choices = [i for i, candidate in enumerate(pending)
@@ -1171,7 +1274,9 @@ def collect_evidence(engine, project_id, limits=None):
             scanned.add(relative)
             try:
                 is_code = (_scheme_category(relative) == 'code'
-                           or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py')
+                           or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py'
+                           or focus and (_scheme_category(relative) == 'tests'
+                               or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS))
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
                 decoded_reads += 1
                 declarations = _entrypoint_declarations(value, relative)
@@ -1227,10 +1332,16 @@ def collect_evidence(engine, project_id, limits=None):
                         else:
                             limitations.add('Some requirement includes were excluded or outside the bounded repository paths.')
                 elif is_code:
-                    excerpt = '\n'.join(part for part in (declared_excerpt, _structural_excerpt(value, relative)) if part)
-                    provenance = 'observed in code'
+                    syntax = (_structural_excerpt(value, relative, focus=focus.score)
+                              if focus else _structural_excerpt(value, relative))
+                    excerpt = '\n'.join(part for part in (declared_excerpt, syntax) if part)
+                    provenance = 'repository test source' if _scheme_category(relative) == 'tests' else 'observed in code'
                 else:
-                    excerpt, omitted = _documentation_excerpt(value)
+                    if focus:
+                        selected = select_passages(value, _MAX_EXCERPT, priority=focus.score)
+                        excerpt, omitted = selected['text'], selected['omitted']
+                    else:
+                        excerpt, omitted = _documentation_excerpt(value)
                     if omitted:
                         limitations.add('Some documentation sections were omitted from bounded excerpts; omitted text is not evidence of absence.')
                     provenance = 'project documentation'
@@ -1293,24 +1404,33 @@ def collect_evidence(engine, project_id, limits=None):
         # Reserve half for repository evidence when both kinds are present. Keep
         # whole excerpts and return any unused repository allowance to records.
         repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))
-        deferred = []
-        for source in records:
-            if not add_source(source, source_budget - repository_reserve):
-                deferred.append(source)
-        for source in [*repository_sources, *deferred]:
+        if focus:
+            priority_order = sorted([*repository_sources, *records], key=focus.source_key)
+        else:
+            deferred = []
+            for source in records:
+                if not add_source(source, source_budget - repository_reserve):
+                    deferred.append(source)
+            priority_order = [*repository_sources, *deferred]
+        for source in priority_order:
             if not add_source(source, source_budget):
                 omitted_reasons['source_output_budget'] = omitted_reasons.get('source_output_budget', 0) + 1
                 limitations.add('The source excerpt budget was reached; some evidence was omitted.')
                 continue
-        allowed_ids = {source['id'] for source in bounded}
-        dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
-        source_order = {source['id']: index for index, source in enumerate(bounded)}
-        dependencies.sort(key=lambda dependency: (
-            _dependency_name(dependency['name']) not in imported_names,
-            min(source_order[ref] for ref in dependency['source_ids'])))
-        if len(dependencies) > _MAX_DEPENDENCIES:
-            dependencies = dependencies[:_MAX_DEPENDENCIES]
-            limitations.add('Only up to 100 dependency declarations are supplied to AI for explanations. The local dependency inventory is separate.')
+        if focus:
+            # Normalized manifest excerpts can support a focused diagram. The
+            # project-wide inventory and dependency explanations are separate.
+            dependencies = []
+        else:
+            allowed_ids = {source['id'] for source in bounded}
+            dependencies = [d for d in dependencies if set(d['source_ids']) <= allowed_ids]
+            source_order = {source['id']: index for index, source in enumerate(bounded)}
+            dependencies.sort(key=lambda dependency: (
+                _dependency_name(dependency['name']) not in imported_names,
+                min(source_order[ref] for ref in dependency['source_ids'])))
+            if len(dependencies) > _MAX_DEPENDENCIES:
+                dependencies = dependencies[:_MAX_DEPENDENCIES]
+                limitations.add('Only up to 100 dependency declarations are supplied to AI for explanations. The local dependency inventory is separate.')
         excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
         for relative in paths[:_MAX_PATHS]:
@@ -1375,7 +1495,7 @@ def collect_evidence(engine, project_id, limits=None):
                                 if key not in {'file_counts', 'inspection_policy', 'file_omissions'}}
         result['fingerprint'] = _digest({key: result[key] for key in
             ('sources', 'dependencies', 'dependency_inventory', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
-                'published_knowledge': knowledge['marker']})
+                'published_knowledge': knowledge['marker'], **scope_identity})
         if inspection_stop != 'time_budget' and dependency_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))

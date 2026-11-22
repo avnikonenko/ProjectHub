@@ -4,7 +4,10 @@ import { Feedback } from './Feedback';
 import { useEffect, useId, useRef, useState } from 'react';
 import { api, post } from './api';
 import { briefReferences, BriefSources, type BriefSource } from './BriefReferences';
-import { SavedGeneration, isGenerationCancelled, cancelledGenerationMessage, type GenerationProvenance } from './GenerationStatus';
+import {
+  GenerationStatus, SavedGeneration, useFocusedSchemeRecovery, isGenerationCancelled,
+  cancelledGenerationMessage, type GenerationProvenance,
+} from './GenerationStatus';
 import { Empty, ErrorBox, label } from './ui';
 import { RevisionHistory } from './RevisionHistory';
 import { decodeSchemeText } from './SchemeText';
@@ -43,6 +46,11 @@ type SchemeResult = {
   inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[];
     diagnostics?: SchemeDiagnostics | null; dependency_inventory?: DependencyInventory };
 };
+type FocusedSchemeSnapshot = {
+  generated_at: string; instruction: string; graph: SchemeGraph; sources: SchemeSource[];
+  coverage: Coverage; generation?: GenerationProvenance | null; diagnostics?: SchemeDiagnostics | null;
+};
+const schemeViews = ['Architecture', 'Workflow', 'Dependencies', 'Focused Scheme'] as const;
 
 const freshnessLabels: Record<string, string> = {
   unchanged: 'No changes detected in inspected sources',
@@ -255,15 +263,121 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
+function FocusedScheme({ base, generation, visible, onGenerating }: {
+  base: string; generation: Generation; visible: boolean; onGenerating?: (active: boolean) => void;
+}) {
+  const [snapshot, setSnapshot] = useState<FocusedSchemeSnapshot | null>(null);
+  const [instruction, setInstruction] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [retryLoad, setRetryLoad] = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [loadError, setLoadError] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const draftEdited = useRef(false);
+  const inFlight = useRef(false);
+  const mounted = useRef(true);
+  const recovery = useFocusedSchemeRecovery(base);
+  const active = generating || recovery.running;
+  const path = base + '/codex/scheme/focused';
+  const prefix = base.split('/')[2] + '-focused-scheme';
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => { onGenerating?.(active); }, [active, onGenerating]);
+  useEffect(() => {
+    const abort = new AbortController();
+    setLoading(true);
+    setLoadError('');
+    api<{ snapshot: FocusedSchemeSnapshot | null }>(path, { signal: abort.signal })
+      .then(({ snapshot: saved }) => {
+        if (abort.signal.aborted) return;
+        setSnapshot(saved);
+        if (!draftEdited.current) setInstruction(saved?.instruction ?? '');
+      })
+      .catch((error: Error) => { if (!abort.signal.aborted) setLoadError(error.message); })
+      .finally(() => { if (!abort.signal.aborted) setLoading(false); });
+    return () => abort.abort();
+  }, [path, recovery.version, retryLoad]);
+
+  async function generate() {
+    const requested = instruction.trim();
+    if (!requested || loading || loadError || recovery.checking || active || inFlight.current) return;
+    inFlight.current = true;
+    setGenerating(true);
+    recovery.clearError();
+    setError('');
+    setNotice('');
+    try {
+      const saved = await post(path, { confirmed: true, instruction: requested, ...generationBody(generation) }) as FocusedSchemeSnapshot;
+      if (mounted.current) {
+        setSnapshot(saved);
+        setInstruction(saved.instruction);
+        draftEdited.current = false;
+      }
+    } catch (error) {
+      if (mounted.current) {
+        if (isGenerationCancelled(error)) setNotice(cancelledGenerationMessage);
+        else {
+          setError((error as Error).message);
+          recovery.recheck();
+        }
+      }
+    } finally {
+      inFlight.current = false;
+      if (mounted.current) setGenerating(false);
+    }
+  }
+
+  const numbers = new Map(snapshot?.sources.map((source, index) => [source.id, index + 1]));
+  const busy = loading || recovery.checking || active;
+  return <div hidden={!visible} aria-busy={busy} className="focused-scheme">
+    <AIResultHeader title="Focused Scheme" savedAt={snapshot?.generated_at} />
+    <form onSubmit={event => { event.preventDefault(); void generate(); }}>
+      <label>
+        What should the diagram show?
+        <textarea value={instruction} maxLength={2000} rows={4} required disabled={loading || active}
+          placeholder="Trace how an imported conversation becomes a searchable result."
+          onChange={event => { draftEdited.current = true; setInstruction(event.target.value); }} />
+      </label>
+      <button type="submit" className="secondary" disabled={busy || !!loadError || !instruction.trim()}>
+        Generate focused scheme
+      </button>
+    </form>
+    <small className="muted">Generation sends your instruction and selected project evidence to {generationDestination(generation.provider)}.</small>
+    <ErrorBox error={loadError || error || recovery.error} />
+    {loadError && <button type="button" className="secondary" onClick={() => setRetryLoad(value => value + 1)}>Retry loading</button>}
+    <Feedback>{notice}</Feedback>
+    {loading && !snapshot && <Feedback>Loading Focused Scheme…</Feedback>}
+    {visible && active && <GenerationStatus base={base} kind="focused_scheme" label="Focused Scheme"
+      sharedProgress={recovery.running ? recovery.progress : undefined} />}
+    {visible && snapshot && <>
+      <details className="brief-details" open={instruction.trim() !== snapshot.instruction || undefined}>
+        <summary>Saved instruction</summary>
+        <p className="focused-scheme-instruction">{snapshot.instruction}</p>
+        {snapshot.generation && <SavedGeneration generation={snapshot.generation} />}
+      </details>
+      {!!snapshot.graph.nodes.length && <SchemeDiagram graph={snapshot.graph} />}
+      <p><AIEmphasis text={snapshot.graph.explanation} /></p>
+      {!!snapshot.graph.nodes.length && <GraphEvidence graph={snapshot.graph} numbers={numbers} prefix={prefix} sources={snapshot.sources} />}
+      {!!snapshot.sources.length && <details className="scheme-sources">
+        <summary>Evidence used ({snapshot.sources.length})</summary>
+        <BriefSources sources={snapshot.sources} prefix={prefix} />
+      </details>}
+      <SchemeResultCoverage snapshot={snapshot} />
+    </>}
+  </div>;
+}
+
+export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
+  onFocusedGenerating?: (active: boolean) => void;
   waitingForKnowledge?: boolean;
   onResultActivated?: () => void;
   focus: SchemeFocus; queuedFocus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
-  const [view, setView] = useState<'Architecture' | 'Workflow' | 'Dependencies'>('Architecture');
+  const [view, setView] = useState<(typeof schemeViews)[number]>('Architecture');
+  const [visitedFocused, setVisitedFocused] = useState(false);
   const [loading, setLoading] = useState(true);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
   const [revisionId, setRevisionId] = useState<number | null>(null);
@@ -349,7 +463,18 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
     ? `${freshnessLabels[result.freshness.state] ?? label(result.freshness.state)}${result.freshness.partial || coverage?.partial ? ' · Partial coverage' : ''}`
     : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
-  return <section className="card scheme-panel" aria-busy={loading || generating || recoveryBusy || revisionLoading}>
+  const focused = view === 'Focused Scheme';
+  return <section className="card scheme-panel" aria-busy={!focused && (loading || generating || recoveryBusy || revisionLoading)}>
+    <nav className="tabs scheme-tabs" aria-label="Scheme views">
+      {schemeViews.map((name) =>
+        <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
+          onClick={() => {
+            if (name === 'Focused Scheme') setVisitedFocused(true);
+            setView(name);
+          }}>{name}</button>)}
+    </nav>
+    {visitedFocused && <FocusedScheme base={base} generation={generation} visible={focused && visible} onGenerating={onFocusedGenerating} />}
+    {!focused && <>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
     <label>Scheme focus for next run
@@ -401,11 +526,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           }
         }} />
     </details>
-    <nav className="tabs scheme-tabs" aria-label="Scheme views">
-      {(['Architecture', 'Workflow', 'Dependencies'] as const).map((name) =>
-        <button type="button" key={name} className={view === name ? 'active' : ''} aria-current={view === name ? 'page' : undefined}
-          onClick={() => setView(name)}>{name}</button>)}
-    </nav>
     {!loading && !snapshot && view !== 'Dependencies' && <Empty>No saved Scheme. Select Scheme on the Generate tab to create one.</Empty>}
     {view !== 'Dependencies' && graph && <>
       {!!graph.nodes.length && <SchemeDiagram graph={graph} />}
@@ -427,5 +547,6 @@ export function Scheme({ base, generation, visible, onGenerating, recoveryVersio
           {source.revision ? ' · revision ' + source.revision.slice(0, 12) : ''}{source.date ? ' · ' + source.date : ''}</li>)}</ul></details>
     </details>}
     {result && <SchemeResultCoverage snapshot={snapshot} current={result.inspection} showCurrent={revisionId === null} />}
+    </>}
   </section>;
 }

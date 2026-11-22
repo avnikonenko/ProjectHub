@@ -4,7 +4,7 @@ from pathlib import Path
 import logging
 import shutil
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
@@ -19,6 +19,8 @@ from .accounts import (account_options, account_home, launch_home, launch_label,
 from .qa import DEFAULT_QA_MAX_ITEMS, read_active_qa, read_qa, refresh_qa
 from .tag_generation import TagGenerationConflict, generate_tags
 from .scheme import SchemeFocus, SchemeQueueSuperseded, read_scheme, refresh_scheme, scheme_snapshot_for_display
+from .focused_scheme import (INSTRUCTION_LIMIT as FOCUSED_SCHEME_INSTRUCTION_LIMIT, KIND as FOCUSED_SCHEME_KIND,
+                             clean_instruction, read_focused_scheme, refresh_focused_scheme)
 from .parameters import read_parameters, refresh_parameters
 from .parameter_evidence import collect_parameter_evidence
 from .knowledge import knowledge_with_legacy_summary, read_knowledge, reconcile
@@ -133,6 +135,12 @@ class SchemeGenerationInput(GenerationInput):
     focus: SchemeFocus = 'balanced'
 
 
+class FocusedSchemeGenerationInput(GenerationInput):
+    instruction: str = Field(min_length=1, max_length=FOCUSED_SCHEME_INSTRUCTION_LIMIT, strict=True)
+
+    _clean_instruction = field_validator('instruction')(clean_instruction)
+
+
 class KnowledgeGenerationInput(GenerationInput):
     # Retained for older clients; public generation always saves its result.
     publish: bool = Field(default=True, strict=True)
@@ -165,7 +173,7 @@ class TagGenerationInput(GenerationInput):
 
 
 class CancelGenerationInput(Input):
-    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters']
+    kind: Literal['brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters', 'focused_scheme']
     started_at: str = Field(min_length=1, max_length=100)
 
 
@@ -549,7 +557,7 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
 @router.get('/generation/status')
 def generation_status(project_id: int, db: DB, kind: str = 'brief'):
     project(db, project_id)
-    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters'):
+    if kind not in ('brief', 'qa', 'scheme', 'knowledge', 'ask', 'tags', 'parameters', FOCUSED_SCHEME_KIND):
         raise HTTPException(422, 'Unknown generation kind.')
     status = progress.read(project_id, kind, engine=db.bind)
     status['latest_attempt'] = attempts.read_latest(db, project_id, kind)
@@ -807,6 +815,30 @@ def generate_scheme(project_id: int, body: SchemeGenerationInput, request: Reque
         db.rollback()
         with use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_scheme(request.app.state.engine, project_id, selected, focus=body.focus)
+    except BriefBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@router.get('/scheme/focused')
+def get_focused_scheme(project_id: int, db: DB):
+    return {'snapshot': read_focused_scheme(db, project_id)}
+
+
+@router.post('/scheme/focused')
+def generate_focused_scheme(project_id: int, body: FocusedSchemeGenerationInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.confirmed:
+        raise HTTPException(422, 'Confirm sending the instruction and selected evidence to the selected provider.')
+    try:
+        manager = generation_base(request.app, project_id, body.provider)
+        profile = review_profile()
+        selected = review_manager(manager, body, profile)
+        instructions = read_project_instructions(db, project_id)
+        db.rollback()
+        with use_project_instructions(instructions), use_knowledge_profile(profile):
+            return refresh_focused_scheme(request.app.state.engine, project_id, selected, body.instruction)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
     except CodexError as exc:

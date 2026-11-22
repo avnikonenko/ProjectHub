@@ -45,7 +45,7 @@ def _passage_ranges(value):
     return ranges, bool(opened)
 
 
-def select_passages(value, limit=EXCERPT_CHARS):
+def select_passages(value, limit=EXCERPT_CHARS, *, priority=None):
     """Select exact complete paragraphs/diagrams, including their message context.
 
     No summary, sentence cutting, invented chronology or inferred acceptance.
@@ -71,7 +71,8 @@ def select_passages(value, limit=EXCERPT_CHARS):
             score += 5
         if len(re.findall(r'(?m)^\s*\d+[.)]\s+', body)) > 1:
             score += 2
-        blocks.append({'start': start, 'end': end, 'role': role, 'score': score})
+        blocks.append({'start': start, 'end': end, 'role': role, 'score': score,
+                       'priority': priority(body) if priority else 0})
     chosen, seen = [], set()
 
     def rendered(indexes):
@@ -85,7 +86,7 @@ def select_passages(value, limit=EXCERPT_CHARS):
                 ranges.append({'start': block['start'], 'end': block['end']})
         return GAP.join(value[span['start']:span['end']] for span in ranges), ranges
 
-    for index in sorted(range(len(blocks)), key=lambda i: (-blocks[i]['score'], i)):
+    for index in sorted(range(len(blocks)), key=lambda i: (-blocks[i]['priority'], -blocks[i]['score'], i)):
         if len(chosen) >= 12:
             break
         block = blocks[index]

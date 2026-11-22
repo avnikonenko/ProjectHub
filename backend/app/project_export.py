@@ -16,14 +16,14 @@ from starlette.background import BackgroundTask
 
 from .models import (Answer, AuditEvent, CodexEvent, CodexSession, ContextPackage, ConversationImportSource,
                      Decision, Delivery, GenerationRevision, Note, ProjectAIInstructions,
-                     ProjectBrief, ProjectGenerationAttempt, ProjectHistoryBatch, ProjectKnowledge, ProjectQA,
+                     ProjectBrief, ProjectFocusedScheme, ProjectGenerationAttempt, ProjectHistoryBatch, ProjectKnowledge, ProjectQA,
                      ProjectScheme, Question, Task)
 from .services import question_dict, require_project, serialize
 
 _BLOCK_BYTES = 65536
 _MAX_UPLOAD_BYTES = 2 * 1024 * 1024
 _UPLOAD_NAME = re.compile(r'[0-9a-f]{32}\.(?:md|txt)')
-_SINGLETONS = (('brief', ProjectBrief), ('qa', ProjectQA), ('scheme', ProjectScheme),
+_SINGLETONS = (('brief', ProjectBrief), ('qa', ProjectQA), ('scheme', ProjectScheme), ('focused_scheme', ProjectFocusedScheme),
                ('knowledge', ProjectKnowledge), ('ai_instructions', ProjectAIInstructions))
 _HISTORY_ROWS = ('FROM codex_history_turns h JOIN codex_sessions s '
                  'ON s.id=h.session_id AND s.project_id=h.project_id WHERE h.project_id=:pid')

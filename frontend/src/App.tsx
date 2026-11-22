@@ -339,6 +339,7 @@ function ProjectWorkspace({
   const [visited, setVisited] = useState({ brief: false, qa: false, scheme: false, knowledge: false });
   const [visitedReviews, setVisitedReviews] = useState(false);
   const [running, setRunning] = useState({ brief: false, qa: false, scheme: false });
+  const [focusedSchemeRunning, setFocusedSchemeRunning] = useState(false);
   const [analysisState, setAnalysisState] = useState({ busy: false, running: false });
   const [knowledgeSubview, setKnowledgeSubview] = useState<'knowledge' | 'parameters'>('knowledge');
   const [parametersVisited, setParametersVisited] = useState(false);
@@ -722,7 +723,7 @@ function ProjectWorkspace({
             Edit overview
           </button>
           <ProjectExport base={base} name={project.name} />
-          <button type="button" className="secondary" disabled={busy || removingProject !== null}
+          <button type="button" className="secondary" disabled={busy || focusedSchemeRunning || removingProject !== null}
             onClick={() => void onRemoveProject(project)}>
             {removingProject === project.id ? 'Removing…' : 'Remove project'}
           </button>
@@ -877,6 +878,7 @@ function ProjectWorkspace({
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
               recoveryVersion={recovery.version.scheme} recoveryBusy={generationRecoveryBusy.scheme}
+              onFocusedGenerating={setFocusedSchemeRunning}
               onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />
           </div>
         )}

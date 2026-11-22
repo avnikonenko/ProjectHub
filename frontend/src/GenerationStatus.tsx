@@ -6,7 +6,7 @@ import { generationProviderLabels, type GenerationProvider } from './generationP
 
 type SavedGenerationKind = 'brief' | 'qa' | 'scheme' | 'parameters';
 type RecoveryKind = SavedGenerationKind | 'knowledge';
-export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags';
+export type GenerationKind = SavedGenerationKind | 'ask' | 'knowledge' | 'tags' | 'focused_scheme';
 const recoveryLabels: Record<RecoveryKind, string> = {
   brief: 'Project Overview', knowledge: 'Knowledge Summary', scheme: 'Scheme',
   qa: 'AI Q&A', parameters: 'Implementation Choices & Limits',
@@ -55,7 +55,7 @@ type RecoveryState = {
 };
 const initialRecovery: RecoveryState = { checking: true, running: false, version: 0, error: '' };
 
-function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
+function useKindRecovery(base: string, kind: RecoveryKind | 'focused_scheme', enabled: boolean) {
   const [request, setRequest] = useState<{ previousStartedAt?: string } | null>(null);
   const [state, setState] = useState(initialRecovery);
 
@@ -77,10 +77,11 @@ function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
           timer = setTimeout(() => void poll(), 1500);
           return;
         }
-        // Failed attempts found on mount or still present during a retry
-        // belong in the view's saved attempt details.
+        // Focused Scheme keeps its own attempt feedback. Bulk views show
+        // previous failures on the Generate tab.
         const failedCurrentAttempt = status.state === 'failed'
-          && (recovering || (request !== null && !beforeReplacement));
+          && (recovering || (request !== null && !beforeReplacement)
+              || (kind === 'focused_scheme' && request === null));
         const error = failedCurrentAttempt
           ? status.error || 'AI generation failed. The previous result is preserved.'
           : status.state === 'idle' && recovering && !running
@@ -118,6 +119,10 @@ function useKindRecovery(base: string, kind: RecoveryKind, enabled: boolean) {
       setRequest({ previousStartedAt: state.progress?.started_at });
     },
   };
+}
+
+export function useFocusedSchemeRecovery(base: string) {
+  return useKindRecovery(base, 'focused_scheme', true);
 }
 
 export function useGenerationRecovery(base: string, { includeBrief = true, includeKnowledge = false, includeParameters = false }: {
@@ -167,15 +172,18 @@ function describeProgress(stage: string, kind: GenerationKind, provider: string)
     case 'Combining evidence': return `Waiting for ${provider} to combine the evidence`;
     case 'Summarizing project notes and decisions': return 'Gathering project notes and decisions';
     case 'Collecting Scheme evidence': return 'Inspecting selected code and saved discussions';
+    case 'Collecting focused Scheme evidence': return 'Gathering evidence for the requested scope';
     case 'Generating Scheme': return `Waiting for ${provider} to explain architecture and workflow`;
+    case 'Generating focused Scheme': return `Waiting for ${provider} to draw the focused scheme`;
     case 'Validating Scheme': return 'Checking diagrams and source references';
+    case 'Validating focused Scheme': return 'Checking the focused diagram and source references';
     case 'Generating project brief': return `Waiting for ${provider} to write the project summary`;
     case 'Completed': return 'Finished. Loading the result…';
     case 'Cancelling': return `Cancelling… Waiting for ${provider} to stop.`;
     case 'Cancelled': return 'Cancelled. Saved results are unchanged.';
     case 'Failed': return 'Generation failed';
     case '':
-    case 'Starting generation': return kind === 'tags' ? 'Preparing AI tags' : kind === 'scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'parameters' ? 'Preparing implementation choices and limits' : kind === 'ask' ? 'Preparing an answer' : kind === 'knowledge' ? 'Preparing source-linked knowledge' : 'Preparing questions and answers';
+    case 'Starting generation': return kind === 'tags' ? 'Preparing AI tags' : kind === 'scheme' || kind === 'focused_scheme' ? 'Preparing project diagrams' : kind === 'brief' ? 'Gathering project information' : kind === 'parameters' ? 'Preparing implementation choices and limits' : kind === 'ask' ? 'Preparing an answer' : kind === 'knowledge' ? 'Preparing source-linked knowledge' : 'Preparing questions and answers';
     default: return stage;
   }
 }

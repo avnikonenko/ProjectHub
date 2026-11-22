@@ -11,6 +11,7 @@ results makes no AI request.
   for the selected repository tree.
 - **Workflow** shows stages, inputs, outputs, and execution order.
 - **Dependencies** shows tools, libraries, declared versions, and their roles.
+- **Focused Scheme** diagrams a specific part of the project from an instruction you provide.
 
 Component labels indicate **observed**, **proposed**, or **uncertain** status.
 An observation has supporting evidence. Verify runtime behavior separately.
@@ -31,6 +32,17 @@ The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
 Focus leaves the repository dependency scan independent of the diagrams.
 Find earlier results under **Scheme details → Previous versions**.
+
+## Focused Scheme
+
+Open **Scheme → Focused Scheme**, describe the part you want to understand,
+then click **Generate focused scheme**. For example, ask how imported
+conversations reach search results, including storage and indexing.
+
+The generator prioritizes evidence relevant to your instruction and cites the
+sources that support the diagram. The current diagram and its instruction are
+saved together. A successful rerun replaces that focused result. To rerun a
+focused scheme, use its own button.
 
 ## Saved Knowledge
 

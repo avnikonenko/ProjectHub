@@ -42,6 +42,7 @@ _NODE_TYPES = {
     'architecture': ('module', 'service', 'component', 'database', 'tool', 'interface', 'backend'),
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
 }
+_NODE_TYPES['focused'] = (*_NODE_TYPES['architecture'], *_NODE_TYPES['workflow'])
 
 
 class SchemeQueueSuperseded(CodexError):
