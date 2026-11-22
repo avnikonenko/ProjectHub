@@ -4,6 +4,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+- Link local Codex and Claude Code sessions from Sources. Preview the conversation before linking, and refresh saved Claude Code transcripts as work continues.
+
 ## [0.2.5] - 2026-11-21
 
 - Import public ChatGPT and Claude chats, JSON exports, and structured Markdown from Sources. Preview imports, manage saved conversations, and keep original source copies in project exports.

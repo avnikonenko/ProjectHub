@@ -87,6 +87,57 @@ def test_preview_save_duplicate_and_immutable_download(api):
     assert client.patch(base + f"/notes/{note['id']}", json={'title': 'Renamed'}).status_code == 200
 
 
+def test_link_local_claude_session_and_refresh_without_losing_source_copies(api, tmp_path, monkeypatch):
+    client, base, other = api
+    session_id = '00000000-0000-4000-8000-000000000011'
+    profile = tmp_path / 'claude-profile'
+    workspace = profile / 'projects' / 'synthetic-workspace'
+    workspace.mkdir(parents=True)
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(profile))
+    transcript = workspace / f'{session_id}.jsonl'
+    records = []
+
+    def add(role, content):
+        records.append({'type': role, 'sessionId': session_id,
+                        'uuid': f'00000000-0000-4000-8000-{len(records)+100:012d}',
+                        'parentUuid': records[-1]['uuid'] if records else None,
+                        'message': {'role': role, 'content': content}})
+        transcript.write_text(''.join(json.dumps(row) + '\n' for row in records), encoding='utf-8')
+
+    body = {'session_id': session_id, 'title': 'Local design session'}
+    assert client.post(base + '/conversations/preview', json=body).status_code == 404
+    add('user', 'Can we adopt the indexed archive?')
+    add('assistant', [{'type': 'thinking', 'thinking': 'hidden reasoning marker'},
+                      {'type': 'text', 'text': 'The indexed archive preserves source identity.'}])
+    preview = check(client, base, body)
+    assert preview['provider'] == 'claude' and preview['message_count'] == 2
+    assert client.get(base + '/notes').json() == []
+    note = save(client, base, body, preview).json()
+    assert note['conversation']['linked_session'] == {'provider': 'claude', 'id': session_id, 'profile': 'launch'}
+    assert check(client, other, body)['existing'] is None
+    assert check(client, base, body)['existing']['duplicate'] is True
+
+    path = f"/conversations/{note['id']}/sources"
+    original, = client.get(base + path).json()
+    saved_copy = client.get(base + path + f"/{original['id']}").content
+    assert b'hidden reasoning marker' not in saved_copy and str(profile).encode() not in saved_copy
+    add('user', 'Also preserve the audit marker.')
+    refresh = {**body, 'profile': 'launch'}
+    updated = check(client, base, refresh)
+    assert updated['existing'] == {'id': note['id'], 'title': note['title'], 'duplicate': False}
+    add('assistant', 'Yes, preserve the audit marker.')
+    assert save(client, base, refresh, updated, replace_existing=True).status_code == 409
+    response = save(client, base, refresh, check(client, base, refresh), replace_existing=True)
+    assert response.status_code == 201, response.text
+    assert response.json()['id'] == note['id']
+    assert response.json()['conversation']['messages'][:2] == note['conversation']['messages']
+    assert len(client.get(base + path).json()) == 2
+    assert client.get(base + path + f"/{original['id']}").content == saved_copy
+    assert client.get(other + path).status_code == 404
+    assert client.get(base + '/history/search', params={'q': 'audit marker'}).json()['results']
+    assert len(load_sources(client.app.state.engine, note['project_id'])['sources']) == 4
+
+
 def test_replacement_revalidates_input_and_preserves_source_and_message_identity(api):
     client, base, other = api
     url = 'https://claude.ai/share/c265b990-bef4-4d55-bbdd-1e87bd03d8b5'

@@ -100,7 +100,7 @@ For Codex sessions or generation with Codex, install the [Codex CLI](https://lea
 and run `codex login`. Local notes and browsing work without Codex.
 
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
-2. In **Sources**, link a Codex session about Project X or use **Import conversation** to add a past discussion.
+2. In **Sources**, link a Codex or Claude Code session about Project X, or use **Import conversation** to add a past discussion.
 3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results and follow their citations.
 4. When you return, open **Reviews → Ask Project** and ask “Why did we choose to validate records before importing them?” or “Which export options did we discuss, and what is still undecided?” With the optional terminal-agent skill, you can also ask Codex or Claude Code “Read ProjectHub context for Project X before we continue.”
 5. In **Generate**, select **Scheme** and click **Regenerate selected**. Open **Scheme** to explore the architecture, workflow, and dependencies.

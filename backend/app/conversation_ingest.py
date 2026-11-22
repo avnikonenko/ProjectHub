@@ -15,8 +15,11 @@ def _digest(value):
                                      separators=(',', ':')).encode()).hexdigest()
 
 
-def prepare(payload):
-    if payload.url is not None:
+def prepare(payload, engine=None):
+    if payload.session_id is not None:
+        from .integrations.claude_session import read_session
+        normalized, original = read_session(engine, payload.session_id, payload.profile, payload.title)
+    elif payload.url is not None:
         normalized = conversation_import.read_share(payload.url)
     else:
         normalized = conversation_import.parse_file(payload.filename, payload.content.encode('utf-8'), payload.source_url)
@@ -44,7 +47,9 @@ def prepare(payload):
             identifiers.add(message['id'])
     metadata['fingerprint'] = _digest(contents)
     values['conversation'] = metadata
-    if payload.filename is not None:
+    if payload.session_id is not None:
+        filename = 'claude-code-session.json'
+    elif payload.filename is not None:
         filename = payload.filename.replace('\\', '/').rsplit('/', 1)[-1]
         original = payload.content.encode('utf-8')
     else:
@@ -134,6 +139,8 @@ def preserve_source_identity(values, previous_reference, previous_metadata):
         provider_id = previous_metadata.get('provider_conversation_id')
         if provider_id:
             metadata.setdefault('provider_conversation_id', provider_id)
+        if previous_metadata.get('linked_session'):
+            metadata.setdefault('linked_session', previous_metadata['linked_session'])
 
 
 def _is_duplicate(db, project_id, found, values):

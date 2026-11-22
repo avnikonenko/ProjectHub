@@ -352,9 +352,10 @@ def _create_app(data_dir, restart_controller, ownership):
         require_project(db, project_id)
         db.rollback()
         try:
-            return conversation_ingest.prepare(payload)
+            return conversation_ingest.prepare(payload, db.get_bind())
         except conversation_import.ConversationImportError as exc:
-            status = 403 if exc.code == 'access_denied' else 502 if exc.code == 'share_unavailable' else 422
+            status = {'access_denied': 403, 'share_unavailable': 502, 'session_not_found': 404,
+                      'ambiguous_session': 409}.get(exc.code, 422)
             raise HTTPException(status, str(exc)) from exc
         except ValidationError as exc:
             raise HTTPException(422, 'The transcript exceeds supported limits or contains invalid text.') from exc

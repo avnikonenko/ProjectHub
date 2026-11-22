@@ -66,6 +66,14 @@ class AIWorkerSettingsInput(Input):
 class SessionInput(Input):
     title: str = Field(default='Codex discussion', min_length=1, max_length=200)
     thread_id: str | None = Field(default=None, min_length=1, max_length=200, pattern=r'^[A-Za-z0-9_-]+$')
+    profile: str | None = Field(default=None, max_length=200,
+                               pattern=r'^(launch|default|current|profile:[A-Za-z0-9_-]+|registered:[1-9][0-9]{0,17})$')
+
+    @model_validator(mode='after')
+    def profile_for_link(self):
+        if self.profile is not None and self.thread_id is None:
+            raise ValueError('A link profile requires a Codex thread ID.')
+        return self
 
 
 class SessionDetailsInput(Input):
@@ -1049,6 +1057,26 @@ def configure_session_link(project_id: int, session_id: int, body: SessionLinkIn
         return result
 
 
+@router.post('/sessions/preview')
+def preview_session_link(project_id: int, body: SessionInput, request: Request, db: DB):
+    project(db, project_id)
+    if not body.thread_id:
+        raise HTTPException(422, 'Enter a Codex thread ID to preview.')
+    existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
+    account = None if body.profile in (None, 'launch') else body.profile
+    if existing is not None:
+        if existing.project_id != project_id and existing.is_linked:
+            raise HTTPException(409, 'This Codex session is already linked to another project.')
+        if body.profile is not None and account != existing.codex_account:
+            raise HTTPException(409, 'Choose the original profile for this Codex session.')
+        account = existing.codex_account
+    db.rollback()
+    try:
+        return manager_for(request.app).preview_association(body.title, body.thread_id, account)
+    except CodexError as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
 @router.post('/sessions', status_code=201)
 def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
     row = project(db, project_id)
@@ -1056,6 +1084,8 @@ def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
         with manager_for(request.app).lock:
             existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
             if existing:
+                if body.profile is not None and existing.codex_account != (None if body.profile == 'launch' else body.profile):
+                    raise HTTPException(409, 'Choose the original profile for this Codex session.')
                 if existing.project_id != project_id:
                     return reassign_session(db, existing.project_id, existing.id, project_id,
                                             manager_for(request.app), require_unlinked=True)
@@ -1063,10 +1093,12 @@ def open_session(project_id: int, body: SessionInput, request: Request, db: DB):
                     raise HTTPException(409, 'Thread already associated; select its existing session.')
                 return _set_session_linked(db, existing, True)
     try:
-        manager = manager_for(request.app, project_id)
         if body.thread_id:
+            manager = manager_for(request.app)
+            if body.profile not in (None, 'launch'):
+                return manager.associate(row, body.title, body.thread_id, account=body.profile)
             return manager.associate(row, body.title, body.thread_id)
-        return manager.open(row, body.title)
+        return manager_for(request.app, project_id).open(row, body.title)
     except (CodexError, KeyError) as exc:
         raise HTTPException(503, str(exc) if isinstance(exc, CodexError) else 'Unsupported Codex thread response') from exc
 

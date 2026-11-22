@@ -32,7 +32,7 @@ Project fields are `{id,name,pinned,codex_account,description,goals,status,repos
 
 ## Conversation imports
 
-- `POST /{pid}/conversations/preview` accepts `{url}` for a public share link or `{filename,content,source_url?}` for a UTF-8 file. It returns the detected provider, completeness, roles, sample, and a fingerprint. Preview leaves the project data unchanged. An inaccessible share can return 403. Invalid input returns 422.
+- `POST /{pid}/conversations/preview` accepts `{url}` for a public share link, `{filename,content,source_url?}` for a UTF-8 file, or `{session_id,profile?,title?}` for local Claude Code history. It returns the detected provider, completeness, roles, sample, and a fingerprint. Preview leaves project data unchanged. An inaccessible share can return 403, a missing local transcript 404, an ambiguous local match 409, and invalid input 422.
 - `POST /{pid}/conversations/import` accepts the same source and its `fingerprint`. It requires `confirm_partial:true` to save a partial import and `replace_existing:true` to update an existing conversation. A changed preview or exact duplicate returns 409.
 - `GET /{pid}/conversations/{nid}/sources` lists the saved source copies. Append `/{source_id}` to download a copy. Both routes check project ownership.
 
@@ -100,6 +100,7 @@ Task fields are `{id,project_id,pinned,title,description,priority,status,questio
 - `POST /{pid}/codex/sessions` with a new `thread_id`: validates the thread with `thread/read`, stores status `linked`, and closes the temporary connection. Linking requires no resume.
 - `GET /{pid}/codex/sessions/{sid}/history?cursor=...&limit=3`: returns `{turns:[{id,status,messages:[{role,text}]}],next_cursor}` from bounded App Server history pages. The limit is 1–5 (API default 5; the UI uses 3). Only user and assistant display text is returned; tool output is excluded.
 - `POST /{pid}/codex/history/index`: refreshes the local text index of finished turns across linked sessions and returns `{indexed_at,indexed_turns}`. This does not request AI generation. A failed refresh preserves the previous index.
+- `POST /{pid}/codex/sessions/preview` reads the saved Codex thread named by `{thread_id,title?,profile?}`. It returns its title and available message sample without linking. Send the same input to `POST /{pid}/codex/sessions` to link the thread.
 - `GET /{pid}/codex/history/search?q=...&offset=0`: searches the index and returns `{results,next_offset,indexed_at,indexed_turns}`. Results have `session_id`, `session_title`, `turn_id`, and a plain-text `snippet`.
 - `GET /{pid}/codex/sessions/{sid}/history/turn?turn_id=...`: opens an exact indexed turn, returning `{id,status,messages:[{role,text}]}`. Returns 404 for turns absent from the project's index.
 - `POST /{pid}/codex/sessions/{sid}/resume`: explicitly attempts to take ownership for later read-only discussion. Linked sessions reject tasks and decision delivery until this succeeds.

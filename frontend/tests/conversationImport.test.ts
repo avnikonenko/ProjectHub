@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { conversationImportBody, conversationReference, conversationSourcesPath,
-  hasConversationMetadata, importedConversation, parseConversationPreview, parseConversationSources,
+  hasConversationMetadata, importedConversation, linkedClaudeSession, parseCodexSessionPreview, parseConversationPreview, parseConversationSources,
   readConversationFile } from '../src/conversationImportData.ts';
 
 const chatgpt = 'https://chatgpt.com/share/00000000-0000-4000-8000-000000000001';
@@ -73,4 +73,27 @@ test('history recognises canonical local imports and legacy shared links while k
   const copy = { id: 1, filename: 'Original.JSON', created_at: '2026-11-20T10:00:00Z' };
   assert.deepEqual(parseConversationSources([copy]), [copy]);
   assert.throws(() => parseConversationSources([copy, copy]), /could not be read/);
+});
+
+test('linked Claude refresh retains the saved session identity and confirms only its preview', () => {
+  const id = '00000000-0000-4000-8000-000000000002';
+  const note = { id: 3, kind: 'document', title: 'Renamed session', conversation: {
+    provider: 'claude', completeness: 'unknown', source_status: 'provided',
+    linked_session: { provider: 'claude', id, profile: 'registered:7' },
+  } };
+  const initial = linkedClaudeSession(note);
+  assert.deepEqual(initial, { session_id: id, profile: 'registered:7', title: 'Renamed session' });
+  assert.equal(linkedClaudeSession({ ...note, conversation: {
+    ...note.conversation, linked_session: { ...note.conversation.linked_session, profile: '../another' },
+  } }), null);
+  const update = { ...fixture(), existing: { id: 3, title: note.title, duplicate: false } };
+  assert.equal(conversationImportBody(initial!, update, false, false), null);
+  assert.deepEqual(conversationImportBody(initial!, update, false, true),
+    { ...initial, fingerprint: 'checked-exact-input', replace_existing: true });
+});
+
+test('Codex session previews accept labeled text and reject malformed responses', () => {
+  assert.deepEqual(parseCodexSessionPreview({ title: 'Example', sample: [] }), { title: 'Example', sample: [] });
+  assert.throws(() => parseCodexSessionPreview({ title: 'Example', sample: [{ role: 'tool', text: 'hidden' }] }), /invalid data/);
+  assert.throws(() => parseCodexSessionPreview({ title: 'Example' }), /invalid data/);
 });

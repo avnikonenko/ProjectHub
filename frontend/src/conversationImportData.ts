@@ -1,6 +1,7 @@
 import type { RecordData } from './types';
 
-export type ConversationInput = { url: string } | { filename: string; content: string; source_url?: string };
+export type ClaudeSessionInput = { session_id: string; profile?: string; title?: string };
+export type ConversationInput = { url: string } | { filename: string; content: string; source_url?: string } | ClaudeSessionInput;
 export type ConversationSummary = {
   provider: string;
   completeness: 'partial' | 'unknown' | 'complete';
@@ -22,6 +23,9 @@ const object = (value: unknown): value is Record<string, unknown> =>
 const count = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 const name = (value: unknown): value is string => typeof value === 'string' && !!value.trim();
+const hasSample = (value: unknown): value is ConversationPreview['sample'] =>
+  Array.isArray(value) && value.every(message => object(message)
+    && (message.role === 'user' || message.role === 'assistant') && typeof message.text === 'string');
 const isSummary = (value: unknown): value is ConversationSummary & Record<string, unknown> => object(value) && name(value.provider)
   && (value.completeness === 'partial' || value.completeness === 'unknown' || value.completeness === 'complete')
   && (value.source_status === 'verified' || value.source_status === 'provided' || value.source_status === 'none');
@@ -31,14 +35,18 @@ export function parseConversationPreview(raw: unknown): ConversationPreview {
     || (raw.reference !== null && typeof raw.reference !== 'string')
     || !count(raw.message_count) || raw.message_count === 0 || !name(raw.fingerprint)
     || !object(raw.role_counts) || !count(raw.role_counts.user) || !count(raw.role_counts.assistant)
-    || raw.role_counts.user + raw.role_counts.assistant !== raw.message_count || !Array.isArray(raw.sample)
-    || raw.sample.some(value => !object(value) || (value.role !== 'user' && value.role !== 'assistant')
-      || typeof value.text !== 'string')
+    || raw.role_counts.user + raw.role_counts.assistant !== raw.message_count || !hasSample(raw.sample)
     || (raw.existing !== null && (!object(raw.existing) || !count(raw.existing.id) || raw.existing.id === 0
       || !name(raw.existing.title) || typeof raw.existing.duplicate !== 'boolean'))) {
     throw new Error('The conversation preview returned invalid data. Preview the source again.');
   }
   return raw as ConversationPreview;
+}
+
+export function parseCodexSessionPreview(raw: unknown) {
+  if (!object(raw) || !name(raw.title) || !hasSample(raw.sample))
+    throw new Error('The session preview returned invalid data. Preview the session again.');
+  return { title: raw.title, sample: raw.sample };
 }
 
 export function conversationImportBody(source: ConversationInput, preview: ConversationPreview,
@@ -71,6 +79,14 @@ export function importedConversation(note: RecordData): ConversationSummary | nu
   return typeof note.reference === 'string' && legacyChatGPTShare.test(note.reference)
     ? { provider: 'chatgpt', completeness: 'unknown', source_status: 'provided' }
     : null;
+}
+
+export function linkedClaudeSession(note: RecordData): ClaudeSessionInput | null {
+  const session = importedConversation(note)?.provider === 'claude' ? note.conversation?.linked_session : null;
+  if (!object(session) || session.provider !== 'claude' || typeof session.id !== 'string'
+    || !/^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i.test(session.id)
+    || typeof session.profile !== 'string' || !/^(launch|registered:[1-9]\d*)$/.test(session.profile)) return null;
+  return { session_id: session.id, profile: session.profile, ...(note.title ? { title: note.title } : {}) };
 }
 
 export function hasConversationMetadata(note: RecordData) {

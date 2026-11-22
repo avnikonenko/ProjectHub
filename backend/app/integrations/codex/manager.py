@@ -547,26 +547,39 @@ class CodexManager:
         # No callbacks are installed: reading must not persist external events.
         return getattr(self, 'history_client_factory', self.client_factory)()
 
-    def associate(self, project, title, thread_id):
+    def _association_client(self, account):
+        if account is None:
+            return self._new_read_client()
+        from .accounts import account_home
+        return AppServerClient(codex_home=account_home(account, self.engine))
+
+    def preview_association(self, title, thread_id, account=None):
+        client = self._association_client(account)
+        try:
+            title = association_title(client, title, thread_id)
+            try:
+                result = client.request('thread/turns/list', {'threadId': thread_id, 'limit': 1,
+                                        'sortDirection': 'desc', 'itemsView': 'summary'})
+                turns = history_page(result, limit=1)['turns']
+            except CodexError:
+                # Some sessions can be identified even before they have saved turns.
+                turns = []
+            sample = [{'role': msg['role'], 'text': msg['text'][:500]} for turn in turns
+                      for msg in turn['messages'][:4]]
+            return {'title': title, 'sample': sample}
+        finally:
+            client.close()
+
+    def associate(self, project, title, thread_id, *, account=None):
         with self.lock:
             with Session(self.engine) as db:
                 if db.scalar(select(CodexSession).where(CodexSession.thread_id == thread_id)):
                     raise CodexError('Thread is already associated with a project.')
-                client = self._new_read_client()
+                client = self._association_client(account)
                 try:
-                    result = client.request('thread/read', {'threadId': thread_id, 'includeTurns': False})
-                    thread = result.get('thread')
-                    if not isinstance(thread, dict) or thread.get('id') != thread_id:
-                        raise CodexError('Unsupported Codex thread response.')
-                    if title == 'Codex discussion':
-                        name = thread.get('name')
-                        preview = thread.get('preview')
-                        if isinstance(name, str) and name.strip():
-                            title = name.strip()[:200]
-                        elif isinstance(preview, str) and preview.strip():
-                            title = ' '.join(preview.split())[:200]
+                    title = association_title(client, title, thread_id)
                     session = CodexSession(project_id=project.id, thread_id=thread_id,
-                                           title=title, status='linked')
+                                           title=title, status='linked', codex_account=account)
                     db.add(session); db.commit(); db.refresh(session)
                     return record_dict(session)
                 finally:
@@ -1249,6 +1262,20 @@ def manager_for(app, project_id=None, *, account=_PROJECT_ACCOUNT):
 
 
 _manager_lock = threading.Lock()
+
+
+def association_title(client, title, thread_id):
+    result = client.request('thread/read', {'threadId': thread_id, 'includeTurns': False})
+    thread = result.get('thread') if isinstance(result, dict) else None
+    if not isinstance(thread, dict) or thread.get('id') != thread_id:
+        raise CodexError('Unsupported Codex thread response.')
+    if title == 'Codex discussion':
+        name, preview = thread.get('name'), thread.get('preview')
+        if isinstance(name, str) and name.strip():
+            return name.strip()[:200]
+        if isinstance(preview, str) and preview.strip():
+            return ' '.join(preview.split())[:200]
+    return title
 
 
 def read_session_history(client, session, params, *, clip_messages, limit):

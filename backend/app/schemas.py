@@ -113,9 +113,18 @@ class ConversationPreviewInput(Input):
     content: Annotated[str, StringConstraints(min_length=1, max_length=NOTE_CONTENT_MAX_BYTES,
                        strip_whitespace=False), AfterValidator(_note_content_bytes)] | None = None
     source_url: str | None = Field(default=None, min_length=1, max_length=2048)
+    session_id: str | None = Field(default=None, pattern=r'^[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$')
+    profile: str | None = Field(default=None, pattern=r'^(launch|registered:[1-9][0-9]{0,18})$')
+    title: str | None = Field(default=None, min_length=1, max_length=500)
 
     @model_validator(mode='after')
     def one_source(self):
+        if self.session_id is not None:
+            if any(value is not None for value in (self.url, self.filename, self.content, self.source_url)):
+                raise ValueError('Choose one conversation source.')
+            return self
+        if self.profile is not None or self.title is not None:
+            raise ValueError('A profile or title requires a local Claude Code session.')
         if self.url is not None:
             if self.filename is not None or self.content is not None or self.source_url is not None:
                 raise ValueError('Choose a share link or a file.')

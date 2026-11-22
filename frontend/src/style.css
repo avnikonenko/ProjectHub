@@ -1651,9 +1651,7 @@ a:focus-visible {
 }
 .source-toolbar { margin-block: 1rem; }
 .source-import { display: flex; flex-wrap: wrap; align-items: center; gap: 0.65rem; }
-.source-link { min-width: 0; max-width: 100%; }
-.source-link[open] { flex: 1 1 22rem; }
-.source-link > summary, .source-diagnostics > summary { cursor: pointer; }
+.source-diagnostics > summary { cursor: pointer; }
 .source-filters label { flex: 1 1 12rem; min-width: 0; margin-block: 0.5rem 1rem; }
 .source-diagnostics[open] > summary { margin-bottom: 1rem; }
 

@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
-from backend.app.models import Base, Project, Decision, CodexSession, Delivery, ContextPackage, CodexEvent, AuditEvent
+from backend.app.models import Base, Project, Decision, CodexProfile, CodexSession, Delivery, ContextPackage, CodexEvent, AuditEvent
 from backend.app.integrations.codex import manager as module
 from backend.app.integrations.codex.manager import CodexManager, context_preview
 from backend.app.integrations.codex.protocol import CodexError
@@ -65,6 +65,44 @@ class FakeClient:
 
     def close(self):
         self.closed = True
+
+
+def test_session_link_preview_reads_the_same_codex_thread_without_linking(setup):
+    prefix = '/api/projects/1/codex/sessions'
+    payload = {'thread_id': 'test-thread', 'title': 'Design'}
+    response = setup.client.post(prefix + '/preview', json=payload)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'title': 'Design', 'sample': [
+        {'role': 'user', 'text': 'Saved question'}, {'role': 'assistant', 'text': 'Saved answer'}]}
+    assert setup.client.get(prefix).json() == []
+    assert setup.client.post(prefix, json=payload).status_code == 201
+    assert setup.client.post('/api/projects/2/codex/sessions/preview', json=payload).status_code == 409
+
+
+def test_session_link_uses_and_saves_only_the_selected_codex_profile(setup, monkeypatch):
+    profile = setup.path / 'profile'
+    profile.mkdir()
+    with Session(setup.engine) as db:
+        db.add(CodexProfile(id=1, name='Secondary', directory=str(profile), provider='codex'))
+        db.commit()
+    clients = []
+
+    def open_client(*, codex_home):
+        client = FakeClient()
+        clients.append((client, codex_home))
+        return client
+
+    monkeypatch.setattr(module, 'AppServerClient', open_client)
+    prefix = '/api/projects/1/codex/sessions'
+    data = {'thread_id': 'registered-thread', 'profile': 'registered:1'}
+    assert setup.client.post(prefix + '/preview', json=data).status_code == 200
+    linked = setup.client.post(prefix, json=data)
+    assert linked.status_code == 201 and linked.json()['codex_account'] == 'registered:1'
+    assert [home for _, home in clients] == [str(profile), str(profile)]
+    assert all(client.closed for client, _ in clients)
+    assert setup.client.post(prefix + '/preview', json={**data, 'profile': 'launch'}).status_code == 409
+    with Session(setup.engine) as db:
+        assert db.get(Project, 1).codex_account is None
 
 
 @pytest.fixture

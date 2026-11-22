@@ -52,11 +52,22 @@ and run `codex login` before linking a session or requesting generation. Local
 notes and browsing work without Codex.
 
 1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
-2. In **Sources**, link a Codex session or use **Import conversation**.
+2. In **Sources**, link a Codex or Claude Code session, or use **Import conversation**.
 3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
 4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
 Press Ctrl+C in the terminal to stop ProjectHub.
+
+## Link a local session
+
+Open **Sources → Link session**, choose Codex or Claude Code, and enter the
+session ID. Preview the match before linking it. Select a profile if the
+session belongs to a different local profile.
+
+Claude Code sessions appear as saved transcripts in **History**. Use
+**Refresh session** in **Sources** to preview and save new turns. ProjectHub
+keeps the earlier source copies and reads the transcript without running Claude
+Code. History, Search, and AI generation use the saved transcript.
 
 ## Import conversations
 
