@@ -43,8 +43,9 @@ The generator prioritizes evidence relevant to your instruction and cites the
 sources that support the diagram. Name a file to prioritize it. Supported build
 files, SQL schemas, and YAML files contribute structural excerpts with values
 omitted. **Coverage → Requested files skipped** explains any named files that
-did not supply evidence. Long saved conversations can contribute excerpts around
-matching passages.
+did not supply evidence. Scope matching recognizes forms such as “cache” and
+“cached”. When a matching paragraph in a long saved conversation is too large to
+include, the diagram can use a short excerpt around the match.
 
 The current diagram and its instruction are
 saved together. A successful rerun replaces that focused result. To rerun a

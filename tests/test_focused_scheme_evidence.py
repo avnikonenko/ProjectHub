@@ -9,6 +9,32 @@ from backend.app.models import CodexSession, Note
 from backend.tests.integrations.test_scheme_evidence import repository, setup
 
 
+def test_scope_matches_common_word_families_and_prefers_exact_words():
+    scope = evidence._EvidenceScope('Show how cached search is retrieved')
+    assert scope.score('cache retrieval') > scope.score('search') > 0
+    assert scope.score('cached and retrieved') > scope.score('cache retrieval')
+    assert scope.score('cache caches caching') == scope.score('cache')
+    assert scope.score('cachalot') == 0
+    assert evidence._EvidenceScope('validate policies').score('policy validation') > 0
+
+
+def test_scope_finds_an_older_record_using_word_variants(tmp_path):
+    engine = setup(tmp_path)
+    relevant = 'Cache retrieval begins with a project-local lookup.'
+    try:
+        with Session(engine) as db:
+            db.add(Note(id=100, project_id=1, title='Earlier decision', content=relevant))
+            db.add_all(Note(id=note_id, project_id=1, title='Recent', content='Unrelated housekeeping.')
+                       for note_id in range(101, 111))
+            db.commit()
+        result = evidence.collect_evidence(engine, 1, scope='Show how cached data is retrieved.')
+        source = next(source for source in result['sources'] if source['id'] == 'note:100')
+        assert source['text'] == relevant
+        assert source['excerpt_spans'] == [{'start': 0, 'end': len(relevant)}]
+    finally:
+        engine.dispose()
+
+
 def test_focused_python_excerpt_preserves_startup_and_predicates_without_literals():
     scope = evidence._EvidenceScope('Trace startup and when the queue is rebuilt.')
     source = (

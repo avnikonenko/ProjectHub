@@ -54,28 +54,43 @@ _SCOPE_STOP_WORDS = frozenset(
     'about also both can code could describe diagram explain from give have how include into just '
     'like make only part please project scheme see show should that the their them there these they '
     'this those through want what when where which will with would your'.split())
+_SCOPE_VARIANTS = {
+    'cach': 'cache caches cached caching cacheable cachable'.split(),
+    'retriev': 'retrieve retrieves retrieved retrieving retrieval retrievals retrievable'.split(),
+    'validat': 'validate validates validated validating validation validations validator validators'.split(),
+    'configur': 'configure configures configured configuring configuration configurations configurable'.split(),
+    'execut': 'execute executes executed executing execution executions executable executables'.split(),
+    'serializ': 'serialize serializes serialized serializing serialization serializer serializers'.split(),
+    'polic': 'policy policies'.split(),
+}
+_SCOPE_VARIANT_ROOTS = {word: root for root, words in _SCOPE_VARIANTS.items() for word in words}
 
 
-def _scope_words(value):
+def _scope_tokens(value):
     for part in _SCOPE_WORD.findall(_SCOPE_CAMEL_CASE.sub(' ', value).casefold()):
-        if (len(part) < 3 and part not in {'db', 'ci', 'ui'}) or part.isdecimal() or part in _SCOPE_STOP_WORDS:
-            continue
-        for suffix in ('able', 'ing', 'ed'):
-            if len(part) - len(suffix) >= 4 and part.endswith(suffix):
-                part = part[:-len(suffix)]
-                break
-        else:
-            if part.endswith(('ches', 'shes', 'sses', 'xes', 'zzes')) and len(part) >= 6:
-                part = part[:-2]
-            elif part.endswith('s') and not part.endswith(('ss', 'us', 'is')) and len(part) >= 5:
-                part = part[:-1]
-        yield part
+        if (len(part) >= 3 or part in {'db', 'ci', 'ui'}) and not part.isdecimal() and part not in _SCOPE_STOP_WORDS:
+            yield part
+
+
+def _scope_root(word):
+    if word in _SCOPE_VARIANT_ROOTS:
+        return _SCOPE_VARIANT_ROOTS[word]
+    for suffix in ('able', 'ing', 'ed'):
+        if len(word) - len(suffix) >= 4 and word.endswith(suffix):
+            return word[:-len(suffix)]
+    if word.endswith(('ches', 'shes', 'sses', 'xes', 'zzes')) and len(word) >= 6:
+        return word[:-2]
+    if word.endswith('s') and not word.endswith(('ss', 'us', 'is')) and len(word) >= 5:
+        return word[:-1]
+    return word
 
 
 class _EvidenceScope:
     def __init__(self, value):
         self.value = ' '.join(value.split())
-        self.terms = frozenset(list(dict.fromkeys(_scope_words(self.value)))[:24])
+        tokens = tuple(dict.fromkeys(_scope_tokens(self.value)))
+        self.terms = frozenset(list(dict.fromkeys(map(_scope_root, tokens)))[:24])
+        self.exact_terms = frozenset(token for token in tokens if _scope_root(token) in self.terms)
         names = ((match[2] or match[3]).strip().rstrip('.').removeprefix('./')
                  for match in _SCOPE_PATH_TOKEN.finditer(value))
         self.paths = {name.casefold(): name for name in names
@@ -84,7 +99,14 @@ class _EvidenceScope:
         self.excluded_references = set()
 
     def score(self, value):
-        return len(self.terms.intersection(_scope_words(value))) if self.terms else 0
+        if not self.terms:
+            return 0
+        hits = {}
+        for token in _scope_tokens(value):
+            root = _scope_root(token)
+            if root in self.terms:
+                hits[root] = max(hits.get(root, 0), 3 if token in self.exact_terms else 2)
+        return sum(hits.values())
 
     def path_rank(self, path):
         return int(bool(self.matching_references(path))), self.score(path)
@@ -115,7 +137,14 @@ class _EvidenceScope:
 
     @property
     def fts_query(self):
-        return ' OR '.join(f'"{term}"*' for term in sorted(self.terms))
+        expressions = []
+        for term in sorted(self.terms):
+            variants = _SCOPE_VARIANTS.get(term)
+            if variants and term not in self.exact_terms:
+                expressions.extend(f'"{variant}"' for variant in variants)
+            else:
+                expressions.append(f'"{term}"*')
+        return ' OR '.join(expressions)
 
 
 def _source(identifier, label, value, provenance, **metadata):
@@ -1121,16 +1150,20 @@ def _focused_record_windows(db, query, table, columns, params):
     """Locate an FTS fragment in the original text and read one bounded window."""
     return db.execute(text(
         f'WITH matches AS MATERIALIZED ({query}), '
-        'anchors AS MATERIALIZED (SELECT matches.id,score,'
-        'instr(replace(fragment,:gap,\'\'),:start) AS first_match, '
-        'instr(record.content,replace(replace(replace(fragment,:gap,\'\'),:start,\'\'),:end,\'\')) AS fragment_start, '
-        f'length(record.content) AS content_length FROM matches JOIN {table} record '
-        'ON record.id=matches.id AND record.project_id=:pid), '
-        'windows AS (SELECT *, CASE WHEN first_match>0 AND fragment_start>0 THEN '
-        'max(0,min(content_length-:read_chars,fragment_start+first_match-2-:read_chars/2)) '
-        'ELSE 0 END AS window_start FROM anchors) '
+        'fragments AS (SELECT id,score,replace(fragment,:gap,\'\') AS fragment FROM matches), '
+        'anchors AS MATERIALIZED (SELECT fragments.id,score,'
+        'instr(fragment,:start) AS first_match,instr(fragment,:end) AS first_end, '
+        'instr(record.content,replace(replace(fragment,:start,\'\'),:end,\'\')) AS fragment_start, '
+        f'length(record.content) AS content_length FROM fragments JOIN {table} record '
+        'ON record.id=fragments.id AND record.project_id=:pid), '
+        'positions AS (SELECT *, CASE WHEN first_match>0 AND fragment_start>0 '
+        'AND first_end>first_match+length(:start) THEN fragment_start+first_match-2 END AS match_start '
+        'FROM anchors), '
+        'windows AS (SELECT *, max(0,min(content_length-:read_chars,'
+        'coalesce(match_start,0)-:read_chars/2)) AS window_start FROM positions) '
         f'SELECT windows.id,{columns},substr(record.content,window_start+1,:read_chars) AS window, '
-        f'window_start,content_length FROM windows JOIN {table} record '
+        'window_start,content_length,match_start,first_end-first_match-length(:start) AS match_length '
+        f'FROM windows JOIN {table} record '
         'ON record.id=windows.id AND record.project_id=:pid ORDER BY score,windows.id DESC'
     ), params).mappings().all()
 
@@ -1202,7 +1235,7 @@ def _records(db, project, *, scope=None):
     turn_budget = 12_000 if notes else 24_000
     note_budget = 12_000 if turns else 24_000
 
-    def passage(value, original_length, remaining, window_start=0):
+    def passage(value, original_length, remaining, window_start=0, match_start=None, match_length=0):
         begin, end = 0, len(value)
         if original_length > len(value):
             # Cut partial paragraphs at either edge of a bounded read. Quoted
@@ -1212,12 +1245,30 @@ def _records(db, project, *, scope=None):
                 begin = boundaries[0].end() if boundaries else end
             if window_start + len(value) < original_length:
                 end = boundaries[-1].end() if boundaries else 0
-        selected = select_passages(value[begin:end], min(EXCERPT_CHARS, max(0, remaining)),
-                                    priority=scope.score if scope else None)
+        limit = min(EXCERPT_CHARS, max(0, remaining))
+        selected = select_passages(value[begin:end], limit, priority=scope.score if scope else None)
+        local_match = match_start - window_start if match_start is not None else -1
+        match_end = local_match + match_length
+        excerpt_offset = begin
+        if (scope and 0 <= local_match < match_end <= len(value) and match_length <= limit
+                and not any(begin + part['start'] <= local_match and match_end <= begin + part['end']
+                            for part in selected['spans'])):
+            # A verified body match can lie in a paragraph that is larger than
+            # the excerpt budget or cut off by the read window. Keep the exact
+            # source text around it without assigning a speaker to the slice.
+            width = min(len(value), limit, max(1200, match_length))
+            center = (local_match + match_end) // 2
+            left = min(len(value) - width, max(0, center - width // 2))
+            right = left + width
+            excerpt = value[left:right]
+            if scope.score(excerpt) > scope.score(selected['text']):
+                selected = {'text': excerpt, 'spans': [{'start': left, 'end': right}], 'omitted': False}
+                excerpt_offset = 0
+                limitations.append('Some discussion excerpts contain only the text around a focused match.')
         if window_start:
             # A window can start inside a message. Its local role-parser
             # ordinal is not an ordinal in the full saved conversation.
-            offset = window_start + begin
+            offset = window_start + excerpt_offset
             selected['spans'] = [{'start': part['start'] + offset, 'end': part['end'] + offset}
                                  for part in selected['spans'] if part['end'] > part['start']]
         if selected['omitted']:
@@ -1234,7 +1285,9 @@ def _records(db, project, *, scope=None):
     turn_sources = [_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
         f"Session #{row['session_id']}, turn {row['turn_id']}", row['window'], 'Codex conversation',
         session_id=row['session_id'], turn_id=row['turn_id'], original_chars=row['content_length'],
-        **({'inspected_start': row['window_start']} if row['window_start'] else {}))
+        **({'inspected_start': row['window_start']} if row['window_start'] else {}),
+        **({'match_start': row['match_start'], 'match_length': row['match_length']}
+           if row.get('match_start') is not None else {}))
         for row in turns]
     # Confirm shared-prefix identity before charging the context budget; repeated
     # forks must not crowd out complementary turns that follow them.
@@ -1242,7 +1295,8 @@ def _records(db, project, *, scope=None):
     excerpt_count = 0
     for source in turn_sources:
         selected, metadata = passage(source['text'], source['original_chars'], turn_budget,
-                                     source.get('inspected_start', 0))
+                                     source.get('inspected_start', 0),
+                                     source.pop('match_start', None), source.pop('match_length', 0))
         if selected['text']:
             sources.append({**source, **metadata, 'text': selected['text'],
                             'content_hash': hashlib.sha256(selected['text'].encode()).hexdigest()})
@@ -1254,7 +1308,8 @@ def _records(db, project, *, scope=None):
     if any(row['title_length'] > 160 for row in notes[:6]):
         limitations.append('Some note titles were truncated to 160 characters.')
     for row in notes[:6]:
-        selected, metadata = passage(row['window'], row['content_length'], note_budget, row['window_start'])
+        selected, metadata = passage(row['window'], row['content_length'], note_budget, row['window_start'],
+                                     row.get('match_start'), row.get('match_length', 0))
         if selected['text']:
             sources.append(_source(f"note:{row['id']}", row['title'], selected['text'],
                 'imported discussion' if row['kind'] == 'document' else 'project note',
@@ -1359,7 +1414,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 3, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 4, 'requested_paths': sorted(focus.paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
