@@ -32,6 +32,9 @@ The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
 Focus leaves the repository dependency scan independent of the diagrams.
 Find earlier results under **Scheme details → Previous versions**.
+When Scheme cites published Knowledge, ProjectHub can fill in its recorded
+original source references. If these would exceed the citation limit, it retries
+once. If validation still fails, the previous Scheme stays saved.
 
 ## Focused Scheme
 

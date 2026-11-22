@@ -49,6 +49,10 @@ class SchemeQueueSuperseded(CodexError):
     """The queued follow-up no longer owns the Scheme attempt."""
 
 
+class SchemeKnowledgeCitationError(CodexError):
+    """A claim omitted some recorded backing citations for its Knowledge references."""
+
+
 def _string(limit, minimum=1):
     return {'type': 'string', 'minLength': minimum, 'maxLength': limit}
 
@@ -143,7 +147,7 @@ def _keys(item, keys):
         raise CodexError('Scheme generation returned an invalid structure.')
 
 
-def _references(value, available, location='source_ids'):
+def _references(value, available, location='source_ids', *, complete_knowledge_refs=False):
     if not isinstance(value, list):
         raise CodexError(f'Scheme generation returned a non-list evidence reference field at {location}.')
     if not 1 <= len(value) <= 6:
@@ -154,6 +158,7 @@ def _references(value, available, location='source_ids'):
         raise CodexError(f'Scheme generation cited missing or foreign evidence at {location}.')
     # Repeated valid citations add no evidence; retain their first-seen order.
     refs = list(dict.fromkeys(value))
+    required_originals = []
     for identifier in refs:
         source = available.get(identifier) if isinstance(available, dict) else None
         if not isinstance(source, dict) or source.get('provenance') != _KNOWLEDGE_INTERPRETATION:
@@ -165,12 +170,18 @@ def _references(value, available, location='source_ids'):
                 or any(not isinstance(available[ref], dict)
                        or available[ref].get('provenance') == _KNOWLEDGE_INTERPRETATION for ref in supporting)):
             raise CodexError(f'Scheme generation cited Knowledge without valid original evidence at {location}.')
-        if not set(supporting) <= set(refs):
-            raise CodexError(f'Scheme generation must cite original evidence alongside Knowledge at {location}.')
-    return refs
+        required_originals.extend(supporting)
+    completed = list(dict.fromkeys([*refs, *required_originals]))
+    if completed != refs:
+        # Complete only the published interpretation's recorded provenance.
+        # The evidence package must already contain every original.
+        if not complete_knowledge_refs or len(completed) > 6:
+            raise SchemeKnowledgeCitationError(
+                f'Scheme generation must cite original evidence alongside Knowledge at {location}.')
+    return completed
 
 
-def _validate_graph(graph, kind, sources):
+def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False):
     _keys(graph, ('nodes', 'edges', 'explanation'))
     nodes, edges = graph['nodes'], graph['edges']
     if (not isinstance(nodes, list) or len(nodes) > MAX_NODES
@@ -189,7 +200,8 @@ def _validate_graph(graph, kind, sources):
         _text(node['description'], 400)
         if node['type'] not in _NODE_TYPES[kind] or node['status'] not in STATUSES:
             raise CodexError('Scheme generation returned an invalid component classification.')
-        node['source_ids'] = _references(node['source_ids'], sources, f'{kind}.nodes[{index}].source_ids')
+        node['source_ids'] = _references(node['source_ids'], sources, f'{kind}.nodes[{index}].source_ids',
+                                         complete_knowledge_refs=complete_knowledge_refs)
         cited_paths = (sources[ref].get('path') for ref in node['source_ids'])
         node['paths'] = list(dict.fromkeys(path for path in cited_paths if isinstance(path, str) and path))
     seen_edges = set()
@@ -202,7 +214,8 @@ def _validate_graph(graph, kind, sources):
         relation_type = _text(edge['type'], 50)
         if edge['status'] not in STATUSES:
             raise CodexError('Scheme generation returned an invalid relationship classification.')
-        edge['source_ids'] = _references(edge['source_ids'], sources, f'{kind}.edges[{index}].source_ids')
+        edge['source_ids'] = _references(edge['source_ids'], sources, f'{kind}.edges[{index}].source_ids',
+                                         complete_knowledge_refs=complete_knowledge_refs)
         key = (edge['source'], edge['target'], relation_type)
         if key in seen_edges:
             raise CodexError('Scheme generation returned duplicate relationships.')
@@ -210,7 +223,7 @@ def _validate_graph(graph, kind, sources):
     return {**graph, 'mermaid': render_mermaid(graph)}
 
 
-def validate_output(raw, evidence):
+def validate_output(raw, evidence, *, complete_knowledge_refs=False):
     try:
         if not isinstance(raw, str) or len(raw) > MAX_OUTPUT_CHARS:
             raise ValueError('Invalid response size')
@@ -219,8 +232,10 @@ def validate_output(raw, evidence):
         raise CodexError('Scheme generation returned invalid JSON.') from exc
     _keys(result, ('architecture', 'workflow', 'dependencies'))
     sources = {source['id']: source for source in evidence['sources']}
-    architecture = _validate_graph(result['architecture'], 'architecture', sources)
-    workflow = _validate_graph(result['workflow'], 'workflow', sources)
+    architecture = _validate_graph(result['architecture'], 'architecture', sources,
+                                   complete_knowledge_refs=complete_knowledge_refs)
+    workflow = _validate_graph(result['workflow'], 'workflow', sources,
+                               complete_knowledge_refs=complete_knowledge_refs)
     if not isinstance(result['dependencies'], list) or len(result['dependencies']) > 100:
         raise CodexError('Scheme generation returned invalid dependency explanations.')
     declared = {item['id']: item for item in evidence['dependencies']}
@@ -230,7 +245,8 @@ def validate_output(raw, evidence):
         identifier = item['id']
         if not isinstance(identifier, str) or identifier not in declared or identifier in explanations:
             raise CodexError('Scheme generation invented or repeated a dependency.')
-        refs = _references(item['source_ids'], sources, f'dependencies[{index}].source_ids')
+        refs = _references(item['source_ids'], sources, f'dependencies[{index}].source_ids',
+                           complete_knowledge_refs=complete_knowledge_refs)
         explanations[identifier] = {
             'purpose': _text(item['purpose'], 300), 'purpose_source_ids': refs,
         }
@@ -479,9 +495,27 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         if len(prompt) > MAX_INPUT_CHARS:
             raise CodexError('Scheme prompt exceeds the generation input limit.')
         progress.update(project_id, stage='Generating Scheme')
+        scheme_requests = 1
         raw = manager.generate_brief(prompt, schema)
         progress.update(project_id, stage='Validating Scheme')
-        architecture, workflow, dependencies = validate_output(raw, evidence)
+        try:
+            architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+        except SchemeKnowledgeCitationError as exc:
+            retry_prompt = (
+                f'The previous response failed validation. {exc} '
+                'For every affected claim, cite the original sources directly and omit the derived Knowledge ID '
+                'if all its recorded original citations cannot fit within six references. '
+                'Keep supported claims and return a complete replacement that follows the same contract.\n'
+                + prompt
+            )
+            if len(retry_prompt) > MAX_INPUT_CHARS:
+                raise
+            progress.check_cancelled()
+            progress.update(project_id, stage='Retrying Scheme citations')
+            scheme_requests += 1
+            raw = manager.generate_brief(retry_prompt, schema)
+            progress.update(project_id, stage='Validating Scheme')
+            architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
         snapshot = {
             'generated_at': utcnow(), 'architecture': architecture, 'workflow': workflow,
             'focus': focus,
@@ -490,7 +524,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'generation': generation_metadata(manager),
             'diagnostics': {**evidence.get('diagnostics', {}), **overview_diagnostics, 'input_chars': len(prompt),
                             'duration_seconds': round(time.monotonic() - started, 3),
-                            'ai_requests': 1 + overview_diagnostics.get('archive_generated_batches', 0),
+                            'ai_requests': scheme_requests + overview_diagnostics.get('archive_generated_batches', 0),
                             **metrics.snapshot()},
         }
         if 'dependency_inventory' in evidence:

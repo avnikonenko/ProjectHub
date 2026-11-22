@@ -9,7 +9,7 @@ from backend.app.db import initialize
 from backend.app.integrations.codex import scheme
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project
-from backend.tests.integrations.test_scheme import evidence, output
+from backend.tests.integrations.test_scheme import evidence, knowledge_evidence, output
 
 
 TARGETS = [
@@ -113,3 +113,120 @@ def test_refresh_saves_normalized_references_and_preserves_snapshot_after_foreig
         assert revisions[0].project_id == 1
         assert revisions[0].snapshot == saved
     engine.dispose()
+
+
+@pytest.fixture
+def knowledge_scheme(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='One'))
+        db.commit()
+    inputs = knowledge_evidence()
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *args: inputs)
+    try:
+        yield engine, inputs
+    finally:
+        engine.dispose()
+
+
+class _ScriptedManager:
+    generation_metadata = {'model': 'mock'}
+
+    def __init__(self, *outputs):
+        self.outputs = outputs
+        self.prompts = []
+
+    def generate_brief(self, prompt, schema):
+        index = len(self.prompts)
+        self.prompts.append(prompt)
+        assert index < len(self.outputs), 'Unexpected extra model request'
+        return json.dumps(self.outputs[index])
+
+
+@pytest.mark.parametrize('graph,collection,location', TARGETS)
+def test_refresh_completes_cited_knowledge_sources_without_another_request(
+    knowledge_scheme, graph, collection, location,
+):
+    engine, inputs = knowledge_scheme
+    inputs['sources'].append({
+        **inputs['sources'][-1], 'id': 'knowledge:item:related',
+        'supporting_source_ids': ['knowledge:original:proposal'],
+    })
+    draft = output()
+    refs = ['file:api.py', 'knowledge:item:choice', 'knowledge:original:acceptance',
+            'knowledge:item:related']
+    _target(draft, graph, collection)['source_ids'] = refs
+    manager = _ScriptedManager(draft)
+
+    saved = scheme.refresh_scheme(engine, 1, manager)
+
+    expected = [*refs, 'knowledge:original:proposal']
+    actual = (saved['dependencies'][0]['purpose_source_ids'] if graph is None
+              else saved[graph][collection][0]['source_ids'])
+    assert actual == expected, location
+    assert saved['diagnostics']['ai_requests'] == len(manager.prompts) == 1
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == saved
+
+
+def _overflowing_knowledge_edge(inputs):
+    extra = ['knowledge:original:extra-1', 'knowledge:original:extra-2', 'knowledge:original:extra-3']
+    original = next(source for source in inputs['sources'] if source['id'] == 'knowledge:original:proposal')
+    inputs['sources'].extend({**original, 'id': identifier} for identifier in extra)
+    inputs['sources'].append({
+        **next(source for source in inputs['sources'] if source['id'] == 'knowledge:item:choice'),
+        'id': 'knowledge:item:related',
+        'supporting_source_ids': ['knowledge:original:acceptance', *extra],
+    })
+    draft = output()
+    draft['architecture']['edges'][0]['source_ids'] = ['knowledge:item:choice', 'knowledge:item:related']
+    return draft
+
+
+def test_refresh_retries_once_when_knowledge_support_cannot_fit(knowledge_scheme):
+    engine, inputs = knowledge_scheme
+    draft = _overflowing_knowledge_edge(inputs)
+    corrected = output()
+    corrected['architecture']['edges'][0]['source_ids'] = ['knowledge:item:related']
+    manager = _ScriptedManager(draft, corrected)
+
+    saved = scheme.refresh_scheme(engine, 1, manager)
+
+    assert saved['diagnostics']['ai_requests'] == len(manager.prompts) == 2
+    assert 'architecture.edges[0].source_ids' in manager.prompts[1]
+    assert 'original evidence' in manager.prompts[1]
+    assert saved['architecture']['edges'][0]['source_ids'] == [
+        'knowledge:item:related', 'knowledge:original:acceptance',
+        'knowledge:original:extra-1', 'knowledge:original:extra-2', 'knowledge:original:extra-3',
+    ]
+
+
+def test_repeated_knowledge_source_overflow_preserves_saved_scheme(knowledge_scheme):
+    engine, inputs = knowledge_scheme
+    draft = _overflowing_knowledge_edge(inputs)
+    saved = scheme.refresh_scheme(engine, 1, _ScriptedManager(output()))
+    manager = _ScriptedManager(draft, draft)
+
+    with pytest.raises(CodexError, match=r'architecture\.edges\[0\]\.source_ids'):
+        scheme.refresh_scheme(engine, 1, manager)
+
+    assert len(manager.prompts) == 2
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == saved
+        assert [revision.snapshot for revision in db.scalars(select(GenerationRevision))] == [saved]
+
+
+def test_refresh_never_repairs_unavailable_knowledge_support(knowledge_scheme):
+    engine, inputs = knowledge_scheme
+    inputs['sources'][-1]['supporting_source_ids'] = ['note:foreign-project']
+    draft = output()
+    draft['architecture']['edges'][0]['source_ids'] = ['knowledge:item:choice']
+    manager = _ScriptedManager(draft)
+
+    with pytest.raises(CodexError, match='Knowledge without valid original evidence'):
+        scheme.refresh_scheme(engine, 1, manager)
+
+    assert len(manager.prompts) == 1
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) is None
+        assert db.scalar(select(GenerationRevision)) is None
