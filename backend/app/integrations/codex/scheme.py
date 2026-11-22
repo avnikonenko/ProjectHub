@@ -421,9 +421,12 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         index_pairs = [(migration['id'], query['id']) for migration, query in _index_workflows(
             [source for source in evidence['sources'] if source.get('path')])]
         index_guidance = (
-            'Ground the workflow in these inspected pairs of migration and query citation IDs. Each migration '
-            'identifies which table triggers each index update. Use those table names to distinguish different '
-            'record ingestion paths, and cite both IDs for the matching index and search handoff. Pairs: '
+            'Search is one capability, so keep it compact and leave room for the project’s other evidenced '
+            'workflows, including AI generation and saving when present. Limit index internals to a few stages. '
+            'Show where the searchable records come from, including a dedicated import handler if one writes '
+            'the indexed record. Cite the import code and use the trigger table to connect the correct ingestion '
+            'path. Do not turn imported records into linked-session turns. For each matching index and search '
+            'handoff cite both IDs from these inspected migration/query pairs: '
             + json.dumps(index_pairs) + '. '
         ) if index_pairs else ''
         prompt = (
@@ -488,6 +491,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Keep design_status separate from graph status: AGREED does not establish implementation, '
             'executed tests or scientific validation. An agreed plan without implementation evidence '
             'remains proposed in the graph; unresolved or conflicting relationships remain uncertain. '
+            'If a proposed capability is a major branch of an implemented workflow, give it a separate proposed '
+            'node so its status is visible without opening an observed node’s description. '
             'Retain the item scope and rationale; do not confuse project-wide objectives with first-release '
             'boundaries. Respect source_state and evidence-availability limitations without rewriting '
             'historical design status. Rejected or superseded knowledge is historical context, not the '
