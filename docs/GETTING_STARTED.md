@@ -64,8 +64,9 @@ Open **Sources → Link session**, choose Codex or Claude Code, and enter the
 session ID. Preview the match before linking it. Select a profile if the
 session belongs to a different local profile.
 
-Claude Code sessions appear as saved transcripts in **History**. Use
-**Refresh session** in **Sources** to preview and save new turns. ProjectHub
+Linked Claude Code sessions appear under **Project sessions** in **Sources**,
+with their saved transcripts in **History**. Use **Refresh session** to
+preview and save new turns. ProjectHub
 keeps the earlier source copies and reads the transcript without running Claude
 Code. History, Search, and AI generation use the saved transcript.
 

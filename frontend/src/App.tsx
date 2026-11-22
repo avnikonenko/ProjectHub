@@ -590,6 +590,21 @@ function ProjectWorkspace({
     );
   const { project, tasks, notes, activity } = overview;
   const projectNotes = notes.filter((note) => !importedConversation(note));
+  const conversationActions = {
+    busy,
+    rename: (conversation: RecordData) => edit('Rename conversation', [titleField], `/notes/${conversation.id}`, conversation),
+    remove: (conversation: RecordData) => {
+      const message = linkedClaudeSession(conversation)
+        ? `Remove linked session “${conversation.title}” and its saved copies from this project? The original stays in Claude Code.`
+        : `Remove imported conversation “${conversation.title}” and its saved source copies from this project?`;
+      if (window.confirm(message)) {
+        void run(async () => {
+          await api(`${base}/notes/${conversation.id}`, { method: 'DELETE' });
+          setGenerationResultsVersion(version => version + 1);
+        });
+      }
+    },
+  };
   const remoteIssuesUrl = repository.status?.github_issues_url ?? githubIssuesUrl(project.git_remote ?? '');
   const latestActivity = [
     ...activity.map((event) => ({
@@ -1091,6 +1106,7 @@ function ProjectWorkspace({
             {view === 'Sources' && (
               <>
                 <Codex base={base} onError={setError}
+                  conversationActions={conversationActions}
                   targetSessionId={searchTarget?.kind === 'sessions' ? searchTarget.id : undefined}
                   notes={notes} onImported={async () => {
                     setGenerationResultsVersion(version => version + 1);
@@ -1102,22 +1118,7 @@ function ProjectWorkspace({
                     return load();
                   }}
                   onOpenGeneration={() => setView('Generation')} />
-                <ImportedConversations base={base} notes={notes} manage={{
-                  busy,
-                  onRefreshed: async () => {
-                    setGenerationResultsVersion(version => version + 1);
-                    await load();
-                  },
-                  rename: (conversation) => edit('Rename conversation', [titleField], `/notes/${conversation.id}`, conversation),
-                  remove: (conversation) => {
-                    if (window.confirm(`Remove imported conversation “${conversation.title}” and its saved source copies from this project?`)) {
-                      void run(async () => {
-                        await api(`${base}/notes/${conversation.id}`, { method: 'DELETE' });
-                        setGenerationResultsVersion((version) => version + 1);
-                      });
-                    }
-                  },
-                }} />
+                <ImportedConversations base={base} notes={notes} manage={conversationActions} />
               </>
             )}
             {view === 'Reviews' && (
@@ -1875,16 +1876,36 @@ function ImportedConversationInfo({ note }: { note: RecordData }) {
   </p>;
 }
 
+type ConversationSourceActions = { busy: boolean; rename: (conversation: RecordData) => void; remove: (conversation: RecordData) => void };
+
+function ConversationSource({ base, note, manage, onRefresh }: {
+  base: string; note: RecordData; manage?: ConversationSourceActions; onRefresh?: () => void;
+}) {
+  const recordLabel = onRefresh ? 'session' : 'conversation';
+  return <article className={onRefresh ? 'list-item session-row' : 'list-item'}>
+    <div className="section-title">
+      <strong>{note.title || (onRefresh ? 'Untitled session' : 'Untitled conversation')}</strong>
+      {manage && <div className="note-actions">
+        {onRefresh && <button type="button" className="secondary" disabled={manage.busy} onClick={onRefresh}>Refresh session</button>}
+        <EditButton label={`Rename ${recordLabel}: ${note.title}`} disabled={manage.busy} onClick={() => manage.rename(note)} />
+        <DeleteButton label={`Remove ${recordLabel}: ${note.title}`} disabled={manage.busy} onClick={() => manage.remove(note)} />
+      </div>}
+    </div>
+    {onRefresh ? <p className="muted">Claude Code · Linked for reading</p> : <ImportedConversationInfo note={note} />}
+    <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: note.id })}>Read saved transcript</a>
+    {hasConversationMetadata(note) && <ConversationSourceCopies base={base} note={note} />}
+  </article>;
+}
+
 function ImportedConversations({ base, notes, passageNotes, manage }: {
   base: string;
   notes: RecordData[];
   passageNotes?: PassageNoteContext;
-  manage?: { busy: boolean; rename: (conversation: RecordData) => void; remove: (conversation: RecordData) => void;
-    onRefreshed: () => Promise<void> };
+  manage?: ConversationSourceActions;
 }) {
   const [page, setPage] = useState(0);
-  const [refreshing, setRefreshing] = useState<{ noteId: number; input: ClaudeSessionInput } | null>(null);
-  const shares = notes.filter(importedConversation).sort((a, b) => b.id - a.id);
+  const shares = notes.filter(note => importedConversation(note) && (passageNotes || !linkedClaudeSession(note)))
+    .sort((a, b) => b.id - a.id);
   const pageCount = Math.max(1, Math.ceil(shares.length / HISTORY_PAGE_SIZE));
   const currentPage = Math.min(page, pageCount - 1);
   const start = currentPage * HISTORY_PAGE_SIZE;
@@ -1905,27 +1926,9 @@ function ImportedConversations({ base, notes, passageNotes, manage }: {
       )}
       {passageNotes ? shares.slice(start, start + HISTORY_PAGE_SIZE).map((share) => (
         <ImportedTranscript key={share.id} base={base} share={share} passageNotes={passageNotes} />
-      )) : <PagedItems label="Saved conversation pages">{shares.map((share) => {
-        const linked = linkedClaudeSession(share);
-        return <article className="list-item" key={share.id}>
-          <div className="section-title">
-            <strong>{share.title || 'Untitled conversation'}</strong>
-            {manage && <div className="note-actions">
-              {linked && <button type="button" className="secondary" disabled={manage.busy}
-                onClick={() => setRefreshing({ noteId: share.id, input: linked })}>Refresh session</button>}
-              <EditButton label={`Rename conversation: ${share.title}`} disabled={manage.busy}
-                onClick={() => manage.rename(share)} />
-              <DeleteButton label={`Remove saved conversation: ${share.title}`} disabled={manage.busy}
-                onClick={() => manage.remove(share)} />
-            </div>}
-          </div>
-          <ImportedConversationInfo note={share} />
-          <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: share.id })}>Read saved transcript</a>
-          {hasConversationMetadata(share) && <ConversationSourceCopies base={base} note={share} />}
-        </article>;
-      })}</PagedItems>}
-      {manage && refreshing && <SessionLink key={`${base}:${refreshing.noteId}`} base={base} refresh={refreshing}
-        onSaved={manage.onRefreshed} onClose={() => setRefreshing(null)} />}
+      )) : <PagedItems label="Saved conversation pages">{shares.map((share) => (
+        <ConversationSource key={share.id} base={base} note={share} manage={manage} />
+      ))}</PagedItems>}
     </section>
   );
 }
@@ -2278,7 +2281,7 @@ function SavedHistory({
   );
 }
 
-function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration, targetSessionId }: {
+function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration, targetSessionId, conversationActions }: {
   base: string;
   onError: (message: string) => void;
   notes: RecordData[];
@@ -2286,11 +2289,13 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   onUnlinked: (sessionId: number) => Promise<void>;
   onOpenGeneration: () => void;
   targetSessionId?: number;
+  conversationActions: ConversationSourceActions;
 }) {
   const [sessionRows, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
   useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessionRows]);
   const [linkingSession, setLinkingSession] = useState(false);
+  const [refreshing, setRefreshing] = useState<{ noteId: number; input: ClaudeSessionInput } | null>(null);
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
   const [renaming, setRenaming] = useState<RecordData | null>(null);
@@ -2301,16 +2306,23 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   const mounted = useRef(true);
   const refreshVersion = useRef(0);
   const sessions = sessionRows ?? [];
-  const chatCount = notes.filter(importedConversation).length;
+  const claudeSessions = notes.flatMap(note => {
+    const linked = linkedClaudeSession(note);
+    return linked ? [{ record: note, linked, activity: note.updated_at ?? note.created_at }] : [];
+  });
   const selectedSession = sessions.find((s) => String(s.id) === sessionId);
   const readingOnly = selectedSession?.status === 'linked';
-  const filteredSessions = [...sessions].filter((session) => {
-    return (targetSessionId !== undefined ? session.id === targetSessionId : sessionFilter === 'all' || (sessionFilter === 'linked'
-        ? session.status === 'linked' : session.status !== 'linked'));
-  }).sort((a, b) => (sessionOrder === 'topic' ? (Number(!a.topic) - Number(!b.topic)
-    || String(a.topic ?? '').localeCompare(String(b.topic ?? ''), undefined, { sensitivity: 'base' })) : 0)
-    || String(sessionActivity(b)).localeCompare(String(sessionActivity(a)))
-    || b.id - a.id);
+  const filteredSessions = [
+    ...sessions.map(record => ({ record, linked: null, activity: sessionActivity(record) })),
+    ...claudeSessions,
+  ].filter(({ record, linked }) => {
+    if (targetSessionId !== undefined) return !linked && record.id === targetSessionId;
+    const reading = !!linked || record.status === 'linked';
+    return sessionFilter === 'all' || (sessionFilter === 'linked' ? reading : !reading);
+  }).sort((a, b) => (sessionOrder === 'topic' ? (Number(!a.record.topic) - Number(!b.record.topic)
+    || String(a.record.topic ?? '').localeCompare(String(b.record.topic ?? ''), undefined, { sensitivity: 'base' })) : 0)
+    || String(b.activity).localeCompare(String(a.activity))
+    || b.record.id - a.record.id);
   const refresh = useCallback(async () => {
     const version = ++refreshVersion.current;
     const current = () => mounted.current && version === refreshVersion.current;
@@ -2365,8 +2377,8 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
             <div>
               <h2>Project sessions</h2>
               <small>
-                {sessionRows && `${sessions.length.toLocaleString()} linked Codex session${sessions.length === 1 ? '' : 's'} · `}
-                {chatCount.toLocaleString()} saved conversation{chatCount === 1 ? '' : 's'}
+                {sessionRows && `Codex: ${sessions.length.toLocaleString()} · `}
+                Claude Code: {claudeSessions.length.toLocaleString()}
               </small>
             </div>
           </div>
@@ -2400,8 +2412,11 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           </label>
           </div>
           <PagedItems key={JSON.stringify([sessionFilter, sessionOrder])} label="Project session pages">
-            {filteredSessions.map((session) => (
-              <article className="list-item session-row" key={session.id}>
+            {filteredSessions.map(({ record: session, linked }) => linked ? (
+              <ConversationSource key={`claude:${session.id}`} base={base} note={session}
+                manage={conversationActions} onRefresh={() => setRefreshing({ noteId: session.id, input: linked })} />
+            ) : (
+              <article className="list-item session-row" key={`codex:${session.id}`}>
                 <div className="record-row">
                   <label className="session-choice record-main">
                     <input type="radio" name="source-session" value={session.id} disabled={busy}
@@ -2415,7 +2430,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
                   </div>
                 </div>
                 <div className="session-metadata">
-                  <small>#{session.id}{session.topic ? ` · ${session.topic}` : ''} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
+                  <small>Codex · #{session.id}{session.topic ? ` · ${session.topic}` : ''} · {label(session.status ?? '')} · {session.codex_account || 'Launch account'}</small>
                   <small>{session.codex_activity_at ? 'Codex last updated' : 'Last activity recorded here'}: {
                     sessionActivity(session) ? new Date(sessionActivity(session)).toLocaleString() : 'Unknown'
                   }</small>
@@ -2439,7 +2454,9 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
               </article>
             ))}
           </PagedItems>
-          {sessionRows && !filteredSessions.length && <Empty>{sessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
+          {sessionRows && !filteredSessions.length && <Empty>{sessions.length || claudeSessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
+          {refreshing && <SessionLink key={`${base}:${refreshing.noteId}`} base={base} refresh={refreshing}
+            onSaved={onImported} onClose={() => setRefreshing(null)} />}
           {renaming && (
             <Form title="Edit session" fields={[{ ...titleField, maxLength: 200 },
               { name: 'topic', label: 'Topic (optional)', maxLength: 80 }]} initial={renaming}
