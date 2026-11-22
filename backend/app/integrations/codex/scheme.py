@@ -45,16 +45,14 @@ _NODE_TYPES = {
 _NODE_TYPES['focused'] = (*_NODE_TYPES['architecture'], *_NODE_TYPES['workflow'])
 
 
-def _missing_index_workflows(workflow, sources):
+def _missing_index_workflows(workflow, pairs):
     """Check citations on a node or handoff for the inspected index/query pair."""
     nodes = {node['id']: set(node['source_ids']) for node in workflow['nodes'] if node['status'] == 'observed'}
     citations = list(nodes.values())
     citations.extend(set(edge['source_ids']) | nodes[edge['source']] | nodes[edge['target']]
                      for edge in workflow['edges'] if edge['status'] == 'observed'
                      and edge['source'] in nodes and edge['target'] in nodes)
-    return [(schema['id'], query['id']) for schema, query in _index_workflows(
-                [source for source in sources if source.get('path')])
-            if not any({schema['id'], query['id']} <= refs for refs in citations)]
+    return [pair for pair in pairs if not any(set(pair) <= refs for refs in citations)]
 
 
 class SchemeQueueSuperseded(CodexError):
@@ -420,8 +418,17 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         else:
             schema['properties']['dependencies']['maxItems'] = 0
         schema['properties']['dependencies']['items']['properties']['source_ids']['items']['enum'] = source_ids
+        index_pairs = [(migration['id'], query['id']) for migration, query in _index_workflows(
+            [source for source in evidence['sources'] if source.get('path')])]
+        index_guidance = (
+            'Ground the workflow in these inspected pairs of migration and query citation IDs. Each migration '
+            'identifies which table triggers each index update. Use those table names to distinguish different '
+            'record ingestion paths, and cite both IDs for the matching index and search handoff. Pairs: '
+            + json.dumps(index_pairs) + '. '
+        ) if index_pairs else ''
         prompt = (
             _FOCUS_GUIDANCE[focus] +
+            index_guidance +
             'Explain this project visually using only the supplied evidence. Return architecture and workflow '
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
@@ -532,11 +539,12 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                 'if all its recorded original citations cannot fit within six references. '
             )
         else:
-            missing = _missing_index_workflows(workflow, evidence['sources'])
+            missing = _missing_index_workflows(workflow, index_pairs)
             repair = ('The previous workflow omitted a supported index handoff. For each of the following '
                       'migration and query citation pairs, show how the record named in the trigger is indexed '
                       'and returned through the matching query. Cite both IDs in the workflow and keep distinct '
-                      'indexes separate. Citation pairs: ' + json.dumps(missing) + '. ') if missing else ''
+                      'indexes separate. Every edge endpoint must exactly match a node ID in its own graph. '
+                      'Citation pairs: ' + json.dumps(missing) + '. ') if missing else ''
         retry_prompt = repair + 'Keep supported claims and return a complete replacement.\n' + prompt if repair else ''
         if repair and len(retry_prompt) <= MAX_INPUT_CHARS:
             progress.check_cancelled()
@@ -544,10 +552,16 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             scheme_requests += 1
             raw = manager.generate_brief(retry_prompt, schema)
             progress.update(project_id, stage='Validating Scheme')
-            architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+            try:
+                architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+            except CodexError:
+                if citation_error is not None:
+                    raise
+                # The first graph already passed validation. Keep it with the
+                # visible coverage limitation when the optional rewrite is invalid.
         elif citation_error is not None:
             raise citation_error
-        if _missing_index_workflows(workflow, evidence['sources']):
+        if _missing_index_workflows(workflow, index_pairs):
             evidence['coverage']['partial'] = True
             evidence['coverage']['limitations'] = [
                 *evidence['coverage']['limitations'],

@@ -37,7 +37,8 @@ files can use a larger per-file read within the same overall inspection budget.
 General Scheme also reserves part of that budget for matching full-text index
 declarations, trigger writes, and application queries when found in the repository.
 If the workflow omits citations for an inspected indexing handoff, Scheme can
-retry once. Remaining citation gaps appear under coverage.
+retry once. A malformed optional rewrite leaves the validated draft available,
+with the remaining citation gap under coverage.
 Find earlier results under **Scheme details → Previous versions**.
 When Scheme cites published Knowledge, ProjectHub can fill in its recorded
 original source references. If these would exceed the citation limit, it retries

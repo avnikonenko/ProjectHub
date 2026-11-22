@@ -454,8 +454,8 @@ def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair_works', [True, False])
-def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair_works):
+@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid'])
+def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
         db.add(Project(name='Search'))
@@ -476,15 +476,19 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair_wor
         def generate_brief(self, prompt, schema):
             prompts.append(prompt)
             graph = output()
-            if len(prompts) > 1 and repair_works:
-                graph['workflow']['nodes'] = [
-                    {**node('find', refs=['migration', 'query']), 'type': 'operation'},
-                ]
+            if len(prompts) > 1:
+                if repair == 'covered':
+                    graph['workflow']['nodes'] = [
+                        {**node('find', refs=['migration', 'query']), 'type': 'operation'},
+                    ]
+                if repair == 'invalid':
+                    graph['architecture']['edges'][0]['target'] = 'missing'
             return json.dumps(graph)
 
     saved = scheme.refresh_scheme(engine, 1, Manager())
     assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
     assert '["migration", "query"]' in prompts[-1]
     warning = any('did not fully cite' in value for value in saved['coverage']['limitations'])
-    assert warning is not repair_works
+    assert warning == (repair != 'covered')
+    assert saved['architecture']['edges'][0]['target'] == 'replacement'
     engine.dispose()
