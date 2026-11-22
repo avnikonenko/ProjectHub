@@ -7,6 +7,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Link local Codex and Claude Code sessions from Sources. Preview the conversation before linking, and refresh saved Claude Code transcripts as work continues.
 - Keep Claude Code history across compaction and reuse matching imports when linking. Newly linked sessions appear in the list immediately.
 - Recover missing original citations when Scheme cites published Knowledge, with one retry if the citations exceed the per-claim limit.
+- Improve general Scheme coverage of application entry points, code handoffs, and configuration choices within the same overall evidence budget.
 
 ## [0.2.5] - 2026-11-21
 

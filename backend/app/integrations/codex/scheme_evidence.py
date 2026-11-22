@@ -21,7 +21,7 @@ from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, DEFAULT_SCHEME_READ_BYTES, s
 from ...models import Project, ProjectHistoryBatch
 from ...project_evidence import (
     EvidenceReadError, _CODE_PRIVATE, _code_category, _code_order, _digest,
-    _excluded, _exclusions, _git, _repository_root,
+    _code_hints, _excluded, _exclusions, _git, _repository_root,
 )
 from ...services import require_project
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
@@ -30,12 +30,14 @@ from .scheme_js_scope import focused_call_owner, focused_ui_declarations
 from .scheme_knowledge import collect_published_knowledge
 from .scheme_migration_sql import compact_migration_sql, migration_sql_declarations
 from .scheme_named_files import named_file_excerpt, named_file_kind
+from .scheme_namelist import namelist_excerpt
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
-from .scheme_python_flow import python_flow_declarations
+from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations
 from .scheme_route_evidence import python_route_declarations
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
+_MAX_ENTRYPOINT_FILE_BYTES = 192 * 1024
 _MAX_DEPENDENCY_FILE_BYTES = 2 * 1024 * 1024
 _MAX_DEPENDENCY_READ_BYTES = 32 * 1024 * 1024
 _DEPENDENCY_INSPECTION_SECONDS = 10.0
@@ -456,7 +458,7 @@ def _shared_feature_stems(paths):
     return {stem for stem, locations in areas.items() if len(locations) > 1}
 
 
-def _import_targets(value, relative, available):
+def _import_targets(value, relative, available, *, called_names=None):
     """Resolve explicit local imports; prioritize application entrypoints/feature use."""
     path = PurePosixPath(relative)
     bases, feature_names = [], set()
@@ -512,6 +514,8 @@ def _import_targets(value, relative, available):
                     bases.append((base, base.stem))
     found = {}
     for base, symbol in bases:
+        if called_names is not None and symbol not in called_names:
+            continue
         candidates = [base.as_posix(), *((str(base) + ext) for ext in _CODE_EXTENSIONS),
                       *((base / ('index' + ext)).as_posix() for ext in _CODE_EXTENSIONS),
                       (base / '__init__.py').as_posix()]
@@ -521,6 +525,25 @@ def _import_targets(value, relative, available):
                          PurePosixPath(candidate).stem.casefold() not in {'router', 'routes', 'app', 'main', 'index', 'server'})
                 found[candidate] = min(found.get(candidate, score), score)
     return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
+
+
+def _general_repository_order(sources, entrypoints, declared_modules, handoffs, reachable, configurations, guides):
+    """Give entry points, linked code, configurations and guides independent turns."""
+    lanes = [deque() for _ in range(7)]
+    for source in sources:
+        path = source['path']
+        lane = (0 if path in entrypoints else 1 if path in handoffs else 2 if path in configurations
+                else 3 if path in guides else 4 if _manifest(path) else 5 if path in reachable else 6)
+        lanes[lane].append(source)
+    lanes[0] = deque(sorted(lanes[0], key=lambda source: declared_modules.get(source['path'], len(declared_modules))))
+    order = []
+    pending = deque(lane for lane in lanes if lane)
+    while pending:
+        lane = pending.popleft()
+        order.append(lane.popleft())
+        if lane:
+            pending.append(lane)
+    return order
 
 
 def _repository(repository_path, patterns, *, inventory=None, requested=None):
@@ -585,7 +608,7 @@ def _repository(repository_path, patterns, *, inventory=None, requested=None):
     return root, paths, candidates, limits
 
 
-def _entrypoint_declarations(value, relative):
+def _entrypoint_declarations(value, relative, *, preserve_order=False):
     """Read literal packaging declarations only; never import or evaluate setup code."""
     entries = []
     name = PurePosixPath(relative).name
@@ -631,7 +654,7 @@ def _entrypoint_declarations(value, relative):
                 and len(target) <= 240
                 and re.fullmatch(r'[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*:[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*', target, re.ASCII)):
             result.append((command, target))
-    return sorted(set(result))
+    return list(dict.fromkeys(result)) if preserve_order else sorted(set(result))
 
 
 def _entrypoint_targets(declarations, relative, available):
@@ -1057,7 +1080,7 @@ def _client_navigation_declarations(value, masked, owner_at):
     return declarations
 
 
-def _structural_excerpt(value, relative, *, focus=None):
+def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
     flow = []
@@ -1072,6 +1095,9 @@ def _structural_excerpt(value, relative, *, focus=None):
             elif focus:
                 routes = python_route_declarations(parsed)
                 flow = python_flow_declarations(parsed, focus, predicate_shape=_predicate_shape)
+            elif trace_imports is not None:
+                flow, called = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
+                trace_imports.update(called)
 
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
@@ -1212,9 +1238,11 @@ def _structural_excerpt(value, relative, *, focus=None):
     used = len(rendered[0]) + 1
     # Keep room for explicit routes and concrete handoffs ahead of call-name lists.
     ordered_routes = sorted(routes, key=lambda item: -focus(item[1])) if routes else []
-    for rows, allowance in ((ordered_routes, _MAX_FOCUSED_ROUTE_CHARS), (flow, _MAX_FOCUSED_FLOW_CHARS)):
+    flow_allowance = _MAX_FOCUSED_FLOW_CHARS if focus else 1400
+    for rows, allowance, count in ((ordered_routes, _MAX_FOCUSED_ROUTE_CHARS, 8),
+                                    (flow, flow_allowance, 8 if focus else 16)):
         ceiling = min(used + allowance, _MAX_EXCERPT)
-        for number, statement in rows[:8]:
+        for number, statement in rows[:count]:
             line = f'L{number}: {statement[:320]}'
             if used + len(line) + 1 <= ceiling:
                 rendered.append(line)
@@ -1456,6 +1484,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
               'max_file_bytes': _MAX_BYTES, 'max_source_chars': source_budget,
               'max_package_chars': package_budget, 'max_tree_paths': _MAX_PATHS,
               'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
+    if not focus:
+        policy['max_entrypoint_file_bytes'] = _MAX_ENTRYPOINT_FILE_BYTES
     try:
         patterns = (*_exclusions(), *_CODE_PRIVATE)
         root, paths, candidates, repo_limits = (_repository(repository_path, patterns, inventory=inventory, requested=focus)
@@ -1509,7 +1539,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             candidates = [relative for relative in candidates if relative in marked_paths]
         scope_identity = {'scope': focus.value, 'scope_policy': 9, 'requested_paths': sorted(focus.paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v15', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1545,6 +1575,16 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         code_paths = {path for path in paths if _scheme_category(path) == 'code'}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         entrypoint_paths = set()
+        declared_modules = {}
+        entrypoint_functions = {}
+        reachable_paths = set()
+        handoff_paths = set()
+        configuration_paths = set()
+        configurations = {}
+        if not focus:
+            for path in paths:
+                if PurePosixPath(path).suffix.casefold() == '.in' and not _manifest(path) and not _historical_path(path):
+                    configurations.setdefault(PurePosixPath(path).name, []).append(path)
         declared_commands, guide_words = set(), {}
         while pending:
             try:
@@ -1584,28 +1624,75 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     omitted_reasons['requested_file_too_large'] = omitted_reasons.get('requested_file_too_large', 0) + 1
                     limitations.add('Some named files exceeded the 64 KiB per-file inspection limit.')
                     continue
-                value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
+                extended = (not focus and PurePosixPath(relative).suffix == '.py'
+                            and relative in (entrypoint_paths | reachable_paths))
+                file_limit = _MAX_ENTRYPOINT_FILE_BYTES if extended else _MAX_BYTES
+                value = _read(root_fd, relative, allow_prefix=is_code, budget=budget,
+                              **({'max_file_bytes': file_limit} if extended else {}))
                 decoded_reads += 1
-                declarations = _entrypoint_declarations(value, relative)
+                declarations = _entrypoint_declarations(value, relative, preserve_order=not focus)
                 declared_commands.update(command for command, _ in declarations)
-                if _scheme_category(relative) == 'docs':
+                is_guide = _scheme_category(relative) == 'docs'
+                if is_guide:
                     guide_words[relative] = set(re.findall(r'[A-Za-z][A-Za-z0-9_.-]*', value))
                 targets = _entrypoint_targets(declarations, relative, paths)
                 if any(not _entrypoint_targets([declaration], relative, paths) for declaration in declarations):
                     limitations.add('Some declared entrypoint modules were unavailable within the safe bounded repository paths.')
                 for order, target in enumerate(targets):
+                    declared_modules.setdefault(target, len(declared_modules))
                     eligible.add(target)
                     entrypoint_paths.add(target)
                     priorities[target] = (-1, order)
                     if target not in scanned and target not in pending:
                         pending.append(target)
+                if not focus:
+                    for declaration in declarations:
+                        for target in _entrypoint_targets([declaration], relative, code_paths | entrypoint_paths):
+                            entrypoint_functions.setdefault(target, set()).add(declaration[1].split(':', 1)[1])
+                    if is_guide and not _historical_path(relative):
+                        documented, _ = _code_hints(relative, value, code_paths)
+                        for target in documented:
+                            if not _production_path(target):
+                                continue
+                            declared_commands.add(PurePosixPath(target).name)
+                            entrypoint_paths.add(target)
+                            eligible.add(target)
+                            priorities[target] = (-1, len(entrypoint_paths))
+                            if target not in scanned and target not in pending:
+                                pending.append(target)
+                    if configurations and (is_code or is_guide) and not _historical_path(relative):
+                        for name in dict.fromkeys(re.findall(r'(?<![\w.-])[\w.-]+\.in(?![\w.-])', value)):
+                            matches = configurations.get(name, ())
+                            if len(matches) > 1 and _production_path(relative):
+                                matches = [path for path in matches if not any(
+                                    part.casefold() in {'test', 'tests', 'fixtures', 'example', 'examples', 'docs'}
+                                    for part in PurePosixPath(path).parts[:-1])]
+                            if len(matches) != 1:
+                                continue
+                            target = matches[0]
+                            configuration_paths.add(target)
+                            eligible.add(target)
+                            if target not in scanned and target not in pending:
+                                pending.insert(0, target)
                 declared_excerpt = '\n'.join(f'Declared entrypoint {command} = {target}' for command, target in declarations)
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
-                    if isinstance(marker, list) and marker[3] > _MAX_BYTES:
-                        limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
+                    if isinstance(marker, list) and marker[3] > file_limit:
+                        limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
+                    called_names = set()
+                    syntax = (_structural_excerpt(value, relative, focus=focus.score)
+                              if focus else _structural_excerpt(value, relative,
+                                  entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names))
+                    if not focus and called_names:
+                        entrypoint_paths.add(relative)
                     linked = _import_targets(value, relative, code_paths)
+                    if not focus and called_names:
+                        reachable_paths.update(_import_targets(value, relative, code_paths, called_names=called_names))
+                        visible_calls = {name for line in syntax.splitlines() if 'Python entrypoint flow ' in line
+                                         for name in re.findall(r'\b([A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*\(', line)}
+                        handoff_paths.update(_import_targets(value, relative, code_paths,
+                                                             called_names=called_names & visible_calls))
                     for order, target in enumerate(linked):
                         eligible.add(target)
                         if target not in scanned:
@@ -1638,10 +1725,11 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                         else:
                             limitations.add('Some requirement includes were excluded or outside the bounded repository paths.')
                 elif is_code:
-                    syntax = (_structural_excerpt(value, relative, focus=focus.score)
-                              if focus else _structural_excerpt(value, relative))
                     excerpt = '\n'.join(part for part in (declared_excerpt, syntax) if part)
                     provenance = 'repository test source' if _scheme_category(relative) == 'tests' else 'observed in code'
+                elif relative in configuration_paths:
+                    excerpt = namelist_excerpt(value, limit=_MAX_EXCERPT)
+                    provenance = 'repository configuration'
                 elif relative in named_files:
                     excerpt = named_file_excerpt(value, relative, limit=_MAX_EXCERPT, priority=focus.score)
                     provenance = 'repository file structure'
@@ -1712,6 +1800,9 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             PurePosixPath(source.get('path', '')).name not in {'setup.py', 'pyproject.toml'},
             not _manifest(source.get('path', '')),
             source.get('path') not in command_guides))
+        if not focus:
+            repository_sources = _general_repository_order(repository_sources, entrypoint_paths, declared_modules,
+                                                           handoff_paths, reachable_paths, configuration_paths, command_guides)
         # Reserve half for repository evidence when both kinds are present. Keep
         # whole excerpts and return any unused repository allowance to records.
         repository_reserve = min(source_budget // 2, sum(len(s['text']) for s in repository_sources))

@@ -131,6 +131,49 @@ def test_feature_documentation_survives_badges_with_original_wording(tmp_path):
     engine.dispose()
 
 
+def test_general_scheme_finds_long_documented_entrypoint_and_its_called_modules(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'README.md').write_text('# Pipeline\n\nRun `python pipeline.py` to produce a report.\n')
+    (repo / 'pipeline.py').write_text('import execution\nimport crossover\n'
+        + '# padding\n' * 7000
+        + 'def main():\n    execution.restore_checkpoint()\n    execution.write_report()\n\n'
+          'if __name__ == "__main__":\n    main()\n')
+    (repo / 'execution.py').write_text('def restore_checkpoint(): pass\ndef write_report(): pass\n')
+    (repo / 'crossover.py').write_text('def dormant_helper(): pass\n')
+    engine = setup(tmp_path, repo)
+    result = evidence.collect_evidence(engine, 1)
+    sources = {source.get('path'): source for source in result['sources']}
+    assert 'Python entrypoint flow main' in sources['pipeline.py']['text']
+    assert 'execution.restore_checkpoint' in sources['pipeline.py']['text']
+    assert 'execution.write_report' in sources['pipeline.py']['text']
+    assert list(sources).index('execution.py') < list(sources).index('crossover.py')
+    assert result['diagnostics']['bytes_read'] <= evidence.DEFAULT_SCHEME_READ_BYTES
+    engine.dispose()
+
+
+def test_general_scheme_includes_referenced_configuration_with_its_active_sections(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'pyproject.toml').write_text('[project.scripts]\nprepare="prepare:main"\nanalyze="analyze:main"\n')
+    (repo / 'prepare.py').write_text('def main():\n    return prepare_input()\n')
+    (repo / 'analyze.py').write_text('def main():\n    return load_template("methods.in")\n')
+    (repo / 'scripts').mkdir()
+    (repo / 'scripts/methods.in').write_text('&active\n key="PRIVATE_VALUE"\n/\n#&optional\n#/\n')
+    (repo / 'tests').mkdir()
+    (repo / 'tests/methods.in').write_text('&fixture\n/\n')
+    (repo / 'unused.in').write_text('&unused\n/\n')
+    engine = setup(tmp_path, repo)
+    result = evidence.collect_evidence(engine, 1)
+    sources = {source.get('path'): source for source in result['sources']}
+    assert {'prepare.py', 'analyze.py', 'scripts/methods.in'} <= sources.keys()
+    config = sources['scripts/methods.in']
+    assert config['provenance'] == 'repository configuration'
+    assert 'L1: Active namelist section &active' in config['text']
+    assert 'L4: Commented-out namelist section &optional' in config['text']
+    assert {'unused.in', 'tests/methods.in'}.isdisjoint(sources)
+    assert 'PRIVATE_VALUE' not in json.dumps(result)
+    engine.dispose()
+
+
 def test_mixed_resolved_and_missing_entrypoints_report_partial_coverage(tmp_path):
     repo = repository(tmp_path)
     (repo / 'pyproject.toml').write_text('[project.scripts]\n'

@@ -145,9 +145,9 @@ def test_time_budget_in_final_parse_is_not_cached(tmp_path, monkeypatch):
     monkeypatch.setattr(evidence, 'time', SimpleNamespace(monotonic=lambda: clock.value))
     original = evidence._structural_excerpt
 
-    def slow_excerpt(*args):
+    def slow_excerpt(*args, **kwargs):
         clock.value += evidence._INSPECTION_SECONDS
-        return original(*args)
+        return original(*args, **kwargs)
 
     monkeypatch.setattr(evidence, '_structural_excerpt', slow_excerpt)
     engine = setup(tmp_path, repo)

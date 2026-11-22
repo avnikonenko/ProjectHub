@@ -31,6 +31,9 @@ Generation sends selected evidence to the provider chosen in the project's AI se
 The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
 Focus leaves the repository dependency scan independent of the diagrams.
+General Scheme prioritizes declared commands, their code handoffs, and
+referenced configuration sections alongside project guides. Longer entrypoint
+files can use a larger per-file read within the same overall inspection budget.
 Find earlier results under **Scheme details → Previous versions**.
 When Scheme cites published Knowledge, ProjectHub can fill in its recorded
 original source references. If these would exceed the citation limit, it retries
