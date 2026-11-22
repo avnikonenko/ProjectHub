@@ -84,6 +84,10 @@ def _find_existing(db, project_id, values):
     matches = select(Note.id, Note.title, Note.updated_at, Note.reference, Note.conversation).where(
         Note.project_id == project_id, Note.kind == 'document').order_by(Note.id).limit(1)
     reference = values['reference']
+    provider_id = metadata.get('provider_conversation_id')
+    local_session = metadata.get('linked_session')
+    stored_id = func.json_extract(Note.conversation, literal_column("'$.provider_conversation_id'"))
+    stored_provider = func.json_extract(Note.conversation, literal_column("'$.provider'"))
     if reference:
         saved_conversation = Note.conversation.is_not(None)
         try:
@@ -99,19 +103,30 @@ def _find_existing(db, project_id, values):
         found = db.execute(matches.where(Note.reference == reference, saved_conversation)).first()
         if found is not None:
             return found
+        if metadata['provider'] == 'claude' and provider_id:
+            # A local session and an export can share a provider UUID while
+            # carrying different source references.
+            same_session = matches.where(stored_id == provider_id, stored_provider == 'claude')
+            if local_session:
+                found = db.execute(same_session).first()
+                if found is None:
+                    found = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
+            else:
+                linked_id = func.json_extract(Note.conversation, literal_column("'$.linked_session.id'"))
+                found = db.execute(same_session.where(linked_id == provider_id)).first()
+            if found is not None:
+                return found
         matches = matches.where(Note.reference == '')
-    provider_id = metadata.get('provider_conversation_id')
-    stored_id = func.json_extract(Note.conversation, literal_column("'$.provider_conversation_id'"))
-    stored_provider = func.json_extract(Note.conversation, literal_column("'$.provider'"))
     if metadata['provider'] != 'other':
         matches = matches.where(or_(stored_provider.is_(None), stored_provider.in_(('other', metadata['provider']))))
     if provider_id:
-        found = db.execute(matches.where(stored_id == provider_id, stored_provider == metadata['provider'])).first()
-        if found is not None:
-            return found
-        found = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
-        if found is not None:
-            return found
+        if not (reference and local_session):
+            found = db.execute(matches.where(stored_id == provider_id, stored_provider == metadata['provider'])).first()
+            if found is not None:
+                return found
+            found = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
+            if found is not None:
+                return found
         matches = matches.where(or_(stored_id.is_(None), stored_id == provider_id))
     found = db.execute(matches.where(Note.conversation.is_not(None),
         func.json_extract(Note.conversation, literal_column("'$.fingerprint'")) == metadata['fingerprint'],
@@ -158,6 +173,11 @@ def _is_duplicate(db, project_id, found, values):
 def preview(db, project_id, values, source):
     metadata = values['conversation']
     found = _find_existing(db, project_id, values)
+    if found is not None and metadata.get('linked_session') and found.reference.startswith('https://'):
+        # Keep the original link on the conversation. The new source copy
+        # separately records its local Claude Code session reference.
+        values['reference'] = found.reference
+        metadata['source_status'] = found.conversation.get('source_status', 'provided')
     duplicate = found is not None and _is_duplicate(db, project_id, found, values)
     existing = {'id': found.id, 'title': found.title, 'duplicate': duplicate} if found is not None else None
     first_and_last = sorted(set(range(min(2, len(metadata['messages'])))) |

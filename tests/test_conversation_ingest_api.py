@@ -138,6 +138,51 @@ def test_link_local_claude_session_and_refresh_without_losing_source_copies(api,
     assert len(load_sources(client.app.state.engine, note['project_id'])['sources']) == 4
 
 
+@pytest.mark.parametrize('legacy', [False, True])
+def test_link_claude_session_reuses_import_with_source_url(api, tmp_path, monkeypatch, legacy):
+    client, base, other = api
+    session_id = '00000000-0000-4000-8000-000000000021'
+    profile = tmp_path / 'claude-profile'
+    transcript = profile / 'projects' / 'workspace' / f'{session_id}.jsonl'
+    transcript.parent.mkdir(parents=True)
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(profile))
+    original_url = 'https://example.test/original-transcript'
+    messages = [
+        {'role': 'user', 'id': '00000000-0000-4000-8000-000000000022', 'content': 'Preserve the original source.'},
+        {'role': 'assistant', 'id': '00000000-0000-4000-8000-000000000023', 'content': 'The source copy stays available.'},
+    ]
+    export = {'filename': 'claude.json', 'source_url': original_url,
+              'content': json.dumps({'title': 'Original import', 'provider': 'claude',
+                                     'provider_conversation_id': session_id, 'messages': messages})}
+    saved = save(client, base, export, check(client, base, export))
+    assert saved.status_code == 201
+    note = saved.json()
+    if legacy:
+        with client.app.state.engine.begin() as db:
+            db.execute(text("UPDATE notes SET conversation=json_remove(conversation, '$.provider_conversation_id') "
+                            "WHERE id=:id"), {'id': note['id']})
+    transcript.write_text(''.join(json.dumps({
+        'type': message['role'], 'sessionId': session_id, 'uuid': message['id'],
+        'parentUuid': messages[index - 1]['id'] if index else None,
+        'message': {'role': message['role'], 'content': message['content']},
+    }) + '\n' for index, message in enumerate(messages)), encoding='utf-8')
+
+    body = {'session_id': session_id, 'title': note['title']}
+    preview = check(client, base, body)
+    assert preview['existing'] == {'id': note['id'], 'title': note['title'], 'duplicate': False}
+    assert check(client, other, body)['existing'] is None
+    assert save(client, base, body, preview).status_code == 409
+    linked = save(client, base, body, preview, replace_existing=True)
+    assert linked.status_code == 201
+    assert linked.json()['id'] == note['id'] and linked.json()['reference'] == original_url
+    assert linked.json()['conversation']['linked_session']['id'] == session_id
+    assert check(client, base, body)['existing']['duplicate'] is True
+    alternate_reference = {**export, 'source_url': 'https://example.test/other-transcript-location'}
+    assert check(client, base, alternate_reference)['existing']['id'] == note['id']
+    sources = client.get(base + f"/conversations/{note['id']}/sources").json()
+    assert len(client.get(base + '/notes').json()) == 1 and len(sources) == 2
+
+
 def test_replacement_revalidates_input_and_preserves_source_and_message_identity(api):
     client, base, other = api
     url = 'https://claude.ai/share/c265b990-bef4-4d55-bbdd-1e87bd03d8b5'

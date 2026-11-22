@@ -102,13 +102,16 @@ export function ErrorBox({ error }: { error: string }) {
   return <Feedback tone="error">{error}</Feedback>;
 }
 
-export function PagedItems({ children, label, listClass, pageSize = 3 }: {
+export function PagedItems({ children, label, listClass, pageSize = 3, pagination }: {
   children: React.ReactNode;
   label: string;
   listClass?: string;
   pageSize?: number;
+  pagination?: { page: number; onPageChange: (page: number) => void };
 }) {
-  const [page, setPage] = useState(0);
+  const [internalPage, setInternalPage] = useState(0);
+  const page = pagination?.page ?? internalPage;
+  const setPage = pagination?.onPageChange ?? setInternalPage;
   const items = Children.toArray(children);
   const count = Math.max(1, Math.ceil(items.length / pageSize));
   const current = Math.min(page, count - 1);

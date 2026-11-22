@@ -106,14 +106,16 @@ def _read_text(entry):
 
 def _active_messages(nodes, latest):
     records, visited = [], set()
+    missing_ancestry = False
     while latest in nodes:
         if latest in visited:
             _error('The Claude Code transcript contains a cyclic message history.')
         visited.add(latest)
-        latest, message = nodes[latest]
+        latest, message, missing_parent = nodes[latest]
+        missing_ancestry |= missing_parent
         if message is not None:
             records.append(message)
-    return list(reversed(records)), 'partial' if latest is not None else 'unknown'
+    return list(reversed(records)), 'partial' if latest is not None or missing_ancestry else 'unknown'
 
 
 def _read_transcript(handle, session_id, title):
@@ -151,15 +153,23 @@ def _read_transcript(handle, session_id, title):
             if entry_type in ('user', 'assistant'):
                 _error('The Claude Code transcript contains an invalid message ID.')
             continue
-        parent = entry.get('parentUuid', latest)
+        compaction = entry_type == 'system' and entry.get('subtype') == 'compact_boundary'
+        if compaction:
+            # Claude Code starts a new context at the boundary and keeps the
+            # previous transcript leaf separately from its physical parent.
+            parent = entry.get('parentUuid')
+            if parent is None:
+                parent = entry.get('logicalParentUuid')
+        else:
+            parent = entry.get('parentUuid', latest)
         if parent is not None and (not isinstance(parent, str) or not _UUID.fullmatch(parent)):
             _error('The Claude Code transcript contains an invalid parent message ID.')
-        record = _read_text(entry)
+        node = (parent, _read_text(entry), compaction and parent is None)
         if identifier in nodes:
-            if nodes[identifier] != (parent, record):
+            if nodes[identifier] != node:
                 _error('The Claude Code transcript contains conflicting message records.')
             continue
-        nodes[identifier] = (parent, record)
+        nodes[identifier] = node
         if entry_type in ('user', 'assistant'):
             latest = identifier
     after = os.fstat(handle.fileno())

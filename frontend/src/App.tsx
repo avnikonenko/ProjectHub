@@ -1108,7 +1108,10 @@ function ProjectWorkspace({
                 <Codex base={base} onError={setError}
                   conversationActions={conversationActions}
                   targetSessionId={searchTarget?.kind === 'sessions' ? searchTarget.id : undefined}
-                  notes={notes} onImported={async () => {
+                  notes={notes} onImported={async (sessionLinked) => {
+                    if (sessionLinked) {
+                      setSearchTarget(current => current?.kind === 'sessions' ? null : current);
+                    }
                     setGenerationResultsVersion(version => version + 1);
                     await load();
                   }}
@@ -2285,7 +2288,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   base: string;
   onError: (message: string) => void;
   notes: RecordData[];
-  onImported: () => Promise<void>;
+  onImported: (sessionLinked?: boolean) => Promise<void>;
   onUnlinked: (sessionId: number) => Promise<void>;
   onOpenGeneration: () => void;
   targetSessionId?: number;
@@ -2298,6 +2301,8 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
   const [refreshing, setRefreshing] = useState<{ noteId: number; input: ClaudeSessionInput } | null>(null);
   const [sessionFilter, setSessionFilter] = useState('all');
   const [sessionOrder, setSessionOrder] = useState('recent');
+  const [sessionPage, setSessionPage] = useState(0);
+  const [newLink, setNewLink] = useState<{ provider: 'codex' | 'claude'; id: number } | null>(null);
   const [renaming, setRenaming] = useState<RecordData | null>(null);
   const [importingConversation, setImportingConversation] = useState(false);
   const [unlinkedSession, setUnlinkedSession] = useState('');
@@ -2310,8 +2315,6 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
     const linked = linkedClaudeSession(note);
     return linked ? [{ record: note, linked, activity: note.updated_at ?? note.created_at }] : [];
   });
-  const selectedSession = sessions.find((s) => String(s.id) === sessionId);
-  const readingOnly = selectedSession?.status === 'linked';
   const filteredSessions = [
     ...sessions.map(record => ({ record, linked: null, activity: sessionActivity(record) })),
     ...claudeSessions,
@@ -2323,6 +2326,20 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
     || String(a.record.topic ?? '').localeCompare(String(b.record.topic ?? ''), undefined, { sensitivity: 'base' })) : 0)
     || String(b.activity).localeCompare(String(a.activity))
     || b.record.id - a.record.id);
+  const pageSize = 3;
+  const newLinkIndex = newLink === null ? -1 : filteredSessions.findIndex(({ record, linked }) =>
+    record.id === newLink.id && (linked ? 'claude' : 'codex') === newLink.provider);
+  const currentPage = newLinkIndex >= 0 ? Math.floor(newLinkIndex / pageSize)
+    : Math.min(sessionPage, Math.max(0, Math.ceil(filteredSessions.length / pageSize) - 1));
+  const selectedSession = filteredSessions.slice(currentPage * pageSize, (currentPage + 1) * pageSize)
+    .find(({ record, linked }) => !linked && String(record.id) === sessionId)?.record;
+  const readingOnly = selectedSession?.status === 'linked';
+  useEffect(() => {
+    if (newLinkIndex >= 0) {
+      setSessionPage(Math.floor(newLinkIndex / pageSize));
+      setNewLink(null);
+    }
+  }, [newLinkIndex]);
   const refresh = useCallback(async () => {
     const version = ++refreshVersion.current;
     const current = () => mounted.current && version === refreshVersion.current;
@@ -2367,7 +2384,14 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
       setSessionId(String(linked.id));
       await refresh();
     }
-    await onImported();
+    await onImported(true);
+    if (!mounted.current) return;
+    if (provider === 'claude' || linked.status === 'linked') {
+      setSessionFilter(current => current === 'managed' ? 'all' : current);
+    } else {
+      setSessionFilter(current => current === 'linked' ? 'all' : current);
+    }
+    setNewLink({ provider, id: linked.id });
   }
   return (
     <>
@@ -2397,7 +2421,11 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           <div className="source-filters">
           <label>
             Sessions
-            <select value={sessionFilter} onChange={(e) => setSessionFilter(e.target.value)}>
+            <select value={sessionFilter} onChange={(e) => {
+              setSessionFilter(e.target.value);
+              setSessionPage(0);
+              setNewLink(null);
+            }}>
               <option value="all">All sessions</option>
               <option value="linked">Linked for reading</option>
               <option value="managed">Discussion sessions</option>
@@ -2405,13 +2433,21 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           </label>
           <label>
             Organize by
-            <select value={sessionOrder} onChange={(e) => setSessionOrder(e.target.value)}>
+            <select value={sessionOrder} onChange={(e) => {
+              setSessionOrder(e.target.value);
+              setSessionPage(0);
+              setNewLink(null);
+            }}>
               <option value="recent">Recent activity</option>
               <option value="topic">Topic, then recent activity</option>
             </select>
           </label>
           </div>
-          <PagedItems key={JSON.stringify([sessionFilter, sessionOrder])} label="Project session pages">
+          <PagedItems label="Project session pages" pageSize={pageSize}
+            pagination={{ page: currentPage, onPageChange: page => {
+              setSessionPage(page);
+              setNewLink(null);
+            } }}>
             {filteredSessions.map(({ record: session, linked }) => linked ? (
               <ConversationSource key={`claude:${session.id}`} base={base} note={session}
                 manage={conversationActions} onRefresh={() => setRefreshing({ noteId: session.id, input: linked })} />
@@ -2456,7 +2492,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
           </PagedItems>
           {sessionRows && !filteredSessions.length && <Empty>{sessions.length || claudeSessions.length ? 'No matching sessions.' : 'No sessions added yet.'}</Empty>}
           {refreshing && <SessionLink key={`${base}:${refreshing.noteId}`} base={base} refresh={refreshing}
-            onSaved={onImported} onClose={() => setRefreshing(null)} />}
+            onSaved={() => onImported()} onClose={() => setRefreshing(null)} />}
           {renaming && (
             <Form title="Edit session" fields={[{ ...titleField, maxLength: 200 },
               { name: 'topic', label: 'Topic (optional)', maxLength: 80 }]} initial={renaming}
@@ -2489,10 +2525,10 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
             </button>
             <button
               className="secondary"
-              disabled={busy || !sessionId}
-              onClick={() =>
-                action(() => post(`${prefix}/sessions/${sessionId}/resume`))
-              }
+              disabled={busy || !selectedSession}
+              onClick={() => {
+                if (selectedSession) void action(() => post(`${prefix}/sessions/${selectedSession.id}/resume`));
+              }}
             >
               Resume selected
             </button>

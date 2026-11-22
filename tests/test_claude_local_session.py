@@ -25,6 +25,14 @@ def _transcript(home, rows, workspace='project'):
     return file
 
 
+def _compact_boundary(identifier, logical_parent=None):
+    row = {'type': 'system', 'subtype': 'compact_boundary', 'sessionId': SESSION,
+           'uuid': str(UUID(int=identifier)), 'parentUuid': None}
+    if logical_parent is not None:
+        row['logicalParentUuid'] = str(UUID(int=logical_parent))
+    return row
+
+
 def test_claude_session_keeps_active_branch_and_only_visible_text(tmp_path, monkeypatch):
     launch = tmp_path / 'launch'
     monkeypatch.setattr(claude_session, 'claude_launch_home', lambda: launch)
@@ -56,6 +64,53 @@ def test_claude_session_keeps_active_branch_and_only_visible_text(tmp_path, monk
     assert parse_file('conversation.json', payload)['content'] == normalized['content']
     for secret in (b'private', b'Older branch', b'Injected reminder', b'accountUuid'):
         assert secret not in payload
+
+
+def test_claude_session_follows_compaction_history_without_saving_summary(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_session, 'claude_launch_home', lambda: tmp_path)
+    _transcript(tmp_path, [
+        _message('user', 2, None, 'Original question'),
+        _message('assistant', 3, 2, 'Original answer'),
+        _message('assistant', 4, 2, 'Abandoned branch'),
+        _compact_boundary(5, 3),
+        _message('user', 6, 5, 'First internal summary', isCompactSummary=True),
+        _message('user', 7, 6, 'Follow-up question'),
+        _compact_boundary(8, 7),
+        _message('user', 9, 8, 'Second internal summary', isCompactSummary=True),
+        _message('assistant', 10, 9, 'Latest answer'),
+    ])
+    normalized, payload = claude_session.read_session(None, SESSION, 'launch')
+    assert normalized['conversation']['completeness'] == 'unknown'
+    assert [message['id'] for message in normalized['conversation']['messages']] == [
+        str(UUID(int=i)) for i in (2, 3, 7, 10)]
+    assert [message['content'] for message in json.loads(payload)['messages']] == [
+        'Original question', 'Original answer', 'Follow-up question', 'Latest answer']
+
+
+@pytest.mark.parametrize('logical_parent', [None, 99])
+def test_claude_session_marks_compaction_with_missing_ancestry_partial(tmp_path, monkeypatch, logical_parent):
+    monkeypatch.setattr(claude_session, 'claude_launch_home', lambda: tmp_path)
+    _transcript(tmp_path, [
+        _message('user', 2, None, 'Unconnected question'),
+        _compact_boundary(3, logical_parent),
+        _message('user', 4, 3, 'Question with retained ancestry'),
+        _message('assistant', 5, 4, 'Available answer'),
+    ])
+    normalized, payload = claude_session.read_session(None, SESSION, 'launch')
+    assert normalized['conversation']['completeness'] == 'partial'
+    assert [message['id'] for message in normalized['conversation']['messages']] == [
+        str(UUID(int=i)) for i in (4, 5)]
+    assert b'Unconnected question' not in payload
+
+
+def test_claude_session_rejects_cyclic_logical_parent(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_session, 'claude_launch_home', lambda: tmp_path)
+    _transcript(tmp_path, [
+        _compact_boundary(2, 3),
+        _message('user', 3, 2, 'Question on a broken chain'),
+    ])
+    with pytest.raises(ConversationImportError, match='cyclic message history'):
+        claude_session.read_session(None, SESSION, 'launch')
 
 
 def test_claude_session_profile_detection_deduplication_and_conflict(tmp_path, monkeypatch):
