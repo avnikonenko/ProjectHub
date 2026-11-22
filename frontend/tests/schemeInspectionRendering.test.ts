@@ -91,6 +91,29 @@ test('latest Scheme with saved counts but missing filenames can disclose the cur
   assert.match(historical, /saved.py/);
   assert.doesNotMatch(historical, /missed-now.py|selected-now.py/);
 });
+test('saved requested-file omissions are disclosed independently from the ordinary file count', () => {
+  const snapshot = { coverage: { ...coverage, requested_file_omissions: [
+    { path: 'manual.pdf', reason: 'unsupported_requested_type' },
+    { path: 'missing.sql', reason: 'outside_repository_inventory' },
+    { path: 'private.yml', reason: 'excluded_by_policy' },
+    { path: 'Dockerfile', reason: 'repository_unavailable' },
+    { path: 'Makefile', reason: 'source_output_budget' },
+  ] } };
+  const current = { coverage: { ...coverage, requested_file_omissions: [
+    { path: 'current-only.sql', reason: 'time_budget' },
+  ] } };
+  const html = renderToStaticMarkup(createElement(resultCoverage, { snapshot, current, showCurrent: true }));
+  assert.match(html, /<summary>Requested files skipped \(5\)<\/summary>/);
+  assert.match(html, /manual\.pdf<\/code> · Unsupported file type/);
+  assert.match(html, /missing\.sql<\/code> · Path absent from the repository inventory/);
+  assert.match(html, /private\.yml<\/code> · Excluded by repository inspection rules/);
+  assert.match(html, /Dockerfile<\/code> · Repository inspection unavailable/);
+  assert.match(html, /Makefile<\/code> · Source excerpt budget reached/);
+  assert.match(html, /<h4>Skipped files \(15\)<\/h4>/);
+  assert.doesNotMatch(html, /current-only\.sql/);
+  const normal = renderToStaticMarkup(createElement(resultCoverage, { snapshot: { coverage } }));
+  assert.doesNotMatch(normal, /Requested files skipped/);
+});
 test('inconsistent skipped-file details fall back to the saved aggregate', () => {
   const row = { path: 'worker.py', reason: 'source_output_budget' };
   for (const file_omissions of [{ total: 15, files: [null] }, { total: 15, files: [] },

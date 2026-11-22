@@ -40,7 +40,13 @@ then click **Generate focused scheme**. For example, ask how imported
 conversations reach search results, including storage and indexing.
 
 The generator prioritizes evidence relevant to your instruction and cites the
-sources that support the diagram. The current diagram and its instruction are
+sources that support the diagram. Name a file to prioritize it. Supported build
+files, SQL schemas, and YAML files contribute structural excerpts with values
+omitted. **Coverage → Requested files skipped** explains any named files that
+did not supply evidence. Long saved conversations can contribute excerpts around
+matching passages.
+
+The current diagram and its instruction are
 saved together. A successful rerun replaces that focused result. To rerun a
 focused scheme, use its own button.
 

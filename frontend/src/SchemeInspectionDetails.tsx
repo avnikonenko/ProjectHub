@@ -15,11 +15,13 @@ export type SchemeInspectionPolicy = {
 export type SchemeDiagnostics = {
   bytes_read?: number; inspection_seconds?: number; cache_hits?: number; package_chars?: number;
 };
+type OmittedFile = { path: string; reason: string };
 export type SchemeCoverage = {
   partial: boolean; limitations: string[]; files_inspected: number; conversation_excerpts: number;
   file_counts?: SchemeFileCounts | null; inspection_policy?: SchemeInspectionPolicy | null;
   inspection_stopped?: string | null; omitted_reason_counts?: Record<string, number>;
-  file_omissions?: { files: { path: string; reason: string }[]; total: number };
+  file_omissions?: { files: OmittedFile[]; total: number };
+  requested_file_omissions?: OmittedFile[];
 };
 type Inspection = { coverage?: SchemeCoverage; diagnostics?: SchemeDiagnostics | null };
 
@@ -56,6 +58,11 @@ const omissionLabels: Record<string, string> = {
   source_output_budget: 'Source excerpt budget reached',
   package_output_budget: 'Final evidence package limit reached',
   knowledge_support_budget: 'Supporting evidence did not fit the input budget',
+  unsupported_requested_type: 'Unsupported file type',
+  requested_file_too_large: 'File exceeds the per-file read limit',
+  outside_repository_inventory: 'Path absent from the repository inventory',
+  excluded_by_policy: 'Excluded by repository inspection rules',
+  repository_unavailable: 'Repository inspection unavailable',
 };
 function omissionLabel(reason: string) {
   return Object.hasOwn(omissionLabels, reason) ? omissionLabels[reason] : reason.replaceAll('_', ' ');
@@ -79,11 +86,15 @@ function missedFileCount(coverage?: SchemeCoverage) {
   return eligible !== undefined && validCount(evidence) ? eligible - evidence : undefined;
 }
 
+function OmittedFileList({ files }: { files: OmittedFile[] }) {
+  return <ul className="scheme-omitted-files">{files.map(({ path, reason }) =>
+    <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>;
+}
+
 function SkippedFiles({ omissions }: { omissions: NonNullable<SchemeCoverage['file_omissions']> }) {
   return <>
     {omissions.total > omissions.files.length && <p>Showing {omissions.files.length} of {omissions.total} skipped files.</p>}
-    <ul className="scheme-omitted-files">{omissions.files.map(({ path, reason }) =>
-      <li key={path}><code>{path}</code> · {omissionLabel(reason)}</li>)}</ul>
+    <OmittedFileList files={omissions.files} />
     {omissions.files.some(({ reason }) => reason === 'source_output_budget') && <p className="muted"><small>
       For larger projects, a higher Scheme excerpt budget in Settings can fit more source excerpts on the next generation.
     </small></p>}
@@ -223,10 +234,19 @@ export function SchemeResultCoverage({ snapshot, current, showCurrent = false }:
   const primary = snapshot ?? current;
   const missing = missedFileCount(primary?.coverage);
   const omissions = recordedOmissions(primary?.coverage?.file_omissions, missing);
+  const requested = inspection.coverage?.requested_file_omissions;
+  const requestedOmissions = Array.isArray(requested)
+    ? recordedOmissions({ files: requested, total: requested.length }, undefined) : undefined;
   const currentOmissions = showCurrent && snapshot && missing !== 0 && !omissions
     ? recordedOmissions(current?.coverage?.file_omissions, missedFileCount(current?.coverage)) : undefined;
   return <CoverageDetails savedAt={snapshot?.generated_at} customCoverage
-    summaryContent={<SchemeCoverageSummary coverage={inspection.coverage} saved={inspection.saved} />}
+    summaryContent={<>
+      <SchemeCoverageSummary coverage={inspection.coverage} saved={inspection.saved} />
+      {requestedOmissions && <details>
+        <summary>Requested files skipped ({requestedOmissions.total})</summary>
+        <OmittedFileList files={requestedOmissions.files} />
+      </details>}
+    </>}
     processingDetails={hasInspectionTiming(inspection.diagnostics)
       && <SchemeInspectionTiming diagnostics={inspection.diagnostics} saved={inspection.saved} embedded />}
     fileCoverage={primary && <>

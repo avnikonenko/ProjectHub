@@ -28,6 +28,7 @@ from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_js_scope import focused_call_owner
 from .scheme_knowledge import collect_published_knowledge
+from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 
 _MAX_PATHS = 300
@@ -45,6 +46,10 @@ _REQUIREMENT = re.compile(r'^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[A-Za-z0-9_,. -]+\])
 
 _SCOPE_WORD = re.compile(r'[^\W_]+')
 _SCOPE_CAMEL_CASE = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
+_SCOPE_PATH_TOKEN = re.compile(r'([`"])([\w./ -]+)\1|(?<![\w./-])(/?(?:[\w.-]+/)*[\w.-]+)')
+_LIKELY_FILE_SUFFIXES = frozenset(
+    '.c .cpp .css .csv .go .h .html .ini .java .js .json .jsx .md .mjs .pdf .png .py .rb .rs .rst .sh .sql '
+    '.toml .ts .tsx .txt .xml .yaml .yml .zip'.split())
 _SCOPE_STOP_WORDS = frozenset(
     'about also both can code could describe diagram explain from give have how include into just '
     'like make only part please project scheme see show should that the their them there these they '
@@ -71,15 +76,36 @@ class _EvidenceScope:
     def __init__(self, value):
         self.value = ' '.join(value.split())
         self.terms = frozenset(list(dict.fromkeys(_scope_words(self.value)))[:24])
-        self.paths = frozenset(match.casefold().removeprefix('./')
-                               for match in re.findall(r'[\w./-]+\.[\w-]+', self.value))
+        names = ((match[2] or match[3]).strip().rstrip('.').removeprefix('./')
+                 for match in _SCOPE_PATH_TOKEN.finditer(value))
+        self.paths = {name.casefold(): name for name in names
+                      if name and ('.' in PurePosixPath(name).name or named_file_kind(name)
+                                   or _scheme_category(name) == 'docs')}
+        self.excluded_references = set()
 
     def score(self, value):
         return len(self.terms.intersection(_scope_words(value))) if self.terms else 0
 
     def path_rank(self, path):
+        return int(bool(self.matching_references(path))), self.score(path)
+
+    def matching_references(self, path):
         folded = path.casefold()
-        return (int(folded in self.paths or PurePosixPath(folded).name in self.paths), self.score(path))
+        return self.paths.keys() & {folded, PurePosixPath(folded).name}
+
+    def unresolved_references(self, matched_paths, repository_available):
+        resolved = {key for path in matched_paths for key in self.matching_references(path)}
+        for key, name in self.paths.items():
+            if key in resolved:
+                continue
+            if key in self.excluded_references:
+                reason = 'excluded_by_policy'
+            elif (named_file_kind(name) or PurePosixPath(name).suffix.lower() in _LIKELY_FILE_SUFFIXES
+                  or PurePosixPath(name).name.lower().startswith('.env') or _scheme_category(name) == 'docs'):
+                reason = 'outside_repository_inventory' if repository_available else 'repository_unavailable'
+            else:
+                continue  # A dotted identifier such as module.function can also be a search term.
+            yield {'path': name, 'reason': reason}
 
     def source_key(self, source):
         path = source.get('path', '')
@@ -417,7 +443,7 @@ def _import_targets(value, relative, available):
     return sorted(found, key=lambda candidate: (*found[candidate], *_scheme_order(candidate)))
 
 
-def _repository(repository_path, patterns, *, inventory=None):
+def _repository(repository_path, patterns, *, inventory=None, requested=None):
     if not repository_path:
         return None, [], [], ['No repository is linked; diagrams can use saved discussions only.']
     deadline = time.monotonic() + 5
@@ -428,7 +454,14 @@ def _repository(repository_path, patterns, *, inventory=None):
     # Git's exclude rules apply to untracked files; explicit tracked ignored files are excluded too.
     ignored, _ = _git(root, 'ls-files', '-z', '--cached', '--ignored', '--exclude-standard', deadline=deadline)
     ignored_paths = {os.fsdecode(v) for v in ignored.split(b'\0') if v}
-    paths = [v for v in paths if v not in ignored_paths and _safe_relative(v, patterns)]
+    safe = []
+    for path in paths:
+        if path not in ignored_paths and _safe_relative(path, patterns):
+            safe.append(path)
+        elif requested is not None:
+            # Report the user's reference, so a basename cannot reveal hidden locations.
+            requested.excluded_references.update(requested.matching_references(path))
+    paths = safe
     limits = []
     if len(paths) > _MAX_PATHS:
         limits.append('Code structure display is limited to 300 safe paths; source inspection uses separate byte and time budgets.')
@@ -1084,6 +1117,24 @@ def _structural_excerpt(value, relative, *, focus=None):
     return '\n'.join(rendered) if len(rendered) > 1 else ''
 
 
+def _focused_record_windows(db, query, table, columns, params):
+    """Locate an FTS fragment in the original text and read one bounded window."""
+    return db.execute(text(
+        f'WITH matches AS MATERIALIZED ({query}), '
+        'anchors AS MATERIALIZED (SELECT matches.id,score,'
+        'instr(replace(fragment,:gap,\'\'),:start) AS first_match, '
+        'instr(record.content,replace(replace(replace(fragment,:gap,\'\'),:start,\'\'),:end,\'\')) AS fragment_start, '
+        f'length(record.content) AS content_length FROM matches JOIN {table} record '
+        'ON record.id=matches.id AND record.project_id=:pid), '
+        'windows AS (SELECT *, CASE WHEN first_match>0 AND fragment_start>0 THEN '
+        'max(0,min(content_length-:read_chars,fragment_start+first_match-2-:read_chars/2)) '
+        'ELSE 0 END AS window_start FROM anchors) '
+        f'SELECT windows.id,{columns},substr(record.content,window_start+1,:read_chars) AS window, '
+        f'window_start,content_length FROM windows JOIN {table} record '
+        'ON record.id=windows.id AND record.project_id=:pid ORDER BY score,windows.id DESC'
+    ), params).mappings().all()
+
+
 def _records(db, project, *, scope=None):
     from .history_duplicates import deduplicate_sources
     sources, markers, limitations = [], [], []
@@ -1109,62 +1160,89 @@ def _records(db, project, *, scope=None):
            or not row['codex_activity_at'] or row['history_indexed_activity'] != row['codex_activity_at']
            for row in sessions):
         limitations.append('Some linked conversations have no current saved index; no live Codex history was read.')
-    turns = db.execute(text('SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS excerpt,length(h.content) AS content_length '
+    turns = db.execute(text('SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS window,'
+        '0 AS window_start,length(h.content) AS content_length '
         'FROM codex_history_turns h JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
         "WHERE h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' ORDER BY h.id DESC LIMIT 12"),
         {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
-    notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,:read_chars) AS content,kind,updated_at, '
+    notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,:read_chars) AS window,'
+                           '0 AS window_start,kind,updated_at,'
                            'length(content) AS content_length,length(title) AS title_length '
                            'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'),
                        {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
     if scope and scope.fts_query:
-        params = {'pid': project.id, 'read_chars': READ_CHARS, 'query': scope.fts_query}
-        focused_turns = db.execute(text(
-            'SELECT h.id,h.session_id,h.turn_id,substr(h.content,1,:read_chars) AS excerpt,length(h.content) AS content_length '
+        from .history_search import search_markers
+
+        start, end = search_markers()
+        params = {'pid': project.id, 'read_chars': READ_CHARS, 'query': scope.fts_query,
+                  'start': start, 'end': end, 'gap': start + end}
+        focused_turns = _focused_record_windows(db,
+            'SELECT h.id,substr(snippet(codex_history_fts,0,:start,:end,:gap,24),1,:read_chars) AS fragment,'
+            'codex_history_fts.rank AS score '
             'FROM codex_history_fts JOIN codex_history_turns h ON h.id=codex_history_fts.rowid '
             'JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
             "WHERE codex_history_fts MATCH :query AND h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' "
-            'ORDER BY codex_history_fts.rank,h.id DESC LIMIT 12'), params).mappings().all()
-        focused_notes = db.execute(text(
-            'SELECT n.id,substr(n.title,1,160) AS title,substr(n.content,1,:read_chars) AS content,n.kind,n.updated_at, '
-            'length(n.content) AS content_length,length(n.title) AS title_length '
+            'ORDER BY score,h.id DESC LIMIT 12', 'codex_history_turns', 'record.session_id,record.turn_id', params)
+        focused_notes = _focused_record_windows(db,
+            'SELECT n.id,substr(snippet(search_index,4,:start,:end,:gap,24),1,:read_chars) AS fragment,'
+            'search_index.rank AS score '
             'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
             "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
-            'ORDER BY search_index.rank,n.id DESC LIMIT 7'), params).mappings().all()
-        turns = list({row['id']: row for row in [*focused_turns, *turns]}.values())[:12]
-        notes = list({row['id']: row for row in [*focused_notes, *notes]}.values())[:7]
+            'ORDER BY score,n.id DESC LIMIT 7', 'notes',
+            'substr(record.title,1,160) AS title,record.kind,record.updated_at,length(record.title) AS title_length',
+            params)
+        # Keep the best window when a matching record also appears in the recent
+        # results. Relevance order takes precedence over the recency fallback.
+        focused_turn_ids = {row['id'] for row in focused_turns}
+        focused_note_ids = {row['id'] for row in focused_notes}
+        turns = [*focused_turns, *(row for row in turns if row['id'] not in focused_turn_ids)][:12]
+        notes = [*focused_notes, *(row for row in notes if row['id'] not in focused_note_ids)][:7]
     # Bound discussion context independently so larger notes cannot crowd out all
     # repository evidence from the existing 40,000-character source package.
     turn_budget = 12_000 if notes else 24_000
     note_budget = 12_000 if turns else 24_000
 
-    def passage(value, original_length, remaining):
-        complete = value
+    def passage(value, original_length, remaining, window_start=0):
+        begin, end = 0, len(value)
         if original_length > len(value):
-            # SQL's bounded read can end inside a paragraph or diagram. That
-            # suffix is not a complete passage merely because it is end-of-input.
+            # Cut partial paragraphs at either edge of a bounded read. Quoted
+            # spans still address the original source, before any trimming.
             boundaries = list(re.finditer(r'\n[ \t]*\n', value))
-            complete = value[:boundaries[-1].end()] if boundaries else ''
-        selected = select_passages(complete, min(EXCERPT_CHARS, max(0, remaining)),
+            if window_start:
+                begin = boundaries[0].end() if boundaries else end
+            if window_start + len(value) < original_length:
+                end = boundaries[-1].end() if boundaries else 0
+        selected = select_passages(value[begin:end], min(EXCERPT_CHARS, max(0, remaining)),
                                     priority=scope.score if scope else None)
+        if window_start:
+            # A window can start inside a message. Its local role-parser
+            # ordinal is not an ordinal in the full saved conversation.
+            offset = window_start + begin
+            selected['spans'] = [{'start': part['start'] + offset, 'end': part['end'] + offset}
+                                 for part in selected['spans'] if part['end'] > part['start']]
         if selected['omitted']:
             limitations.append('Some discussion sections were omitted from bounded whole-passage selection; omitted text is not evidence of absence.')
         if original_length > len(value):
-            limitations.append('Some discussions exceeded the 65,536-character inspection bound; later content was not inspected.')
+            limitations.append(
+                'Some long discussions were inspected in bounded windows; material outside those windows may be omitted.'
+                if scope else 'Some discussions exceeded the 65,536-character inspection bound; later content was not inspected.')
         return selected, {'excerpt_spans': selected['spans'],
                           'inspected_hash': hashlib.sha256(value.encode()).hexdigest(),
-                          'inspected_chars': len(value), 'original_chars': original_length}
+                          'inspected_chars': len(value), 'original_chars': original_length,
+                          **({'inspected_start': window_start} if window_start else {})}
 
     turn_sources = [_source(f"session:{row['session_id']}:turn:{row['turn_id']}",
-        f"Session #{row['session_id']}, turn {row['turn_id']}", row['excerpt'], 'Codex conversation',
-        session_id=row['session_id'], turn_id=row['turn_id'], original_chars=row['content_length'])
+        f"Session #{row['session_id']}, turn {row['turn_id']}", row['window'], 'Codex conversation',
+        session_id=row['session_id'], turn_id=row['turn_id'], original_chars=row['content_length'],
+        **({'inspected_start': row['window_start']} if row['window_start'] else {}))
         for row in turns]
     # Confirm shared-prefix identity before charging the context budget; repeated
     # forks must not crowd out complementary turns that follow them.
     turn_sources = deduplicate_sources(db, project.id, turn_sources)
     excerpt_count = 0
     for source in turn_sources:
-        selected, metadata = passage(source['text'], source['original_chars'], turn_budget)
+        selected, metadata = passage(source['text'], source['original_chars'], turn_budget,
+                                     source.get('inspected_start', 0))
         if selected['text']:
             sources.append({**source, **metadata, 'text': selected['text'],
                             'content_hash': hashlib.sha256(selected['text'].encode()).hexdigest()})
@@ -1176,7 +1254,7 @@ def _records(db, project, *, scope=None):
     if any(row['title_length'] > 160 for row in notes[:6]):
         limitations.append('Some note titles were truncated to 160 characters.')
     for row in notes[:6]:
-        selected, metadata = passage(row['content'], row['content_length'], note_budget)
+        selected, metadata = passage(row['window'], row['content_length'], note_budget, row['window_start'])
         if selected['text']:
             sources.append(_source(f"note:{row['id']}", row['title'], selected['text'],
                 'imported discussion' if row['kind'] == 'document' else 'project note',
@@ -1238,15 +1316,19 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
               'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
     try:
         patterns = (*_exclusions(), *_CODE_PRIVATE)
-        root, paths, candidates, repo_limits = _repository(repository_path, patterns, inventory=inventory)
+        root, paths, candidates, repo_limits = (_repository(repository_path, patterns, inventory=inventory, requested=focus)
+                                                if focus else _repository(repository_path, patterns, inventory=inventory))
     except (EvidenceReadError, OSError) as exc:
         freshness_unknown = True
         patterns = ()
         limitations.add(str(exc) if isinstance(exc, EvidenceReadError) else 'The repository is unavailable.')
     limitations.update(repo_limits)
     path_ranks = {}
+    requested_paths, named_files = set(), set()
     if focus:
         path_ranks = {relative: focus.path_rank(relative) for relative in paths}
+        requested_paths = {relative for relative, (exact, _) in path_ranks.items() if exact}
+        named_files = {relative for relative in requested_paths if named_file_kind(relative)}
 
         def focus_order(relative):
             exact, rank = path_ranks[relative]
@@ -1254,6 +1336,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
 
         promoted = [relative for relative in paths if any(path_ranks[relative])
                     and (_manifest(relative) or _scheme_category(relative) in {'code', 'docs', 'tests'}
+                         or relative in named_files
                          or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS)]
         candidates = sorted(dict.fromkeys([*candidates, *promoted]), key=focus_order)
         paths.sort(key=focus_order)
@@ -1276,7 +1359,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 2} if focus else {}
+        scope_identity = {'scope': focus.value, 'scope_policy': 3, 'requested_paths': sorted(focus.paths),
+                          'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
@@ -1346,6 +1430,12 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                            or relative in entrypoint_paths and PurePosixPath(relative).suffix == '.py'
                            or focus and (_scheme_category(relative) == 'tests'
                                or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS))
+                marker = marker_by_path.get(relative)
+                if relative in named_files and not is_code and isinstance(marker, list) and marker[3] > _MAX_BYTES:
+                    file_omission_reasons[relative] = 'requested_file_too_large'
+                    omitted_reasons['requested_file_too_large'] = omitted_reasons.get('requested_file_too_large', 0) + 1
+                    limitations.add('Some named files exceeded the 64 KiB per-file inspection limit.')
+                    continue
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget)
                 decoded_reads += 1
                 declarations = _entrypoint_declarations(value, relative)
@@ -1365,7 +1455,6 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
-                    marker = marker_by_path.get(relative)
                     if isinstance(marker, list) and marker[3] > _MAX_BYTES:
                         limitations.add('Some source files were limited to a 64 KiB prefix; later implementation may be omitted.')
                     linked = _import_targets(value, relative, code_paths)
@@ -1405,6 +1494,11 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                               if focus else _structural_excerpt(value, relative))
                     excerpt = '\n'.join(part for part in (declared_excerpt, syntax) if part)
                     provenance = 'repository test source' if _scheme_category(relative) == 'tests' else 'observed in code'
+                elif relative in named_files:
+                    excerpt = named_file_excerpt(value, relative, limit=_MAX_EXCERPT, priority=focus.score)
+                    provenance = 'repository file structure'
+                    if excerpt:
+                        limitations.add('Named build, configuration, and SQL files supply bounded structural excerpts with values omitted.')
                 else:
                     if focus:
                         selected = select_passages(value, _MAX_EXCERPT, priority=focus.score)
@@ -1540,8 +1634,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         package_chars = _bound_package(result, package_budget)
         # Attach local accounting only after the AI package has been finalized.
         # A file with even one retained excerpt is counted as supplied.
+        supplied_paths = {source['path'] for source in result['sources'] if source.get('path')}
         if inventory['listing_complete']:
-            supplied_paths = {source['path'] for source in result['sources'] if source.get('path')}
             prepared_paths = {source['path'] for source in repository_sources}
             omitted_paths = eligible - supplied_paths
             file_omission_reasons.update(dict.fromkeys(prepared_paths - selected_paths, 'source_output_budget'))
@@ -1555,6 +1649,22 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     for path in sorted(omitted_paths)[:_MAX_RECORDED_FILE_OMISSIONS]
                 ],
             }
+        if focus:
+            requested_omissions = []
+            for relative in sorted(requested_paths - supplied_paths):
+                reason = file_omission_reasons.get(relative)
+                if reason is None:
+                    if relative not in eligible:
+                        reason = 'unsupported_requested_type'
+                    elif root_fd is None:
+                        reason = 'repository_unavailable'
+                    else:
+                        reason = 'no_usable_excerpt' if relative in scanned else 'not_attempted'
+                requested_omissions.append({'path': relative, 'reason': reason})
+            requested_omissions.extend(focus.unresolved_references(
+                requested_paths, root_fd is not None and inventory['listing_complete']))
+            if requested_omissions:
+                result['coverage']['requested_file_omissions'] = requested_omissions[:_MAX_RECORDED_FILE_OMISSIONS]
         result['diagnostics'].update(package_chars=package_chars,
             input_chars=sum(len(source['text']) for source in result['sources']),
             conversation_excerpts=result['coverage']['conversation_excerpts'],

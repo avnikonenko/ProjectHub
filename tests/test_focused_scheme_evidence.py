@@ -109,15 +109,21 @@ def test_scope_recovers_older_record_passages_and_excludes_other_projects(tmp_pa
         engine.dispose()
 
 
-def test_scope_discloses_when_a_matching_record_exceeds_the_passage_read_bound(tmp_path):
+def test_scope_reads_matching_note_passage_after_the_original_prefix(tmp_path):
     engine = setup(tmp_path)
+    prefix = 'Earlier discussion.\n\n' * 3200
+    match = 'The unique checkpoint lives here.'
+    content = prefix + match
     with Session(engine) as db:
         db.add(Note(id=100, project_id=1, title='Prior discussion',
-                    content='Earlier discussion.\n\n' * 3200 + 'The unique checkpoint lives here.'))
+                    content=content))
         db.commit()
     try:
         result = evidence.collect_evidence(engine, 1, scope='unique checkpoint')
-        assert all('The unique checkpoint lives here' not in source['text'] for source in result['sources'])
-        assert any('inspection bound' in detail for detail in result['coverage']['limitations'])
+        source = next(source for source in result['sources'] if source['id'] == 'note:100')
+        assert match in source['text']
+        assert source['inspected_start'] > 0
+        assert all(content[span['start']:span['end']] in source['text'] for span in source['excerpt_spans'])
+        assert any('bounded windows' in detail for detail in result['coverage']['limitations'])
     finally:
         engine.dispose()
