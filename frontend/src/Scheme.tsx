@@ -276,7 +276,6 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
     message: string; instruction: string; savedAt?: string; previousStartedAt?: string;
   } | null>(null);
   const [notice, setNotice] = useState('');
-  const instructionExampleId = useId();
   const draftEdited = useRef(false);
   const inFlight = useRef(false);
   const mounted = useRef(true);
@@ -354,12 +353,14 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
       <label>
         What should the diagram show?
         <textarea value={instruction} maxLength={2000} rows={4} required disabled={loading || active}
-          aria-describedby={instructionExampleId}
           onChange={event => { draftEdited.current = true; setInstruction(event.target.value); }} />
       </label>
-      <small id={instructionExampleId} className="focused-scheme-example muted">
-        Example: Show what happens when an AI generation is cancelled, from clicking Cancel to preserving the previous saved result.
-      </small>
+      <details className="focused-scheme-example">
+        <summary>Example</summary>
+        <small className="muted">
+          Show what happens when an AI generation is cancelled, from clicking Cancel to preserving the previous saved result.
+        </small>
+      </details>
       <button type="submit" className="secondary" disabled={busy || !!loadError || !instruction.trim()}>
         Generate focused scheme
       </button>
