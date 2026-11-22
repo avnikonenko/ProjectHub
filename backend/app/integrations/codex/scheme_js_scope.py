@@ -22,6 +22,21 @@ _METHOD = re.compile(rf'(?<![\w$.])(?P<name>{_IDENTIFIER})\s*{_TYPE_PARAMETERS}(
 _CONTROL = {'catch', 'for', 'if', 'switch', 'while', 'with'}
 _OPEN = '([{'
 _CLOSE = ')]}'
+_CLICK_BINDING = re.compile(
+    rf'<(?P<element>{_IDENTIFIER})(?=\s)[^<>]{{0,480}}?\s+onClick\s*=\s*\{{\s*'
+    rf'(?:(?:\(\s*\)\s*=>\s*(?:void\s+)?)(?P<call>{_IDENTIFIER})\s*\(\s*\)'
+    rf'|(?P<reference>{_IDENTIFIER}))\s*\}}(?=[\s/>])'
+)
+_CLIENT_REQUEST = re.compile(
+    r"(?<![\w$.])(?P<helper>post|patch|put|del)\s*\(\s*"
+    r"(?:`(?P<template>\$\{[A-Za-z_$][\w$]{0,63}\}(?:/[a-zA-Z0-9_-]{1,48}){1,8})`"
+    r"|(?P<quote>['\"])(?P<path>(?:/[a-zA-Z0-9_-]{1,48}){1,8})(?P=quote))"
+    r"(?=\s*[,\)])"
+)
+_PLAIN_PAYLOAD = re.compile(
+    rf',\s*\{{\s*(?P<fields>{_IDENTIFIER}(?:\s*:\s*{_IDENTIFIER})?'
+    rf'(?:\s*,\s*{_IDENTIFIER}(?:\s*:\s*{_IDENTIFIER})?){{0,7}})\s*,?\s*\}}\s*\)'
+)
 
 
 def _delimiter_pairs(text):
@@ -153,3 +168,30 @@ def focused_call_owner(masked):
         return None
 
     return owner_at
+
+
+def focused_ui_declarations(value, masked, owner_at):
+    """Read simple JSX click bindings and lexical client request targets."""
+    declarations = []
+    for match in _CLICK_BINDING.finditer(masked):
+        owner = owner_at(match.start())
+        if not owner or owner == 'module':
+            continue
+        handler = f'invokes {match["call"]}()' if match['call'] else f'references {match["reference"]}'
+        line = value.count('\n', 0, match.start('call' if match['call'] else 'reference')) + 1
+        declarations.append((line, f'UI click binding {owner} <{match["element"]}> onClick {handler}'))
+
+    for match in _CLIENT_REQUEST.finditer(value):
+        if not masked.startswith(match['helper'], match.start()):
+            continue
+        owner = owner_at(match.start())
+        if not owner or owner == 'module':
+            continue
+        target = match['template'] or match['path']
+        payload = _PLAIN_PAYLOAD.match(masked, match.end())
+        fields = ''
+        if payload:
+            fields = ' with payload {' + re.sub(r'\s+', ' ', payload['fields']).strip() + '}'
+        declarations.append((value.count('\n', 0, match.start()) + 1,
+                             f'Client request syntax {owner} calls {match["helper"]} for {target}{fields}'))
+    return declarations

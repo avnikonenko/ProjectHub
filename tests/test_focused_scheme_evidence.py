@@ -30,6 +30,39 @@ def test_scope_supplies_registered_search_routes_and_transcript_link(tmp_path):
         engine.dispose()
 
 
+def test_scope_supplies_cancel_attempt_and_save_guard_from_code(tmp_path):
+    repo = repository(tmp_path)
+    paths = ('frontend/src/GenerationStatus.tsx', 'backend/app/integrations/codex/router.py',
+             'backend/app/integrations/codex/progress.py', 'backend/app/integrations/codex/focused_scheme.py')
+    for relative in paths:
+        target = repo / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes((Path(__file__).resolve().parents[1] / relative).read_bytes())
+    docs = repo / 'docs'
+    docs.mkdir()
+    for index in range(8):
+        (docs / f'guide-{index}.md').write_text(
+            'AI generation can be cancelled by clicking Cancel, preserving the previous saved result. ' * 16)
+    engine = setup(tmp_path, repo)
+    try:
+        scope = 'Show what happens when an AI generation is cancelled, from clicking Cancel to preserving the previous saved result.'
+        limits = (7500, 150_000, 50_000)
+        result = evidence.collect_evidence(engine, 1, limits, scope=scope)
+        excerpts = {source.get('path'): source['text'] for source in result['sources']}
+        assert 'onClick invokes cancel()' in excerpts[paths[0]]
+        assert 'with payload {kind, started_at: started}' in excerpts[paths[0]]
+        assert 'POST /generation/cancel -> cancel_generation' in excerpts[paths[1]]
+        assert 'progress.cancel(project_id, body.kind, body.started_at)' in excerpts[paths[1]]
+        assert '!= started_at' in excerpts[paths[2]]
+        assert any('complete' in line and 'is_set' in line and 'GenerationCancelled' in line
+                   for line in excerpts[paths[2]].splitlines())
+        assert 'result = save()' in excerpts[paths[2]]
+        assert 'progress.complete(project_id, db.commit, db=db)' in excerpts[paths[3]]
+        assert sum(len(source['text']) for source in result['sources']) <= limits[0]
+    finally:
+        engine.dispose()
+
+
 def test_client_navigation_evidence_uses_structural_fragments_only():
     source = (
         "// return '#from-comment?'\n"

@@ -1,4 +1,5 @@
-from backend.app.integrations.codex.scheme_js_scope import focused_call_owner
+from backend.app.integrations.codex.scheme_evidence import _mask_js
+from backend.app.integrations.codex.scheme_js_scope import focused_call_owner, focused_ui_declarations
 
 
 def _owners(source, names):
@@ -72,3 +73,35 @@ function module() { initialize(); }"""
     assert _owners(source, ('readWork', 'writeWork', 'initialize')) == {
         'readWork': 'read.run', 'writeWork': 'write.run', 'initialize': 'module',
     }
+
+
+def test_ui_declarations_show_named_click_handler_and_request_fields():
+    source = '''function Status() {
+  async function cancel() {
+    return await post(`${base}/generation/cancel`, { kind, started_at: started });
+  }
+  return <button disabled={cancelling} onClick={() => void cancel()}>Cancel</button>;
+}'''
+    masked = _mask_js(source)
+    assert focused_ui_declarations(source, masked, focused_call_owner(masked)) == [
+        (5, 'UI click binding Status <button> onClick invokes cancel()'),
+        (3, 'Client request syntax Status.cancel calls post for ${base}/generation/cancel'
+            ' with payload {kind, started_at: started}'),
+    ]
+
+
+def test_ui_declarations_skip_external_targets_comments_and_raw_payload_values():
+    source = '''function Status() {
+  // post('/comment', { ignored });
+  const sample = "<button onClick={sample}>";
+  post('/action?token=private', { ignored });
+  post('https://example.org/private', { ignored });
+  post(`${base}/action/${user}`, { ignored });
+  post('/action', { token: 'private' });
+  return <button onClick={handleClick}>Go</button>;
+}'''
+    masked = _mask_js(source)
+    assert focused_ui_declarations(source, masked, focused_call_owner(masked)) == [
+        (8, 'UI click binding Status <button> onClick references handleClick'),
+        (7, 'Client request syntax Status calls post for /action'),
+    ]
