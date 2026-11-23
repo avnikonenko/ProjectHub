@@ -32,7 +32,8 @@ _FOCUS_GUIDANCE = {
 }
 _INPUT_HEADROOM_CHARS = 20_000
 MAX_INPUT_CHARS = max(SCHEME_PACKAGE_CHARS_OPTIONS) + _INPUT_HEADROOM_CHARS
-MAX_OUTPUT_CHARS = 100_000
+_DEFAULT_RESPONSE_CHARS = 100_000
+_EXTRA_GRAPH_ITEM_RESPONSE_CHARS = 1_250
 STATUSES = ('observed', 'proposed', 'uncertain')
 _KNOWLEDGE_INTERPRETATION = 'published Knowledge interpretation'
 _KNOWLEDGE_CHANGED = 'Knowledge changed before the follow-up Scheme could be saved. The previous Scheme is preserved.'
@@ -260,9 +261,17 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False,
     return {**validated, 'mermaid': render_mermaid(validated)}
 
 
-def _read_graph_response(raw, label):
-    if isinstance(raw, str) and len(raw) > MAX_OUTPUT_CHARS:
-        raise CodexError(f'{label} response exceeds the {MAX_OUTPUT_CHARS:,}-character limit.')
+def _graph_response_limit(max_nodes, max_edges, *, diagrams):
+    # Keep the default budget and allow additional cited items above the default
+    # graph sizes. At the supported maxima this yields 400,000 chars for General
+    # Scheme and 250,000 for Focused, below the separate provider transport caps.
+    extra_items = max(0, max_nodes - DEFAULT_SCHEME_MAX_NODES) + max(0, max_edges - DEFAULT_SCHEME_MAX_EDGES)
+    return _DEFAULT_RESPONSE_CHARS + diagrams * extra_items * _EXTRA_GRAPH_ITEM_RESPONSE_CHARS
+
+
+def _read_graph_response(raw, label, *, max_chars):
+    if isinstance(raw, str) and len(raw) > max_chars:
+        raise CodexError(f'{label} response exceeds the {max_chars:,}-character limit.')
     try:
         if not isinstance(raw, str):
             raise ValueError('Response is not text')
@@ -273,7 +282,8 @@ def _read_graph_response(raw, label):
 
 def validate_output(raw, evidence, *, complete_knowledge_refs=False,
                     max_nodes=DEFAULT_SCHEME_MAX_NODES, max_edges=DEFAULT_SCHEME_MAX_EDGES):
-    result = _read_graph_response(raw, 'Scheme generation')
+    result = _read_graph_response(raw, 'Scheme generation',
+                                  max_chars=_graph_response_limit(max_nodes, max_edges, diagrams=2))
     _keys(result, ('architecture', 'workflow', 'dependencies'))
     sources = {source['id']: source for source in evidence['sources']}
     architecture = _validate_graph(result['architecture'], 'architecture', sources,
@@ -477,6 +487,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'step tied to one route must connect only to a generation node that explicitly includes '
             'that route’s output. Give the edge a label that identifies the specific output. '
         ) if any('Workflow call ' in source['text'] for source in evidence['sources']) else ''
+        response_limit = _graph_response_limit(max_nodes, max_edges, diagrams=2)
         prompt = (
             _FOCUS_GUIDANCE[focus] +
             index_guidance +
@@ -485,6 +496,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
             f'For each graph, limit the node count to {max_nodes} and the edge count to {max_edges}. '
+            f'Keep the entire JSON response within {response_limit:,} characters, with concise descriptions. '
             'Prioritize the most useful supported components and relationships within those limits. '
             'Keep both diagrams at project-capability level: help a user understand what the project does '
             'and how its main capabilities connect. Use concise domain-language labels supported by the '

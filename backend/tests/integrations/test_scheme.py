@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import progress, scheme
+from backend.app.integrations.codex import focused_scheme, progress, scheme
 from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectKnowledge, ProjectScheme
@@ -65,7 +65,7 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
 
 def test_graph_response_distinguishes_size_limit_from_invalid_json():
     with pytest.raises(CodexError, match='response exceeds the 100,000-character limit'):
-        scheme.validate_output(json.dumps(output()) + ' ' * scheme.MAX_OUTPUT_CHARS, evidence())
+        scheme.validate_output(json.dumps(output()) + ' ' * scheme._DEFAULT_RESPONSE_CHARS, evidence())
     with pytest.raises(CodexError, match='returned invalid JSON'):
         scheme.validate_output('{', evidence())
 
@@ -115,6 +115,72 @@ def test_scheme_uses_configured_limit_per_graph_and_preserves_the_saved_result(t
             scheme.refresh_scheme(engine, 1, manager)
         with Session(engine) as db:
             assert scheme.read_scheme(db, 1) == saved
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('focused,response_limit', [(False, 400_000), (True, 250_000)])
+def test_maximum_scheme_sizes_accept_large_cited_responses(tmp_path, monkeypatch, focused, response_limit):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Project'))
+        db.commit()
+    details = evidence()
+    source_ids = [
+        f'file:backend/application/scientific_data/transformation/services/task_checkpoint_{index}.py'
+        for index in range(6)
+    ]
+    details['sources'].extend({'id': ref, 'text': 'Evidence for the processing sequence.'} for ref in source_ids)
+
+    def graph(node_type):
+        identifiers = [f'component_worker_stage_{index}' for index in range(60)]
+        return {
+            'nodes': [{**node(identifier, refs=source_ids), 'type': node_type,
+                       'label': f'Data transformation checkpoint {index}',
+                       'description': 'Checks and records the output of the previous processing step. '
+                                      'It validates the resulting state before handing the outcome to the next worker.'}
+                      for index, identifier in enumerate(identifiers)],
+            'edges': [{'source': source, 'target': target, 'label': 'Returns the verified processing output',
+                       'type': 'feeds', 'status': 'observed', 'source_ids': source_ids}
+                      for source, target in islice(permutations(identifiers, 2), 120)],
+            'explanation': 'Describes the observed processing flow.',
+        }
+
+    result = graph('operation') if focused else {'architecture': graph('service'), 'workflow': graph('operation'),
+                                                 'dependencies': []}
+    raw = json.dumps(result, separators=(',', ':'))
+    assert scheme._DEFAULT_RESPONSE_CHARS < len(raw) < response_limit
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '120')
+    module = focused_scheme if focused else scheme
+    monkeypatch.setattr(module, 'collect_evidence', lambda *_, **__: details)
+
+    class Manager:
+        response = raw
+
+        def generate_brief(self, prompt, schema):
+            assert f'Keep the entire JSON response within {response_limit:,} characters' in prompt
+            graphs = [schema] if focused else [schema['properties'][kind] for kind in ('architecture', 'workflow')]
+            for entry in graphs:
+                assert entry['properties']['nodes']['maxItems'] == 60
+                assert entry['properties']['edges']['maxItems'] == 120
+            return self.response
+
+    def run(manager):
+        if focused:
+            return focused_scheme.refresh_focused_scheme(engine, 1, manager, 'Trace data transformation')
+        return scheme.refresh_scheme(engine, 1, manager)
+
+    try:
+        manager = Manager()
+        saved = run(manager)
+        for key in ('graph',) if focused else ('architecture', 'workflow'):
+            assert len(saved[key]['nodes']) == 60 and len(saved[key]['edges']) == 120
+        manager.response = raw.ljust(response_limit + 1)
+        with pytest.raises(CodexError, match=f'response exceeds the {response_limit:,}-character limit'):
+            run(manager)
+        with Session(engine) as db:
+            assert (focused_scheme.read_focused_scheme if focused else scheme.read_scheme)(db, 1) == saved
     finally:
         engine.dispose()
 

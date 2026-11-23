@@ -14,7 +14,7 @@ from .brief import BriefBusy, generation_lock, generation_metadata
 from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
-from .scheme import (MAX_INPUT_CHARS, _graph_schema, _read_graph_response, _validate_graph,
+from .scheme import (MAX_INPUT_CHARS, _graph_response_limit, _graph_schema, _read_graph_response, _validate_graph,
                      preserves_graph, render_mermaid, scheme_snapshot_for_display)
 from .scheme_evidence import _EvidenceScope, collect_evidence
 from .scheme_handoff_contract import check_contracts, make_contracts
@@ -77,7 +77,8 @@ def read_focused_scheme(db, project_id):
 
 
 def _graph(raw, sources, *, max_nodes=DEFAULT_SCHEME_MAX_NODES, max_edges=DEFAULT_SCHEME_MAX_EDGES):
-    result = _read_graph_response(raw, 'Focused Scheme')
+    result = _read_graph_response(raw, 'Focused Scheme',
+                                  max_chars=_graph_response_limit(max_nodes, max_edges, diagrams=1))
     return _validate_graph(result, 'focused', sources, max_nodes=max_nodes, max_edges=max_edges)
 
 
@@ -184,7 +185,9 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
             'the edge. Preserve the supplied relationship and its condition. '
             'Reserve value_transfer and conditional_sequence edge types for these records.\n'
         ) if contracts else ''
+        response_limit = _graph_response_limit(max_nodes, max_edges, diagrams=1)
         graph_limits = (f'Limit the node count to {max_nodes} and the edge count to {max_edges}. '
+                        f'Keep the entire JSON response within {response_limit:,} characters, with concise descriptions. '
                         'Describe supported relationships in node descriptions or the explanation '
                         'when edges cannot fit.\n')
         prompt = (PROMPT + graph_limits + contract_prompt
