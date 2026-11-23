@@ -188,13 +188,21 @@ overrides can take precedence after restart. See the
 
 ## Check coverage and costs
 
+**Overall time budget** sets the time available for a run, including its
+batches and retries. A longer limit can allow more requests to complete.
+**Scheme excerpt budget** sets how many characters of source excerpts Scheme
+can use as input. Other Scheme inspection limits apply separately.
+
+ProjectHub reports model request counts and provider-reported token usage.
+Token totals can be partial. The provider's account limits still apply.
+
 Expand **Coverage** below a generated result.
 
 - **Files used and missed** shows supplied excerpts and omissions. A local file
   read may contribute only an excerpt to generation.
 - **Detailed coverage** shows conversation and repository counts, scope and limits.
-- **Processing diagnostics** shows recorded timing, workers, cache reuse and
-  token usage. Token totals can be partial.
+- **Processing diagnostics** shows recorded timing, workers, cache reuse,
+  model requests, and reported tokens.
 
 Older results may have fewer measurements. Check cited passages to judge accuracy.
 
