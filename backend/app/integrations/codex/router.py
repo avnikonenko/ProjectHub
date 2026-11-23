@@ -41,8 +41,9 @@ from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, 
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 from .session_reassignment import check_session_reassignment, reassign_session
-from ...config import (ConfigError, MAX_EXTRACTION_WORKERS, MAX_GENERATION_TOKEN_LIMIT, MAX_SCHEME_MAX_NODES,
-                       MIN_SCHEME_MAX_NODES, ai_worker_settings, save_ai_settings)
+from ...config import (ConfigError, MAX_EXTRACTION_WORKERS, MAX_GENERATION_TOKEN_LIMIT, MAX_SCHEME_MAX_EDGES,
+                       MAX_SCHEME_MAX_NODES, MIN_SCHEME_MAX_EDGES, MIN_SCHEME_MAX_NODES,
+                       ai_worker_settings, save_ai_settings)
 from ...generation_profiles import get_generation_profile
 from ...services import begin_session_write
 
@@ -61,6 +62,7 @@ class AIWorkerSettingsInput(Input):
     generation_budget: int | None = Field(default=None, strict=True, ge=30, le=7200)
     generation_token_limit: int | None = Field(default=None, strict=True, ge=0, le=MAX_GENERATION_TOKEN_LIMIT)
     scheme_max_nodes: int | None = Field(default=None, strict=True, ge=MIN_SCHEME_MAX_NODES, le=MAX_SCHEME_MAX_NODES)
+    scheme_max_edges: int | None = Field(default=None, strict=True, ge=MIN_SCHEME_MAX_EDGES, le=MAX_SCHEME_MAX_EDGES)
     scheme_source_chars: int | None = Field(default=None, strict=True)
     scheme_read_bytes: int | None = Field(default=None, strict=True)
     scheme_package_chars: int | None = Field(default=None, strict=True)

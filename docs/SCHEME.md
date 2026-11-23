@@ -32,10 +32,11 @@ Green marks entries, purple marks outputs, and blue marks other components.
 
 Generation sends selected evidence to the provider chosen in the project's AI settings.
 
-**Settings → Scheme node limit** sets the maximum number of nodes per diagram
-for Architecture, Workflow, and Focused Scheme. Choose 1 to 40 nodes (default 20).
-Each diagram can contain up to 40 relationships. The setting applies when the next
-Scheme generation starts.
+Under **Settings → Advanced settings → Scheme**, set **Maximum nodes** (1 to
+60, default 20) and **Maximum edges** (0 to 120, default 40). The limits are
+independent and apply per diagram to Architecture, Workflow, and Focused Scheme.
+Set the edge limit to zero for a diagram with nodes only. Wait for the save
+confirmation before starting the next Scheme generation.
 
 The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
@@ -147,9 +148,9 @@ Match the omission reason to its setting.
 
 | Omission reason | Setting | Default and alternatives |
 |---|---|---|
-| Source excerpt budget reached | **Settings → Scheme excerpt budget** | 40,000 characters (default), 60,000, or 80,000 |
-| Local read budget reached | **Settings → Advanced Scheme settings → Local file read limit** | 2 MiB (default), 4 MiB, or 8 MiB |
-| Final evidence package limit reached | **Settings → Advanced Scheme settings → Final evidence package limit** | 140,000 characters (default), 180,000, or 220,000 |
+| Source excerpt budget reached | **Settings → Advanced settings → Scheme → Scheme excerpt budget** | 40,000 characters (default), 60,000, or 80,000 |
+| Local read budget reached | **Settings → Advanced settings → Scheme → Local file read limit** | 2 MiB (default), 4 MiB, or 8 MiB |
+| Final evidence package limit reached | **Settings → Advanced settings → Scheme → Final evidence package limit** | 140,000 characters (default), 180,000, or 220,000 |
 
 Local inspection has a five-second deadline and a 64 KiB per-file cap. The
 final package includes excerpts and metadata and can still limit coverage

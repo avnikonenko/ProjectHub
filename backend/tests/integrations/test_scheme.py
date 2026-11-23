@@ -1,5 +1,6 @@
 """Structured Scheme graphs and persistence; Codex calls are mocked here."""
 from copy import deepcopy
+from itertools import islice, permutations
 import json
 
 import pytest
@@ -69,27 +70,39 @@ def test_scheme_uses_configured_limit_per_graph_and_preserves_the_saved_result(t
         db.commit()
     monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: evidence())
     response = output()
+    edge_template = response['architecture']['edges'][0]
     for kind, node_type in (('architecture', 'service'), ('workflow', 'operation')):
         response[kind]['nodes'] = [{**node(f'item{index}'), 'type': node_type} for index in range(21)]
-        response[kind]['edges'] = []
+        response[kind]['edges'] = [
+            {**edge_template, 'source': f'item{source}', 'target': f'item{target}'}
+            for source, target in islice(permutations(range(21), 2), 45)
+        ]
 
     class Manager:
         def generate_brief(self, prompt, schema):
-            assert f'For each graph, limit the node count to {self.limit} and the edge count to 40.' in prompt
+            assert f'For each graph, limit the node count to {self.nodes} and the edge count to {self.edges}.' in prompt
             for kind in ('architecture', 'workflow'):
                 graph = schema['properties'][kind]['properties']
-                assert graph['nodes']['maxItems'] == self.limit
-                assert graph['edges']['maxItems'] == 40
+                assert graph['nodes']['maxItems'] == self.nodes
+                assert graph['edges']['maxItems'] == self.edges
             return json.dumps(response)
 
     try:
         manager = Manager()
-        manager.limit = 21
-        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.limit))
+        manager.nodes, manager.edges = 60, 45
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.nodes))
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', str(manager.edges))
         saved = scheme.refresh_scheme(engine, 1, manager)
-        assert len(saved['architecture']['nodes']) == len(saved['workflow']['nodes']) == 21
-        manager.limit = 20
-        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.limit))
+        for kind in ('architecture', 'workflow'):
+            assert len(saved[kind]['nodes']) == 21
+            assert len(saved[kind]['edges']) == 45
+        manager.edges = 40
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', str(manager.edges))
+        with pytest.raises(CodexError, match='graph size limit.*maximum nodes 60, maximum edges 40'):
+            scheme.refresh_scheme(engine, 1, manager)
+        manager.nodes, manager.edges = 20, 45
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.nodes))
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', str(manager.edges))
         with pytest.raises(CodexError, match='graph size limit.*maximum nodes 20'):
             scheme.refresh_scheme(engine, 1, manager)
         with Session(engine) as db:

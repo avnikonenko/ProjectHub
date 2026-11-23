@@ -18,6 +18,8 @@ generation_profile = "quality"
 scheme_source_chars = 40000
 # Maximum number of nodes in each generated Scheme diagram.
 scheme_max_nodes = 20
+# Maximum number of edges in each generated Scheme diagram. Set 0 for nodes only.
+scheme_max_edges = 40
 # Advanced Scheme limits for local file reads and the serialized evidence package.
 scheme_read_bytes = 2097152
 scheme_package_chars = 140000

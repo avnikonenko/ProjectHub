@@ -225,7 +225,7 @@ Older results may have fewer measurements. Check cited passages to judge accurac
 **Files were skipped?** In Scheme, open **Coverage → Files used and missed**
 and match the omission reason to its [budget setting](SCHEME.md#freshness-and-coverage).
 For **Source excerpt budget reached**, try **60,000** or **80,000** characters
-under **Settings → Scheme excerpt budget**, then regenerate. Larger budgets can
+under **Settings → Advanced settings → Scheme → Scheme excerpt budget**, then regenerate. Larger budgets can
 increase generation time and token use. Repository exclusions still apply.
 
 ## History sync

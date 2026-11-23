@@ -9,8 +9,9 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...config import (ConfigError, DEFAULT_SCHEME_MAX_NODES, DEFAULT_SCHEME_PACKAGE_CHARS,
-                       SCHEME_PACKAGE_CHARS_OPTIONS, scheme_inspection_limits, scheme_max_nodes)
+from ...config import (ConfigError, DEFAULT_SCHEME_MAX_EDGES, DEFAULT_SCHEME_MAX_NODES,
+                       DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS, scheme_graph_limits,
+                       scheme_inspection_limits)
 from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
 from . import generation_attempts, progress
@@ -29,7 +30,6 @@ _FOCUS_GUIDANCE = {
     'sessions': 'Prioritize decisions, rationale, and intended workflows from original conversations. '
                 'Use code to check implementation status and distinguish planned capabilities from observed ones. ',
 }
-MAX_EDGES = 40
 _INPUT_HEADROOM_CHARS = 20_000
 MAX_INPUT_CHARS = max(SCHEME_PACKAGE_CHARS_OPTIONS) + _INPUT_HEADROOM_CHARS
 MAX_OUTPUT_CHARS = 100_000
@@ -91,7 +91,7 @@ def _refs():
     return {'type': 'array', 'minItems': 1, 'maxItems': 6, 'items': _string(200)}
 
 
-def _graph_schema(kind, max_nodes):
+def _graph_schema(kind, max_nodes, max_edges):
     return _object({
         'nodes': {'type': 'array', 'maxItems': max_nodes, 'items': _object({
             'id': {**_string(64), 'pattern': r'^[A-Za-z][A-Za-z0-9_-]*$'},
@@ -99,7 +99,7 @@ def _graph_schema(kind, max_nodes):
             'type': {'type': 'string', 'enum': list(_NODE_TYPES[kind])},
             'status': {'type': 'string', 'enum': list(STATUSES)}, 'source_ids': _refs(),
         })},
-        'edges': {'type': 'array', 'maxItems': MAX_EDGES, 'items': _object({
+        'edges': {'type': 'array', 'maxItems': max_edges, 'items': _object({
             'source': _string(64), 'target': _string(64), 'label': _string(100, 0),
             'type': _string(50), 'status': {'type': 'string', 'enum': list(STATUSES)},
             'source_ids': _refs(),
@@ -108,10 +108,10 @@ def _graph_schema(kind, max_nodes):
     })
 
 
-def _output_schema(max_nodes):
+def _output_schema(max_nodes, max_edges):
     return _object({
-        'architecture': _graph_schema('architecture', max_nodes),
-        'workflow': _graph_schema('workflow', max_nodes),
+        'architecture': _graph_schema('architecture', max_nodes, max_edges),
+        'workflow': _graph_schema('workflow', max_nodes, max_edges),
         'dependencies': {'type': 'array', 'maxItems': 100, 'items': _object({
             'id': _string(200), 'purpose': _string(300), 'source_ids': _refs(),
         })},
@@ -209,13 +209,14 @@ def _references(value, available, location='source_ids', *, complete_knowledge_r
     return completed
 
 
-def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False, max_nodes=DEFAULT_SCHEME_MAX_NODES):
+def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False,
+                    max_nodes=DEFAULT_SCHEME_MAX_NODES, max_edges=DEFAULT_SCHEME_MAX_EDGES):
     _keys(graph, ('nodes', 'edges', 'explanation'))
     nodes, edges = graph['nodes'], graph['edges']
     if (not isinstance(nodes, list) or len(nodes) > max_nodes
-            or not isinstance(edges, list) or len(edges) > MAX_EDGES):
+            or not isinstance(edges, list) or len(edges) > max_edges):
         raise CodexError(f'Scheme generation exceeded the graph size limit '
-                         f'(maximum nodes {max_nodes}, maximum edges {MAX_EDGES}).')
+                         f'(maximum nodes {max_nodes}, maximum edges {max_edges}).')
     _text(graph['explanation'], 1000)
     identifiers = set()
     for index, node in enumerate(nodes):
@@ -259,7 +260,8 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False, max_
     return {**validated, 'mermaid': render_mermaid(validated)}
 
 
-def validate_output(raw, evidence, *, complete_knowledge_refs=False, max_nodes=DEFAULT_SCHEME_MAX_NODES):
+def validate_output(raw, evidence, *, complete_knowledge_refs=False,
+                    max_nodes=DEFAULT_SCHEME_MAX_NODES, max_edges=DEFAULT_SCHEME_MAX_EDGES):
     try:
         if not isinstance(raw, str) or len(raw) > MAX_OUTPUT_CHARS:
             raise ValueError('Invalid response size')
@@ -269,9 +271,11 @@ def validate_output(raw, evidence, *, complete_knowledge_refs=False, max_nodes=D
     _keys(result, ('architecture', 'workflow', 'dependencies'))
     sources = {source['id']: source for source in evidence['sources']}
     architecture = _validate_graph(result['architecture'], 'architecture', sources,
-                                   complete_knowledge_refs=complete_knowledge_refs, max_nodes=max_nodes)
+                                   complete_knowledge_refs=complete_knowledge_refs,
+                                   max_nodes=max_nodes, max_edges=max_edges)
     workflow = _validate_graph(result['workflow'], 'workflow', sources,
-                               complete_knowledge_refs=complete_knowledge_refs, max_nodes=max_nodes)
+                               complete_knowledge_refs=complete_knowledge_refs,
+                               max_nodes=max_nodes, max_edges=max_edges)
     if not isinstance(result['dependencies'], list) or len(result['dependencies']) > 100:
         raise CodexError('Scheme generation returned invalid dependency explanations.')
     declared = {item['id']: item for item in evidence['dependencies']}
@@ -395,12 +399,13 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                        generation_profile=profile.id, scheme_focus=focus)
         progress.update(project_id, stage='Collecting Scheme evidence')
         try:
-            max_nodes = scheme_max_nodes()
+            max_nodes, max_edges = scheme_graph_limits()
             limits = scheme_inspection_limits()
         except ConfigError as exc:
             raise CodexError('Could not read the Scheme limits. Check ProjectHub settings.') from exc
         source_chars, read_bytes, package_chars = limits
-        progress.record_settings(project_id, scheme_max_nodes=max_nodes, scheme_source_chars=source_chars,
+        progress.record_settings(project_id, scheme_max_nodes=max_nodes, scheme_max_edges=max_edges,
+                                 scheme_source_chars=source_chars,
                                  scheme_read_bytes=read_bytes, scheme_package_chars=package_chars)
         evidence = collect_evidence(engine, project_id, limits)
         knowledge_context = evidence.get('knowledge_context')
@@ -437,7 +442,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         serialized = json.dumps(payload, ensure_ascii=False)
         if len(serialized) > package_limit:
             raise CodexError('Scheme evidence exceeds the generation input limit.')
-        schema = _output_schema(max_nodes)
+        schema = _output_schema(max_nodes, max_edges)
         source_ids = [source['id'] for source in evidence['sources']]
         for kind in ('architecture', 'workflow'):
             for name in ('nodes', 'edges'):
@@ -472,7 +477,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Explain this project visually using only the supplied evidence. Return architecture and workflow '
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
-            f'For each graph, limit the node count to {max_nodes} and the edge count to {MAX_EDGES}. '
+            f'For each graph, limit the node count to {max_nodes} and the edge count to {max_edges}. '
             'Keep both diagrams at project-capability level: help a user understand what the project does '
             'and how its main capabilities connect. Use concise domain-language labels supported by the '
             'evidence. Put module names, command names, file formats, and implementation mechanics in '
@@ -588,7 +593,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         citation_error = None
         try:
             architecture, workflow, dependencies = validate_output(
-                raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
+                raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes, max_edges=max_edges)
         except SchemeKnowledgeCitationError as exc:
             citation_error = exc
             repair = (
@@ -615,7 +620,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                     raw = manager.generate_brief(retry_prompt, schema)
                     progress.update(project_id, stage='Validating Scheme')
                     architecture, workflow, dependencies = validate_output(
-                        raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
+                        raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes, max_edges=max_edges)
                 else:
                     with progress.reserve_generation_time(project_id, 30):
                         progress.check_cancelled()
@@ -625,7 +630,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                         progress.check_cancelled()
                         progress.update(project_id, stage='Validating Scheme')
                         candidate, revised, revised_dependencies = validate_output(
-                            raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
+                            raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes, max_edges=max_edges)
                         progress.check_cancelled()
                     if (set(_missing_index_workflows(revised, index_pairs)) < set(missing)
                             and preserves_graph(architecture, candidate) and preserves_graph(workflow, revised)):

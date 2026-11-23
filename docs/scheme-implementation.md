@@ -13,8 +13,9 @@ project evidence. See the [Scheme guide](SCHEME.md) for usage and settings.
   request using the selected account and project instructions.
 - `GET /api/projects/{id}/codex/generation/status?kind=scheme` reports progress.
 
-`scheme.py` validates both graphs before saving. Each graph has up to 20 nodes
-and 40 edges. Nodes and edges cite one to six supplied source IDs. Empty graphs
+`scheme.py` validates both graphs before saving. Each graph uses the configured
+node and edge limits, which default to 20 and 40. The overall response-size limit
+also applies. Nodes and edges cite one to six supplied source IDs. Empty graphs
 need an explanation. The application renders Mermaid from validated data with
 escaped labels. The snapshot and revision save in one transaction. Invalid
 output leaves the previous snapshot available.

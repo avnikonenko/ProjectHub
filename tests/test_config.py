@@ -19,6 +19,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.extraction_workers == 0
     assert settings.generation_profile == 'quality'
     assert settings.scheme_max_nodes == config.DEFAULT_SCHEME_MAX_NODES
+    assert settings.scheme_max_edges == config.DEFAULT_SCHEME_MAX_EDGES
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
 
@@ -107,6 +108,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '4194304')
     monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '180000')
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '30')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '80')
     for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS',
                 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_TOKEN_LIMIT', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
@@ -117,7 +119,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
             calls.append((callable(app_factory), kwargs, os.environ['PROJECTHUB_DATA_DIR'],
                           os.environ['PROJECTHUB_GENERATION_TIMEOUT'], os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'],
                           os.environ['PROJECTHUB_SCHEME_READ_BYTES'], os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'],
-                          os.environ['PROJECTHUB_SCHEME_MAX_NODES']))
+                          os.environ['PROJECTHUB_SCHEME_MAX_NODES'], os.environ['PROJECTHUB_SCHEME_MAX_EDGES']))
         def bind_socket(self):
             return nullcontext(listener)
     class Server:
@@ -130,7 +132,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     assert cli.main(['start']) == 0
     assert calls == [(True, {
         'factory': True, 'host': '127.0.0.1', 'port': 8888,
-    }, str(tmp_path / 'data'), '120', '60000', '4194304', '180000', '30')]
+    }, str(tmp_path / 'data'), '120', '60000', '4194304', '180000', '30', '80')]
     assert capsys.readouterr().out.strip() == 'ProjectHub: http://127.0.0.1:8888'
 
 
@@ -201,12 +203,14 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '8388608')
     monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '220000')
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '10')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '90')
     loaded.apply_environment()
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '4'
     assert os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'] == '40000'
     assert os.environ['PROJECTHUB_SCHEME_READ_BYTES'] == '2097152'
     assert os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'] == '140000'
     assert os.environ['PROJECTHUB_SCHEME_MAX_NODES'] == '20'
+    assert os.environ['PROJECTHUB_SCHEME_MAX_EDGES'] == '40'
 
 
 @pytest.mark.parametrize('value', [True, -1, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])
@@ -291,8 +295,24 @@ def test_scheme_node_limit_file_and_environment_precedence(tmp_path, monkeypatch
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_NODES', raising=False)
     assert config.scheme_max_nodes() == 24
-    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '40')
-    assert config.scheme_max_nodes() == 40
-    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '41')
-    with pytest.raises(ConfigError, match='ai.scheme_max_nodes must be an integer from 1 to 40'):
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
+    assert config.scheme_max_nodes() == 60
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '61')
+    with pytest.raises(ConfigError, match='ai.scheme_max_nodes must be an integer from 1 to 60'):
         config.scheme_max_nodes()
+
+
+def test_scheme_edge_limit_file_and_environment_precedence(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    path.write_text('[ai]\nscheme_max_nodes = 30\nscheme_max_edges = 65\n')
+    monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
+    monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_NODES', raising=False)
+    monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_EDGES', raising=False)
+    assert config.scheme_graph_limits() == (30, 65)
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '0')
+    assert config.scheme_graph_limits() == (30, 0)
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '6')
+    assert config.scheme_graph_limits() == (6, 0)
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '121')
+    with pytest.raises(ConfigError, match='ai.scheme_max_edges must be an integer from 0 to 120'):
+        config.scheme_max_edges()

@@ -23,8 +23,12 @@ MAX_EXTRACTION_WORKERS = 2_147_483_647
 MAX_GENERATION_TOKEN_LIMIT = 2_147_483_647
 DEFAULT_SCHEME_MAX_NODES = 20
 MIN_SCHEME_MAX_NODES = 1
-MAX_SCHEME_MAX_NODES = 40
+MAX_SCHEME_MAX_NODES = 60
 _SCHEME_MAX_NODES_ENV = 'PROJECTHUB_SCHEME_MAX_NODES'
+DEFAULT_SCHEME_MAX_EDGES = 40
+MIN_SCHEME_MAX_EDGES = 0
+MAX_SCHEME_MAX_EDGES = 120
+_SCHEME_MAX_EDGES_ENV = 'PROJECTHUB_SCHEME_MAX_EDGES'
 SCHEME_SOURCE_CHARS_OPTIONS = (40_000, 60_000, 80_000)
 DEFAULT_SCHEME_SOURCE_CHARS = SCHEME_SOURCE_CHARS_OPTIONS[0]
 SCHEME_READ_BYTES_OPTIONS = (2 * 1024**2, 4 * 1024**2, 8 * 1024**2)
@@ -61,6 +65,8 @@ generation_profile = "quality"
 scheme_source_chars = {DEFAULT_SCHEME_SOURCE_CHARS}
 # Maximum number of nodes in each generated Scheme diagram.
 scheme_max_nodes = {DEFAULT_SCHEME_MAX_NODES}
+# Maximum number of edges in each generated Scheme diagram. Set 0 for nodes only.
+scheme_max_edges = {DEFAULT_SCHEME_MAX_EDGES}
 # Advanced Scheme limits for local file reads and the serialized evidence package.
 scheme_read_bytes = {DEFAULT_SCHEME_READ_BYTES}
 scheme_package_chars = {DEFAULT_SCHEME_PACKAGE_CHARS}
@@ -89,12 +95,14 @@ class Settings:
     scheme_package_chars: int = DEFAULT_SCHEME_PACKAGE_CHARS
     generation_token_limit: int = 0
     scheme_max_nodes: int = DEFAULT_SCHEME_MAX_NODES
+    scheme_max_edges: int = DEFAULT_SCHEME_MAX_EDGES
 
     def apply_environment(self):
         workers = _extraction_worker_setting(self.extraction_workers)
         budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
         token_limit = _generation_token_limit(self.generation_token_limit)
         max_nodes = _scheme_node_limit(self.scheme_max_nodes)
+        max_edges = _scheme_edge_limit(self.scheme_max_edges)
         profile = _profile(self.generation_profile)
         scheme_environment = {env: str(_scheme_preset(name, getattr(self, name)))
                               for name, (env, _) in _SCHEME_SETTINGS.items()}
@@ -108,6 +116,7 @@ class Settings:
         with _settings_write_lock:
             os.environ.update(scheme_environment)
             os.environ[_SCHEME_MAX_NODES_ENV] = str(max_nodes)
+            os.environ[_SCHEME_MAX_EDGES_ENV] = str(max_edges)
         os.environ['PROJECTHUB_HISTORY_AUTO_SYNC'] = str(self.history_auto_sync).lower()
         os.environ['PROJECTHUB_HISTORY_SYNC_INTERVAL'] = str(self.history_sync_interval)
         if self.codex_home is not None:
@@ -152,6 +161,10 @@ def _generation_token_limit(value):
 
 def _scheme_node_limit(value):
     return _integer(value, 'ai.scheme_max_nodes', MIN_SCHEME_MAX_NODES, MAX_SCHEME_MAX_NODES)
+
+
+def _scheme_edge_limit(value):
+    return _integer(value, 'ai.scheme_max_edges', MIN_SCHEME_MAX_EDGES, MAX_SCHEME_MAX_EDGES)
 
 
 def _available_cpu_count():
@@ -228,7 +241,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
     allowed = {'server': {'port', 'data_dir'},
                'ai': {'generation_timeout', 'generation_budget', 'generation_token_limit', 'codex_home',
-                      'extraction_workers', 'generation_profile', 'scheme_max_nodes', *_SCHEME_SETTINGS},
+                      'extraction_workers', 'generation_profile', 'scheme_max_nodes', 'scheme_max_edges',
+                      *_SCHEME_SETTINGS},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -252,6 +266,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
             env.get('PROJECTHUB_GENERATION_TOKEN_LIMIT', ai.get('generation_token_limit', 0))),
         scheme_max_nodes=_scheme_node_limit(
             env.get(_SCHEME_MAX_NODES_ENV, ai.get('scheme_max_nodes', DEFAULT_SCHEME_MAX_NODES))),
+        scheme_max_edges=_scheme_edge_limit(
+            env.get(_SCHEME_MAX_EDGES_ENV, ai.get('scheme_max_edges', DEFAULT_SCHEME_MAX_EDGES))),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
         extraction_workers=_extraction_worker_setting(
             env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS))),
@@ -290,6 +306,8 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
     scheme_changes = scheme_changes or {}
     max_nodes = _scheme_node_limit(scheme_changes.get(
         'scheme_max_nodes', os.environ.get(_SCHEME_MAX_NODES_ENV, configured.scheme_max_nodes)))
+    max_edges = _scheme_edge_limit(scheme_changes.get(
+        'scheme_max_edges', os.environ.get(_SCHEME_MAX_EDGES_ENV, configured.scheme_max_edges)))
     result = {'extraction_workers': resolve_extraction_workers(selected_workers),
             'configured_extraction_workers': configured.extraction_workers,
             'selected_extraction_workers': selected_workers,
@@ -304,7 +322,9 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
             'configured_generation_token_limit': configured.generation_token_limit,
             'min_generation_token_limit': 0, 'max_generation_token_limit': MAX_GENERATION_TOKEN_LIMIT,
             'scheme_max_nodes': max_nodes, 'configured_scheme_max_nodes': configured.scheme_max_nodes,
-            'min_scheme_max_nodes': MIN_SCHEME_MAX_NODES, 'max_scheme_max_nodes': MAX_SCHEME_MAX_NODES}
+            'min_scheme_max_nodes': MIN_SCHEME_MAX_NODES, 'max_scheme_max_nodes': MAX_SCHEME_MAX_NODES,
+            'scheme_max_edges': max_edges, 'configured_scheme_max_edges': configured.scheme_max_edges,
+            'min_scheme_max_edges': MIN_SCHEME_MAX_EDGES, 'max_scheme_max_edges': MAX_SCHEME_MAX_EDGES}
     for name, (env, options) in _SCHEME_SETTINGS.items():
         value = getattr(configured, name)
         result[name] = _scheme_preset(name, scheme_changes.get(name, os.environ.get(env, value)))
@@ -318,7 +338,7 @@ def ai_worker_settings():
     with _settings_write_lock:
         configured_env = dict(os.environ)
         for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET',
-                    'PROJECTHUB_GENERATION_TOKEN_LIMIT', _SCHEME_MAX_NODES_ENV,
+                    'PROJECTHUB_GENERATION_TOKEN_LIMIT', _SCHEME_MAX_NODES_ENV, _SCHEME_MAX_EDGES_ENV,
                     *(env for env, _ in _SCHEME_SETTINGS.values())):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
@@ -336,11 +356,23 @@ def generation_token_limit():
     return _generation_token_limit(limit) if limit is not None else load_settings().generation_token_limit
 
 
-def scheme_max_nodes():
-    """Read the node limit to capture at the start of the next Scheme generation."""
+def scheme_graph_limits():
+    """Capture the effective node and edge limits together for the next Scheme generation."""
     with _settings_write_lock:
-        limit = os.environ.get(_SCHEME_MAX_NODES_ENV)
-        return _scheme_node_limit(limit) if limit is not None else load_settings().scheme_max_nodes
+        nodes = os.environ.get(_SCHEME_MAX_NODES_ENV)
+        edges = os.environ.get(_SCHEME_MAX_EDGES_ENV)
+        if nodes is None or edges is None:
+            settings = load_settings()
+            return settings.scheme_max_nodes, settings.scheme_max_edges
+        return _scheme_node_limit(nodes), _scheme_edge_limit(edges)
+
+
+def scheme_max_nodes():
+    return scheme_graph_limits()[0]
+
+
+def scheme_max_edges():
+    return scheme_graph_limits()[1]
 
 
 def _worker_config_text(original, workers):
@@ -357,7 +389,7 @@ def _ai_config_text(original, changes):
 def _ai_scalar_text(original, name, value):
     """Edit an application-owned scalar; comparison protects unsupported layouts."""
     if name not in ('extraction_workers', 'generation_profile', 'generation_budget', 'generation_token_limit',
-                    'scheme_max_nodes', *_SCHEME_SETTINGS):
+                    'scheme_max_nodes', 'scheme_max_edges', *_SCHEME_SETTINGS):
         raise ConfigError('Unsupported AI setting.')
     encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
@@ -407,7 +439,7 @@ def save_ai_worker_settings(workers):
 
 def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET,
                      generation_token_limit=_UNSET, scheme_source_chars=_UNSET, scheme_read_bytes=_UNSET,
-                     scheme_package_chars=_UNSET, scheme_max_nodes=_UNSET):
+                     scheme_package_chars=_UNSET, scheme_max_nodes=_UNSET, scheme_max_edges=_UNSET):
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
@@ -420,6 +452,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
         changes['generation_token_limit'] = _generation_token_limit(generation_token_limit)
     if scheme_max_nodes is not _UNSET:
         changes['scheme_max_nodes'] = _scheme_node_limit(scheme_max_nodes)
+    if scheme_max_edges is not _UNSET:
+        changes['scheme_max_edges'] = _scheme_edge_limit(scheme_max_edges)
     for name, value in (('scheme_source_chars', scheme_source_chars), ('scheme_read_bytes', scheme_read_bytes),
                         ('scheme_package_chars', scheme_package_chars)):
         if value is not _UNSET:
@@ -478,6 +512,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
                 os.environ['PROJECTHUB_GENERATION_TOKEN_LIMIT'] = str(changes['generation_token_limit'])
             if 'scheme_max_nodes' in changes:
                 os.environ[_SCHEME_MAX_NODES_ENV] = str(changes['scheme_max_nodes'])
+            if 'scheme_max_edges' in changes:
+                os.environ[_SCHEME_MAX_EDGES_ENV] = str(changes['scheme_max_edges'])
             for name, (env, _) in _SCHEME_SETTINGS.items():
                 if name in changes:
                     os.environ[env] = str(changes[name])

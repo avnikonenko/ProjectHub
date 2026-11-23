@@ -13,6 +13,7 @@ const numericalSettingLabels = {
   generation_token_limit: 'Token limit',
   extraction_workers: 'AI workers per job',
   scheme_max_nodes: 'Scheme node limit',
+  scheme_max_edges: 'Scheme edge limit',
   scheme_source_chars: 'Scheme excerpt budget',
   scheme_read_bytes: 'Local file read limit',
   scheme_package_chars: 'Final evidence package limit',
@@ -75,7 +76,7 @@ const validAttemptSettings = (value: unknown) => value === undefined || value ==
     && numericalSettings.every(key => {
       const part = value[key];
       return part === undefined || (typeof part === 'number' && Number.isSafeInteger(part)
-        && part >= (key === 'generation_token_limit' ? 0 : 1));
+        && part >= (key === 'generation_token_limit' || key === 'scheme_max_edges' ? 0 : 1));
     }));
 export const generationKindLabels: Record<ProjectGenerationKind, string> = {
   brief: 'Overview', knowledge: 'Knowledge', scheme: 'Scheme', qa: 'Q&A', parameters: 'Implementation Choices & Limits',
@@ -151,6 +152,8 @@ function attemptSettingValue(key: NumericalSetting, value: number) {
       return value ? `${value.toLocaleString()} reported tokens` : 'No limit';
     case 'scheme_max_nodes':
       return `${value.toLocaleString()} ${value === 1 ? 'node' : 'nodes'} per diagram`;
+    case 'scheme_max_edges':
+      return `${value.toLocaleString()} ${value === 1 ? 'edge' : 'edges'} per diagram`;
     case 'scheme_source_chars':
     case 'scheme_package_chars':
       return `${value.toLocaleString()} characters`;

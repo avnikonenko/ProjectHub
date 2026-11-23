@@ -23,7 +23,8 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     for name in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE',
                  'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_GENERATION_TOKEN_LIMIT', 'PROJECTHUB_SCHEME_SOURCE_CHARS',
-                 'PROJECTHUB_SCHEME_READ_BYTES', 'PROJECTHUB_SCHEME_PACKAGE_CHARS', 'PROJECTHUB_SCHEME_MAX_NODES'):
+                 'PROJECTHUB_SCHEME_READ_BYTES', 'PROJECTHUB_SCHEME_PACKAGE_CHARS',
+                 'PROJECTHUB_SCHEME_MAX_NODES', 'PROJECTHUB_SCHEME_MAX_EDGES'):
         # Track an originally absent key before removing it: the settings API
         # writes os.environ directly, outside pytest's monkeypatch operations.
         monkeypatch.setenv(name, os.environ.get(name, ''))
@@ -50,7 +51,9 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
         'generation_token_limit': 0, 'configured_generation_token_limit': 0,
         'min_generation_token_limit': 0, 'max_generation_token_limit': config.MAX_GENERATION_TOKEN_LIMIT,
         'scheme_max_nodes': 20, 'configured_scheme_max_nodes': 20,
-        'min_scheme_max_nodes': 1, 'max_scheme_max_nodes': 40,
+        'min_scheme_max_nodes': 1, 'max_scheme_max_nodes': 60,
+        'scheme_max_edges': 40, 'configured_scheme_max_edges': 40,
+        'min_scheme_max_edges': 0, 'max_scheme_max_edges': 120,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
         'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
@@ -226,7 +229,9 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
         'generation_token_limit': 0, 'configured_generation_token_limit': 0,
         'min_generation_token_limit': 0, 'max_generation_token_limit': config.MAX_GENERATION_TOKEN_LIMIT,
         'scheme_max_nodes': 20, 'configured_scheme_max_nodes': 20,
-        'min_scheme_max_nodes': 1, 'max_scheme_max_nodes': 40,
+        'min_scheme_max_nodes': 1, 'max_scheme_max_nodes': 60,
+        'scheme_max_edges': 40, 'configured_scheme_max_edges': 40,
+        'min_scheme_max_edges': 0, 'max_scheme_max_edges': 120,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
         'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
@@ -373,19 +378,44 @@ def test_scheme_node_limit_applies_now_and_after_restart(settings_client, monkey
     assert result['scheme_max_nodes'] == config.scheme_max_nodes() == 31
     assert result['configured_scheme_max_nodes'] == 20
 
-    response = client.patch(endpoint, json={'scheme_max_nodes': 40})
+    response = client.patch(endpoint, json={'scheme_max_nodes': 60})
     assert response.status_code == 200, response.text
     result = response.json()
-    assert result['scheme_max_nodes'] == result['configured_scheme_max_nodes'] == config.scheme_max_nodes() == 40
-    assert tomllib.loads(path.read_text())['ai']['scheme_max_nodes'] == 40
+    assert result['scheme_max_nodes'] == result['configured_scheme_max_nodes'] == config.scheme_max_nodes() == 60
+    assert tomllib.loads(path.read_text())['ai']['scheme_max_nodes'] == 60
     monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_NODES')
-    assert config.scheme_max_nodes() == 40
+    assert config.scheme_max_nodes() == 60
 
     original = path.read_bytes()
-    for invalid in (0, 41, True, '12', 12.0, None):
+    for invalid in (0, 61, True, '12', 12.0, None):
         assert client.patch(endpoint, json={'scheme_max_nodes': invalid, 'extraction_workers': 8}).status_code == 422
         assert path.read_bytes() == original
-        assert config.scheme_max_nodes() == 40
+        assert config.scheme_max_nodes() == 60
+
+
+def test_scheme_edge_limit_applies_now_and_after_restart(settings_client, monkeypatch):
+    client, path = settings_client
+    endpoint = '/api/settings/ai'
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '52')
+    result = client.get(endpoint).json()
+    assert result['scheme_max_edges'] == config.scheme_max_edges() == 52
+    assert result['configured_scheme_max_edges'] == 40
+
+    for limit in (120, 0):
+        response = client.patch(endpoint, json={'scheme_max_nodes': 50, 'scheme_max_edges': limit})
+        assert response.status_code == 200, response.text
+        result = response.json()
+        assert result['scheme_max_edges'] == result['configured_scheme_max_edges'] == limit
+        assert config.scheme_graph_limits() == (50, limit)
+        assert tomllib.loads(path.read_text())['ai']['scheme_max_edges'] == limit
+
+    monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_EDGES')
+    assert config.scheme_graph_limits() == (50, 0)
+    original = path.read_bytes()
+    for invalid in (-1, 121, True, '12', 12.0, None):
+        assert client.patch(endpoint, json={'scheme_max_edges': invalid, 'scheme_max_nodes': 30}).status_code == 422
+        assert path.read_bytes() == original
+        assert config.scheme_graph_limits() == (50, 0)
 
 
 @pytest.mark.parametrize('budget', [30, 1200, 7200])

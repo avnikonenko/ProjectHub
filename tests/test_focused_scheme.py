@@ -42,6 +42,7 @@ def diagram(source='repo:search'):
 def test_focused_route_saves_instruction_and_cited_graph_separately(database, monkeypatch):
     calls = []
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '1')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '0')
 
     def evidence(engine, pid, limits, *, scope):
         assert engine is database and pid == 1
@@ -52,12 +53,14 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
 
     class Manager:
         response = diagram()
+        node_limit = 1
 
         def generate_brief(self, prompt, schema):
             nodes = schema['properties']['nodes']
-            assert nodes['maxItems'] == 1
+            assert nodes['maxItems'] == self.node_limit
+            assert schema['properties']['edges']['maxItems'] == 0
             assert nodes['items']['properties']['source_ids']['items']['enum'] == ['repo:search']
-            assert 'Limit the node count to 1 and the edge count to 40.' in prompt
+            assert f'Limit the node count to {self.node_limit} and the edge count to 0.' in prompt
             assert json.loads(prompt.splitlines()[-2])['user_instruction'] == calls[-1]
             return json.dumps(self.response)
 
@@ -83,6 +86,7 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
         attempt = routes.generation_status(1, db, kind='focused_scheme')['latest_attempt']
         assert attempt['state'] == 'completed'
         assert attempt['settings']['scheme_max_nodes'] == 1
+        assert attempt['settings']['scheme_max_edges'] == 0
         assert routes.get_focused_scheme(2, db) == {'snapshot': None}
         with pytest.raises(HTTPException) as missing:
             routes.get_focused_scheme(999, db)
@@ -95,6 +99,13 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
         manager.response = diagram()
         manager.response['nodes'].append({**manager.response['nodes'][0], 'id': 'query'})
         with pytest.raises(HTTPException, match='graph size limit.*maximum nodes 1') as oversized:
+            routes.generate_focused_scheme(1, body, request, db)
+        assert oversized.value.status_code == 503
+        manager.node_limit = 2
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.node_limit))
+        manager.response['edges'].append({'source': 'index', 'target': 'query', 'label': '', 'type': 'uses',
+                                          'status': 'observed', 'source_ids': ['repo:search']})
+        with pytest.raises(HTTPException, match='graph size limit.*maximum nodes 2, maximum edges 0') as oversized:
             routes.generate_focused_scheme(1, body, request, db)
         assert oversized.value.status_code == 503
         assert routes.get_focused_scheme(1, db) == {'snapshot': saved}
