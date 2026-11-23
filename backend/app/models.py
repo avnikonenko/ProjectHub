@@ -96,6 +96,7 @@ class Decision(Scoped, Base):
 
 class Task(Scoped, Base):
     __tablename__ = 'tasks'
+    __table_args__ = {'sqlite_autoincrement': True}
     pinned: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
     title: Mapped[str] = mapped_column(Text)
     description: Mapped[str] = mapped_column(Text, default='')
@@ -108,6 +109,7 @@ class Task(Scoped, Base):
 
 class Note(Scoped, Base):
     __tablename__ = 'notes'
+    __table_args__ = {'sqlite_autoincrement': True}
     title: Mapped[str] = mapped_column(Text)
     content: Mapped[str] = mapped_column(Text, default='')
     kind: Mapped[str] = mapped_column(String, default='note')
@@ -118,6 +120,7 @@ class Note(Scoped, Base):
 class ConversationImportSource(Base):
     """Immutable input retained for each saved import or replacement."""
     __tablename__ = 'conversation_import_sources'
+    __table_args__ = {'sqlite_autoincrement': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id', ondelete='CASCADE'))
     note_id: Mapped[int] = mapped_column(ForeignKey('notes.id', ondelete='CASCADE'))
@@ -175,6 +178,7 @@ class Delivery(Scoped, Base):
 
 class CodexEvent(Base):
     __tablename__ = 'codex_events'
+    __table_args__ = {'sqlite_autoincrement': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), index=True)
     session_id: Mapped[int] = mapped_column(ForeignKey('codex_sessions.id'), index=True)
@@ -231,6 +235,7 @@ class ProjectKnowledge(Base):
 
 class GenerationRevision(Base):
     __tablename__ = 'generation_revisions'
+    __table_args__ = {'sqlite_autoincrement': True}
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(ForeignKey('projects.id'), index=True)
     kind: Mapped[str] = mapped_column(String(10))
