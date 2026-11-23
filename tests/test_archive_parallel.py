@@ -210,12 +210,11 @@ def test_duplicate_parallel_cache_misses_return_winner_and_replay_identically(en
 
 
 def test_saved_worker_setting_is_captured_for_the_job_not_changed_mid_generation(monkeypatch):
-    selected = {'extraction_workers': 2}
-    monkeypatch.setattr(archive, 'ai_worker_settings', lambda: dict(selected))
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '2')
     manager = ParallelFake()
     with archive.archive_worker_scope():
         assert archive._worker_count(manager) == 2
-        selected['extraction_workers'] = 4
+        monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '4')
         with archive.archive_worker_scope():
             assert archive._worker_count(manager) == 2
     with archive.archive_worker_scope():

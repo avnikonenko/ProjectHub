@@ -544,7 +544,8 @@ def generate_knowledge_brief(engine, project_id, manager, *, publish=True):
         except (ConfigError, ValueError) as exc:
             raise CodexError('Could not read the knowledge generation profile and worker settings.') from exc
         progress.begin(project_id, 'knowledge', engine=engine, saves_result=publish, manager=manager, metrics=metrics,
-                       generation_profile=profile.id, extraction_workers=settings['extraction_workers'])
+                       generation_profile=profile.id, extraction_workers=settings['extraction_workers'],
+                       worker_settings=settings)
         with ExitStack() as scope:
             scope.enter_context(collect_generation_metrics(metrics))
             scope.enter_context(use_knowledge_profile(profile, settings['extraction_workers']))

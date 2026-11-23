@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.sqlite import insert
 
 from ...models import Project, CodexSession, ProjectHistoryBatch, utcnow
-from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings
+from ...config import MAX_EXTRACTION_WORKERS
 from .manager import allow_generation_recovery
 from .protocol import CodexError, JSONFormattingError
 from . import progress
@@ -58,10 +58,7 @@ def archive_worker_scope(workers=None):
     if existing is not None and workers is None:
         yield existing['workers']
         return
-    try:
-        selected = ai_worker_settings()['extraction_workers'] if workers is None else workers
-    except (ConfigError, ValueError) as exc:
-        raise CodexError('Could not read the parallel AI worker setting.') from exc
+    selected = progress.generation_worker_count() if workers is None else workers
     if type(selected) is not int or not 1 <= selected <= MAX_EXTRACTION_WORKERS:
         raise CodexError(f'Parallel AI workers must be from 1 to {MAX_EXTRACTION_WORKERS}.')
     token = _archive_run.set({'workers': selected, 'phases': 0, 'timings': []})

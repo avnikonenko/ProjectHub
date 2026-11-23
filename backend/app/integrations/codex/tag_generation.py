@@ -68,7 +68,7 @@ def generate_tags(engine, project_id, manager, *, target, publication_id=None, g
                 profile = get_generation_profile(settings['generation_profile'])
             except (ConfigError, ValueError) as exc:
                 raise CodexError('Could not read the tag generation profile and worker settings.') from exc
-            scope.enter_context(use_knowledge_profile(profile, settings['extraction_workers']))
+            scope.enter_context(use_knowledge_profile(profile, progress.generation_worker_count()))
             manager, _ = configure_profile_manager(manager, profile)
             session = getattr(manager, 'generation_session', None)
             if callable(session):

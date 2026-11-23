@@ -7,6 +7,7 @@ import time
 import os
 import logging
 import weakref
+from typing import NamedTuple
 
 from sqlalchemy.orm import Session
 
@@ -91,22 +92,37 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
-def _automatic_limit():
+class _WorkerPolicy(NamedTuple):
+    automatic: bool
+    count: int
+
+
+def _worker_policy(settings=None):
+    if settings is not None:
+        count = settings['extraction_workers']
+        return _WorkerPolicy(settings.get('selected_extraction_workers', count) == 0, count)
     try:
-        return resolve_extraction_workers(0) if selected_extraction_workers() == 0 else None
+        selected = selected_extraction_workers()
+        return _WorkerPolicy(selected == 0, resolve_extraction_workers(selected))
     except ConfigError as exc:
         raise CodexError(str(exc)) from exc
+
+
+def generation_worker_count():
+    """Read the worker count captured with this job's admission mode."""
+    current = _current.get()
+    return (current[3] if current is not None else _worker_policy()).count
 
 
 @contextmanager
 def generation_request_slot():
     """Share Auto capacity across generation jobs and both provider transports."""
     current = _current.get()
-    limit = current[3] if current is not None else _automatic_limit()
-    if limit is None:
+    workers = current[3] if current is not None else _worker_policy()
+    if not workers.automatic:
         yield
         return
-    with _model_slots.slot(limit, check_cancelled=check_cancelled,
+    with _model_slots.slot(workers.count, check_cancelled=check_cancelled,
                            is_throttle=lambda exc: isinstance(exc, CodexError) and exc.generation_throttled):
         yield
 
@@ -115,11 +131,12 @@ def automatic_worker_status():
     return _model_slots.status(resolve_extraction_workers(0))
 
 
-def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None, **options):
+def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None,
+          worker_settings=None, **options):
     from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
-    automatic_limit = _automatic_limit()
+    workers = _worker_policy(worker_settings)
     settings = None if manager is None else {
         **settings_for(manager, engine), **options, 'generation_budget': budget,
         'project_instructions': has_project_instructions(),
@@ -140,7 +157,7 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, met
                            'started_at': utcnow(), 'budget_seconds': budget}
         if settings is not None:
             _snapshots[key]['settings'] = settings
-        _current.set((project_id, kind, event, automatic_limit))
+        _current.set((project_id, kind, event, workers))
         _stores[key] = weakref.ref(engine) if engine is not None else None
     if engine is not None:
         try:

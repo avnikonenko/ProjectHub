@@ -85,7 +85,7 @@ type SettingField = 'extraction_workers' | 'generation_profile' | 'generation_bu
 type SettingOption = string | number;
 type Setting = { value: SettingOption; configured: SettingOption } &
   ({ min: number; max: number } | { options: readonly SettingOption[] });
-type SettingEdit = { field: SettingField; draft: string };
+type SettingEdit = { field: SettingField; draft: string; numericInput: boolean };
 type SaveNotice = { state: 'saving' | 'saved' } | { state: 'failed'; error: string };
 const savedMessages: Record<SettingField, string> = {
   extraction_workers: 'AI worker setting saved.',
@@ -96,12 +96,12 @@ const savedMessages: Record<SettingField, string> = {
   scheme_package_chars: 'Final evidence package limit saved.',
 };
 
-function settingFor(settings: WorkerSettings | null, field: SettingField): Setting | null | undefined {
+function settingFor(settings: WorkerSettings | null, field: SettingField, numericInput = false): Setting | null | undefined {
   if (!settings) return null;
   switch (field) {
     case 'extraction_workers':
       return { value: settings.selected_extraction_workers, configured: settings.configured_extraction_workers,
-        min: settings.min_extraction_workers, max: settings.max_extraction_workers };
+        min: numericInput ? 1 : settings.min_extraction_workers, max: settings.max_extraction_workers };
     case 'generation_profile': {
       const profile = settings.profileSettings;
       return profile && { value: profile.generation_profile, configured: profile.configured_generation_profile,
@@ -130,7 +130,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [reload, setReload] = useState(0);
-  const [drafts, setDrafts] = useState<Partial<Record<SettingField, string>>>({});
+  const [drafts, setDrafts] = useState<Partial<Record<SettingField, SettingEdit>>>({});
   const [notices, setNotices] = useState<Partial<Record<SettingField, SaveNotice>>>({});
   const [autoWorkerStatus, setAutoWorkerStatus] = useState<AutoWorkerStatus | null>(null);
   const mounted = useRef(true);
@@ -180,7 +180,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
     // saved settings independent of the order in which the user edits fields.
     writeQueue.current = writeQueue.current.then(async () => {
       if (!mounted.current || latestEdits.current[field] !== edit) return;
-      const setting = settingFor(currentSettings.current, field);
+      const setting = settingFor(currentSettings.current, field, edit.numericInput);
       const value = settingValue(setting, draft);
       try {
         if (value === undefined) throw new Error('The permitted values changed. Choose another value.');
@@ -223,11 +223,11 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   function changeSetting(field: SettingField, draft: string, numericInput = false) {
     clearTimeout(timers.current.get(field));
     timers.current.delete(field);
-    const edit = { field, draft };
+    const edit = { field, draft, numericInput };
     latestEdits.current[field] = edit;
-    setDrafts(previous => ({ ...previous, [field]: draft }));
+    setDrafts(previous => ({ ...previous, [field]: edit }));
     setNotices(previous => ({ ...previous, [field]: undefined }));
-    if (settingValue(settingFor(currentSettings.current, field), draft) === undefined) return;
+    if (settingValue(settingFor(currentSettings.current, field, numericInput), draft) === undefined) return;
     if (numericInput) {
       timers.current.set(field, setTimeout(() => finishNumber(field), 550));
     } else {
@@ -237,7 +237,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
 
   function inputValue(field: SettingField) {
     const value = settingFor(settings, field)?.value;
-    return drafts[field] ?? (value === undefined ? '' : String(value));
+    return drafts[field]?.draft ?? (value === undefined ? '' : String(value));
   }
   function numericEvents(field: SettingField) {
     return {
@@ -269,7 +269,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const schemeBudget = settings?.schemeSourceSettings;
   const advancedScheme = settings?.advancedSchemeSettings;
   const workerInput = inputValue('extraction_workers');
-  const autoWorkers = workerInput === '0';
+  const autoWorkers = workerInput === '0' && !drafts.extraction_workers?.numericInput;
   const showAutoStatus = autoWorkers && settings?.selected_extraction_workers === 0;
   useEffect(() => {
     setAutoWorkerStatus(null);
@@ -295,7 +295,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
       clearTimeout(timer);
     };
   }, [active, showAutoStatus, refreshVersion, reload]);
-  const validWorkers = settingValue(settingFor(settings, 'extraction_workers'), workerInput) !== undefined;
+  const validWorkers = autoWorkers || settingValue(settingFor(settings, 'extraction_workers', true), workerInput) !== undefined;
   const workerOverride = settings && settings.selected_extraction_workers !== settings.configured_extraction_workers;
   const validBudget = settingValue(budget, inputValue('generation_budget')) !== undefined;
   return <div>

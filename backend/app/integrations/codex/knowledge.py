@@ -13,7 +13,6 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, ProjectKnowledge, GenerationRevision
-from ...config import ConfigError, resolve_extraction_workers, selected_extraction_workers
 from .ai_instructions import ai_instructions
 from .manager import request_knowledge_json
 from .protocol import CodexError
@@ -887,12 +886,10 @@ def reconcile(previous, extracted, bundle, extraction_version, *, compatible_ver
 
 
 def _extraction_workers(manager):
+    from . import progress
     from .knowledge_profiles import captured_knowledge_workers
-    try:
-        captured = captured_knowledge_workers()
-        workers = captured if captured is not None else resolve_extraction_workers(selected_extraction_workers())
-    except ConfigError as exc:
-        raise CodexError(str(exc)) from exc
+    captured = captured_knowledge_workers()
+    workers = captured if captured is not None else progress.generation_worker_count()
     return workers if callable(getattr(manager, 'independent_generation', None)) else 1
 
 
