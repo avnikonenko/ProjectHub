@@ -77,8 +77,7 @@ export function AskProject({ base, projectId, generation, visible, schemeContext
         <p className="brief-note">
           Uses {schemeContext.kind === 'focused_scheme' ? 'the Focused Scheme' : 'the Scheme'} saved on{' '}
           <time dateTime={schemeContext.generated_at}>{new Date(schemeContext.generated_at).toLocaleString()}</time>.
-          ProjectHub sends your question, diagram context, and selected evidence to your selected AI provider
-          ({generationDestination(generation.provider)}).
+          ProjectHub sends your question, diagram context, and selected evidence to your selected AI provider.
         </p>
       ) : (
         <>
