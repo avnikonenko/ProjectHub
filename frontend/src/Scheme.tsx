@@ -1,7 +1,7 @@
 import { schemeFocusLabels, useGenerationRequest, type GenerationRequestProps, type SchemeFocus } from './generationBatch';
 import { AIEmphasis } from './AIEmphasis';
 import { Feedback } from './Feedback';
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { api, post } from './api';
 import { briefReferences, BriefSources, type BriefSource } from './BriefReferences';
 import {
@@ -270,9 +270,10 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-function AskAboutScheme({ base, generation, visible, context, disabled, onBusyChange }: {
+function AskAboutScheme({ base, generation, visible, context, disabled, onBusyChange, afterButton }: {
   base: string; generation: Generation; visible: boolean; context: SchemeAnswerContext;
   disabled: boolean; onBusyChange: (busy: boolean) => void;
+  afterButton?: ReactNode;
 }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
@@ -283,6 +284,7 @@ function AskAboutScheme({ base, generation, visible, context, disabled, onBusyCh
   return <>
     <button type="button" className="secondary" aria-expanded={!!open} aria-controls={panelId}
       onClick={() => setOpen(current => !current)}>Ask about this Scheme</button>
+    {afterButton}
     <div id={panelId} hidden={!open}>
       {earlierVersion && <Feedback>This question uses an earlier Scheme version.</Feedback>}
       {earlierVersion && !pending && <button type="button" className="secondary" onClick={() => {
@@ -523,6 +525,9 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
   const focused = view === 'Focused Scheme';
+  const generationNote = <p className="scheme-generation-note"><small className="muted">
+    Generation sends selected project evidence to {generationDestination(generation.provider)}.
+  </small></p>;
   return <section className="card scheme-panel" aria-busy={!focused && (loading || generating || recoveryBusy || revisionLoading)}>
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {schemeViews.map((name) =>
@@ -543,22 +548,21 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
           <option key={option} value={option}>{schemeFocusLabels[option]}</option>)}
       </select>
     </label>
-    <button type="button" className="secondary" onClick={() => void generate(focus)}
-      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy}>
-      Generate Scheme
-    </button>
-    {snapshot && <AskAboutScheme key={`${base}:${revisionId}`} base={base}
-      generation={generation} visible={visible && !focused} onBusyChange={setQuestionBusy}
-      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge} context={{
-        kind: 'scheme', generated_at: snapshot.generated_at, ...(revisionId !== null ? { revision_id: revisionId } : {}),
-      }} />}
-    <small className="muted">Generation sends selected project evidence to {generationDestination(generation.provider)}.</small>
     <details className="brief-details">
       <summary>How focus works</summary>
       <p><strong>Balanced</strong> draws on code and discussions. <strong>Code first</strong> emphasizes how the current checkout works. <strong>Sessions first</strong> emphasizes decisions, reasons, and proposed workflows.</p>
       <p>Dependencies come from the repository scan. This choice also applies when Scheme runs after Knowledge from the Generate tab.</p>
     </details>
-    {snapshot?.focus && <small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small>}
+    {snapshot?.focus && <div><small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small></div>}
+    <button type="button" className="secondary" onClick={() => void generate(focus)}
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy}>
+      Generate Scheme
+    </button>
+    {snapshot ? <AskAboutScheme key={`${base}:${revisionId}`} base={base} afterButton={generationNote}
+      generation={generation} visible={visible && !focused} onBusyChange={setQuestionBusy}
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge} context={{
+        kind: 'scheme', generated_at: snapshot.generated_at, ...(revisionId !== null ? { revision_id: revisionId } : {}),
+      }} /> : generationNote}
     {waitingForKnowledge && <Feedback>Waiting for Knowledge…</Feedback>}
     <ErrorBox error={error} />
     <Feedback>{notice}</Feedback>
