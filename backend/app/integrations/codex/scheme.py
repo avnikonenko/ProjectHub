@@ -9,7 +9,8 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ...config import DEFAULT_SCHEME_PACKAGE_CHARS, SCHEME_PACKAGE_CHARS_OPTIONS, scheme_inspection_limits
+from ...config import (ConfigError, DEFAULT_SCHEME_MAX_NODES, DEFAULT_SCHEME_PACKAGE_CHARS,
+                       SCHEME_PACKAGE_CHARS_OPTIONS, scheme_inspection_limits, scheme_max_nodes)
 from ...models import Project, ProjectKnowledge, ProjectScheme, utcnow
 from ...services import begin_session_write
 from . import generation_attempts, progress
@@ -20,7 +21,6 @@ from .protocol import CodexError
 from .revisions import save_revision
 from .scheme_evidence import _index_workflows, collect_evidence
 
-MAX_NODES = 20
 SchemeFocus = Literal['balanced', 'code', 'sessions']
 _FOCUS_GUIDANCE = {
     'balanced': 'Use code for implemented relationships and conversations for design intent and planned work. ',
@@ -91,9 +91,9 @@ def _refs():
     return {'type': 'array', 'minItems': 1, 'maxItems': 6, 'items': _string(200)}
 
 
-def _graph_schema(kind):
+def _graph_schema(kind, max_nodes):
     return _object({
-        'nodes': {'type': 'array', 'maxItems': MAX_NODES, 'items': _object({
+        'nodes': {'type': 'array', 'maxItems': max_nodes, 'items': _object({
             'id': {**_string(64), 'pattern': r'^[A-Za-z][A-Za-z0-9_-]*$'},
             'label': _string(100), 'description': _string(400),
             'type': {'type': 'string', 'enum': list(_NODE_TYPES[kind])},
@@ -108,12 +108,14 @@ def _graph_schema(kind):
     })
 
 
-OUTPUT_SCHEMA = _object({
-    'architecture': _graph_schema('architecture'), 'workflow': _graph_schema('workflow'),
-    'dependencies': {'type': 'array', 'maxItems': 100, 'items': _object({
-        'id': _string(200), 'purpose': _string(300), 'source_ids': _refs(),
-    })},
-})
+def _output_schema(max_nodes):
+    return _object({
+        'architecture': _graph_schema('architecture', max_nodes),
+        'workflow': _graph_schema('workflow', max_nodes),
+        'dependencies': {'type': 'array', 'maxItems': 100, 'items': _object({
+            'id': _string(200), 'purpose': _string(300), 'source_ids': _refs(),
+        })},
+    })
 
 
 def read_scheme(db, project_id):
@@ -207,12 +209,13 @@ def _references(value, available, location='source_ids', *, complete_knowledge_r
     return completed
 
 
-def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False):
+def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False, max_nodes=DEFAULT_SCHEME_MAX_NODES):
     _keys(graph, ('nodes', 'edges', 'explanation'))
     nodes, edges = graph['nodes'], graph['edges']
-    if (not isinstance(nodes, list) or len(nodes) > MAX_NODES
+    if (not isinstance(nodes, list) or len(nodes) > max_nodes
             or not isinstance(edges, list) or len(edges) > MAX_EDGES):
-        raise CodexError('Scheme generation exceeded the graph size limit.')
+        raise CodexError(f'Scheme generation exceeded the graph size limit '
+                         f'(maximum nodes {max_nodes}, maximum edges {MAX_EDGES}).')
     _text(graph['explanation'], 1000)
     identifiers = set()
     for index, node in enumerate(nodes):
@@ -256,7 +259,7 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False):
     return {**validated, 'mermaid': render_mermaid(validated)}
 
 
-def validate_output(raw, evidence, *, complete_knowledge_refs=False):
+def validate_output(raw, evidence, *, complete_knowledge_refs=False, max_nodes=DEFAULT_SCHEME_MAX_NODES):
     try:
         if not isinstance(raw, str) or len(raw) > MAX_OUTPUT_CHARS:
             raise ValueError('Invalid response size')
@@ -266,9 +269,9 @@ def validate_output(raw, evidence, *, complete_knowledge_refs=False):
     _keys(result, ('architecture', 'workflow', 'dependencies'))
     sources = {source['id']: source for source in evidence['sources']}
     architecture = _validate_graph(result['architecture'], 'architecture', sources,
-                                   complete_knowledge_refs=complete_knowledge_refs)
+                                   complete_knowledge_refs=complete_knowledge_refs, max_nodes=max_nodes)
     workflow = _validate_graph(result['workflow'], 'workflow', sources,
-                               complete_knowledge_refs=complete_knowledge_refs)
+                               complete_knowledge_refs=complete_knowledge_refs, max_nodes=max_nodes)
     if not isinstance(result['dependencies'], list) or len(result['dependencies']) > 100:
         raise CodexError('Scheme generation returned invalid dependency explanations.')
     declared = {item['id']: item for item in evidence['dependencies']}
@@ -391,9 +394,13 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         progress.begin(project_id, 'scheme', engine=engine, manager=manager, metrics=metrics,
                        generation_profile=profile.id, scheme_focus=focus)
         progress.update(project_id, stage='Collecting Scheme evidence')
-        limits = scheme_inspection_limits()
+        try:
+            max_nodes = scheme_max_nodes()
+            limits = scheme_inspection_limits()
+        except ConfigError as exc:
+            raise CodexError('Could not read the Scheme limits. Check ProjectHub settings.') from exc
         source_chars, read_bytes, package_chars = limits
-        progress.record_settings(project_id, scheme_source_chars=source_chars,
+        progress.record_settings(project_id, scheme_max_nodes=max_nodes, scheme_source_chars=source_chars,
                                  scheme_read_bytes=read_bytes, scheme_package_chars=package_chars)
         evidence = collect_evidence(engine, project_id, limits)
         knowledge_context = evidence.get('knowledge_context')
@@ -430,7 +437,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         serialized = json.dumps(payload, ensure_ascii=False)
         if len(serialized) > package_limit:
             raise CodexError('Scheme evidence exceeds the generation input limit.')
-        schema = deepcopy(OUTPUT_SCHEMA)
+        schema = _output_schema(max_nodes)
         source_ids = [source['id'] for source in evidence['sources']]
         for kind in ('architecture', 'workflow'):
             for name in ('nodes', 'edges'):
@@ -465,6 +472,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Explain this project visually using only the supplied evidence. Return architecture and workflow '
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
+            f'For each graph, limit the node count to {max_nodes} and the edge count to {MAX_EDGES}. '
             'Keep both diagrams at project-capability level: help a user understand what the project does '
             'and how its main capabilities connect. Use concise domain-language labels supported by the '
             'evidence. Put module names, command names, file formats, and implementation mechanics in '
@@ -579,7 +587,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         progress.update(project_id, stage='Validating Scheme')
         citation_error = None
         try:
-            architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+            architecture, workflow, dependencies = validate_output(
+                raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
         except SchemeKnowledgeCitationError as exc:
             citation_error = exc
             repair = (
@@ -605,7 +614,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                     scheme_requests += 1
                     raw = manager.generate_brief(retry_prompt, schema)
                     progress.update(project_id, stage='Validating Scheme')
-                    architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+                    architecture, workflow, dependencies = validate_output(
+                        raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
                 else:
                     with progress.reserve_generation_time(project_id, 30):
                         progress.check_cancelled()
@@ -614,7 +624,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                         raw = manager.generate_brief(retry_prompt, schema)
                         progress.check_cancelled()
                         progress.update(project_id, stage='Validating Scheme')
-                        candidate, revised, revised_dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+                        candidate, revised, revised_dependencies = validate_output(
+                            raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes)
                         progress.check_cancelled()
                     if (set(_missing_index_workflows(revised, index_pairs)) < set(missing)
                             and preserves_graph(architecture, candidate) and preserves_graph(workflow, revised)):

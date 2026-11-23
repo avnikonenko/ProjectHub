@@ -5,7 +5,7 @@ import time
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
-from ...config import ConfigError, scheme_inspection_limits
+from ...config import ConfigError, DEFAULT_SCHEME_MAX_NODES, scheme_inspection_limits, scheme_max_nodes
 from ...models import ProjectFocusedScheme, utcnow
 from ...services import require_project
 from . import progress
@@ -13,7 +13,7 @@ from .brief import BriefBusy, generation_lock, generation_metadata
 from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
-from .scheme import (MAX_INPUT_CHARS, MAX_OUTPUT_CHARS, _graph_schema, _validate_graph,
+from .scheme import (MAX_EDGES, MAX_INPUT_CHARS, MAX_OUTPUT_CHARS, _graph_schema, _validate_graph,
                      preserves_graph, render_mermaid, scheme_snapshot_for_display)
 from .scheme_evidence import _EvidenceScope, collect_evidence
 from .scheme_handoff_contract import check_contracts, make_contracts
@@ -75,14 +75,14 @@ def read_focused_scheme(db, project_id):
     return None if row is None else scheme_snapshot_for_display(row.snapshot)
 
 
-def _graph(raw, sources):
+def _graph(raw, sources, *, max_nodes=DEFAULT_SCHEME_MAX_NODES):
     try:
         if not isinstance(raw, str) or len(raw) > MAX_OUTPUT_CHARS:
             raise ValueError('Invalid response size')
         result = json.loads(raw)
     except (ValueError, RecursionError) as exc:
         raise CodexError('Focused Scheme returned invalid JSON.') from exc
-    return _validate_graph(result, 'focused', sources)
+    return _validate_graph(result, 'focused', sources, max_nodes=max_nodes)
 
 
 def _missing_named_evidence(graph, sources, instruction):
@@ -131,17 +131,18 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
                        generation_profile=profile.id)
         progress.update(project_id, stage='Collecting focused Scheme evidence')
         try:
+            max_nodes = scheme_max_nodes()
             limits = scheme_inspection_limits()
         except ConfigError as exc:
-            raise CodexError('Could not read the Scheme inspection limits. Check ProjectHub settings.') from exc
+            raise CodexError('Could not read the Scheme limits. Check ProjectHub settings.') from exc
         source_chars, read_bytes, package_chars = limits
-        progress.record_settings(project_id, scheme_source_chars=source_chars,
+        progress.record_settings(project_id, scheme_max_nodes=max_nodes, scheme_source_chars=source_chars,
                                  scheme_read_bytes=read_bytes, scheme_package_chars=package_chars)
         evidence = collect_evidence(engine, project_id, limits, scope=instruction)
         sources = {source['id']: source for source in evidence['sources']}
         if not sources:
             raise CodexError('No project evidence is available for a focused Scheme.')
-        schema = _graph_schema('focused')
+        schema = _graph_schema('focused', max_nodes)
         for name in ('nodes', 'edges'):
             schema['properties'][name]['items']['properties']['source_ids']['items']['enum'] = list(sources)
         package = {'sources': evidence['sources']}
@@ -169,13 +170,15 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
             'the edge. Preserve the supplied relationship and its condition. '
             'Reserve value_transfer and conditional_sequence edge types for these records.\n'
         ) if contracts else ''
-        prompt = PROMPT + contract_prompt + json.dumps({'user_instruction': instruction}, ensure_ascii=False) + '\n' + payload
+        graph_limits = f'Limit the node count to {max_nodes} and the edge count to {MAX_EDGES}.\n'
+        prompt = (PROMPT + graph_limits + contract_prompt
+                  + json.dumps({'user_instruction': instruction}, ensure_ascii=False) + '\n' + payload)
         if len(prompt) > MAX_INPUT_CHARS:
             raise CodexError('Focused Scheme prompt exceeds the generation input limit.')
         progress.update(project_id, stage='Generating focused Scheme')
         raw = manager.generate_brief(prompt, schema)
         progress.update(project_id, stage='Validating focused Scheme')
-        graph = _graph(raw, sources)
+        graph = _graph(raw, sources, max_nodes=max_nodes)
         requests = 1
         missing = set(_missing_named_evidence(graph, sources, instruction))
         missing_handoffs, invalid = check_contracts(graph, contracts)
@@ -195,7 +198,7 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
                         retry = manager.generate_brief(repair, schema)
                         progress.check_cancelled()
                         progress.update(project_id, stage='Validating focused Scheme')
-                        revised = _graph(retry, sources)
+                        revised = _graph(retry, sources, max_nodes=max_nodes)
                         progress.check_cancelled()
                     cited = {ref for item in (*revised['nodes'], *revised['edges']) for ref in item['source_ids']}
                     revised_named = set(_missing_named_evidence(revised, sources, instruction))

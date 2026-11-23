@@ -18,6 +18,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.codex_home is None
     assert settings.extraction_workers == 0
     assert settings.generation_profile == 'quality'
+    assert settings.scheme_max_nodes == config.DEFAULT_SCHEME_MAX_NODES
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
 
@@ -105,6 +106,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '60000')
     monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '4194304')
     monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '180000')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '30')
     for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS',
                 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_TOKEN_LIMIT', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
@@ -114,7 +116,8 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
         def __init__(self, app_factory, **kwargs):
             calls.append((callable(app_factory), kwargs, os.environ['PROJECTHUB_DATA_DIR'],
                           os.environ['PROJECTHUB_GENERATION_TIMEOUT'], os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'],
-                          os.environ['PROJECTHUB_SCHEME_READ_BYTES'], os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS']))
+                          os.environ['PROJECTHUB_SCHEME_READ_BYTES'], os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'],
+                          os.environ['PROJECTHUB_SCHEME_MAX_NODES']))
         def bind_socket(self):
             return nullcontext(listener)
     class Server:
@@ -127,7 +130,7 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     assert cli.main(['start']) == 0
     assert calls == [(True, {
         'factory': True, 'host': '127.0.0.1', 'port': 8888,
-    }, str(tmp_path / 'data'), '120', '60000', '4194304', '180000')]
+    }, str(tmp_path / 'data'), '120', '60000', '4194304', '180000', '30')]
     assert capsys.readouterr().out.strip() == 'ProjectHub: http://127.0.0.1:8888'
 
 
@@ -197,11 +200,13 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '80000')
     monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '8388608')
     monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '220000')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '10')
     loaded.apply_environment()
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '4'
     assert os.environ['PROJECTHUB_SCHEME_SOURCE_CHARS'] == '40000'
     assert os.environ['PROJECTHUB_SCHEME_READ_BYTES'] == '2097152'
     assert os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'] == '140000'
+    assert os.environ['PROJECTHUB_SCHEME_MAX_NODES'] == '20'
 
 
 @pytest.mark.parametrize('value', [True, -1, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])
@@ -278,3 +283,16 @@ def test_token_limit_file_and_environment_precedence(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', 'not-an-integer')
     with pytest.raises(ConfigError, match='ai.generation_token_limit must be an integer'):
         config.generation_token_limit()
+
+
+def test_scheme_node_limit_file_and_environment_precedence(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    path.write_text('[ai]\nscheme_max_nodes = 24\n')
+    monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
+    monkeypatch.delenv('PROJECTHUB_SCHEME_MAX_NODES', raising=False)
+    assert config.scheme_max_nodes() == 24
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '40')
+    assert config.scheme_max_nodes() == 40
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '41')
+    with pytest.raises(ConfigError, match='ai.scheme_max_nodes must be an integer from 1 to 40'):
+        config.scheme_max_nodes()

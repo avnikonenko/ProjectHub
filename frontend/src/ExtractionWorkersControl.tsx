@@ -15,6 +15,7 @@ type WorkerSettings = {
   budgetSettings?: { value: number; configured: number; min: number; max: number } | null;
   tokenLimitSettings?: { value: number; configured: number; min: number; max: number } | null;
   schemeSourceSettings?: ReturnType<typeof parseSchemeSourceSettings>;
+  schemeNodeLimitSettings?: { value: number; configured: number; min: number; max: number } | null;
   advancedSchemeSettings: ReturnType<typeof parseAdvancedSchemeSettings>;
 };
 
@@ -89,13 +90,26 @@ function settingsResponse(value: unknown): WorkerSettings {
     }
     tokenLimitSettings = { value: effective, configured, min, max };
   }
+  let schemeNodeLimitSettings = null;
+  if ('scheme_max_nodes' in budget || 'configured_scheme_max_nodes' in budget) {
+    const min = budget.min_scheme_max_nodes;
+    const max = budget.max_scheme_max_nodes;
+    const effective = budget.scheme_max_nodes;
+    const configured = budget.configured_scheme_max_nodes;
+    if (!validCount(min) || !validCount(max, min) || !validCount(effective, min) || !validCount(configured, min)
+      || effective > max || configured > max) {
+      throw new Error('AI settings returned an unsupported Scheme node limit.');
+    }
+    schemeNodeLimitSettings = { value: effective, configured, min, max };
+  }
   return { ...settings, selected_extraction_workers: selected,
     profileSettings: parseGenerationProfileSettings(value), budgetSettings, tokenLimitSettings,
-    schemeSourceSettings: parseSchemeSourceSettings(value), advancedSchemeSettings: parseAdvancedSchemeSettings(value) } as WorkerSettings;
+    schemeSourceSettings: parseSchemeSourceSettings(value), schemeNodeLimitSettings,
+    advancedSchemeSettings: parseAdvancedSchemeSettings(value) } as WorkerSettings;
 }
 
 type SettingField = 'extraction_workers' | 'generation_profile' | 'generation_budget' | 'generation_token_limit'
-  | 'scheme_source_chars' | AdvancedSchemeField;
+  | 'scheme_source_chars' | 'scheme_max_nodes' | AdvancedSchemeField;
 type SettingOption = string | number;
 type Setting = { value: SettingOption; configured: SettingOption } &
   ({ min: number; max: number } | { options: readonly SettingOption[] });
@@ -107,6 +121,7 @@ const savedMessages: Record<SettingField, string> = {
   generation_budget: 'Overall time budget saved.',
   generation_token_limit: 'Token limit saved.',
   scheme_source_chars: 'Scheme excerpt budget saved.',
+  scheme_max_nodes: 'Scheme node limit saved.',
   scheme_read_bytes: 'Local file read limit saved.',
   scheme_package_chars: 'Final evidence package limit saved.',
 };
@@ -125,6 +140,7 @@ function settingFor(settings: WorkerSettings | null, field: SettingField, numeri
     case 'generation_budget': return settings.budgetSettings;
     case 'generation_token_limit': return settings.tokenLimitSettings;
     case 'scheme_source_chars': return settings.schemeSourceSettings;
+    case 'scheme_max_nodes': return settings.schemeNodeLimitSettings;
     default: return settings.advancedSchemeSettings[field];
   }
 }
@@ -142,6 +158,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const budgetHelpId = useId();
   const tokenLimitHelpId = useId();
   const schemeHelpId = useId();
+  const schemeNodeHelpId = useId();
   const advancedSchemeHelpId = useId();
   const [settings, setSettings] = useState<WorkerSettings | null>(null);
   const [loading, setLoading] = useState(false);
@@ -285,6 +302,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const budget = settings?.budgetSettings;
   const tokenLimit = settings?.tokenLimitSettings;
   const schemeBudget = settings?.schemeSourceSettings;
+  const schemeNodeLimit = settings?.schemeNodeLimitSettings;
   const advancedScheme = settings?.advancedSchemeSettings;
   const workerInput = inputValue('extraction_workers');
   const autoWorkers = workerInput === '0' && !drafts.extraction_workers?.numericInput;
@@ -317,6 +335,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const workerOverride = settings && settings.selected_extraction_workers !== settings.configured_extraction_workers;
   const validBudget = settingValue(budget, inputValue('generation_budget')) !== undefined;
   const validTokenLimit = settingValue(tokenLimit, inputValue('generation_token_limit')) !== undefined;
+  const validSchemeNodeLimit = settingValue(schemeNodeLimit, inputValue('scheme_max_nodes')) !== undefined;
   return <div>
     {loading && <Feedback>Loading AI settings…</Feedback>}
     <ErrorBox error={loadError} />
@@ -437,6 +456,23 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
       {saveFeedback('scheme_source_chars')}
       {schemeBudget.value !== schemeBudget.configured
         && <p><small>Startup environment overrides the saved excerpt budget ({schemeBudget.configured.toLocaleString()} characters).</small></p>}
+    </>}
+    {schemeNodeLimit && <>
+      <label>
+        Scheme node limit
+        <input type="number" min={schemeNodeLimit.min} max={schemeNodeLimit.max} step={1}
+          aria-describedby={schemeNodeHelpId} aria-invalid={!validSchemeNodeLimit}
+          value={inputValue('scheme_max_nodes')} disabled={loading}
+          {...numericEvents('scheme_max_nodes')} />
+      </label>
+      {saveFeedback('scheme_max_nodes')}
+      {!validSchemeNodeLimit && <Feedback>Enter a whole number from {schemeNodeLimit.min} to {schemeNodeLimit.max}.</Feedback>}
+      <SettingsHelp title="About the Scheme node limit" id={schemeNodeHelpId}>
+        <p>Caps the number of nodes in each generated diagram. Architecture, Workflow, and Focused Scheme each
+          get their own limit. The default is 20. Changes apply to the next generation.</p>
+      </SettingsHelp>
+      {schemeNodeLimit.value !== schemeNodeLimit.configured
+        && <p><small>Startup environment overrides the saved node limit ({schemeNodeLimit.configured}).</small></p>}
     </>}
     {advancedScheme && advancedSchemeFields.some(({ name }) => advancedScheme[name]) && <SettingsHelp title="Advanced Scheme settings">
       <p id={advancedSchemeHelpId}>Saved limits apply to the next Scheme inspection. The excerpt budget still controls how much source text Scheme selects.</p>

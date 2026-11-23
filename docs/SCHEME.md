@@ -31,6 +31,12 @@ Green marks entries, purple marks outputs, and blue marks other components.
    used** to check the supporting excerpts.
 
 Generation sends selected evidence to the provider chosen in the project's AI settings.
+
+**Settings → Scheme node limit** sets the maximum number of nodes per diagram
+for Architecture, Workflow, and Focused Scheme. Choose 1 to 40 nodes (default 20).
+Each diagram can contain up to 40 relationships. The setting applies when the next
+Scheme generation starts.
+
 The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
 Focus leaves the repository dependency scan independent of the diagrams.

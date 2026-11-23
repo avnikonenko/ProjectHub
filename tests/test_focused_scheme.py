@@ -41,6 +41,7 @@ def diagram(source='repo:search'):
 
 def test_focused_route_saves_instruction_and_cited_graph_separately(database, monkeypatch):
     calls = []
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '1')
 
     def evidence(engine, pid, limits, *, scope):
         assert engine is database and pid == 1
@@ -53,7 +54,10 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
         response = diagram()
 
         def generate_brief(self, prompt, schema):
-            assert schema['properties']['nodes']['items']['properties']['source_ids']['items']['enum'] == ['repo:search']
+            nodes = schema['properties']['nodes']
+            assert nodes['maxItems'] == 1
+            assert nodes['items']['properties']['source_ids']['items']['enum'] == ['repo:search']
+            assert 'Limit the node count to 1 and the edge count to 40.' in prompt
             assert json.loads(prompt.splitlines()[-2])['user_instruction'] == calls[-1]
             return json.dumps(self.response)
 
@@ -76,7 +80,9 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
         assert saved['graph']['nodes'][0]['paths'] == ['search.py']
         assert 'Index saved text' in saved['graph']['mermaid']
         assert routes.get_focused_scheme(1, db) == {'snapshot': saved}
-        assert routes.generation_status(1, db, kind='focused_scheme')['latest_attempt']['state'] == 'completed'
+        attempt = routes.generation_status(1, db, kind='focused_scheme')['latest_attempt']
+        assert attempt['state'] == 'completed'
+        assert attempt['settings']['scheme_max_nodes'] == 1
         assert routes.get_focused_scheme(2, db) == {'snapshot': None}
         with pytest.raises(HTTPException) as missing:
             routes.get_focused_scheme(999, db)
@@ -86,6 +92,11 @@ def test_focused_route_saves_instruction_and_cited_graph_separately(database, mo
         with pytest.raises(HTTPException, match='foreign evidence') as rejected:
             routes.generate_focused_scheme(1, body, request, db)
         assert rejected.value.status_code == 503
+        manager.response = diagram()
+        manager.response['nodes'].append({**manager.response['nodes'][0], 'id': 'query'})
+        with pytest.raises(HTTPException, match='graph size limit.*maximum nodes 1') as oversized:
+            routes.generate_focused_scheme(1, body, request, db)
+        assert oversized.value.status_code == 503
         assert routes.get_focused_scheme(1, db) == {'snapshot': saved}
         assert db.get(ProjectScheme, 1).snapshot['generated_at'] == 'earlier'
 

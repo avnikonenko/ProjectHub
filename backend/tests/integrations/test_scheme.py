@@ -62,6 +62,42 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
     assert dependencies[0]['purpose_source_ids'] == ['file:api.py']
 
 
+def test_scheme_uses_configured_limit_per_graph_and_preserves_the_saved_result(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Project'))
+        db.commit()
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: evidence())
+    response = output()
+    for kind, node_type in (('architecture', 'service'), ('workflow', 'operation')):
+        response[kind]['nodes'] = [{**node(f'item{index}'), 'type': node_type} for index in range(21)]
+        response[kind]['edges'] = []
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            assert f'For each graph, limit the node count to {self.limit} and the edge count to 40.' in prompt
+            for kind in ('architecture', 'workflow'):
+                graph = schema['properties'][kind]['properties']
+                assert graph['nodes']['maxItems'] == self.limit
+                assert graph['edges']['maxItems'] == 40
+            return json.dumps(response)
+
+    try:
+        manager = Manager()
+        manager.limit = 21
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.limit))
+        saved = scheme.refresh_scheme(engine, 1, manager)
+        assert len(saved['architecture']['nodes']) == len(saved['workflow']['nodes']) == 21
+        manager.limit = 20
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(manager.limit))
+        with pytest.raises(CodexError, match='graph size limit.*maximum nodes 20'):
+            scheme.refresh_scheme(engine, 1, manager)
+        with Session(engine) as db:
+            assert scheme.read_scheme(db, 1) == saved
+    finally:
+        engine.dispose()
+
+
 @pytest.mark.parametrize('change,match', [
     (lambda result: result['architecture']['nodes'].append(deepcopy(result['architecture']['nodes'][0])), 'duplicate node'),
     (lambda result: result['architecture']['nodes'][0].update(id=' api '), 'node ID'),
