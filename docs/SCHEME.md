@@ -15,6 +15,9 @@ results makes no AI request.
 
 Component labels indicate **observed**, **proposed**, or **uncertain** status.
 An observation has supporting evidence. Verify runtime behavior separately.
+General Scheme keeps method stages concise. Open the cited sources or use
+Focused Scheme for parameter details. A branch description may mention
+experimental status or a validation gap when the cited evidence supports it.
 Green marks entries, purple marks outputs, and blue marks other components.
 
 ## Generate or refresh

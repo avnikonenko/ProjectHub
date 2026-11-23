@@ -19,8 +19,9 @@ _TRACE_ROUTINE_CALLS = {
     'debug', 'dict', 'enumerate', 'error', 'extend', 'format', 'get', 'getcwd', 'info', 'items', 'join', 'keys', 'len', 'list', 'open',
     'print', 'range', 'setdefault', 'strip', 'sum', 'tuple', 'update', 'values', 'warning', 'zip',
 }
-_TRACE_PRIORITY_TERMS = ('backend', 'checkpoint', 'dispatch', 'dock', 'generation', 'mutat',
-                         'population', 'program', 'restore', 'resume', 'select')
+_TRACE_PRIORITY_TERMS = ('analys', 'backend', 'checkpoint', 'converg', 'dispatch', 'dock',
+                         'equilibr', 'generation', 'mutat', 'population', 'program',
+                         'restore', 'resume', 'rmsd', 'select', 'simulat')
 
 
 def _call_shape(call, shape, *, max_arguments=_MAX_ARGUMENTS):

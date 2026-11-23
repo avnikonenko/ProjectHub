@@ -174,6 +174,40 @@ def test_general_scheme_includes_referenced_configuration_with_its_active_sectio
     engine.dispose()
 
 
+def test_general_scheme_keeps_linked_analysis_and_simulation_templates(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'pyproject.toml').write_text(
+        '[project.scripts]\nsimulate="simulate:main"\nconvert="convert:main"\ncompare="compare:main"\n')
+    (repo / 'simulate.py').write_text(
+        'from compare import compare_trajectories\n'
+        'def main():\n'
+        '    equilibrate("nvt.mdp", "npt.mdp")\n'
+        '    run_simulation("production.mdp")\n'
+        '    return compare_trajectories()\n')
+    (repo / 'convert.py').write_text('def main():\n    write_format()\n')
+    (repo / 'compare.py').write_text('def main():\n    return compare_trajectories()\n'
+                                    'def compare_trajectories():\n    return aggregate_rmsd()\n')
+    (repo / 'templates').mkdir()
+    (repo / 'templates/nvt.mdp').write_text('dt = 0.002\npcoupl = no\n')
+    (repo / 'templates/npt.mdp').write_text('dt = 0.002\npcoupl = Parrinello-Rahman\n')
+    (repo / 'templates/production.mdp').write_text('dt = 0.002\nconstraints = h-bonds\n')
+    (repo / 'unused.mdp').write_text('dt = 0.001\n')
+    engine = setup(tmp_path, repo)
+    try:
+        source_budget = 4500
+        result = evidence.collect_evidence(engine, 1, (source_budget, 12000, 20000))
+        sources = {row.get('path'): row['text'] for row in result['sources']}
+        assert 'pcoupl = no' in sources['templates/nvt.mdp']
+        assert 'pcoupl = Parrinello-Rahman' in sources['templates/npt.mdp']
+        assert 'dt = 0.002' in sources['templates/production.mdp']
+        assert 'compare_trajectories()' in sources['simulate.py']
+        assert 'aggregate_rmsd()' in sources['compare.py']
+        assert 'unused.mdp' not in sources
+        assert sum(len(row['text']) for row in result['sources']) <= source_budget
+    finally:
+        engine.dispose()
+
+
 def test_mixed_resolved_and_missing_entrypoints_report_partial_coverage(tmp_path):
     repo = repository(tmp_path)
     (repo / 'pyproject.toml').write_text('[project.scripts]\n'

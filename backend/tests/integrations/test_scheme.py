@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import scheme
+from backend.app.integrations.codex import progress, scheme
 from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectKnowledge, ProjectScheme
@@ -150,6 +150,8 @@ def test_generation_calls_once_and_preserves_saved_snapshot_on_failure(tmp_path,
             assert 'represent their purpose rather than giving each command a node' in prompt
             assert 'Preserve documented domain purposes of analysis and visualization' in prompt
             assert 'archived, backup, example, or experimental files' in prompt
+            assert 'Lack of validation evidence alone is not a reason to label an implementation experimental' in prompt
+            assert 'Keep exact parameter values and calculations in cited evidence unless essential' in prompt
             assert 'static' in prompt and 'runtime correctness' in prompt
             assert 'Preserve conflicts' in prompt
             assert 'Do not use tools' in prompt
@@ -454,7 +456,7 @@ def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid'])
+@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid', 'provider_error', 'cancelled'])
 def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -477,6 +479,10 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
             prompts.append(prompt)
             graph = output()
             if len(prompts) > 1:
+                if repair == 'provider_error':
+                    raise CodexError('Provider is temporarily unavailable.')
+                if repair == 'cancelled':
+                    raise progress.GenerationCancelled()
                 if repair == 'covered':
                     graph['workflow']['nodes'] = [
                         {**node('find', refs=['migration', 'query']), 'type': 'operation'},
@@ -485,10 +491,23 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
                     graph['architecture']['edges'][0]['target'] = 'missing'
             return json.dumps(graph)
 
+    if repair == 'cancelled':
+        with pytest.raises(progress.GenerationCancelled):
+            scheme.refresh_scheme(engine, 1, Manager())
+        assert len(prompts) == 2
+        with Session(engine) as db:
+            assert scheme.read_scheme(db, 1) is None
+        engine.dispose()
+        return
+
     saved = scheme.refresh_scheme(engine, 1, Manager())
     assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
     assert '["migration", "query"]' in prompts[-1]
     warning = any('did not fully cite' in value for value in saved['coverage']['limitations'])
     assert warning == (repair != 'covered')
+    rewrite_warning = any('optional indexing rewrite failed' in value for value in saved['coverage']['limitations'])
+    assert rewrite_warning == (repair in {'invalid', 'provider_error'})
     assert saved['architecture']['edges'][0]['target'] == 'replacement'
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == saved
     engine.dispose()

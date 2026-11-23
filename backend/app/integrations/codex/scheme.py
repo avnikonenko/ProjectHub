@@ -491,6 +491,10 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Keep design_status separate from graph status: AGREED does not establish implementation, '
             'executed tests or scientific validation. An agreed plan without implementation evidence '
             'remains proposed in the graph; unresolved or conflicting relationships remain uncertain. '
+            'Call a capability experimental only when the supplied evidence explicitly identifies the '
+            'implementation as experimental. If evidence documents a material validation gap or failure, '
+            'describe the specific limitation briefly without inferring implementation status from it. '
+            'Lack of validation evidence alone is not a reason to label an implementation experimental. '
             'If a proposed capability is a major branch of an implemented workflow, give it a separate proposed '
             'node so its status is visible without opening an observed node’s description. '
             'Retain the item scope and rationale; do not confuse project-wide objectives with first-release '
@@ -525,7 +529,11 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'files, execute code, or change anything. Before returning the JSON, check the workflow descriptions '
             'against supplied repository configuration entries. If a template shows active and commented-out '
             'methods for a workflow branch, name both in that branch description, say which the shipped template '
-            'enables, and cite the template. State the template scope without assuming user overrides.\n' + serialized
+            'enables, and cite the template. Name distinct method stages when the evidence supports them. '
+            'Keep exact parameter values and calculations in cited evidence unless essential to understanding '
+            'a workflow decision. Describe shipped settings as template settings unless code also establishes '
+            'their runtime use. When an analysis compares inputs or outputs, briefly describe the purpose and '
+            'result of the comparison without claiming successful validation.\n' + serialized
         )
         if len(prompt) > MAX_INPUT_CHARS:
             raise CodexError('Scheme prompt exceeds the generation input limit.')
@@ -555,15 +563,20 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             progress.check_cancelled()
             progress.update(project_id, stage='Retrying Scheme citations' if citation_error else 'Checking Scheme index handoffs')
             scheme_requests += 1
-            raw = manager.generate_brief(retry_prompt, schema)
-            progress.update(project_id, stage='Validating Scheme')
             try:
+                raw = manager.generate_brief(retry_prompt, schema)
+                progress.update(project_id, stage='Validating Scheme')
                 architecture, workflow, dependencies = validate_output(raw, evidence, complete_knowledge_refs=True)
+            except progress.GenerationCancelled:
+                raise
             except CodexError:
                 if citation_error is not None:
                     raise
-                # The first graph already passed validation. Keep it with the
-                # visible coverage limitation when the optional rewrite is invalid.
+                progress.check_cancelled()
+                evidence['coverage']['limitations'] = [
+                    *evidence['coverage']['limitations'],
+                    'The optional indexing rewrite failed. The first validated Scheme was kept.',
+                ]
         elif citation_error is not None:
             raise citation_error
         if _missing_index_workflows(workflow, index_pairs):

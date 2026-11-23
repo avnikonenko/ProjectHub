@@ -28,6 +28,7 @@ from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_js_scope import focused_call_owner, focused_ui_declarations
 from .scheme_knowledge import collect_published_knowledge
+from .scheme_mdp import mdp_excerpt
 from .scheme_migration_sql import compact_migration_sql, migration_sql_declarations
 from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_namelist import namelist_excerpt
@@ -388,6 +389,7 @@ _MIGRATION_SCOPE_WORDS = frozenset('database db fts fts5 index migration schema 
 _MAX_FOCUSED_MIGRATIONS = 48
 _MAX_FOCUSED_SCHEMA_SOURCES = 3
 _WORKFLOW_ROUTE = re.compile(r'/(?:import|search|generate|generation|scheme)(?=[/ ?])')
+_WORKFLOW_CONFIG = re.compile(r'(?<![\w.-])[\w.-]+\.(?:in|mdp)(?![\w.-])', re.I)
 _VIRTUAL_INDEX = re.compile(r'(?m)^L\d+: CREATE VIRTUAL TABLE (\w+) USING fts[345]\b', re.I)
 _INDEX_WRITE = re.compile(r'(?m)^L\d+: CREATE TRIGGERS? [^\n]+: [^\n]*\bINSERT INTO (\w+)\b', re.I)
 _INDEX_QUERY = re.compile(r'(?m)^L\d+: SELECT FROM \w+ WHERE (\w+) MATCH\b', re.I)
@@ -562,11 +564,13 @@ def _general_repository_order(sources, entrypoints, declared_modules, handoffs, 
     lanes = [deque() for _ in range(9)]
     for source in sources:
         path = source['path']
-        lane = (0 if path in entrypoints else 1 if path in handoffs else 2 if path in configurations
+        lane = (1 if path in declared_modules and path in reachable else 0 if path in entrypoints
+                else 1 if path in handoffs else 2 if path in configurations
                 else 3 if path in guides else 4 if _manifest(path) else 5 if 'HTTP route ' in source['text']
                 else 6 if path in route_targets else 7 if path in reachable else 8)
         lanes[lane].append(source)
     lanes[0] = deque(sorted(lanes[0], key=lambda source: declared_modules.get(source['path'], len(declared_modules))))
+    lanes[1] = deque(sorted(lanes[1], key=lambda source: source['path'] not in declared_modules))
     order = []
     pending = deque(lane for lane in lanes if lane)
     while pending:
@@ -1634,7 +1638,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         scope_identity = {'scope': focus.value, 'scope_policy': 10, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v16', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v17', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1680,7 +1684,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         configurations = {}
         if not focus:
             for path in paths:
-                if PurePosixPath(path).suffix.casefold() == '.in' and not _manifest(path) and not _historical_path(path):
+                if (PurePosixPath(path).suffix.casefold() in {'.in', '.mdp'}
+                        and not _manifest(path) and not _historical_path(path)):
                     configurations.setdefault(PurePosixPath(path).name, []).append(path)
         declared_commands, guide_words = set(), {}
         while pending:
@@ -1760,7 +1765,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                             if target not in scanned and target not in pending:
                                 pending.append(target)
                     if configurations and (is_code or is_guide) and not _historical_path(relative):
-                        for name in dict.fromkeys(re.findall(r'(?<![\w.-])[\w.-]+\.in(?![\w.-])', value)):
+                        for name in dict.fromkeys(_WORKFLOW_CONFIG.findall(value)):
                             matches = configurations.get(name, ())
                             if len(matches) > 1 and _production_path(relative):
                                 matches = [path for path in matches if not any(
@@ -1831,7 +1836,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     excerpt = '\n'.join(part for part in (declared_excerpt, syntax) if part)
                     provenance = 'repository test source' if _scheme_category(relative) == 'tests' else 'observed in code'
                 elif relative in configuration_paths or relative in named_files and PurePosixPath(relative).suffix.casefold() == '.in':
-                    excerpt = namelist_excerpt(value, limit=_MAX_EXCERPT)
+                    excerpt_config = mdp_excerpt if PurePosixPath(relative).suffix.casefold() == '.mdp' else namelist_excerpt
+                    excerpt = excerpt_config(value, limit=_MAX_EXCERPT)
                     provenance = 'repository configuration'
                 elif relative in named_files:
                     excerpt = named_file_excerpt(value, relative, limit=_MAX_EXCERPT, priority=focus.score)
@@ -1934,6 +1940,10 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 if size + sum(len(source['text']) for source in missing) <= workflow_limit:
                     for source in missing:
                         add_source(source, workflow_limit)
+            config_limit = size + repository_reserve // 8
+            for source in repository_sources:
+                if source['path'] in configuration_paths:
+                    add_source(source, config_limit)
             priority_order = [*(source for source in repository_sources if source['path'] not in scoped_migrations),
                               *deferred]
         for source in priority_order:
