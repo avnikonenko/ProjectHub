@@ -14,6 +14,7 @@ from backend.app.db import initialize
 from backend.app.integrations.codex import generation_attempts as attempts, generation_token_budget, progress, router as routes, scheme
 from backend.app.integrations.codex.ai_instructions import ai_instructions
 from backend.app.integrations.codex.generation_metrics import begin_model_request
+from backend.app.integrations.codex.knowledge_brief import generate_knowledge_brief
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectAIInstructions, ProjectKnowledge, ProjectScheme, utcnow
 
@@ -86,7 +87,8 @@ def _reported_request(name):
                                          'tokenUsage': {'total': {'totalTokens': count}}})
 
 
-def test_rejected_knowledge_account_does_not_reserve_token_action(api, monkeypatch):
+@pytest.mark.parametrize('path', ('knowledge/brief', 'ask'))
+def test_rejected_account_does_not_reserve_token_action(api, monkeypatch, path):
     monkeypatch.setattr(generation_token_budget, '_actions', {})
     monkeypatch.setattr(generation_token_budget, '_MAX_ACTIONS', 1)
     select_manager = routes.select_generation_manager
@@ -97,11 +99,13 @@ def test_rejected_knowledge_account_does_not_reserve_token_action(api, monkeypat
         return select_manager(manager, payload)
 
     monkeypatch.setattr(routes, 'select_generation_manager', validate)
+    monkeypatch.setattr(routes, 'retrieve_passages', lambda *_: [{'text': 'Saved passage'}])
     prefix = '/api/projects/1/codex'
+    payload = (body(model='unavailable') if path == 'knowledge/brief' else
+               {'confirmed': True, 'model': 'unavailable', 'question': 'Explain the saved passage'})
     for _ in range(2):
         action = str(uuid4())
-        rejected = api.client.post(f'{prefix}/knowledge/brief', json=body(
-            model='unavailable', generation_action_id=action))
+        rejected = api.client.post(f'{prefix}/{path}', json={**payload, 'generation_action_id': action})
         assert rejected.status_code == 503
         assert rejected.json()['detail'] == 'The selected generation account is unavailable.'
         assert api.client.get(f'{prefix}/generation/actions/{action}').status_code == 404
@@ -111,6 +115,39 @@ def test_rejected_knowledge_account_does_not_reserve_token_action(api, monkeypat
         generate_scheme=False, generation_action_id=action))
     assert accepted.status_code == 200, accepted.text
     assert api.client.get(f'{prefix}/generation/actions/{action}').status_code == 200
+
+
+@pytest.mark.parametrize(('path', 'kind', 'payload'), [
+    ('knowledge/brief', 'knowledge', body()),
+    ('brief', 'brief', {}),
+    ('scheme', 'scheme', {}),
+    ('scheme/focused', 'focused_scheme', {'instruction': 'Explain input and output'}),
+    ('qa', 'qa', {}),
+    ('parameters', 'parameters', {}),
+    ('tags', 'tags', {'target': 'knowledge', 'publication_id': 'old'}),
+])
+def test_busy_routes_release_unused_token_actions(api, monkeypatch, path, kind, payload):
+    monkeypatch.setattr(generation_token_budget, '_actions', {})
+    monkeypatch.setattr(generation_token_budget, '_MAX_ACTIONS', 1)
+    monkeypatch.setattr(routes, 'generate_knowledge_brief', generate_knowledge_brief)
+    monkeypatch.setattr(routes, 'refresh_scheme', scheme.refresh_scheme)
+    prefix = '/api/projects/1/codex'
+    busy_action = str(uuid4())
+    job_lock = routes.generation_lock.for_job(1, kind)
+
+    assert job_lock.acquire(blocking=False)
+    try:
+        rejected = api.client.post(f'{prefix}/{path}', json={
+            **payload, 'confirmed': True, 'generation_action_id': busy_action})
+        assert rejected.status_code == 409, rejected.text
+    finally:
+        job_lock.release()
+    assert api.client.get(f'{prefix}/generation/actions/{busy_action}').status_code == 404
+
+    monkeypatch.setattr(routes, 'refresh_brief', lambda *_: {'result': 'accepted'})
+    accepted = api.client.post(f'{prefix}/brief', json={
+        'confirmed': True, 'generation_action_id': str(uuid4())})
+    assert accepted.status_code == 200, accepted.text
 
 
 def test_parallel_routes_share_one_allowance_and_preserve_the_saved_scheme(api, monkeypatch):

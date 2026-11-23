@@ -35,7 +35,7 @@ from .ask import answer_project, retrieve_passages
 from .scheme_ask import current_repository_passages, saved_scheme_passages
 from . import progress
 from . import generation_attempts as attempts
-from .generation_token_budget import action_budget, action_budget_status, use_token_budget
+from .generation_token_budget import action_budget_status, use_action_budget, use_token_budget
 from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id,
                         list_revisions, qa_revision_matches)
 from .history_duplicates import annotate_page
@@ -244,8 +244,9 @@ def review_manager(manager, body, profile):
 def _request_token_budget(project_id, body, engine):
     budget = progress.new_token_budget()
     if body.generation_action_id is not None:
-        return action_budget(project_id, body.generation_action_id, budget.limit, engine=engine)
-    return budget
+        return use_action_budget(project_id, body.generation_action_id, budget.limit, engine=engine,
+                                 discard_on=(BriefBusy, TagGenerationConflict))
+    return use_token_budget(budget)
 
 
 def database(request: Request):
@@ -679,7 +680,7 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+        with _request_token_budget(project_id, body, request.app.state.engine), \
              use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_brief(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
@@ -777,15 +778,14 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             scheme_manager = review_manager(manager, body, scheme_profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        token_budget = _request_token_budget(project_id, body, request.app.state.engine)
-        if body.generate_scheme:
-            engine = request.app.state.engine
-            dependency_token = attempts.queue_dependency(engine, project_id,
-                settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id,
-                          'scheme_focus': body.scheme_focus,
-                          'generation_token_limit': token_budget.limit})
-        with use_token_budget(token_budget), use_project_instructions(instructions):
-            result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
+        engine = request.app.state.engine
+        with _request_token_budget(project_id, body, engine) as token_budget, use_project_instructions(instructions):
+            if body.generate_scheme:
+                dependency_token = attempts.queue_dependency(engine, project_id,
+                    settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id,
+                              'scheme_focus': body.scheme_focus,
+                              'generation_token_limit': token_budget.limit})
+            result = generate_knowledge_brief(engine, project_id, selected, publish=True)
             if body.generate_scheme:
                 publication_id = result.get('publication_id')
                 if result.get('published') is not True or not isinstance(publication_id, str) or not publication_id:
@@ -876,7 +876,7 @@ def generate_scheme(project_id: int, body: SchemeGenerationInput, request: Reque
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+        with _request_token_budget(project_id, body, request.app.state.engine), \
              use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_scheme(request.app.state.engine, project_id, selected, focus=body.focus)
     except BriefBusy as exc:
@@ -901,7 +901,7 @@ def generate_focused_scheme(project_id: int, body: FocusedSchemeGenerationInput,
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+        with _request_token_budget(project_id, body, request.app.state.engine), \
              use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_focused_scheme(request.app.state.engine, project_id, selected, body.instruction)
     except BriefBusy as exc:
@@ -937,7 +937,7 @@ def generate_parameters(project_id: int, body: GenerationInput, request: Request
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+        with _request_token_budget(project_id, body, request.app.state.engine), \
              use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_parameters(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
@@ -1011,7 +1011,7 @@ def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
         selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), use_project_instructions(instructions):
+        with _request_token_budget(project_id, body, request.app.state.engine), use_project_instructions(instructions):
             return generate_tags(request.app.state.engine, project_id, selected, target=body.target,
                                  publication_id=body.publication_id, generated_at=body.generated_at,
                                  revision_id=body.revision_id)
@@ -1032,7 +1032,7 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+        with _request_token_budget(project_id, body, request.app.state.engine), \
              use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_qa(request.app.state.engine, project_id, selected, max_items=body.max_items)
     except BriefBusy as exc:
@@ -1075,27 +1075,26 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     job_lock = generation_lock.for_job(project_id, 'ask')
     if not job_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
-    scope = ExitStack()
     try:
-        scope.enter_context(use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)))
-        request_id = str(body.request_id) if body.request_id is not None else None
-        progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False, request_id=request_id)
-        sources = matches
-        if snapshot is not None:
-            progress.update(project_id, stage='Gathering evidence for the saved Scheme')
-            sources = saved_scheme_passages(snapshot, scheme_context.kind, body.question, db=db, project_id=project_id)
-            db.rollback()
-            sources.extend({**source, 'kind': 'current_project_passage',
-                            'label': 'Current project · ' + source['label']} for source in matches)
-            if repository_linked:
-                sources.extend(current_repository_passages(request.app.state.engine, project_id, body.question))
-            sources = [{**source, 'id': str(index)} for index, source in enumerate(sources, 1)]
-            progress.check_cancelled()
         manager = generation_base(request.app, project_id, body.provider)
         selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        engine = request.app.state.engine
+        with _request_token_budget(project_id, body, engine), use_project_instructions(instructions):
+            request_id = str(body.request_id) if body.request_id is not None else None
+            progress.begin(project_id, 'ask', engine=engine, saves_result=False, request_id=request_id)
+            sources = matches
+            if snapshot is not None:
+                progress.update(project_id, stage='Gathering evidence for the saved Scheme')
+                sources = saved_scheme_passages(snapshot, scheme_context.kind, body.question, db=db, project_id=project_id)
+                db.rollback()
+                sources.extend({**source, 'kind': 'current_project_passage',
+                                'label': 'Current project · ' + source['label']} for source in matches)
+                if repository_linked:
+                    sources.extend(current_repository_passages(engine, project_id, body.question))
+                sources = [{**source, 'id': str(index)} for index, source in enumerate(sources, 1)]
+                progress.check_cancelled()
             progress.update(project_id, stage='Generating Scheme answer' if snapshot is not None else 'Generating project answer')
             options = {'about_scheme': True} if snapshot is not None else {}
             result = answer_project(selected, body.question, sources, **options)
@@ -1110,7 +1109,6 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
         progress.finish(project_id, error='Project answer generation failed.')
         raise
     finally:
-        scope.close()
         job_lock.release()
 
 

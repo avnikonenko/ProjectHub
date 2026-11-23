@@ -74,11 +74,14 @@ def test_group_original_limit_project_and_engine_isolation(monkeypatch):
     first_engine = Engine()
     other_engine = Engine()
     monkeypatch.setattr(budgets, '_actions', {})
-    group = budgets.action_budget(1, 'action', 100, engine=first_engine)
-    assert budgets.action_budget(1, 'action', 200, engine=first_engine) is group
+    with budgets.use_action_budget(1, 'action', 100, engine=first_engine) as group:
+        assert group.limit == 100
+    with budgets.use_action_budget(1, 'action', 200, engine=first_engine) as late:
+        assert late is group
     assert budgets.action_budget_status(2, 'action', engine=first_engine) is None
     assert budgets.action_budget_status(1, 'action', engine=other_engine) is None
-    assert budgets.action_budget(1, 'action', 200, engine=other_engine).limit == 200
+    with budgets.use_action_budget(1, 'action', 200, engine=other_engine) as other_group:
+        assert other_group.limit == 200
     assert budgets.action_budget_status(1, 'action', engine=first_engine)['limit'] == 100
 
 
@@ -87,16 +90,69 @@ def test_active_group_is_protected_from_expiry_and_capacity_eviction(monkeypatch
     monkeypatch.setattr(budgets, 'monotonic', lambda: now[0])
     monkeypatch.setattr(budgets, '_actions', {})
     monkeypatch.setattr(budgets, '_MAX_ACTIONS', 1)
-    budget = budgets.action_budget(1, 'action', 100)
-    assert budget.status()['total_tokens'] is None
-    with budgets.use_token_budget(budget):
+    with budgets.use_action_budget(1, 'action', 100) as budget:
+        assert budget.status()['total_tokens'] is None
         assert budgets.current_token_budget() is budget
         now[0] += budgets._ACTION_RETENTION_SECONDS
         assert budgets.action_budget_status(1, 'action')['active_jobs'] == 1
         with pytest.raises(CodexError, match='too many recent generation actions'):
-            budgets.action_budget(1, 'other-action', 100)
+            with budgets.use_action_budget(1, 'other-action', 100):
+                pytest.fail('A full active registry admitted another action')
     assert budgets.current_token_budget() is None
     assert budgets.action_budget_status(1, 'action')['active_jobs'] == 0
     now[0] += budgets._ACTION_RETENTION_SECONDS
     assert budgets.action_budget_status(1, 'action') is None
-    assert budgets.action_budget(1, 'other-action', 100) is not budget
+    with budgets.use_action_budget(1, 'other-action', 100) as new_budget:
+        assert new_budget is not budget
+
+
+def test_rejected_sibling_preserves_the_active_and_completed_action(monkeypatch):
+    class Busy(Exception):
+        pass
+
+    monkeypatch.setattr(budgets, '_actions', {})
+    sibling_started, finish_sibling = threading.Event(), threading.Event()
+
+    def succeed():
+        with budgets.use_action_budget(1, 'action', 50) as sibling:
+            sibling_started.set()
+            assert finish_sibling.wait(5)
+            return sibling
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(succeed)
+        try:
+            assert sibling_started.wait(5)
+            with pytest.raises(Busy):
+                with budgets.use_action_budget(1, 'action', 100, discard_on=(Busy,)) as rejected:
+                    assert rejected.limit == 50
+                    raise Busy()
+            assert budgets.action_budget_status(1, 'action')['active_jobs'] == 1
+        finally:
+            finish_sibling.set()
+        assert pending.result(timeout=5) is rejected
+
+    with pytest.raises(Busy):
+        with budgets.use_action_budget(1, 'action', 100, discard_on=(Busy,)) as late:
+            assert late is rejected
+            raise Busy()
+    assert budgets.action_budget_status(1, 'action')['model_requests'] == 0
+
+
+def test_last_rejected_holder_releases_an_unused_action(monkeypatch):
+    class Busy(Exception):
+        pass
+
+    monkeypatch.setattr(budgets, '_actions', {})
+    monkeypatch.setattr(budgets, '_MAX_ACTIONS', 1)
+    with pytest.raises(Busy):
+        with budgets.use_action_budget(1, 'action', 50, discard_on=(Busy,)) as first:
+            with pytest.raises(Busy):
+                with budgets.use_action_budget(1, 'action', 100, discard_on=(Busy,)) as second:
+                    assert first is second
+                    raise Busy()
+            assert budgets.action_budget_status(1, 'action')['active_jobs'] == 1
+            raise Busy()
+    assert budgets.action_budget_status(1, 'action') is None
+    with budgets.use_action_budget(1, 'new', 20):
+        assert budgets.action_budget_status(1, 'new')['active_jobs'] == 1

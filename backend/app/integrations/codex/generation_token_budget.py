@@ -1,5 +1,5 @@
 """Shared provider-reported token accounting for an AI generation action."""
-from contextlib import contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager, nullcontext
 from contextvars import ContextVar
 import threading
 from time import monotonic
@@ -28,6 +28,7 @@ class TokenBudget:
         self._reported = 0
         self._requests = 0
         self._users = 0
+        self._retained = False
         self._last_used = monotonic()
 
     @property
@@ -83,6 +84,11 @@ class TokenBudget:
         with self._lock:
             return not self._users and now - self._last_used >= _ACTION_RETENTION_SECONDS
 
+    def _discard_unadmitted(self, retain):
+        with self._lock:
+            self._retained |= retain
+            return not (self._retained or self._users or self._requests)
+
 
 @contextmanager
 def use_token_budget(budget):
@@ -102,19 +108,35 @@ def _action_key(engine, project_id, action_id):
     return weakref.ref(engine) if engine is not None else None, project_id, action_id
 
 
-def action_budget(project_id, action_id, limit, *, engine=None):
-    """Use the action's original allowance, including for late sibling jobs."""
+@contextmanager
+def use_action_budget(project_id, action_id, limit, *, engine=None, discard_on=()):
+    """Reserve the action's original allowance, including for late sibling jobs."""
     key = _action_key(engine, project_id, action_id)
-    with _action_lock:
-        now = monotonic()
-        for expired in [stored for stored, budget in _actions.items()
-                        if (stored[0] is not None and stored[0]() is None) or budget._expired(now)]:
-            del _actions[expired]
-        if key not in _actions:
-            if len(_actions) >= _MAX_ACTIONS:
-                raise CodexError('ProjectHub has too many recent generation actions to track another token allowance.')
-            _actions[key] = TokenBudget(limit)
-        return _actions[key]
+    with ExitStack() as scope:
+        with _action_lock:
+            now = monotonic()
+            for expired in [stored for stored, budget in _actions.items()
+                            if (stored[0] is not None and stored[0]() is None) or budget._expired(now)]:
+                del _actions[expired]
+            if key not in _actions:
+                if len(_actions) >= _MAX_ACTIONS:
+                    raise CodexError('ProjectHub has too many recent generation actions to track another token allowance.')
+                _actions[key] = TokenBudget(limit)
+            budget = _actions[key]
+            scope.enter_context(use_token_budget(budget))
+        retain = True
+        try:
+            yield budget
+        except discard_on:
+            retain = False
+            raise
+        finally:
+            with _action_lock:
+                # Release the holder and decide whether to discard the entry
+                # before another request can claim the same action.
+                scope.close()
+                if budget._discard_unadmitted(retain):
+                    del _actions[key]
 
 
 def action_budget_status(project_id, action_id, *, engine=None):
