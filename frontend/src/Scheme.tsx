@@ -43,9 +43,15 @@ type SchemeSnapshot = {
 type SchemeResult = {
   snapshot: SchemeSnapshot | null;
   freshness: { state: string; partial: boolean; limitations: string[] };
-  inspection: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[];
+  inspection?: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[];
     diagnostics?: SchemeDiagnostics | null; dependency_inventory?: DependencyInventory };
 };
+
+function resultWithSnapshot(previous: SchemeResult | null, snapshot: SchemeSnapshot | null): SchemeResult | null {
+  const freshness = { state: 'unknown', partial: snapshot?.coverage.partial ?? false,
+    limitations: snapshot?.coverage.limitations ?? [] };
+  return previous || snapshot ? { ...previous, snapshot, freshness } : null;
+}
 type FocusedSchemeSnapshot = {
   generated_at: string; instruction: string; graph: SchemeGraph; sources: SchemeSource[];
   coverage: Coverage; generation?: GenerationProvenance | null; diagnostics?: SchemeDiagnostics | null;
@@ -449,14 +455,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
         setLatestVersion(snapshot.generated_at);
         selectedRevision.current = null;
         setRevisionId(null);
-        setResult((previous) => ({
-        snapshot,
-        freshness: { state: 'unknown', partial: snapshot.coverage.partial, limitations: snapshot.coverage.limitations },
-        inspection: previous?.inspection ?? {
-          tree: snapshot.tree, dependencies: snapshot.dependencies, coverage: snapshot.coverage, sources: snapshot.sources,
-          dependency_inventory: snapshot.dependency_inventory,
-        },
-        }));
+        setResult(previous => resultWithSnapshot(previous, snapshot));
         try {
           const current = await api<SchemeResult>(path);
           if (alive.current) setResult(current);
@@ -477,7 +476,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading ? 'wait' : 'ready',
     () => generate(queuedFocus), onGenerationRequestHandled);
   const snapshot = result?.snapshot;
-  const sources = snapshot?.sources ?? result?.inspection.sources ?? [];
+  const sources = snapshot?.sources ?? result?.inspection?.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';
   const numbers = new Map(sources.map((source, index) => [source.id, index + 1]));
   const inspection = schemeInspectionForDisplay(snapshot, result?.inspection);
@@ -538,10 +537,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
           resultRead.current++;
           selectedRevision.current = id;
           setLoading(false);
-          setResult((previous) => previous ? { ...previous, snapshot: selected,
-            freshness: id !== null ? previous.freshness : { state: 'unknown', partial: selected?.coverage.partial ?? false,
-              limitations: selected?.coverage.limitations ?? [] },
-          } : previous);
+          setError('');
+          setResult(previous => resultWithSnapshot(previous, selected));
           setRevisionId(id);
           if (id === null) {
             setLatestVersion(selected?.generated_at ?? null);
@@ -558,7 +555,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
         <GraphEvidence graph={graph} numbers={numbers} prefix={prefix} sources={sources} />
       </>}
     </>}
-    {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection.tree}
+    {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection?.tree ?? []}
       highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
     {view === 'Dependencies' && result && <SchemeDependencies snapshot={snapshot} current={result.inspection}
       historical={revisionId !== null} prefix={`${prefix}-dependency`} />}

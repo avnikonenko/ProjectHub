@@ -2379,21 +2379,24 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
       if (mounted.current) setBusy(false);
     }
   }
-  async function sessionSaved(provider: 'codex' | 'claude', linked: RecordData) {
+  function revealSession(provider: 'codex' | 'claude', session: RecordData) {
     if (!mounted.current) return;
     if (provider === 'codex') {
-      setSessions((current) => [linked, ...(current ?? []).filter((session) => session.id !== linked.id)]);
-      setSessionId(String(linked.id));
-      await refresh();
+      setSessions(current => [session, ...(current ?? []).filter(row => row.id !== session.id)]);
+      setSessionId(String(session.id));
     }
-    await onImported(true);
-    if (!mounted.current) return;
-    if (provider === 'claude' || linked.status === 'linked') {
+    if (provider === 'claude' || session.status === 'linked') {
       setSessionFilter(current => current === 'managed' ? 'all' : current);
     } else {
       setSessionFilter(current => current === 'linked' ? 'all' : current);
     }
-    setNewLink({ provider, id: linked.id });
+    setNewLink({ provider, id: session.id });
+  }
+  async function sessionSaved(provider: 'codex' | 'claude', session: RecordData) {
+    if (!mounted.current) return;
+    revealSession(provider, session);
+    if (provider === 'codex') await refresh();
+    await onImported(true);
   }
   return (
     <>
@@ -2519,8 +2522,8 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
               onClick={() =>
                 action(async () => {
                   const session = await post(`${prefix}/sessions`);
-                  if (mounted.current) setSessionId(String(session.id));
-                })
+                  revealSession('codex', session);
+                }, () => onImported(true))
               }
             >
               Start read-only session
