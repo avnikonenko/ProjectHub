@@ -24,12 +24,17 @@ _TRACE_PRIORITY_TERMS = ('analys', 'backend', 'checkpoint', 'converg', 'dispatch
                          'restore', 'resume', 'rmsd', 'select', 'simulat')
 
 
-def _call_shape(call, shape, *, max_arguments=_MAX_ARGUMENTS):
+def _call_shape(call, shape, *, max_arguments=_MAX_ARGUMENTS, distinguish_fixed_inputs=False):
     if not isinstance(call.func, (ast.Name, ast.Attribute)):
         return ''
-    arguments = [shape(arg) for arg in call.args[:max_arguments]]
+    def argument_shape(value):
+        if distinguish_fixed_inputs and isinstance(value, ast.Constant) and isinstance(value.value, str):
+            return '<fixed string>'
+        return shape(value)
+
+    arguments = [argument_shape(arg) for arg in call.args[:max_arguments]]
     arguments.extend(
-        f'{keyword.arg}={shape(keyword.value)}' if keyword.arg else '**<expression>'
+        f'{keyword.arg}={argument_shape(keyword.value)}' if keyword.arg else '**<expression>'
         for keyword in call.keywords[:max_arguments - len(arguments)]
     )
     if len(arguments) < len(call.args) + len(call.keywords):
@@ -213,7 +218,7 @@ def _trace_group_rank(owner, priority):
     return (_trace_rank(leaf, '', True), priority)
 
 
-def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape):
+def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distinguish_fixed_inputs=False):
     """Trace direct static call syntax from declared or main-guard entrypoints."""
     classes = {node.name for node in parsed.body if isinstance(node, ast.ClassDef)}
     definitions = {node.name: node for node in parsed.body if isinstance(node, _FUNCTIONS)}
@@ -243,7 +248,8 @@ def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape):
         for node, guards in body:
             if not isinstance(node, ast.Call):
                 continue
-            shape = _call_shape(node, predicate_shape, max_arguments=2)
+            shape = _call_shape(node, predicate_shape, max_arguments=2,
+                                distinguish_fixed_inputs=distinguish_fixed_inputs)
             if isinstance(node.func, ast.Name):
                 root, leaf = node.func.id, node.func.id
                 target = None if root in shadows else root + '.__init__' if root in classes else root

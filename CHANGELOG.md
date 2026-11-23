@@ -10,6 +10,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Improve general Scheme coverage of application entry points, code handoffs, and configuration choices within the same overall evidence budget.
 - Preserve evidence for full-text indexing and search handoffs in general Scheme.
 - Improve Focused Scheme evidence for named source files, configuration defaults, and active entrypoint calls.
+- Check selected Focused Scheme handoffs against the actual code endpoints, relationship, and condition.
 
 ## [0.2.5] - 2026-11-21
 

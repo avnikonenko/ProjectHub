@@ -63,6 +63,10 @@ templates can show which sections are active or commented out.
 Focused Python excerpts can also show where a call's local inputs come from,
 what guards apply, and whether a later call consumes its result. Conditional
 order, unresolved links, and evidence omitted for space are shown separately.
+For selected fully supplied handoffs, ProjectHub checks the relationship and
+both operation endpoints. An omitted or incorrect handoff can trigger the same
+single retry as missing named evidence. Unsupported checked edges are left out
+of the saved diagram, and remaining gaps appear under coverage.
 **Coverage → Requested files skipped** explains any named files that
 did not supply evidence. Scope matching recognizes forms such as “cache” and
 “cached”. When a matching paragraph in a long saved conversation is too large to

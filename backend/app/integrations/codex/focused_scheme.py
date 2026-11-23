@@ -13,8 +13,10 @@ from .brief import BriefBusy, generation_lock, generation_metadata
 from .generation_metrics import GenerationMetrics
 from .knowledge_profiles import current_knowledge_profile
 from .protocol import CodexError
-from .scheme import MAX_INPUT_CHARS, MAX_OUTPUT_CHARS, _graph_schema, _validate_graph, scheme_snapshot_for_display
+from .scheme import (MAX_INPUT_CHARS, MAX_OUTPUT_CHARS, _graph_schema, _validate_graph,
+                     render_mermaid, scheme_snapshot_for_display)
 from .scheme_evidence import _EvidenceScope, collect_evidence
+from .scheme_handoff_contract import check_contracts, make_contracts
 
 KIND = 'focused_scheme'
 INSTRUCTION_LIMIT = 2000
@@ -39,12 +41,16 @@ PROMPT = (
     'separately, say which is enabled by that template and cite it. '
     'For scientific steps, identify the input, output and any setting or check the evidence ties to the '
     'result. Distinguish a proposed validation from an executed check. '
+    'Keep documented input-selection controls with the affected analysis, including parameter names when supplied. '
+    'A fixed string argument is independent of a nearby configurable argument. Preserve that distinction '
+    'and leave redacted values unspecified. '
     'Give requested design proposals a distinct proposed node and cite their original discussion. '
     'Use prior AI summaries only as navigation aids. Require current code-level evidence to mark a '
     'requested integration observed, even when an older summary or discussion describes it as implemented. '
     'Quote an HTTP method and path only from a supplied route declaration and keep its placeholders. '
     'A handler name alone does not establish a URL. Distinguish API requests from client navigation links. '
     'Return structured graph JSON. Every node and edge must cite 1 to 6 source IDs from sources. '
+    'Use value_transfer and conditional_sequence edge types only for supplied required_handoffs records. '
     'Cite original sources along with any published Knowledge interpretation. Use observed for static '
     'evidence, proposed for plans, and uncertain for conflicting evidence. Static evidence does not '
     'establish that code ran. Identify missing evidence in the explanation, including any relevant '
@@ -88,6 +94,30 @@ def _missing_named_evidence(graph, sources, instruction):
                  and 'Active namelist section' in source['text'] and source['id'] not in cited)][:4]
 
 
+def _render_checked_handoffs(graph, contracts, invalid):
+    expected = {(item['source_node']['id'], item['target_node']['id'], item['type']): item for item in contracts}
+    descriptions = {}
+    edges = []
+    for edge in graph['edges']:
+        key = edge['source'], edge['target'], edge['type']
+        if key in invalid:
+            continue
+        if contract := expected.get(key):
+            label = 'Direct value transfer' if key[2] == 'value_transfer' else 'Conditional sequence'
+            guard = contract['context'].partition(' under ')[2]
+            if guard and len(label) + len(guard) + 7 <= 100:
+                label += ' under ' + guard
+            edge = {**edge, 'label': label}
+            for endpoint in key[:2]:
+                descriptions.setdefault(endpoint, contract['context'])
+        edges.append(edge)
+    graph['edges'] = edges
+    for node in graph['nodes']:
+        if node['id'] in descriptions:
+            node['description'] = descriptions[node['id']]
+    graph['mermaid'] = render_mermaid(graph)
+
+
 def refresh_focused_scheme(engine, project_id, manager, instruction):
     instruction = clean_instruction(instruction)
     lease = generation_lock.for_job(project_id, KIND)
@@ -123,7 +153,23 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
             annotated = json.dumps({**package, 'requested_file_omissions': omissions}, ensure_ascii=False)
             if len(annotated) <= package_chars:
                 payload = annotated
-        prompt = PROMPT + json.dumps({'user_instruction': instruction}, ensure_ascii=False) + '\n' + payload
+                package['requested_file_omissions'] = omissions
+        contracts = make_contracts(evidence['sources'])
+        contracts_omitted = False
+        if contracts:
+            annotated = json.dumps({**package, 'required_handoffs': contracts}, ensure_ascii=False)
+            if len(annotated) <= package_chars:
+                payload = annotated
+            else:
+                contracts = []
+                contracts_omitted = True
+        contract_prompt = (
+            'For each required_handoffs record, use its exact source_node and target_node IDs and labels '
+            'and edge type. Set all three statuses to observed and cite its source_id on both nodes and '
+            'the edge. Preserve the supplied relationship and its condition. '
+            'Reserve value_transfer and conditional_sequence edge types for these records.\n'
+        ) if contracts else ''
+        prompt = PROMPT + contract_prompt + json.dumps({'user_instruction': instruction}, ensure_ascii=False) + '\n' + payload
         if len(prompt) > MAX_INPUT_CHARS:
             raise CodexError('Focused Scheme prompt exceeds the generation input limit.')
         progress.update(project_id, stage='Generating focused Scheme')
@@ -131,13 +177,14 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
         progress.update(project_id, stage='Validating focused Scheme')
         graph = _graph(raw, sources)
         requests = 1
-        missing = _missing_named_evidence(graph, sources, instruction)
-        if missing:
-            repair = ('The first diagram omitted graph coverage for these explicitly requested source IDs: '
-                      + json.dumps(missing) + '. Draw the evidence-backed part with nodes for the supported '
-                      'operations and branches and cite these sources where relevant. Preserve supported '
-                      'content and report remaining gaps in the explanation. Every edge endpoint must exactly '
-                      'match a node ID.\n' + prompt)
+        missing = set(_missing_named_evidence(graph, sources, instruction))
+        missing_handoffs, invalid = check_contracts(graph, contracts)
+        if missing or missing_handoffs or (contracts and invalid):
+            repair = ('The first diagram omitted requested source IDs ' + json.dumps(sorted(missing))
+                      + ' or required handoff IDs ' + json.dumps(sorted(missing_handoffs))
+                      + '. Correct or remove invalid typed endpoints and relationships '
+                      + json.dumps(sorted(invalid)) + '. Preserve supported content and report remaining gaps. '
+                      'Every edge endpoint must exactly match a node ID.\n' + prompt)
             if len(repair) <= MAX_INPUT_CHARS:
                 progress.check_cancelled()
                 progress.update(project_id, stage='Checking focused Scheme coverage')
@@ -147,16 +194,32 @@ def refresh_focused_scheme(engine, project_id, manager, instruction):
                     progress.update(project_id, stage='Validating focused Scheme')
                     revised = _graph(retry, sources)
                     cited = {ref for item in (*revised['nodes'], *revised['edges']) for ref in item['source_ids']}
-                    if cited.intersection(missing) and len(_missing_named_evidence(revised, sources, instruction)) < len(missing):
+                    revised_named = set(_missing_named_evidence(revised, sources, instruction))
+                    revised_handoffs, revised_invalid = check_contracts(revised, contracts)
+                    named_improved = bool(cited & missing) and revised_named < missing
+                    if (not revised_invalid and revised_named <= missing and revised_handoffs <= missing_handoffs
+                            and (named_improved or revised_handoffs < missing_handoffs or invalid)):
                         graph = revised
+                        missing, missing_handoffs, invalid = revised_named, revised_handoffs, revised_invalid
                 except progress.GenerationCancelled:
                     raise
                 except CodexError:
                     progress.check_cancelled()
         coverage = evidence['coverage']
-        if _missing_named_evidence(graph, sources, instruction):
+        warnings = []
+        if missing:
+            warnings.append('Some supplied named evidence was not represented in the focused diagram.')
+        if missing_handoffs:
+            warnings.append('Some supplied code handoffs could not be verified in the focused diagram.')
+        if invalid:
+            warnings.append('Unsupported typed relationships were removed from the focused diagram.')
+        if contracts_omitted:
+            warnings.append('Structured handoff verification was omitted by the evidence package budget.')
+        if contracts or invalid:
+            _render_checked_handoffs(graph, contracts, invalid)
+        if warnings:
             coverage = {**coverage, 'partial': True, 'limitations': [*coverage['limitations'],
-                'Some supplied named evidence was not represented in the focused diagram.']}
+                *warnings]}
         snapshot = {
             'generated_at': utcnow(), 'instruction': instruction, 'graph': graph,
             'sources': evidence['sources'], 'coverage': coverage,

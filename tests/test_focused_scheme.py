@@ -147,3 +147,42 @@ def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monke
     assert 'repo:template' in prompts[1].splitlines()[0]
     assert bool(saved['graph']['nodes']) == (rewrite == 'supported')
     assert saved['coverage']['partial'] == (rewrite != 'supported')
+
+
+@pytest.mark.parametrize('repair_works', [True, False])
+def test_focused_checks_actual_handoff_edge_and_rejects_reversed_direction(database, monkeypatch, repair_works):
+    monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
+        'sources': [{'id': 'repo:file', 'path': 'example.py', 'text': 'Bounded code',
+                     'local_handoffs': [{'type': 'value_transfer',
+                                         'from_symbol': 'read', 'from_line': 2,
+                                         'to_symbol': 'write', 'to_line': 3,
+                                         'context': 'write consumes the result of read'}]}],
+        'coverage': {'partial': False, 'limitations': []},
+    })
+
+    class Manager:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            contract, = json.loads(prompt.splitlines()[-1])['required_handoffs']
+            graph = {'nodes': [
+                {**diagram('repo:file')['nodes'][0], 'id': contract[key]['id'], 'label': contract[key]['label']}
+                for key in ('source_node', 'target_node')
+            ], 'edges': [], 'explanation': 'The source declares two operations.'}
+            order = ('source_node', 'target_node') if self.calls == 2 and repair_works else ('target_node', 'source_node')
+            graph['edges'].append({'source': contract[order[0]]['id'], 'target': contract[order[1]]['id'],
+                                   'type': 'value_transfer', 'status': 'observed',
+                                   'label': 'Model wording', 'source_ids': ['repo:file']})
+            return json.dumps(graph)
+
+    manager = Manager()
+    saved = focused_scheme.refresh_focused_scheme(database, 1, manager, 'Trace read into write')
+    assert manager.calls == 2
+    assert bool(saved['graph']['edges']) == repair_works
+    assert saved['coverage']['partial'] == (not repair_works)
+    if repair_works:
+        assert saved['graph']['edges'][0]['label'] == 'Direct value transfer'
+        assert {node['description'] for node in saved['graph']['nodes']} == {'write consumes the result of read'}
+    else:
+        assert len(saved['graph']['nodes']) == 2

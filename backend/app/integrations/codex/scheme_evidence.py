@@ -1140,10 +1140,11 @@ def _client_navigation_declarations(value, masked, owner_at):
 
 
 def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None,
-                        named_python=False):
+                        named_python=False, admitted_handoffs=None):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
     flow, workflow, choices, handoffs, route_owners = [], [], [], [], set()
+    relationships = {}
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
@@ -1153,11 +1154,12 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
             if _python_migration(relative):
                 migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
             elif focus:
-                handoffs = local_handoff_rows(parsed, focus, shape=_predicate_shape)
+                handoffs = local_handoff_rows(parsed, focus, shape=_predicate_shape, structured=relationships)
                 routes = python_route_declarations(parsed)
                 flow = python_flow_declarations(parsed, focus, predicate_shape=_predicate_shape)
                 if named_python:
-                    traced, _ = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
+                    traced, _ = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape,
+                                                       distinguish_fixed_inputs=True)
                     if traced:
                         downstream = traced[4:]
                         scoped = sorted(downstream, key=lambda row: -focus(row[1]))
@@ -1343,6 +1345,8 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
             line = omissions[index]
         if len(line) + 1 <= handoff_budget:
             rendered.append(line)
+            if admitted_handoffs is not None and line != omissions[index]:
+                admitted_handoffs.extend(relationships.get((number, description), ()))
             used += len(line) + 1
             handoff_budget -= len(line) + 1
     full_trace = not focus or (named_python and flow and flow[0][1].startswith('Entry flow '))
@@ -1659,7 +1663,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 14, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 18, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v17', 'project_id': project_id,
@@ -1803,6 +1807,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                             if target not in scanned and target not in pending:
                                 pending.insert(0, target)
                 declared_excerpt = '\n'.join(f'Declared entrypoint {command} = {target}' for command, target in declarations)
+                admitted_handoffs = []
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
@@ -1810,7 +1815,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                         limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
                     called_names = set()
                     returned_calls = set()
-                    syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python)
+                    syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python,
+                                                  admitted_handoffs=admitted_handoffs)
                               if focus else _structural_excerpt(value, relative,
                                   entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names,
                                   route_imports=returned_calls))
@@ -1885,7 +1891,9 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     if len(excerpt) > 3200:
                         limitations.add('Some normalized manifest declaration excerpts were truncated.')
                     sources.append(_source(source_id, relative, excerpt[:3200], provenance, path=relative,
-                                           revision=hashlib.sha256(value.encode()).hexdigest()))
+                                           revision=hashlib.sha256(value.encode()).hexdigest(),
+                                           **({'local_handoffs': admitted_handoffs} if admitted_handoffs
+                                              and provenance == 'observed in code' and len(excerpt) <= 3200 else {})))
             except _InspectionStopped as exc:
                 inspection_stop = exc.reason
                 omitted_reasons[exc.reason] = 1 + len(set(pending) - scanned)

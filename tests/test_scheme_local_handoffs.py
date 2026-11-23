@@ -208,3 +208,58 @@ def test_guarded_first_call_precedes_the_consumer_after_the_join():
     """, 'prepare and publish'), 'Conditional sequence', 'enabled')
     assert {2, 3, 4} <= _anchors(line, report)
     assert 'direct value transfer' not in report.casefold()
+
+
+def test_known_local_guard_prevents_unreachable_sequence():
+    source = """def operate(pipeline):
+    allowed = True
+    if allowed:
+        pipeline.prepare()
+    if not allowed:
+        pipeline.publish()
+"""
+    assert local_handoff_rows(ast.parse(source), lambda _: 1, shape=_predicate_shape) == []
+
+
+def test_budget_omission_does_not_admit_other_occurrence_on_same_line(monkeypatch):
+    short = 'Local handoff into consume: short'
+    long = 'Local handoff into consume: ' + 'large origin ' * 40
+    kept = {'from_line': 2, 'to_line': 4, 'to_column': 2}
+
+    def generate(*args, structured, **kwargs):
+        structured[(4, short)] = [kept]
+        structured[(4, long)] = [{'from_line': 3, 'to_line': 4, 'to_column': 40}]
+        return [(4, short), (4, long)]
+
+    monkeypatch.setattr(scheme_evidence, 'local_handoff_rows', generate)
+    admitted = []
+    excerpt = scheme_evidence._structural_excerpt('def f(): pass', 'entry.py', focus=lambda _: 1,
+                                                  admitted_handoffs=admitted)
+    assert 'Handoff details omitted by excerpt budget' in excerpt
+    assert admitted == [kept]
+
+
+def test_unreachable_or_unsupported_guards_do_not_produce_verified_contracts():
+    from backend.app.integrations.codex.scheme_handoff_contract import make_contracts
+
+    source = """def run(enabled):
+    if False and enabled:
+        x = produce()
+        consume(x)
+    if 1 == 2:
+        x = produce()
+        consume(x)
+    if 8 - 8:
+        x = produce()
+        consume(x)
+
+def assigned_condition():
+    x = produce()
+    if (x := None) or True:
+        consume(x)
+"""
+    structured = {}
+    local_handoff_rows(ast.parse(source), lambda _: 1, shape=_predicate_shape, structured=structured)
+    assert make_contracts([{'id': 'code', 'local_handoffs': [
+        item for group in structured.values() for item in group
+    ]}]) == []
