@@ -599,20 +599,27 @@ def test_archive_formatting_recovery_reopens_pooled_codex_transport(env, failure
     assert clients[-1].close_count == 1
 
 
-def test_expired_optional_recovery_leaves_pooled_generation_usable(env, monkeypatch):
+@pytest.mark.parametrize('expire_at', ['transport setup', 'generation'])
+def test_expired_optional_recovery_leaves_pooled_generation_usable(env, monkeypatch, expire_at):
     from backend.app.integrations.codex import manager, progress
 
     clients = []
 
+    class Client(ReusableBriefClient):
+        def request(self, method, params):
+            if expire_at == 'transport setup' and len(clients) == 1 and method == 'config/read':
+                raise progress.OptionalWorkExpired('Time reserved for synthesis.')
+            return super().request(method, params)
+
     def factory(**callbacks):
-        clients.append(ReusableBriefClient(**callbacks))
+        clients.append(Client(**callbacks))
         return clients[-1]
 
     env.manager.client_factory = factory
     wait = manager.wait_for_generation
 
     def expire_first(done, timeout):
-        if len(clients) == 1:
+        if expire_at == 'generation' and len(clients) == 1:
             raise progress.OptionalWorkExpired('Time reserved for synthesis.')
         return wait(done, timeout)
 

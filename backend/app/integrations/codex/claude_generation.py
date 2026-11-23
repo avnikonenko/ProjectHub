@@ -254,7 +254,7 @@ def _exchange(process, data, timeout, *, record_failed_usage=None):
                 except BlockingIOError:
                     continue
     progress.check_cancelled()
-    if process.returncode != 0 or _failure_details(output) is not None:
+    if process.returncode != 0 or _failure_details(output) is not None or _failure_details(errors) is not None:
         if record_failed_usage is not None:
             record_failed_usage(output, errors)
         raise _generation_failure(process.returncode, output, errors, error_bytes)
@@ -272,14 +272,24 @@ def _terminate(process):
 def _result(output, request, request_id):
     try:
         result = json.loads(output)
-        _record_usage(request, request_id, result)
-        if not (isinstance(result, dict) and result.get('type') == 'result'
-                and result.get('subtype') == 'success' and result.get('is_error') is False
-                and isinstance(result.get('structured_output'), dict)):
-            raise CodexError('Claude Code did not return a completed structured result.')
-        return json.dumps(result['structured_output'], ensure_ascii=True, separators=(',', ':'), allow_nan=False)
-    except (ValueError, UnicodeError, RecursionError):
-        raise CodexError('Claude Code returned invalid structured output.') from None
+    except (ValueError, RecursionError):
+        raise JSONFormattingError('Claude Code returned invalid structured output.') from None
+    _record_usage(request, request_id, result)
+    if isinstance(result, dict) and (result.get('type') == 'error' or result.get('is_error') is True
+                                     or (isinstance(result.get('subtype'), str)
+                                         and result['subtype'].startswith('error_'))):
+        # Recognized provider failures were already handled by the transport.
+        raise CodexError('Claude Code did not return a completed structured result.')
+    if not (isinstance(result, dict) and result.get('type') == 'result'
+            and result.get('subtype') == 'success' and result.get('is_error') is False
+            and isinstance(result.get('structured_output'), dict)):
+        raise JSONFormattingError('Claude Code did not return a completed structured result.')
+    try:
+        answer = json.dumps(result['structured_output'], ensure_ascii=False, separators=(',', ':'), allow_nan=False)
+        answer.encode('utf-8')  # Reject escaped, unpaired surrogates from the CLI.
+        return answer
+    except (ValueError, RecursionError):
+        raise JSONFormattingError('Claude Code returned invalid structured output.') from None
 
 
 def _record_usage(request, request_id, result):
@@ -331,6 +341,7 @@ class ClaudeGenerationManager:
     def __init__(self, history_manager, model=None, effort=None, *, directory=None, account_label=None):
         self._history_manager = history_manager
         self._directory = directory
+        self._verified_account = None
         if account_label:
             self.account_key = account_label
         self.generation_model = model or 'sonnet'
@@ -356,28 +367,28 @@ class ClaudeGenerationManager:
         selected = type(self)(self._history_manager, model, effort,
                               directory=self._directory, account_label=self.account_key)
         selected.generation_account = self.generation_account
+        selected._verified_account = self._verified_account
         return selected
 
-    def verify_account(self):
-        """Identify the sign-in before looking up cached model work."""
-        binary = shutil.which('claude')
-        if not binary:
-            raise CodexError('Claude Code is unavailable. Install its CLI on the ProjectHub server.')
+    @staticmethod
+    def _account_identity(binary, environment, timeout):
         message = 'Claude generation requires a signed-in account. Run claude auth login as the ProjectHub server user.'
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-auth-') as cwd:
             try:
                 with subprocess.Popen([binary, '--safe-mode', '--restricted', 'auth', 'status'],
-                                      cwd=cwd, env=_environment(self._directory), stdin=subprocess.PIPE,
+                                      cwd=cwd, env=environment, stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                       start_new_session=True) as process:
                     try:
-                        raw = _exchange(process, b'', 10)
+                        raw = _exchange(process, b'', timeout)
                     except BaseException:
                         _terminate(process)
                         raise
                 status = json.loads(raw)
             except (OSError, ValueError, RecursionError):
                 raise CodexError(message) from None
+            except TransientGenerationError:
+                raise
             except CodexError:
                 progress.check_cancelled()
                 raise CodexError(message) from None
@@ -388,7 +399,16 @@ class ClaudeGenerationManager:
             raise CodexError(message)
         organization = status.get('orgId')
         identity = json.dumps([email.strip().casefold(), organization if isinstance(organization, str) else None])
-        self.generation_account = 'claude:' + hashlib.sha256(identity.encode()).hexdigest()
+        # Earlier cache identities predated checks around each generation call.
+        return 'claude:v2:' + hashlib.sha256(identity.encode()).hexdigest()
+
+    def verify_account(self):
+        """Identify the sign-in before looking up cached model work."""
+        binary = shutil.which('claude')
+        if not binary:
+            raise CodexError('Claude Code is unavailable. Install its CLI on the ProjectHub server.')
+        self._verified_account = self._account_identity(binary, _environment(self._directory), 10)
+        self.generation_account = self._verified_account
         return self
 
     @contextmanager
@@ -423,20 +443,40 @@ class ClaudeGenerationManager:
                    '--model', self.generation_model, '--system-prompt', system]
         if self.generation_effort is not None:
             command.extend(('--effort', self.generation_effort))
-        timeout = generation_timeout()
+        deadline = time.monotonic() + generation_timeout()
+        environment = _environment(self._directory)
+
+        def remaining():
+            progress.check_cancelled()
+            timeout = deadline - time.monotonic()
+            if timeout <= 0:
+                raise CodexError('Claude generation exceeded its model-call timeout.')
+            return timeout
+
+        def check_account():
+            if self._verified_account is not None:
+                actual = self._account_identity(binary, environment, min(10, remaining()))
+                remaining()
+                if actual != self._verified_account:
+                    raise CodexError('The Claude Code account changed during generation. Verify the selected sign-in and retry.')
+
+        check_account()
         request_id = uuid4().hex
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-') as cwd:
             try:
-                with subprocess.Popen(command, cwd=cwd, env=_environment(self._directory),
+                remaining()
+                with subprocess.Popen(command, cwd=cwd, env=environment,
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       start_new_session=True) as process:
                     request = begin_model_request(request_id)
                     try:
                         failed_usage = partial(_record_failed_usage, request, request_id) if request is not None else None
-                        output = _exchange(process, data, timeout, record_failed_usage=failed_usage)
+                        output = _exchange(process, data, remaining(), record_failed_usage=failed_usage)
                     except BaseException:
                         _terminate(process)
                         raise
             except OSError:
                 raise CodexError('Could not run the Claude Code CLI.') from None
-        return _result(output, request, request_id)
+        result = _result(output, request, request_id)
+        check_account()
+        return result

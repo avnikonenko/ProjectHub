@@ -50,6 +50,8 @@ class FakeCodex:
         ids = list(dict.fromkeys(ids))
         allowed = output_schema['properties']['evidence']['items']['properties']['source_ids']['items']['enum']
         assert set(allowed) == set(ids)
+        if 'For each point, cite at least one primary source' in prompt and 'primary_ids' in data:
+            ids = data['primary_ids']
         limit = output_schema['properties']['evidence']['maxItems']
         return json.dumps({'evidence': [{'text': 'Saved outcome ' + str(i),
                                         'source_ids': ['foreign' if self.foreign else source]}
@@ -654,8 +656,8 @@ def test_deferred_recheck_leaves_time_for_final_generation(env, monkeypatch):
         progress.finish(1)
 
 
-@pytest.mark.parametrize('context_only', [False, True])
-def test_failed_batch_cannot_be_recovered_without_a_primary_citation(env, context_only):
+@pytest.mark.parametrize('recovery', ['empty', 'context-only', 'mixed'])
+def test_failed_batch_cannot_be_recovered_without_primary_citations(env, recovery):
     from backend.app.integrations.codex import archive
 
     engine, manager = env
@@ -666,8 +668,15 @@ def test_failed_batch_cannot_be_recovered_without_a_primary_citation(env, contex
     def invalid_recovery(prompt, schema):
         wire = json.loads(prompt.split('\n', 1)[1])
         manager.inputs.append(wire)
-        ids = ['s999'] if len(manager.inputs) <= 3 else wire.get('context_ids', []) if context_only else []
-        return json.dumps({'evidence': [{'text': 'Test reply', 'source_ids': ids}] if ids else []})
+        if len(manager.inputs) <= 3:
+            citations = [['s999']]
+        elif recovery == 'empty':
+            citations = []
+        else:
+            citations = [wire['context_ids']]
+            if recovery == 'mixed':
+                citations.insert(0, wire['primary_ids'])
+        return json.dumps({'evidence': [{'text': 'Test reply', 'source_ids': ids} for ids in citations]})
 
     manager.generate_brief = invalid_recovery
     omissions = []
@@ -681,6 +690,26 @@ def test_failed_batch_cannot_be_recovered_without_a_primary_citation(env, contex
     assert omissions[0]['source_count'] == 4
     with Session(engine) as db:
         assert not list(db.scalars(select(ProjectHistoryBatch)))
+
+
+def test_recovered_cache_checks_each_point_when_replayed_by_regular_batch(env):
+    from backend.app.integrations.codex.archive import _summarize
+
+    engine, manager = env
+    primary = {'id': 'new', 'text': 'New decision'}
+    context = {'id': 'old', 'text': 'Neighboring turn'}
+    sources = [primary, context]
+    payload = {'sources': sources, 'primary_ids': ['new'], 'context_ids': ['old']}
+    result, cached = _summarize(engine, 1, manager, payload, sources, 'history', recover=True)
+    assert not cached and result[0]['sources'] == [primary]
+    assert _summarize(engine, 1, manager, payload, sources, 'history') == (result, True)
+    with Session(engine) as db:
+        row = db.scalars(select(ProjectHistoryBatch)).one()
+        row.evidence = [*result, {'text': 'Context alone', 'sources': [context]}]
+        db.commit()
+    with pytest.raises(CodexError, match='Each retry point must cite a primary source'):
+        _summarize(engine, 1, manager, payload, sources, 'history')
+    assert len(manager.inputs) == 1
 
 
 def test_small_long_note_edit_reuses_unchanged_chunks_and_refreshes_citations(env):

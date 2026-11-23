@@ -142,9 +142,11 @@ def _validated(raw, sources, limit, *, aliases=None, required_primary=None):
             raise RetryableArchiveOutput('citation_validation',
                                          'History summary cited an unknown or foreign turn source. '
                                          'Only citations from the current batch are allowed; earlier valid batches remain cached.')
-        evidence.append({'text': value, 'sources': [indexed[key] for key in dict.fromkeys(ids)]})
-    if required_primary is not None and not any(source['id'] in required_primary
-            for item in evidence for source in item['sources']):
+        references = [indexed[key] for key in dict.fromkeys(ids)]
+        if required_primary is not None and not any(source['id'] in required_primary for source in references):
+            raise RetryableArchiveOutput('citation_validation', 'Each retry point must cite a primary source from this batch.')
+        evidence.append({'text': value, 'sources': references})
+    if required_primary is not None and not evidence:
         raise RetryableArchiveOutput('citation_validation', 'The retry did not cite any primary source from this batch.')
     return evidence
 
@@ -222,7 +224,11 @@ def _smaller_reduction_inputs(payload, sources, limit):
 def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *, attempts=3, recover=False,
                require_primary=False):
     from .ai_instructions import ai_instructions
+    primary_ids = {source['id'] for source in _primary_sources(payload, sources)}
+    strict_request = recover or require_primary
     # Cache identity uses original IDs so existing validated summaries remain reusable.
+    # Older contextual summaries did not distinguish first responses from
+    # recoveries, so they cannot be replayed with the new citation contract.
     cache_inputs = {'version': CACHE_VERSION, 'project_id': project_id, 'stage': stage,
                     'ai_instructions': ai_instructions(),
                     **({'provider': 'claude'} if getattr(manager, 'generation_provider', None) == 'claude' else {}),
@@ -230,8 +236,7 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *,
                     **({'effort': manager.generation_effort} if getattr(manager, 'generation_effort', None) else {}),
                     **({'account': manager.generation_account} if getattr(manager, 'generation_account', None) else {}),
                     'limit': limit, 'payload': payload,
-                    **({'recovery_requires_primary': True} if require_primary else {})}
-    primary_ids = {source['id'] for source in _primary_sources(payload, sources)}
+                    **({'contextual_citation_policy': 2} if len(primary_ids) != len(sources) else {})}
     # Reduction prompts omit timestamps and alternate-session links: these
     # describe citations rather than the evidence seen by the model.
     # Keep the payload exact, including any metadata actually in the prompt.
@@ -239,33 +244,36 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *,
                          if key not in ('updated_at', 'shared_sessions')}
                         for source in sources]
 
-    def fingerprint_for(source_metadata):
-        serialized = json.dumps({**cache_inputs, 'sources': source_metadata}, ensure_ascii=False,
-                                sort_keys=True, separators=(',', ':'))
+    def fingerprint_for(source_metadata, strict=False):
+        serialized = json.dumps({**cache_inputs, 'sources': source_metadata,
+                                 **({'recovery_requires_primary': 'every-point'} if strict else {})},
+                                ensure_ascii=False, sort_keys=True, separators=(',', ':'))
         return hashlib.sha256(serialized.encode()).hexdigest()
 
-    fingerprint = fingerprint_for(semantic_sources)
+    def read_cached(saved, strict):
+        try:
+            raw = json.dumps({'evidence': [
+                {'text': item['text'], 'source_ids': [source['id'] for source in item['sources']]}
+                for item in saved.evidence
+            ]}, ensure_ascii=False)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CodexError('Saved history summary has invalid citation data.') from exc
+        try:
+            return _validated(raw, sources, limit, required_primary=primary_ids if strict else None)
+        except RetryableArchiveOutput as exc:
+            raise CodexError(f'Saved history summary failed validation. {exc}') from exc
+
     with Session(engine) as db:
-        saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
-        legacy = False
-        if saved is None and semantic_sources != sources:
-            saved = db.get(ProjectHistoryBatch, (project_id, fingerprint_for(sources)))
-            legacy = saved is not None
-        if saved is not None:
-            # Cached summaries keep their text, but citations must resolve to the
-            # current batch and carry current metadata, never old timestamps.
-            try:
-                raw = json.dumps({'evidence': [
-                    {'text': item['text'], 'source_ids': [source['id'] for source in item['sources']]}
-                    for item in saved.evidence
-                ]})
-            except (KeyError, TypeError, ValueError) as exc:
-                raise CodexError('Saved history summary has invalid citation data.') from exc
-            try:
-                result = _validated(raw, sources, limit,
-                                    required_primary=primary_ids if require_primary else None)
-            except RetryableArchiveOutput as exc:
-                raise CodexError(f'Saved history summary failed validation. {exc}') from exc
+        for strict in (True,) if strict_request else (False, True):
+            fingerprint = fingerprint_for(semantic_sources, strict)
+            saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
+            legacy = saved is None and not strict and semantic_sources != sources
+            if legacy:
+                saved = db.get(ProjectHistoryBatch, (project_id, fingerprint_for(sources)))
+            if saved is None:
+                continue
+            # Rebind citations to current metadata, including on recovery replay.
+            result = read_cached(saved, strict)
             if legacy:
                 db.execute(insert(ProjectHistoryBatch).values(
                     project_id=project_id, fingerprint=fingerprint, evidence=result).on_conflict_do_nothing(
@@ -310,17 +318,18 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *,
                  f'Keep each evidence text well under {MAX_SUMMARY_CHARS} characters. '
                  'Return compact JSON without indentation or padding. '
                  'Aim for one to three exact short source IDs per evidence entry, with a hard limit of six. '
-                 'Use only IDs from this batch. Cite at least one primary source if listed, '
+                 'Use only IDs from this batch. For each point, cite at least one primary source if listed, '
                  'using context sources only as additional support. Omit unsupported points. ')
         request = retry + prompt if recover or require_primary else prompt
         for attempt in range(attempts):
             progress.check_cancelled()
-            recovering = recover or attempt > 0
+            recovering = strict_request or attempt > 0
             try:
                 with allow_generation_recovery():
                     raw = manager.generate_brief(request, schema)
                 result = _validated(raw, sources, limit, aliases=aliases,
-                                    required_primary=primary_ids if recovering or require_primary else None)
+                                    required_primary=primary_ids if recovering else None)
+                strict_request = recovering
                 break
             except (RetryableArchiveOutput, JSONFormattingError) as exc:
                 formatting = isinstance(exc, JSONFormattingError)
@@ -330,6 +339,7 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *,
                         raise RetryableArchiveOutput(reason, 'History summary did not complete structured JSON.') from exc
                     raise
                 request = f'Retry the batch after {_RETRY_PROBLEMS[reason]}. ' + retry + prompt
+    fingerprint = fingerprint_for(semantic_sources, strict_request)
     with Session(engine) as db:
         # Identical reduction groups can finish concurrently. Both responses
         # were requested and validated; keep the first cache without treating
@@ -342,9 +352,7 @@ def _summarize(engine, project_id, manager, payload, sources, stage, limit=8, *,
             # Use the winning cache interpretation so a later replay produces
             # the same evidence even when equivalent groups raced on a miss.
             saved = db.get(ProjectHistoryBatch, (project_id, fingerprint))
-            result = _validated(json.dumps({'evidence': [
-                {'text': item['text'], 'source_ids': [source['id'] for source in item['sources']]}
-                for item in saved.evidence]}), sources, limit)
+            result = read_cached(saved, strict_request)
     return result, False
 
 

@@ -331,6 +331,59 @@ def test_claude_known_zero_exit_failures_remain_fatal_without_retry(fake_cli, tm
     assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
 
 
+@pytest.mark.parametrize('first', [
+    '{broken',
+    '{"type":"result","subtype":"success","is_error":false,"result":"{}"}',
+    '{"type":"result","subtype":"success","is_error":false,"structured_output":{"text":"\\ud800"}}',
+])
+def test_claude_malformed_success_uses_bounded_retry(fake_cli, tmp_path, first):
+    counter = tmp_path / 'invalid-result-attempt'
+    fake_cli(f'''import pathlib
+counter = pathlib.Path({str(counter)!r})
+if counter.exists():
+    print('{{"type":"result","subtype":"success","is_error":false,"structured_output":{{"answer":"ok"}}}}')
+else:
+    counter.touch()
+    print({first!r})
+''')
+    retries = []
+    manager = claude_generation.ClaudeGenerationManager(None)
+    result = request_knowledge_json(manager, 'fixture', {'type': 'object'}, on_retry=lambda: retries.append(True))
+    assert json.loads(result) == {'answer': 'ok'} and retries == [True]
+
+
+def test_claude_unknown_explicit_provider_failure_is_terminal(fake_cli):
+    fake_cli('print(\'{"type":"error","error":{"type":"unrecognized","message":"private"}}\')\n')
+    retries = []
+    manager = claude_generation.ClaudeGenerationManager(None)
+    with pytest.raises(CodexError) as caught:
+        request_knowledge_json(manager, 'fixture', {'type': 'object'}, on_retry=lambda: retries.append(True))
+    assert not isinstance(caught.value, JSONFormattingError)
+    assert not retries and 'private' not in str(caught.value)
+
+
+def test_claude_machine_error_on_stderr_preempts_formatting_retry(fake_cli):
+    fake_cli('import sys\nprint("{bad")\n'
+             'print(\'{"type":"error","error":{"type":"authentication_error"}}\', file=sys.stderr)\n')
+    retries = []
+    manager = claude_generation.ClaudeGenerationManager(None)
+    with pytest.raises(CodexError) as caught:
+        request_knowledge_json(manager, 'fixture', {'type': 'object'}, on_retry=lambda: retries.append(True))
+    assert not retries and caught.value.provider_diagnostics['category'] == 'authorization_denied'
+
+
+def test_claude_preserves_unicode_for_qa_character_limits(fake_cli):
+    from backend.app.integrations.codex.qa import _validate_items
+
+    answer = '研究結果について' * 90
+    items = [{'question': f'質問 {index}', 'answer': answer, 'source_ids': ['e1']} for index in range(8)]
+    payload = {'type': 'result', 'subtype': 'success', 'is_error': False, 'structured_output': {'items': items}}
+    fake_cli(f'print({json.dumps(payload)!r})\n')
+    result = claude_generation.ClaudeGenerationManager(None).generate_brief('fixture', {'type': 'object'})
+    assert len(result) < 30_000 < len(json.dumps(payload))
+    assert len(_validate_items(result, {'e1': {'sources': [{'id': 'source'}]}})) == 8
+
+
 def test_claude_formatting_classification_requires_failed_result_and_preserves_fatal_errors():
     exhausted = json.dumps({'type': 'result', 'is_error': True,
                             'subtype': 'error_max_structured_output_retries'}).encode()
@@ -404,3 +457,65 @@ def test_claude_verifies_account_and_copies_only_hashed_identity(fake_cli):
         assert worker._directory == directory
     with pytest.raises(CodexError, match='requires a signed-in account'):
         select('fixture-one@example.invalid', 'api_key')
+
+
+def test_changed_claude_sign_in_cannot_generate_or_reuse_another_accounts_cache(fake_cli, tmp_path):
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+    from backend.app.db import initialize
+    from backend.app.integrations.codex.archive import _summarize
+    from backend.app.models import Project, ProjectHistoryBatch
+
+    engine, _ = initialize(tmp_path / 'data')
+    with Session(engine) as db:
+        db.add(Project(id=1, name='Synthetic project'))
+        db.commit()
+    profile = tmp_path / 'synthetic-profile'
+    profile.mkdir()
+    identity, change, calls = (profile / name for name in ('identity', 'change', 'calls'))
+    identity.write_text('first')
+    fake_cli(f'''import json, os, pathlib, sys
+profile = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"])
+identity = profile / "identity"
+if sys.argv[-2:] == ["auth", "status"]:
+    print(json.dumps(dict(loggedIn=True, authMethod="claude.ai", apiProvider="firstParty",
+                          email=identity.read_text() + "@example.invalid")))
+else:
+    with (profile / "calls").open("a") as counter:
+        counter.write("request\\n")
+    change = profile / "change"
+    if change.exists():
+        identity.write_text(change.read_text())
+    print(json.dumps(dict(type="result", subtype="success", is_error=False,
+                          structured_output={{"evidence": [{{"text": identity.read_text(), "source_ids": ["s1"]}}]}})))
+''')
+    manager = claude_generation.ClaudeGenerationManager(None, directory=str(profile)).verify_account()
+    old = manager.for_generation('sonnet')
+    old.generation_account = 'claude:' + manager.generation_account.rsplit(':', 1)[-1]
+    old.generate_brief = lambda *_: '{"evidence":[{"text":"old cached answer","source_ids":["s1"]}]}'
+    sources = [{'id': 'turn', 'text': 'Original account-independent evidence'}]
+    payload = {'sources': sources}
+    _summarize(engine, 1, old, payload, sources, 'history')
+    try:
+        identity.write_text('second')
+        with pytest.raises(CodexError, match='account changed') as caught:
+            _summarize(engine, 1, manager, payload, sources, 'history')
+        assert 'example.invalid' not in str(caught.value) and str(profile) not in str(caught.value)
+        assert not calls.exists()
+
+        identity.write_text('first')
+        change.write_text('second')
+        with pytest.raises(CodexError, match='account changed'):
+            _summarize(engine, 1, manager, payload, sources, 'history')
+        with Session(engine) as db:
+            saved = db.scalars(select(ProjectHistoryBatch)).one()
+            assert saved.evidence[0]['text'] == 'old cached answer'
+
+        identity.write_text('first')
+        change.unlink()
+        result, cached = _summarize(engine, 1, manager, payload, sources, 'history')
+        assert not cached and result[0]['text'] == 'first'
+        assert _summarize(engine, 1, manager, payload, sources, 'history') == (result, True)
+        assert len(calls.read_text().splitlines()) == 2
+    finally:
+        engine.dispose()

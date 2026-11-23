@@ -828,6 +828,10 @@ class CodexManager:
                 if not reused_client:
                     try:
                         scope['client'] = self._discussion_client(cwd)
+                    except progress.OptionalWorkExpired:
+                        # Setup closes its client on failure. Required synthesis
+                        # can open a fresh transport after optional work ends.
+                        raise
                     except Exception:
                         scope['failed'] = True
                         raise
