@@ -60,6 +60,9 @@ omitted. A bare filename prefers the tracked source, and a repository-relative
 path selects the exact file. Named Python files can use a longer bounded read
 to show entrypoint calls and relevant CLI choices. Named Fortran namelist
 templates can show which sections are active or commented out.
+Focused Python excerpts can also show where a call's local inputs come from,
+what guards apply, and whether a later call consumes its result. Conditional
+order, unresolved links, and evidence omitted for space are shown separately.
 **Coverage → Requested files skipped** explains any named files that
 did not supply evidence. Scope matching recognizes forms such as “cache” and
 “cached”. When a matching paragraph in a long saved conversation is too large to

@@ -28,6 +28,7 @@ from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_js_scope import focused_call_owner, focused_ui_declarations
 from .scheme_knowledge import collect_published_knowledge
+from .scheme_local_handoffs import local_handoff_rows
 from .scheme_mdp import mdp_excerpt
 from .scheme_migration_sql import compact_migration_sql, migration_sql_declarations
 from .scheme_named_files import named_file_excerpt, named_file_kind
@@ -1142,7 +1143,7 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
                         named_python=False):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
-    flow, workflow, choices, route_owners = [], [], [], set()
+    flow, workflow, choices, handoffs, route_owners = [], [], [], [], set()
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
@@ -1152,12 +1153,20 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
             if _python_migration(relative):
                 migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
             elif focus:
+                handoffs = local_handoff_rows(parsed, focus, shape=_predicate_shape)
                 routes = python_route_declarations(parsed)
                 flow = python_flow_declarations(parsed, focus, predicate_shape=_predicate_shape)
                 if named_python:
                     traced, _ = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
                     if traced:
-                        flow = traced
+                        downstream = traced[4:]
+                        scoped = sorted(downstream, key=lambda row: -focus(row[1]))
+                        handoff_lines = {line for line, _ in handoffs[:2]}
+                        paired = [row for row in downstream if row[0] in handoff_lines]
+                        ordered = dict.fromkeys([*traced[:4], *paired,
+                                                 *(row for pair in zip(downstream, scoped) for row in pair)])
+                        flow = [(line, label.replace('Python entrypoint flow ', 'Entry flow ', 1))
+                                for line, label in ordered]
                     guarded_options = {name for _, row in flow if ' under ' in row
                                        for name in re.findall(r'\bargs\.([A-Za-z_]\w*)', row.partition(':')[0])}
                     choices = sorted((row for row in cli_choice_rows(parsed)
@@ -1321,7 +1330,22 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
     used = len(rendered[0]) + 1
     # Keep room for explicit routes and concrete handoffs ahead of call-name lists.
     ordered_routes = sorted(routes, key=lambda item: -focus(item[1])) if focus else routes
-    full_trace = not focus or (named_python and flow and flow[0][1].startswith('Python entrypoint flow '))
+    # Related lines form one budget unit. Keep a short omission record if the
+    # entire unit does not fit alongside the other structural evidence.
+    handoff_budget = min(380, _MAX_EXCERPT - used)
+    selected_handoffs = handoffs[:2]
+    omissions = [f'L{number}: {description.partition(":")[0]}. Handoff details omitted by excerpt budget.'
+                 for number, description in selected_handoffs]
+    for index, (number, description) in enumerate(selected_handoffs):
+        line = f'L{number}: {description}'
+        reserved = sum(len(omitted) + 1 for omitted in omissions[index + 1:])
+        if len(line) + 1 + reserved > handoff_budget:
+            line = omissions[index]
+        if len(line) + 1 <= handoff_budget:
+            rendered.append(line)
+            used += len(line) + 1
+            handoff_budget -= len(line) + 1
+    full_trace = not focus or (named_python and flow and flow[0][1].startswith('Entry flow '))
     flow_allowance = 1400 if full_trace else _MAX_FOCUSED_FLOW_CHARS
     route_calls = [row for row in calls if row[1].split(' uses call syntax:')[0].rsplit('.', 1)[-1] in route_owners]
     for rows, allowance, count in ((workflow, 480, 8),
@@ -1635,7 +1659,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 10, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 14, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v17', 'project_id': project_id,
