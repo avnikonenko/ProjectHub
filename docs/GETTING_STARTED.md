@@ -45,6 +45,20 @@ projecthub
 
 Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/projecthub`.
 
+## Upgrade ProjectHub
+
+Stop ProjectHub, then [back up your data directory](#configuration-and-backups).
+Update using the same method you installed with. For a wheel upgrade, download
+the new wheel and substitute its filename in the commands below.
+
+| Installation | Update command |
+| --- | --- |
+| pipx | `pipx install --force ./projecthub_local-0.2.5-py3-none-any.whl` |
+| Conda | Run `conda activate projecthub`, then `python -m pip install --upgrade ./projecthub_local-0.2.5-py3-none-any.whl`. |
+| Git checkout | In the checkout, run `git pull --ff-only`, then `bash scripts/install.sh`. |
+
+Start ProjectHub again. It applies any database migrations at startup.
+
 ## Start a project
 
 For AI generation, install and sign in to the CLI you want to use. Run
@@ -56,6 +70,10 @@ saved projects and manage notes with ProjectHub alone. [AI setup guide](AI_GENER
 3. Choose **Codex** or **Claude Code** in the project’s **AI settings**. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. [Generation guide](AI_GENERATION.md)
 4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
+To diagram one workflow, open **Scheme → Focused Scheme** and ask, for example,
+“How do imported conversations become searchable?” Then click **Generate focused
+scheme**. [Focused Scheme guide](SCHEME.md#focused-scheme)
+
 Press Ctrl+C in the terminal to stop ProjectHub.
 
 ## Link a local session
@@ -64,11 +82,13 @@ Open **Sources → Link session**, choose Codex or Claude Code, and enter the
 session ID. Preview the match before linking it. Select a profile if the
 session belongs to a different local profile.
 
-Linked Claude Code sessions appear under **Project sessions** in **Sources**,
-with their saved transcripts in **History**. Use **Refresh session** to
-preview and save new turns. ProjectHub
-keeps the earlier source copies and reads the transcript without running Claude
-Code. History, Search, and AI generation use the saved transcript.
+| Linked session | How to pick up new messages |
+| --- | --- |
+| **Codex** | History sync checks linked sessions automatically by default. To refresh manually, use **History → Source details → Refresh Codex index**. |
+| **Claude Code** | In **Sources → Project sessions**, choose **Refresh session**, preview the changes, and save the update. Earlier source copies remain available. |
+
+Read the updated transcript in **History**. Use **Generate** to refresh saved
+results with the new messages. [History sync settings](AI_GENERATION.md#history-sync)
 
 ## Import conversations
 
@@ -110,9 +130,11 @@ Open **Export project** in the project header and choose a format.
 - **JSON file.** Download the structured project records as a standalone file.
   This option is also available in Notes.
 
-Export uses saved data and runs without AI.
+Export uses saved data and runs without AI. Both formats can contain original
+conversation text and source files, so review the contents before sharing.
+For a backup you can restore as a workspace, copy the application data directory.
 
 ## Configuration and backups
 
 - **Settings.** Run `projecthub config` for the file path. The default is `~/.config/projecthub/config.toml`. Environment variables take precedence at startup. Restart after file edits. [Example configuration](https://github.com/avnikonenko/ProjectHub/blob/main/config.example.toml)
-- **Backups.** Source and wheel installations default to `~/.local/share/projecthub`. Back up that directory to preserve history, notes, and tasks.
+- **Backups.** Stop ProjectHub before copying its data directory. Source and wheel installations default to `~/.local/share/projecthub`. Copy the whole directory to preserve saved results, conversations, notes, TODOs, and local files. Copy your configuration file separately to keep those settings too.

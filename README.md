@@ -36,6 +36,7 @@ to make diagrams. Use the links in saved results to see where the information ca
 | **Knowledge** | A summary plus searchable decisions, requirements, proposals, and open questions, with reasons and original evidence. | “Why did we choose SQLite?” |
 | **AI Q&A** | A set of questions and source-linked answers drawn from earlier project discussions. | “What did we discuss about CSV and JSON exports?” |
 | **Scheme** | Architecture and workflow diagrams with dependencies and supporting evidence. | “How does ProjectHub turn linked conversations into an overview?” |
+| **Focused Scheme** | A separate diagram for a workflow or code path you describe. | “How do imported conversations become searchable?” |
 | **Implementation Choices & Limits** | Code-backed findings about limits, defaults, filters, and fallbacks, with locations for their declarations and use. | “Where is import size capped, and what happens at the limit?” |
 
 Use **Reviews → Ask Project** for a new question. Generate **AI tags** separately
@@ -94,6 +95,7 @@ to package your own build.
 
 Both routes use the same [saved data directory](#your-data). Open
 [ProjectHub](http://127.0.0.1:8766) after starting it. Stop with Ctrl+C.
+Already installed? [Upgrade ProjectHub](docs/GETTING_STARTED.md#upgrade-projecthub).
 
 ## Example: Get back up to speed on Project X
 
