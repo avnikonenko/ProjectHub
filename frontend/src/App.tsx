@@ -2298,7 +2298,7 @@ function Codex({ base, onError, notes, onImported, onUnlinked, onOpenGeneration,
 }) {
   const [sessionRows, setSessions] = useState<RecordData[] | null>(null);
   const [sessionId, setSessionId] = useState('');
-  useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId, sessionRows]);
+  useEffect(() => { if (targetSessionId !== undefined) setSessionId(String(targetSessionId)); }, [targetSessionId]);
   const [linkingSession, setLinkingSession] = useState(false);
   const [refreshing, setRefreshing] = useState<{ noteId: number; input: ClaudeSessionInput } | null>(null);
   const [sessionFilter, setSessionFilter] = useState('all');
