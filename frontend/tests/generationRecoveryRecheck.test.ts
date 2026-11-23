@@ -7,6 +7,7 @@ let useGenerationRecovery: any;
 let useFocusedSchemeRecovery: any;
 let Scheme: any;
 let RevisionHistory: any;
+let AskProject: any;
 // A small hook host executes the real recovery hook without adding a DOM or
 // test-renderer dependency. Tests assert requests and observable state changes.
 class HookHost {
@@ -57,13 +58,13 @@ before(async () => {
     server: { middlewareMode: true, hmr: false }, appType: 'custom',
     plugins: [{ name: 'generation-hook-host', enforce: 'pre',
       transform(source, id) {
-        if (/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|generationBatch\.ts)$/.test(id)) {
+        if (/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|AskProject\.tsx|generationBatch\.ts)$/.test(id)) {
           return source.replace("from 'react'", "from 'virtual:generation-hooks'");
         }
       },
       resolveId(id, importer) {
         if (id === 'virtual:generation-hooks') return '\0generation-hook-host';
-        if (!importer?.match(/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|generationBatch\.ts)$/)) return;
+        if (!importer?.match(/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|AskProject\.tsx|generationBatch\.ts)$/)) return;
         if (id === 'react') return '\0generation-hook-host';
         if (id.startsWith('react/jsx')) return '\0generation-jsx-stub';
         if (importer.endsWith('/GenerationStatus.tsx') && (id === './Feedback' || id === './ui')) return '\0generation-ui-stub';
@@ -71,13 +72,14 @@ before(async () => {
       load(id) {
         if (id === '\0generation-hook-host') return `export const useState=(...args)=>globalThis.__generationRecoveryHooks.useState(...args);export const useEffect=(...args)=>globalThis.__generationRecoveryHooks.useEffect(...args);export const useRef=value=>globalThis.__generationRecoveryHooks.useRef(value);export const useCallback=fn=>fn;export const useId=()=>':test:';`;
         if (id === '\0generation-ui-stub') return 'export const Feedback=()=>null;export const ErrorBox=()=>null;';
-        if (id === '\0generation-jsx-stub') return 'export const jsx=(type,props)=>({type,props});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment=Symbol();';
+        if (id === '\0generation-jsx-stub') return 'export const jsx=(type,props,key)=>({type,props,key});export const jsxs=jsx;export const jsxDEV=jsx;export const Fragment=Symbol();';
       },
     }],
   });
   ({ useGenerationRecovery, useFocusedSchemeRecovery } = await server.ssrLoadModule('/src/GenerationStatus.tsx'));
   ({ Scheme } = await server.ssrLoadModule('/src/Scheme.tsx'));
   ({ RevisionHistory } = await server.ssrLoadModule('/src/RevisionHistory.tsx'));
+  ({ AskProject } = await server.ssrLoadModule('/src/AskProject.tsx'));
 });
 after(async () => { await server?.close(); delete (globalThis as any).__generationRecoveryHooks; });
 function fixture(initialBrief: any = { state: 'idle' }, initialParameters?: any, initialScheme?: any, focusedVisible?: boolean) {
@@ -245,6 +247,83 @@ test('switching to Focused Scheme preserves the pending normal revision view', a
     find(regularView, node => node.type === RevisionHistory).props.onLoadingChange(false);
     findButton('Architecture').props.onClick(); await settle();
     assert.equal(findButton('Generate Scheme').props.disabled, false);
+  } finally { host.dispose(); globalThis.fetch = original; }
+});
+
+test('Scheme question controls select the exact saved General, historical, or Focused diagram', async () => {
+  function find(tree: any, predicate: (node: any) => boolean): any {
+    if (!tree) return undefined;
+    if (Array.isArray(tree)) return tree.map(node => find(node, predicate)).find(Boolean);
+    return predicate(tree) ? tree : find(tree.props?.children, predicate);
+  }
+  const original = globalThis.fetch;
+  const host = new HookHost();
+  const focused = new HookHost();
+  const graph = { nodes: [], edges: [], explanation: 'Saved explanation' };
+  const general = { generated_at: '2026-02-01T12:00:00Z', sources: [], coverage: {},
+    architecture: graph, workflow: graph };
+  const previous = { ...general, generated_at: '2026-01-01T12:00:00Z' };
+  const savedFocused = { ...general, generated_at: '2026-03-01T12:00:00Z', instruction: 'A saved instruction', graph };
+  globalThis.fetch = async input => Response.json(String(input).endsWith('/scheme/focused') ? { snapshot: savedFocused }
+    : String(input).includes('/status?') ? { state: 'idle' }
+      : { snapshot: general, inspection: { tree: [], coverage: {} }, freshness: { state: 'unknown' } });
+  host.renderView = () => Scheme({
+    base: '/projects/7', generation: {}, visible: true, onGenerating() {},
+    recoveryVersion: 0, recoveryBusy: false, focus: 'balanced', queuedFocus: 'balanced', onFocusChange() {},
+  });
+  try {
+    host.render(); await settle();
+    const askControl = (tree: any) => find(tree, node => node.type?.name === 'AskAboutScheme');
+    const initial = askControl(host.value);
+    assert.deepEqual(initial.props.context, { kind: 'scheme', generated_at: general.generated_at });
+
+    find(host.value, node => node.type === RevisionHistory).props.onSelect(previous, 21); await settle();
+    const historical = askControl(host.value);
+    assert.deepEqual(historical.props.context, { kind: 'scheme', generated_at: previous.generated_at, revision_id: 21 });
+    assert.notEqual(historical.key, initial.key);
+
+    find(host.value, node => node.type === 'button' && node.props.children === 'Focused Scheme').props.onClick();
+    await settle();
+    const focusedView = find(host.value, node => node.type?.name === 'FocusedScheme');
+    focused.renderView = () => focusedView.type(focusedView.props);
+    focused.render(); await settle();
+    assert.deepEqual(askControl(focused.value).props.context,
+      { kind: 'focused_scheme', generated_at: savedFocused.generated_at });
+  } finally { host.dispose(); focused.dispose(); globalThis.fetch = original; }
+});
+
+test('the shared question form sends only its Scheme identity and ignores late answers after unmounting', async () => {
+  function find(tree: any, type: string): any {
+    if (!tree) return undefined;
+    if (Array.isArray(tree)) return tree.map(node => find(node, type)).find(Boolean);
+    return tree.type === type ? tree : find(tree.props?.children, type);
+  }
+  const original = globalThis.fetch;
+  const host = new HookHost();
+  const schemeContext = { kind: 'scheme', generated_at: '2026-01-01T12:00:00Z', revision_id: 21 };
+  let finish: (response: Response) => void = () => {};
+  let request: { url: string; options?: RequestInit } | undefined;
+  globalThis.fetch = async (input, options) => {
+    request = { url: String(input), options };
+    return new Promise<Response>(resolve => { finish = resolve; });
+  };
+  host.renderView = () => AskProject({ base: '/projects/7', projectId: 7, visible: true, schemeContext,
+    generation: { provider: 'claude', model: 'selected-model', effort: 'low', aiProfile: 'local' } });
+  try {
+    host.render();
+    find(host.value, 'textarea').props.onChange({ target: { value: 'Explain the handoff' } });
+    await settle();
+    find(host.value, 'form').props.onSubmit({ preventDefault() {} });
+    assert.equal(request?.url, '/api/projects/7/codex/ask');
+    assert.deepEqual(JSON.parse(request?.options?.body as string), {
+      question: 'Explain the handoff', confirmed: true, model: 'selected-model', effort: 'low',
+      provider: 'claude', ai_profile: 'local', scheme_context: schemeContext,
+    });
+    host.dispose();
+    assert.equal(request?.options?.signal?.aborted, true);
+    finish(Response.json({ answer: 'Late answer', sources: [] }));
+    await settle();
+    assert.equal(find(host.value, 'h3'), undefined);
   } finally { host.dispose(); globalThis.fetch = original; }
 });
 

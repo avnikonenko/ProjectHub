@@ -41,6 +41,8 @@ to make diagrams. Use the links in saved results to see where the information ca
 
 Use **Reviews → Ask Project** for a new question. Generate **AI tags** separately
 to browse saved Knowledge and Q&A by topic.
+Open **Ask about this Scheme** on a saved diagram to ask about its workflow,
+code references, or unclear steps. [Scheme guide](docs/SCHEME.md#ask-about-this-scheme)
 
 **AI runs when you request it.** Opening projects and searching saved information do not trigger model requests.
 

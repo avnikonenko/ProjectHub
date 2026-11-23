@@ -4,6 +4,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+- Ask about a saved General or Focused Scheme, including earlier General Scheme versions, with answers linked to supporting evidence.
+
 ## [0.2.5] - 2026-11-23
 
 - Link local Codex and Claude Code sessions from Sources. Preview the conversation before linking, and refresh saved Claude Code transcripts as work continues.

@@ -30,6 +30,7 @@ from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_p
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
 from .scheme_evidence import collect_evidence
 from .ask import answer_project, retrieve_passages
+from .scheme_ask import current_repository_passages, saved_scheme_passages
 from . import progress
 from . import generation_attempts as attempts
 from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id,
@@ -181,8 +182,21 @@ class InstructionsInput(Input):
     instructions: str = Field(max_length=MAX_PROJECT_INSTRUCTIONS)
 
 
+class SchemeQuestionContext(Input):
+    kind: Literal['scheme', 'focused_scheme']
+    generated_at: str = Field(min_length=1, max_length=128)
+    revision_id: int | None = Field(default=None, strict=True, gt=0, le=2**63 - 1)
+
+    @model_validator(mode='after')
+    def check_revision(self):
+        if self.kind == 'focused_scheme' and self.revision_id is not None:
+            raise ValueError('Focused Scheme questions use the saved diagram timestamp.')
+        return self
+
+
 class AskInput(GenerationInput):
     question: str = Field(min_length=1, max_length=2000)
+    scheme_context: SchemeQuestionContext | None = None
 
 
 def send_options(manager, body):
@@ -986,27 +1000,60 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
         raise HTTPException(503, str(exc)) from exc
 
 
+def _scheme_question_snapshot(db, project_id, context):
+    if context.revision_id is not None:
+        row = scoped(db, GenerationRevision, project_id, context.revision_id)
+        if row.kind != 'scheme':
+            raise HTTPException(404, 'Saved Scheme revision not found in this project.')
+        if row.generated_at != context.generated_at:
+            raise HTTPException(409, 'This saved Scheme version changed. Reopen it before asking again.')
+        snapshot = row.snapshot
+    elif context.kind == 'focused_scheme':
+        snapshot = read_focused_scheme(db, project_id)
+    else:
+        snapshot = read_scheme(db, project_id)
+    if snapshot is None:
+        raise HTTPException(404, 'Saved Scheme not found in this project.')
+    if not isinstance(snapshot, dict) or snapshot.get('generated_at') != context.generated_at:
+        raise HTTPException(409, 'This saved Scheme version changed. Reopen it before asking again.')
+    return snapshot
+
+
 @router.post('/ask')
 def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
-    project(db, project_id)
+    project_row = project(db, project_id)
     if not body.confirmed:
         raise HTTPException(422, 'Explicitly confirm sending matching passages to the selected provider.')
-    sources = retrieve_passages(db, project_id, body.question)
+    scheme_context = body.scheme_context
+    snapshot = _scheme_question_snapshot(db, project_id, scheme_context) if scheme_context else None
+    repository_linked = bool(project_row.repository_path)
+    matches = retrieve_passages(db, project_id, body.question)
     db.rollback()
-    if not sources:
-        return answer_project(None, body.question, sources)
+    if snapshot is None and not matches:
+        return answer_project(None, body.question, matches)
     job_lock = generation_lock.for_job(project_id, 'ask')
     if not job_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
     try:
         progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False)
+        sources = matches
+        if snapshot is not None:
+            progress.update(project_id, stage='Gathering evidence for the saved Scheme')
+            sources = saved_scheme_passages(snapshot, scheme_context.kind, body.question)
+            sources.extend({**source, 'kind': 'current_project_passage',
+                            'label': 'Current project · ' + source['label']} for source in matches)
+            if repository_linked:
+                sources.extend(current_repository_passages(request.app.state.engine, project_id, body.question))
+            sources = [{**source, 'id': str(index)} for index, source in enumerate(sources, 1)]
+            progress.check_cancelled()
         manager = generation_base(request.app, project_id, body.provider)
         selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
         with use_project_instructions(instructions):
-            progress.update(project_id, stage='Generating project answer')
-            result = answer_project(selected, body.question, sources)
+            progress.update(project_id, stage='Generating Scheme answer' if snapshot is not None else 'Generating project answer')
+            options = {'about_scheme': True} if snapshot is not None else {}
+            result = answer_project(selected, body.question, sources, **options)
             if body.provider == 'claude':
                 result = {**result, 'provider': body.provider}
             progress.complete(project_id, lambda: None)

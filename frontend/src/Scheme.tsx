@@ -16,6 +16,7 @@ import { AIResultHeader } from './AIResultHeader';
 import { SchemeResultCoverage, schemeInspectionForDisplay, type SchemeCoverage, type SchemeDiagnostics } from './SchemeInspectionDetails';
 import { SchemeKnowledgeContext } from './SchemeKnowledgeContext';
 import { SchemeDependencies, type Dependency, type DependencyInventory } from './SchemeDependencies';
+import { AskProject, type SchemeAnswerContext } from './AskProject';
 import { generationBody, generationDestination, type Generation } from './generationProvider';
 
 type SchemeSource = BriefSource & {
@@ -269,6 +270,21 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
+function AskAboutScheme({ base, generation, visible, context }: {
+  base: string; generation: Generation; visible: boolean; context: SchemeAnswerContext;
+}) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const panelId = useId();
+  return <>
+    <button type="button" className="secondary" aria-expanded={!!open} aria-controls={panelId}
+      onClick={() => setOpen(current => !current)}>Ask about this Scheme</button>
+    <div id={panelId} hidden={!open}>
+      {open !== null && <AskProject base={base} projectId={Number(base.split('/')[2])}
+        generation={generation} visible={visible && open} schemeContext={context} />}
+    </div>
+  </>;
+}
+
 function FocusedScheme({ base, generation, visible, onGenerating }: {
   base: string; generation: Generation; visible: boolean; onGenerating?: (active: boolean) => void;
 }) {
@@ -372,6 +388,8 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
       </button>
     </form>
     <small className="muted">Generation sends your instruction and selected project evidence to {generationDestination(generation.provider)}.</small>
+    {snapshot && <AskAboutScheme key={`${base}:${snapshot.generated_at}`} base={base} generation={generation}
+      visible={visible} context={{ kind: 'focused_scheme', generated_at: snapshot.generated_at }} />}
     <ErrorBox error={loadError || recovery.error || (recoveredSubmission ? '' : submissionError?.message ?? '')} />
     {loadError && <button type="button" className="secondary" onClick={() => setRetryLoad(value => value + 1)}>Retry loading</button>}
     <Feedback>{notice || (recoveredCancellation && cancelledGenerationMessage)}</Feedback>
@@ -510,6 +528,10 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
       disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
       Generate Scheme
     </button>
+    {snapshot && <AskAboutScheme key={`${base}:${snapshot.generated_at}:${revisionId}`} base={base}
+      generation={generation} visible={visible && !focused} context={{
+        kind: 'scheme', generated_at: snapshot.generated_at, ...(revisionId !== null ? { revision_id: revisionId } : {}),
+      }} />}
     <small className="muted">Generation sends selected project evidence to {generationDestination(generation.provider)}.</small>
     <details className="brief-details">
       <summary>How focus works</summary>

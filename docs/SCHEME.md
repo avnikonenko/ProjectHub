@@ -92,6 +92,18 @@ Scheme can draw on saved Knowledge, repository excerpts, and conversations.
 Check **Scheme details → Saved Knowledge context** for the version and counts
 used. Regenerate Scheme to use newer Knowledge.
 
+## Ask about this Scheme
+
+Open a saved General or Focused Scheme and click **Ask about this Scheme**.
+For example, ask “Where does the code hand off the validated record?” or
+“Which steps in this diagram are still proposals?” You can also ask about an
+older General Scheme selected under **Previous versions**.
+
+The answer uses the diagram version you opened, its coverage notes, and
+available supporting evidence. ProjectHub can look for additional passages
+when needed. The question and selected evidence go to your chosen provider,
+and answers cite their sources. Asking leaves the saved diagram in place.
+
 ## Dependencies
 
 The Dependencies tab scans supported manifests and safe Python source files in
