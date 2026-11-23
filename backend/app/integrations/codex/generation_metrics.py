@@ -54,7 +54,7 @@ class _ModelRequest:
             if self._turn_id is not None:
                 return
             self._turn_id = turn_id
-            self._usage = self._pending.get(turn_id)
+            self._update_usage(self._pending.get(turn_id))
             self._pending.clear()
 
     def record(self, params):
@@ -72,7 +72,15 @@ class _ModelRequest:
                 if turn_id in self._pending or len(self._pending) < 16:
                     self._pending[turn_id] = _latest_usage(usage, self._pending.get(turn_id))
             elif turn_id == self._turn_id:
-                self._usage = _latest_usage(usage, self._usage)
+                self._update_usage(_latest_usage(usage, self._usage))
+
+    def _update_usage(self, usage):
+        previous = self._usage.get('total_tokens') if self._usage is not None else None
+        self._usage = usage
+        if self._owner._budget is not None and usage is not None:
+            total = usage.get('total_tokens')
+            if total is not None and total != previous:
+                self._owner._budget._record_total(previous, total)
 
 
 def _latest_usage(current, previous):
@@ -89,10 +97,21 @@ class GenerationMetrics:
     def __init__(self):
         self._lock = threading.Lock()
         self._requests = []
+        self._budget = None
+
+    def attach_budget(self, budget):
+        with self._lock:
+            if self._budget is budget:
+                return
+            if self._budget is not None or self._requests:
+                raise RuntimeError('Attach a token allowance before starting generation requests.')
+            self._budget = budget
 
     def begin_model_request(self, thread_id):
         request = _ModelRequest(self, thread_id)
         with self._lock:
+            if self._budget is not None:
+                self._budget._model_started()
             self._requests.append(request)
         return request
 

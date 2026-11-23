@@ -30,6 +30,7 @@ type Props = {
   showRecords?: boolean;
   externalBusy?: boolean;
   refreshRequest?: number;
+  generationActionId?: string;
   onGenerationRequestHandled?: GenerationRequestProps['onGenerationRequestHandled'];
   onGenerationOutcome?: (outcome: KnowledgeGenerationOutcome) => void;
   generateSchemeAfter?: boolean;
@@ -108,7 +109,7 @@ export function EarlierKnowledgeResult({ result, onDownload }: {
   </details>;
 }
 
-export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false, schemeFocus }: Props) {
+export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, generationActionId, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false, schemeFocus }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -240,7 +241,7 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
     };
   }, [base, projectId, retry, visible, loadKey, recoveryAttempt, refreshRequest]);
 
-  async function generateKnowledge() {
+  async function generateKnowledge(actionId?: string) {
     if (externalBusy || active.current || busy || tagsBusy || revisionBusy) return;
     previewRequestVersion.current++;
     recovery.current?.abort();
@@ -254,7 +255,7 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
     setNotice({ base, error: '', notice: '' });
     setPreview({ base, busy: true, error: '', started: Date.now(), loading: false });
     try {
-      const result = await generateAndSaveKnowledge(base, projectId, { ...generation, schemeFocus }, controller.signal, generateSchemeAfter);
+      const result = await generateAndSaveKnowledge(base, projectId, { ...generation, schemeFocus }, controller.signal, generateSchemeAfter, api, actionId);
       if (!controller.signal.aborted && active.current === run) {
         updatePublishedKnowledge(base, () => ({ snapshot: result.knowledge, paired_with_current_brief: false,
           current_evidence_availability: {}, coverage: {} }));
@@ -312,7 +313,7 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
   const error = load.key === loadKey ? load.error : '';
   const blocked = !!(externalBusy || tagsBusy || busy || revisionBusy || currentPreview?.loading || isLoading);
   useEffect(() => { onBusyChange?.({ busy: blocked, running: busy }); }, [blocked, busy, onBusyChange]);
-  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || revisionBusy ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled);
+  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || revisionBusy ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled, generationActionId);
   const feedback = <>
     <ErrorBox error={error} />
     <ErrorBox error={currentNotice?.error || ''} />

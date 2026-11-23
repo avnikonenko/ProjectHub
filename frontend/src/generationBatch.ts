@@ -8,6 +8,7 @@ export type GenerationRequestState = 'wait' | 'ready' | 'skip';
 export type GenerationRequestTracker = { identity: string; sequence: number };
 export type GenerationRequestProps = {
   generationRequest?: number;
+  generationActionId?: string;
   onGenerationRequestHandled?: (started: boolean) => void;
 };
 export type KnowledgeGenerationOutcome = {
@@ -95,16 +96,16 @@ export function claimGenerationRequest(tracker: GenerationRequestTracker, identi
 }
 
 export function useGenerationRequest(identity: string, sequence: number, state: GenerationRequestState,
-  generate: () => Promise<void>, handled?: (started: boolean) => void) {
+  generate: (actionId?: string) => Promise<void>, handled?: (started: boolean) => void, actionId?: string) {
   const tracker = useRef<GenerationRequestTracker>({ identity, sequence: 0 });
   const current = useRef({ generate, handled }); current.current = { generate, handled };
   useEffect(() => {
     const action = claimGenerationRequest(tracker.current, identity, sequence, state);
     if (action === null) return;
     // The normal handler remains the only POST/save/recovery path.
-    if (action === 'start') void current.current.generate();
+    if (action === 'start') void current.current.generate(actionId);
     current.current.handled?.(action === 'start');
-  }, [identity, sequence, state]);
+  }, [identity, sequence, state, actionId]);
 }
 
 export function idleGenerationKinds(busy: Partial<Record<ProjectGenerationKind, boolean>>) {

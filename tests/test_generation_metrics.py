@@ -11,6 +11,7 @@ from backend.app.integrations.codex import progress
 from backend.app.integrations.codex.generation_metrics import (
     GenerationMetrics, begin_model_request, collect_generation_metrics,
 )
+from backend.app.integrations.codex.generation_token_budget import GenerationTokenLimitExceeded
 from backend.app.integrations.codex.protocol import CodexError
 from backend.tests.integrations.test_manager import env, ReusableBriefClient
 
@@ -206,6 +207,36 @@ def test_real_manager_protocol_mock_counts_each_fresh_turn_once(env):
     assert snapshot['token_usage']['total_tokens'] == 200
     assert snapshot['token_usage']['status'] == 'complete'
     assert snapshot['token_usage']['reported_requests'] == 2
+
+
+def test_real_manager_interrupts_active_turn_when_reported_usage_reaches_limit(env, monkeypatch):
+    class ActiveUsageClient(ReusableBriefClient):
+        def request(self, method, params):
+            if method == 'turn/start':
+                event = notification(thread=params['threadId'], turn='active-turn')
+                self.on_event('thread/tokenUsage/updated', event)
+                return {'turn': {'id': 'active-turn'}}
+            return super().request(method, params)
+
+    clients = []
+
+    def factory(**callbacks):
+        client = ActiveUsageClient(**callbacks)
+        clients.append(client)
+        return client
+
+    env.manager.client_factory = factory
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '100')
+    metrics = GenerationMetrics()
+    progress.begin(813, 'brief', metrics=metrics)
+    try:
+        with collect_generation_metrics(metrics), pytest.raises(GenerationTokenLimitExceeded):
+            env.manager.generate_brief('input', {})
+    finally:
+        progress.finish(813)
+
+    assert ('turn/interrupt', {'threadId': 'generated-1', 'turnId': 'active-turn'}) in clients[0].calls
+    assert metrics.snapshot()['token_usage']['total_tokens'] == 100
 
 
 def test_real_manager_failed_start_is_counted_without_fabricating_usage(env):

@@ -13,6 +13,7 @@ type WorkerSettings = {
   max_extraction_workers: number;
   profileSettings?: GenerationProfileSettings | null;
   budgetSettings?: { value: number; configured: number; min: number; max: number } | null;
+  tokenLimitSettings?: { value: number; configured: number; min: number; max: number } | null;
   schemeSourceSettings?: ReturnType<typeof parseSchemeSourceSettings>;
   advancedSchemeSettings: ReturnType<typeof parseAdvancedSchemeSettings>;
 };
@@ -76,12 +77,25 @@ function settingsResponse(value: unknown): WorkerSettings {
     }
     budgetSettings = { value: effective, configured, min, max };
   }
+  let tokenLimitSettings = null;
+  if ('generation_token_limit' in budget || 'configured_generation_token_limit' in budget) {
+    const min = budget.min_generation_token_limit;
+    const max = budget.max_generation_token_limit;
+    const effective = budget.generation_token_limit;
+    const configured = budget.configured_generation_token_limit;
+    if (min !== 0 || !validCount(max) || !validCount(effective, min) || !validCount(configured, min)
+      || effective > max || configured > max) {
+      throw new Error('AI settings returned an unsupported token limit.');
+    }
+    tokenLimitSettings = { value: effective, configured, min, max };
+  }
   return { ...settings, selected_extraction_workers: selected,
-    profileSettings: parseGenerationProfileSettings(value), budgetSettings,
+    profileSettings: parseGenerationProfileSettings(value), budgetSettings, tokenLimitSettings,
     schemeSourceSettings: parseSchemeSourceSettings(value), advancedSchemeSettings: parseAdvancedSchemeSettings(value) } as WorkerSettings;
 }
 
-type SettingField = 'extraction_workers' | 'generation_profile' | 'generation_budget' | 'scheme_source_chars' | AdvancedSchemeField;
+type SettingField = 'extraction_workers' | 'generation_profile' | 'generation_budget' | 'generation_token_limit'
+  | 'scheme_source_chars' | AdvancedSchemeField;
 type SettingOption = string | number;
 type Setting = { value: SettingOption; configured: SettingOption } &
   ({ min: number; max: number } | { options: readonly SettingOption[] });
@@ -91,6 +105,7 @@ const savedMessages: Record<SettingField, string> = {
   extraction_workers: 'AI worker setting saved.',
   generation_profile: 'Generation profile saved.',
   generation_budget: 'Overall time budget saved.',
+  generation_token_limit: 'Token limit saved.',
   scheme_source_chars: 'Scheme excerpt budget saved.',
   scheme_read_bytes: 'Local file read limit saved.',
   scheme_package_chars: 'Final evidence package limit saved.',
@@ -108,6 +123,7 @@ function settingFor(settings: WorkerSettings | null, field: SettingField, numeri
         options: profile.generation_profiles.map(option => option.id) };
     }
     case 'generation_budget': return settings.budgetSettings;
+    case 'generation_token_limit': return settings.tokenLimitSettings;
     case 'scheme_source_chars': return settings.schemeSourceSettings;
     default: return settings.advancedSchemeSettings[field];
   }
@@ -124,6 +140,7 @@ function settingValue(setting: Setting | null | undefined, draft: string) {
 export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { active: boolean; refreshVersion?: number }) {
   const helpId = useId();
   const budgetHelpId = useId();
+  const tokenLimitHelpId = useId();
   const schemeHelpId = useId();
   const advancedSchemeHelpId = useId();
   const [settings, setSettings] = useState<WorkerSettings | null>(null);
@@ -266,6 +283,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
 
   const profileSettings = settings?.profileSettings;
   const budget = settings?.budgetSettings;
+  const tokenLimit = settings?.tokenLimitSettings;
   const schemeBudget = settings?.schemeSourceSettings;
   const advancedScheme = settings?.advancedSchemeSettings;
   const workerInput = inputValue('extraction_workers');
@@ -298,6 +316,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const validWorkers = autoWorkers || settingValue(settingFor(settings, 'extraction_workers', true), workerInput) !== undefined;
   const workerOverride = settings && settings.selected_extraction_workers !== settings.configured_extraction_workers;
   const validBudget = settingValue(budget, inputValue('generation_budget')) !== undefined;
+  const validTokenLimit = settingValue(tokenLimit, inputValue('generation_token_limit')) !== undefined;
   return <div>
     {loading && <Feedback>Loading AI settings…</Feedback>}
     <ErrorBox error={loadError} />
@@ -381,6 +400,26 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
     </SettingsHelp>
     {budget && budget.value !== budget.configured
       && <p><small>Startup environment overrides the saved time budget ({budget.configured} seconds).</small></p>}
+    {tokenLimit && <>
+      <label>
+        Stop at reported tokens
+        <input type="number" min={tokenLimit.min} max={tokenLimit.max} step={1}
+          aria-describedby={tokenLimitHelpId} aria-invalid={!validTokenLimit}
+          value={inputValue('generation_token_limit')} disabled={loading}
+          {...numericEvents('generation_token_limit')} />
+      </label>
+      {saveFeedback('generation_token_limit')}
+      {!validTokenLimit && <Feedback>Enter a whole number from 0 to {tokenLimit.max.toLocaleString()}.</Feedback>}
+      <SettingsHelp title="About the reported token limit" id={tokenLimitHelpId}>
+        <p>One limit covers all selected results, including parallel batches and retries. Set 0 for unlimited.
+          {' '}Changes apply to the next generation.</p>
+        <p>The total is approximate because provider reports can be incomplete or delayed.
+          ProjectHub stops starting new requests when the reported total reaches the limit.
+          Requests in progress can push the final total over the limit.</p>
+      </SettingsHelp>
+      {tokenLimit.value !== tokenLimit.configured && <p><small>Startup environment overrides the saved token limit
+        {' '}({tokenLimit.configured === 0 ? 'unlimited' : tokenLimit.configured.toLocaleString()}).</small></p>}
+    </>}
     {schemeBudget && <>
       <label>
         Scheme excerpt budget

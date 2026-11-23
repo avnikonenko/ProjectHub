@@ -1,6 +1,9 @@
 """Server-owned Scheme follow-up starts only after saved Knowledge; mocked AI."""
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Event
 from types import SimpleNamespace
+from uuid import uuid4
 
 from fastapi import BackgroundTasks, FastAPI
 from fastapi.testclient import TestClient
@@ -10,6 +13,7 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import generation_attempts as attempts, progress, router as routes, scheme
 from backend.app.integrations.codex.ai_instructions import ai_instructions
+from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
 from backend.app.models import GenerationRevision, Project, ProjectAIInstructions, ProjectKnowledge, ProjectScheme, utcnow
 
@@ -73,6 +77,96 @@ def api(tmp_path, monkeypatch):
 
 def body(**changes):
     return {'confirmed': True, 'publish': True, 'generate_scheme': True, 'model': 'chosen', 'effort': 'medium', **changes}
+
+
+def _reported_request(name):
+    request = begin_model_request(name)
+    request.bind_turn('test-turn')
+    return lambda count: request.record({'threadId': name, 'turnId': 'test-turn',
+                                         'tokenUsage': {'total': {'totalTokens': count}}})
+
+
+def test_parallel_routes_share_one_allowance_and_preserve_the_saved_scheme(api, monkeypatch):
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '100')
+    action = str(uuid4())
+    both_active = Barrier(2)
+    brief_reported, limit_reached = Event(), Event()
+
+    def run(engine, pid, kind):
+        progress.begin(pid, kind, engine=engine)
+        try:
+            report = _reported_request(kind)
+            both_active.wait(5)
+            if kind == 'brief':
+                report(55)
+                brief_reported.set()
+                assert limit_reached.wait(5)
+            else:
+                assert brief_reported.wait(5)
+                report(52)
+                limit_reached.set()
+            progress.complete(pid, lambda: pytest.fail('An unfinished result was saved after reaching the shared limit'))
+        except CodexError as exc:
+            progress.finish(pid, error=str(exc))
+            raise
+        finally:
+            progress.finish(pid)
+
+    monkeypatch.setattr(routes, 'refresh_brief', lambda engine, pid, *_: run(engine, pid, 'brief'))
+    monkeypatch.setattr(routes, 'refresh_scheme', lambda engine, pid, *_, **__: run(engine, pid, 'scheme'))
+    prefix = '/api/projects/1/codex'
+    payload = {'confirmed': True, 'generation_action_id': action}
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        requests = [pool.submit(api.client.post, f'{prefix}/{kind}', json=payload) for kind in ('brief', 'scheme')]
+        for pending in requests:
+            response = pending.result(timeout=10)
+            assert response.status_code == 503
+            assert '100 reported tokens' in response.json()['detail']
+    assert api.client.get(f'{prefix}/generation/actions/{action}').json() == {
+        'limit': 100, 'total_tokens': 107, 'model_requests': 2, 'reported_requests': 2,
+        'reached': True, 'active_jobs': 0,
+    }
+    assert api.client.get(f'/api/projects/2/codex/generation/actions/{action}').status_code == 404
+    with Session(api.engine) as db:
+        assert db.get(ProjectScheme, 1).snapshot == api.old_scheme
+        assert attempts.read_latest(db, 1, 'scheme')['state'] == 'failed'
+
+
+def test_queued_scheme_keeps_the_knowledge_allowance(api, monkeypatch):
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '100')
+    original_publish = routes.generate_knowledge_brief
+    action = str(uuid4())
+
+    def publish(engine, pid, selected, *, publish):
+        progress.begin(pid, 'knowledge', engine=engine)
+        try:
+            _reported_request('knowledge')(60)
+            return progress.complete(pid, lambda: original_publish(engine, pid, selected, publish=publish))
+        finally:
+            progress.finish(pid)
+
+    def followup(engine, pid, *_args, **_kwargs):
+        progress.begin(pid, 'scheme', engine=engine)
+        try:
+            assert progress.current_metrics().live_usage()['model_requests'] == 0
+            _reported_request('scheme')(40)
+            progress.complete(pid, lambda: pytest.fail('Scheme exceeded the shared limit'))
+        except CodexError as exc:
+            progress.finish(pid, error=str(exc))
+            raise
+        finally:
+            progress.finish(pid)
+
+    monkeypatch.setattr(routes, 'generate_knowledge_brief', publish)
+    monkeypatch.setattr(routes, 'refresh_scheme', followup)
+    prefix = '/api/projects/1/codex'
+    response = api.client.post(f'{prefix}/knowledge/brief', json=body(generation_action_id=action))
+    assert response.status_code == 200 and response.json()['scheme_requested'] is True
+    assert api.client.get(f'{prefix}/generation/actions/{action}').json()['total_tokens'] == 100
+    with Session(api.engine) as db:
+        assert db.get(ProjectKnowledge, 1).snapshot['publication_id'] == 'new-knowledge'
+        assert db.get(ProjectScheme, 1).snapshot == api.old_scheme
+        assert '100 reported tokens' in attempts.read_latest(db, 1, 'scheme')['error']
 
 
 def test_scheme_followup_uses_committed_knowledge_and_a_fresh_manager(api):

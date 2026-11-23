@@ -105,7 +105,8 @@ def test_cli_applies_settings_before_start_and_never_prints_config(tmp_path, mon
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '60000')
     monkeypatch.setenv('PROJECTHUB_SCHEME_READ_BYTES', '4194304')
     monkeypatch.setenv('PROJECTHUB_SCHEME_PACKAGE_CHARS', '180000')
-    for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'CODEX_HOME'):
+    for key in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS',
+                'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_TOKEN_LIMIT', 'CODEX_HOME'):
         monkeypatch.delenv(key, raising=False)
     calls = []
     listener = SimpleNamespace(set_inheritable=lambda enabled: None)
@@ -190,7 +191,7 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     loaded = load_settings({'PROJECTHUB_CONFIG': str(path)})
     for name in ('PROJECTHUB_PORT', 'PROJECTHUB_DATA_DIR', 'PROJECTHUB_GENERATION_BUDGET',
                  'PROJECTHUB_GENERATION_TIMEOUT', 'PROJECTHUB_EXTRACTION_WORKERS',
-                 'PROJECTHUB_GENERATION_PROFILE',
+                 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_TOKEN_LIMIT',
                  'PROJECTHUB_HISTORY_AUTO_SYNC', 'PROJECTHUB_HISTORY_SYNC_INTERVAL'):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv('PROJECTHUB_SCHEME_SOURCE_CHARS', '80000')
@@ -264,3 +265,16 @@ def test_direct_invalid_budget_does_not_partially_update_environment(tmp_path, m
         settings.apply_environment()
     assert os.environ['PROJECTHUB_PORT'] == '8766'
     assert os.environ['PROJECTHUB_GENERATION_BUDGET'] == '900'
+
+
+def test_token_limit_file_and_environment_precedence(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    path.write_text('[ai]\ngeneration_token_limit = 45000\n')
+    monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
+    monkeypatch.delenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', raising=False)
+    assert config.generation_token_limit() == 45_000
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '0')
+    assert config.generation_token_limit() == 0
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', 'not-an-integer')
+    with pytest.raises(ConfigError, match='ai.generation_token_limit must be an integer'):
+        config.generation_token_limit()

@@ -431,7 +431,7 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
   </div>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   onFocusedGenerating?: (active: boolean) => void;
@@ -476,7 +476,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     return () => abort.abort();
   }, [path, recoveryVersion, visible, generationRequest, refresh]);
 
-  async function generate(requestedFocus: SchemeFocus) {
+  async function generate(requestedFocus: SchemeFocus, actionId?: string) {
     if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy) return;
     inFlight.current = true;
     resultRead.current++;
@@ -485,7 +485,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     setNotice('');
     onGenerating(true);
     try {
-      const snapshot = await post(path, { confirmed: true, ...generationBody(generation),
+      const snapshot = await post(path, { confirmed: true, ...generationBody(generation, actionId),
         focus: requestedFocus }) as SchemeSnapshot;
       if (alive.current) {
         setLatestVersion(snapshot.generated_at);
@@ -511,7 +511,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   }
   useGenerationRequest(base, generationRequest,
     generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading || questionBusy ? 'wait' : 'ready',
-    () => generate(queuedFocus), onGenerationRequestHandled);
+    actionId => generate(queuedFocus, actionId), onGenerationRequestHandled, generationActionId);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection?.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';

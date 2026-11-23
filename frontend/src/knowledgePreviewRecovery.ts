@@ -12,12 +12,12 @@ export type PreviewProgress = {
 
 export async function generateAndSaveKnowledge(base: string, projectId: number,
   generation: Generation & { schemeFocus?: SchemeFocus }, signal: AbortSignal, generateScheme = false,
-  request: (path: string, options: RequestInit) => Promise<unknown> = api) {
+  request: (path: string, options: RequestInit) => Promise<unknown> = api, actionId?: string) {
   if (base !== `/projects/${projectId}` || !Number.isSafeInteger(projectId) || projectId < 1)
     throw new Error('Knowledge generation does not identify this project.');
   signal.throwIfAborted();
   const raw = await request(`${base}/codex/knowledge/brief`, { method: 'POST', signal,
-    body: JSON.stringify({ confirmed: true, publish: true, ...generationBody(generation),
+    body: JSON.stringify({ confirmed: true, publish: true, ...generationBody(generation, actionId),
       ...(generateScheme ? { generate_scheme: true, scheme_focus: generation.schemeFocus } : {}) }) });
   signal.throwIfAborted();
   return parsePublishedKnowledgeResult(raw, projectId);

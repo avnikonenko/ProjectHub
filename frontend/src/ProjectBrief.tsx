@@ -18,11 +18,11 @@ type Request = (path: string, options: RequestInit) => Promise<unknown>;
 
 /** Generate only the general Project Overview, independently of Knowledge. */
 export async function generateProjectOverview(base: string, generation: Generation,
-  signal: AbortSignal, request: Request = api): Promise<Brief> {
+  signal: AbortSignal, request: Request = api, actionId?: string): Promise<Brief> {
   if (!/^\/projects\/[1-9]\d*$/.test(base)) throw new Error('The project overview does not identify a project.');
   signal.throwIfAborted();
   const result = await request(`${base}/codex/brief`, { method: 'POST', signal,
-    body: JSON.stringify({ confirmed: true, ...generationBody(generation) }) });
+    body: JSON.stringify({ confirmed: true, ...generationBody(generation, actionId) }) });
   if (!result || typeof result !== 'object' || !('generated_at' in result)
       || typeof result.generated_at !== 'string' || !result.generated_at.trim()
       || !('sections' in result) || !result.sections || typeof result.sections !== 'object'
@@ -48,7 +48,7 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & {
+export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, generationActionId, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & {
   visible: boolean; generation: Generation; onGenerating: (active: boolean) => void;
   onRecoveryNeeded?: () => void;
   onResultActivated?: () => void;
@@ -122,7 +122,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
     return () => { abort.abort(); request.current += 1; };
   }, [base, recoveryVersion, visible, generationRequest]);
 
-  async function generate() {
+  async function generate(actionId?: string) {
     if (activeGeneration.current || loading || revisionLoading || recoveryBusy || externalBusy) return;
     const run = { base, controller: new AbortController() };
     activeGeneration.current = run;
@@ -130,7 +130,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
     setGenerating(true); setError(''); setNotice('');
     onGenerating(true);
     try {
-      const result = await generateProjectOverview(base, generation, run.controller.signal);
+      const result = await generateProjectOverview(base, generation, run.controller.signal, api, actionId);
       if (activeGeneration.current === run && !run.controller.signal.aborted) {
         selectedRevision.current = null; setRevisionId(null);
         setBrief(result); setLatestVersion(result.generated_at);
@@ -150,7 +150,7 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
       }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled, generationActionId);
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
     entries.flatMap((entry) => entry.source_ids),

@@ -1,4 +1,5 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
+from contextlib import ExitStack
 from typing import Annotated, Literal
 from pathlib import Path
 from uuid import UUID
@@ -34,12 +35,13 @@ from .ask import answer_project, retrieve_passages
 from .scheme_ask import current_repository_passages, saved_scheme_passages
 from . import progress
 from . import generation_attempts as attempts
+from .generation_token_budget import action_budget, action_budget_status, use_token_budget
 from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, active_revision_id,
                         list_revisions, qa_revision_matches)
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
 from .session_reassignment import check_session_reassignment, reassign_session
-from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_settings
+from ...config import ConfigError, MAX_EXTRACTION_WORKERS, MAX_GENERATION_TOKEN_LIMIT, ai_worker_settings, save_ai_settings
 from ...generation_profiles import get_generation_profile
 from ...services import begin_session_write
 
@@ -56,6 +58,7 @@ class AIWorkerSettingsInput(Input):
     extraction_workers: int | None = Field(default=None, strict=True, ge=0, le=MAX_EXTRACTION_WORKERS)
     generation_profile: Literal['quality', 'balanced', 'economy'] | None = None
     generation_budget: int | None = Field(default=None, strict=True, ge=30, le=7200)
+    generation_token_limit: int | None = Field(default=None, strict=True, ge=0, le=MAX_GENERATION_TOKEN_LIMIT)
     scheme_source_chars: int | None = Field(default=None, strict=True)
     scheme_read_bytes: int | None = Field(default=None, strict=True)
     scheme_package_chars: int | None = Field(default=None, strict=True)
@@ -125,6 +128,7 @@ class GenerationInput(ModelInput):
     confirmed: bool = False
     provider: GenerationProvider = 'codex'
     ai_profile: str | None = Field(default=None, max_length=40, pattern=r'^registered:[1-9][0-9]*$')
+    generation_action_id: UUID | None = None
 
     @model_validator(mode='after')
     def check_profile_provider(self):
@@ -235,6 +239,13 @@ def generation_base(app, project_id, provider):
 def review_manager(manager, body, profile):
     selected, _ = configure_profile_manager(select_generation_manager(manager, body), profile)
     return selected
+
+
+def _request_token_budget(project_id, body, engine):
+    budget = progress.new_token_budget()
+    if body.generation_action_id is not None:
+        return action_budget(project_id, body.generation_action_id, budget.limit, engine=engine)
+    return budget
 
 
 def database(request: Request):
@@ -604,6 +615,15 @@ def generation_summary(project_id: int, db: DB):
     return attempts.generation_summary(db, project_id, live=live)
 
 
+@router.get('/generation/actions/{action_id}')
+def get_generation_action(project_id: int, action_id: UUID, db: DB):
+    project(db, project_id)
+    result = action_budget_status(project_id, action_id, engine=db.bind)
+    if result is None:
+        raise HTTPException(404, 'Generation action not found in this project.')
+    return result
+
+
 @router.post('/generation/cancel')
 def cancel_generation(project_id: int, body: CancelGenerationInput, db: DB):
     project(db, project_id)
@@ -659,7 +679,8 @@ def generate_brief(project_id: int, body: GenerationInput, request: Request, db:
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions), use_knowledge_profile(profile):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+             use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_brief(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -706,7 +727,7 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
 
 
 def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
-                                     dependency_token, profile=None, focus: SchemeFocus = 'balanced'):
+                                     dependency_token, profile=None, focus: SchemeFocus = 'balanced', token_budget=None):
     """Server-owned follow-up, independent of the selected browser project."""
     if dependency_token is None:
         return
@@ -723,7 +744,8 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
     try:
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
-        with use_project_instructions(instructions), use_knowledge_profile(profile or review_profile()):
+        with use_token_budget(token_budget), use_project_instructions(instructions), \
+             use_knowledge_profile(profile or review_profile()):
             refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id, focus=focus,
                            dependency_token=dependency_token)
         finish_waiting('completed')
@@ -749,6 +771,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         raise HTTPException(422, 'Confirm sending project evidence to the selected provider to refresh the project analysis.')
     dependency_token = None
     try:
+        token_budget = _request_token_budget(project_id, body, request.app.state.engine)
         manager = generation_base(request.app, project_id, body.provider)
         selected = select_generation_manager(manager, body)
         scheme_manager, scheme_profile = None, None
@@ -761,8 +784,9 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             engine = request.app.state.engine
             dependency_token = attempts.queue_dependency(engine, project_id,
                 settings={**attempts.settings_for(scheme_manager, engine), 'generation_profile': scheme_profile.id,
-                          'scheme_focus': body.scheme_focus})
-        with use_project_instructions(instructions):
+                          'scheme_focus': body.scheme_focus,
+                          'generation_token_limit': token_budget.limit})
+        with use_token_budget(token_budget), use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
         if body.generate_scheme:
             publication_id = result.get('publication_id')
@@ -772,7 +796,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                 return {**result, 'scheme_requested': False}
             background_tasks.add_task(_generate_scheme_after_knowledge,
                                       request.app.state.engine, project_id, scheme_manager, instructions,
-                                      publication_id, dependency_token, scheme_profile, body.scheme_focus)
+                                      publication_id, dependency_token, scheme_profile, body.scheme_focus, token_budget)
             result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:
@@ -846,7 +870,8 @@ def generate_scheme(project_id: int, body: SchemeGenerationInput, request: Reque
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions), use_knowledge_profile(profile):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+             use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_scheme(request.app.state.engine, project_id, selected, focus=body.focus)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -870,7 +895,8 @@ def generate_focused_scheme(project_id: int, body: FocusedSchemeGenerationInput,
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions), use_knowledge_profile(profile):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+             use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_focused_scheme(request.app.state.engine, project_id, selected, body.instruction)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -905,7 +931,8 @@ def generate_parameters(project_id: int, body: GenerationInput, request: Request
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions), use_knowledge_profile(profile):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+             use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_parameters(request.app.state.engine, project_id, selected)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -978,7 +1005,7 @@ def tags(project_id: int, body: TagGenerationInput, request: Request, db: DB):
         selected = select_generation_manager(manager, body)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), use_project_instructions(instructions):
             return generate_tags(request.app.state.engine, project_id, selected, target=body.target,
                                  publication_id=body.publication_id, generated_at=body.generated_at,
                                  revision_id=body.revision_id)
@@ -999,7 +1026,8 @@ def generate_qa(project_id: int, body: QAGenerationInput, request: Request, db: 
         selected = review_manager(manager, body, profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
-        with use_project_instructions(instructions), use_knowledge_profile(profile):
+        with use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)), \
+             use_project_instructions(instructions), use_knowledge_profile(profile):
             return refresh_qa(request.app.state.engine, project_id, selected, max_items=body.max_items)
     except BriefBusy as exc:
         raise HTTPException(409, str(exc)) from exc
@@ -1041,7 +1069,9 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     job_lock = generation_lock.for_job(project_id, 'ask')
     if not job_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
+    scope = ExitStack()
     try:
+        scope.enter_context(use_token_budget(_request_token_budget(project_id, body, request.app.state.engine)))
         request_id = str(body.request_id) if body.request_id is not None else None
         progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False, request_id=request_id)
         sources = matches
@@ -1074,6 +1104,7 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
         progress.finish(project_id, error='Project answer generation failed.')
         raise
     finally:
+        scope.close()
         job_lock.release()
 
 

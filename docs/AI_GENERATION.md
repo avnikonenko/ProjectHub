@@ -193,8 +193,17 @@ batches and retries. A longer limit can allow more requests to complete.
 **Scheme excerpt budget** sets how many characters of source excerpts Scheme
 can use as input. Other Scheme inspection limits apply separately.
 
-ProjectHub reports model request counts and provider-reported token usage.
-Token totals can be partial. The provider's account limits still apply.
+**Settings → Stop at reported tokens** defaults to `0` (unlimited). A positive
+limit applies to the combined token total for each Generate action. **Regenerate
+selected**, **Regenerate all**, and **Retry unfinished** each start a fresh total.
+All jobs, parallel batches, and internal retries for that action share the limit,
+including Scheme when it waits for Knowledge.
+
+ProjectHub stops starting model requests and attempts to interrupt active work
+when reports reach the limit. Provider reports can arrive late or omit usage,
+so the total is approximate and in-flight
+requests may push it over the limit. Previously saved results and completed
+batch caches remain available. The provider's account limits still apply.
 
 Expand **Coverage** below a generated result.
 

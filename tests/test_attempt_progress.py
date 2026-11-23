@@ -102,6 +102,7 @@ def test_failed_attempt_keeps_effective_settings_after_profile_changes_and_memor
     assert failed['latest_attempt']['settings'] == {
         'account': 'Luna', 'model': 'gpt-test', 'effort': 'low', 'generation_profile': 'economy',
         'extraction_workers': 4, 'generation_budget': 420, 'project_instructions': True,
+        'generation_token_limit': 0,
     }
     assert '/private/codex-home' not in str(failed)
     assert 'Project-specific writing instructions.' not in str(failed)

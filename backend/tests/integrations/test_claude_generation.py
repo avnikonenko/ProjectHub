@@ -8,6 +8,7 @@ import pytest
 
 from backend.app.integrations.codex import claude_generation, progress
 from backend.app.integrations.codex.generation_metrics import GenerationMetrics, collect_generation_metrics
+from backend.app.integrations.codex.generation_token_budget import GenerationTokenLimitExceeded
 from backend.app.integrations.codex.protocol import CodexError, JSONFormattingError
 from backend.app.integrations.codex.manager import TransientGenerationError, request_knowledge_json
 
@@ -71,6 +72,27 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
     assert metrics.snapshot()['model_requests'] == 1
     assert metrics.snapshot()['token_usage']['total_tokens'] == 20
     assert metrics.snapshot()['token_usage']['cached_input_tokens'] == 4
+
+
+def test_claude_checks_limit_after_recording_result_usage(fake_cli, monkeypatch):
+    fake_cli('''import json, sys
+sys.stdin.read()
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                  'structured_output': {},
+                  'usage': {'input_tokens': 12, 'output_tokens': 8,
+                            'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}}))
+''')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '15')
+    manager = claude_generation.ClaudeGenerationManager(None)
+    metrics = GenerationMetrics()
+    progress.begin(814, 'brief', metrics=metrics)
+    try:
+        with collect_generation_metrics(metrics), pytest.raises(GenerationTokenLimitExceeded):
+            manager.generate_brief('input', {'type': 'object'})
+    finally:
+        progress.finish(814)
+
+    assert metrics.snapshot()['token_usage']['total_tokens'] == 20
 
 
 def test_claude_keeps_unsupported_bounds_in_the_prompt_for_existing_validators(fake_cli):

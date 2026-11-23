@@ -22,7 +22,7 @@ def settings_client(tmp_path, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
     monkeypatch.setenv('PROJECTHUB_HISTORY_AUTO_SYNC', 'false')
     for name in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE',
-                 'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_SCHEME_SOURCE_CHARS',
+                 'PROJECTHUB_GENERATION_BUDGET', 'PROJECTHUB_GENERATION_TOKEN_LIMIT', 'PROJECTHUB_SCHEME_SOURCE_CHARS',
                  'PROJECTHUB_SCHEME_READ_BYTES', 'PROJECTHUB_SCHEME_PACKAGE_CHARS'):
         # Track an originally absent key before removing it: the settings API
         # writes os.environ directly, outside pytest's monkeypatch operations.
@@ -47,6 +47,8 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
         'min_generation_budget': 30, 'max_generation_budget': 7200,
+        'generation_token_limit': 0, 'configured_generation_token_limit': 0,
+        'min_generation_token_limit': 0, 'max_generation_token_limit': config.MAX_GENERATION_TOKEN_LIMIT,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
         'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
@@ -219,6 +221,8 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
         'min_generation_budget': 30, 'max_generation_budget': 7200,
+        'generation_token_limit': 0, 'configured_generation_token_limit': 0,
+        'min_generation_token_limit': 0, 'max_generation_token_limit': config.MAX_GENERATION_TOKEN_LIMIT,
         'scheme_source_chars': 40_000, 'configured_scheme_source_chars': 40_000,
         'scheme_source_chars_options': [40_000, 60_000, 80_000],
         'scheme_read_bytes': 2_097_152, 'configured_scheme_read_bytes': 2_097_152,
@@ -333,6 +337,28 @@ def test_budget_read_separates_environment_override_without_creating_or_editing_
     assert result['configured_generation_budget'] == 900
     assert result['min_generation_budget'] == 30 and result['max_generation_budget'] == 7200
     assert path.read_bytes() == original
+
+
+def test_reported_token_limit_preserves_saved_value_and_supports_unlimited(settings_client, monkeypatch):
+    client, path = settings_client
+    endpoint = '/api/settings/ai'
+    response = client.patch(endpoint, json={'generation_token_limit': 100_000})
+    assert response.status_code == 200
+    assert response.json()['generation_token_limit'] == 100_000
+    original = path.read_bytes()
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '50000')
+    settings = client.get(endpoint).json()
+    assert settings['generation_token_limit'] == 50_000
+    assert settings['configured_generation_token_limit'] == 100_000
+    for limit in (-1, config.MAX_GENERATION_TOKEN_LIMIT + 1, True, '100', None):
+        response = client.patch(endpoint, json={'generation_token_limit': limit, 'extraction_workers': 8})
+        assert response.status_code == 422
+        assert path.read_bytes() == original
+        assert config.generation_token_limit() == 50_000
+    response = client.patch(endpoint, json={'generation_token_limit': 0})
+    assert response.status_code == 200
+    assert response.json()['generation_token_limit'] == config.generation_token_limit() == 0
+    assert tomllib.loads(path.read_text())['ai']['generation_token_limit'] == 0
 
 
 @pytest.mark.parametrize('budget', [30, 1200, 7200])

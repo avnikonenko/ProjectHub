@@ -16,6 +16,7 @@ const response = (value = published()) => ({ snapshot: value.knowledge, current_
 test('normal generation makes one atomic publish request and optionally requests the dependent Scheme', async () => {
   for (const followup of [false, true]) {
     const calls: string[] = [];
+    const actionId = followup ? 'bd796292-237f-4076-9cc7-262665abbfb8' : undefined;
     const result = await generateAndSaveKnowledge('/projects/2', 2, { model: 'chosen', effort: 'medium', schemeFocus: 'sessions', provider: followup ? 'claude' : undefined },
       new AbortController().signal, followup, async (path, options) => {
         calls.push(path); assert.equal(options.method, 'POST');
@@ -24,9 +25,10 @@ test('normal generation makes one atomic publish request and optionally requests
         assert.equal(body.model, 'chosen'); assert.equal(body.effort, 'medium');
         assert.equal(body.generate_scheme, followup ? true : undefined);
         assert.equal(body.scheme_focus, followup ? 'sessions' : undefined);
+        assert.equal(body.generation_action_id, actionId);
         assert.equal(body.provider, followup ? 'claude' : undefined);
         return published();
-      });
+      }, actionId);
     assert.deepEqual(calls, ['/projects/2/codex/knowledge/brief']);
     assert.equal(result.knowledge.publication_id, 'saved-new');
     assert.equal(result.schemeRequested, true);

@@ -11,10 +11,11 @@ from typing import NamedTuple
 
 from sqlalchemy.orm import Session
 
-from ...config import ConfigError, resolve_extraction_workers, selected_extraction_workers
+from ...config import ConfigError, generation_token_limit, resolve_extraction_workers, selected_extraction_workers
 from ...models import utcnow
 from .adaptive_workers import AdaptiveWorkerPool
 from .generation_metrics import GenerationMetrics
+from .generation_token_budget import TokenBudget, current_token_budget
 from .protocol import CodexError
 
 _lock = threading.Lock()
@@ -131,15 +132,33 @@ def automatic_worker_status():
     return _model_slots.status(resolve_extraction_workers(0))
 
 
+def new_token_budget():
+    try:
+        return TokenBudget(generation_token_limit())
+    except ConfigError as exc:
+        raise CodexError(str(exc)) from exc
+
+
+def check_token_budget():
+    current = _current.get()
+    budget = current[4] if current is not None else current_token_budget()
+    if budget is not None:
+        budget.check()
+
+
 def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None,
           request_id=None, worker_settings=None, **options):
     from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
     workers = _worker_policy(worker_settings)
+    token_budget = current_token_budget() or new_token_budget()
+    collection = metrics if metrics is not None else GenerationMetrics()
+    collection.attach_budget(token_budget)
     settings = None if manager is None else {
         **settings_for(manager, engine), **options, 'generation_budget': budget,
         'project_instructions': has_project_instructions(),
+        'generation_token_limit': token_budget.limit,
     }
     key = (project_id, kind)
     # The caller holds a lease for this project/view through finish().
@@ -152,14 +171,14 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, met
         _active[key] = event
         _events[key] = event
         _run_locks[key] = threading.Lock()
-        _live_metrics[key] = metrics if metrics is not None else GenerationMetrics()
+        _live_metrics[key] = collection
         _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation',
                            'started_at': utcnow(), 'budget_seconds': budget}
         if request_id is not None:
             _snapshots[key]['request_id'] = request_id
         if settings is not None:
             _snapshots[key]['settings'] = settings
-        _current.set((project_id, kind, event, workers))
+        _current.set((project_id, kind, event, workers, token_budget))
         _stores[key] = weakref.ref(engine) if engine is not None else None
     if engine is not None:
         try:
@@ -230,6 +249,7 @@ def check_cancelled():
     event = current_cancel_event()
     if event is not None and event.is_set():
         raise GenerationCancelled()
+    check_token_budget()
     current = _current.get()
     if current is not None:
         with _lock:
@@ -387,9 +407,11 @@ def complete(project_id, save, *, db=None):
             if _events[key].is_set():
                 raise GenerationCancelled()
             _check_budget(key)
+            check_token_budget()
         record = _persistence_record(project_id)
         if db is not None:
             _persist_terminal(record, db=db)
+        check_token_budget()
         result = save()
         if db is None:
             _persist_terminal(record)

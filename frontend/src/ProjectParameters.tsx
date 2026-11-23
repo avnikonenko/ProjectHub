@@ -50,11 +50,11 @@ export function ParameterCoverage({ snapshot, freshness, historical = false }: {
 }
 
 export async function generateProjectParameters(base: string, generation: Generation,
-  signal: AbortSignal, request: Request = api): Promise<ParameterSnapshot> {
+  signal: AbortSignal, request: Request = api, actionId?: string): Promise<ParameterSnapshot> {
   if (!/^\/projects\/[1-9]\d*$/.test(base)) throw new Error('The parameters request does not identify a project.');
   signal.throwIfAborted();
   const raw = await request(`${base}/codex/parameters`, { method: 'POST', signal,
-    body: JSON.stringify({ confirmed: true, ...generationBody(generation) }) });
+    body: JSON.stringify({ confirmed: true, ...generationBody(generation, actionId) }) });
   signal.throwIfAborted();
   return parseParameterSnapshot(raw, Number(base.split('/')[2]));
 }
@@ -207,7 +207,7 @@ export function ParameterList({ snapshot, prefix, query = '', component = '' }: 
   </>;
 }
 
-export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationRequestProps & {
+export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean; externalBusy?: boolean;
   onBusyChange?: (state: Busy) => void;
   onResultActivated?: () => void;
@@ -277,13 +277,13 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
     return () => { controller.abort(); if (reader.current === controller) reader.current = null; };
   }, [base, projectId, retry, visible, generationRequest]);
 
-  async function generate() {
+  async function generate(actionId?: string) {
     if (busy || externalBusy || active.current) return;
     const run = { base, controller: new AbortController() };
     reader.current?.abort(); requestVersion.current++;
     active.current = run; setGenerating(true); setError(''); setNotice('');
     try {
-      const current = await generateProjectParameters(base, generation, run.controller.signal);
+      const current = await generateProjectParameters(base, generation, run.controller.signal, api, actionId);
       if (active.current !== run || run.controller.signal.aborted) return;
       selectedRevision.current = null; setRevisionId(null); setLatestVersion(current.generated_at);
       setSaved({ base, result: { snapshot: current,
@@ -302,7 +302,7 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       if (active.current === run) { active.current = null; setGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recovering || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
+  useGenerationRequest(base, generationRequest, generating || recovering || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled, generationActionId);
   const choices = [...new Set(snapshot?.items.map(item => item.component).filter(Boolean) ?? [])].sort();
   const freshness = parameterFreshnessLabel(result?.freshness, revisionId !== null);
   return <section className="card project-parameters" aria-busy={busy}>

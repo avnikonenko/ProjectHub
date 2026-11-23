@@ -23,6 +23,7 @@ from ...models import (Project, Question, Decision, Task, CodexSession,
 from .protocol import AppServerClient, CodexError, JSONFormattingError, MissingSourceHistory
 from .ai_instructions import ai_instructions, read_project_instructions
 from .generation_metrics import begin_model_request
+from .generation_token_budget import GenerationTokenLimitExceeded
 from . import progress
 
 log = logging.getLogger(__name__)
@@ -848,6 +849,7 @@ class CodexManager:
             succeeded = False
             retryable_failure = False
             optional_work_expired = False
+            token_limit_reached = False
             try:
                 progress.check_cancelled()
                 if pooled and reused_client:
@@ -918,10 +920,13 @@ class CodexManager:
             except progress.OptionalWorkExpired:
                 optional_work_expired = True
                 raise
+            except GenerationTokenLimitExceeded:
+                token_limit_reached = not done.is_set()
+                raise
             finally:
                 cancellation = progress.current_cancel_event()
                 abort = progress.current_abort_event()
-                stopping = (optional_work_expired or (cancellation is not None and cancellation.is_set())
+                stopping = (optional_work_expired or token_limit_reached or (cancellation is not None and cancellation.is_set())
                             or (abort is not None and abort.is_set()))
                 if stopping and thread_id and turn_id:
                     # Never use a source-session client here. The generated

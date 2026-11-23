@@ -469,10 +469,10 @@ class ClaudeGenerationManager:
         with tempfile.TemporaryDirectory(prefix='projecthub-claude-') as cwd:
             try:
                 remaining()
+                request = begin_model_request(request_id)
                 with subprocess.Popen(command, cwd=cwd, env=environment,
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       start_new_session=True) as process:
-                    request = begin_model_request(request_id)
                     try:
                         failed_usage = partial(_record_failed_usage, request, request_id) if request is not None else None
                         output = _exchange(process, data, remaining(), record_failed_usage=failed_usage)
@@ -482,5 +482,6 @@ class ClaudeGenerationManager:
             except OSError:
                 raise CodexError('Could not run the Claude Code CLI.') from None
         result = _result(output, request, request_id)
+        progress.check_cancelled()
         check_account()
         return result

@@ -10,6 +10,7 @@ export type GenerationResultState = 'saved' | 'partial' | 'not_generated' | 'run
   | 'timed_out' | 'cancelled' | 'interrupted' | 'skipped' | 'earlier_result';
 const numericalSettingLabels = {
   generation_budget: 'Overall time budget',
+  generation_token_limit: 'Token limit',
   extraction_workers: 'AI workers per job',
   scheme_source_chars: 'Scheme excerpt budget',
   scheme_read_bytes: 'Local file read limit',
@@ -72,9 +73,10 @@ const validAttemptSettings = (value: unknown) => value === undefined || value ==
       && Object.hasOwn(schemeFocusLabels, value.scheme_focus)))
     && numericalSettings.every(key => {
       const part = value[key];
-      return part === undefined || (typeof part === 'number' && Number.isSafeInteger(part) && part > 0);
+      return part === undefined || (typeof part === 'number' && Number.isSafeInteger(part)
+        && part >= (key === 'generation_token_limit' ? 0 : 1));
     }));
-const labels: Record<ProjectGenerationKind, string> = {
+export const generationKindLabels: Record<ProjectGenerationKind, string> = {
   brief: 'Overview', knowledge: 'Knowledge', scheme: 'Scheme', qa: 'Q&A', parameters: 'Implementation Choices & Limits',
 };
 const states: Record<GenerationResultState, string> = {
@@ -144,6 +146,8 @@ function attemptSettingValue(key: NumericalSetting, value: number) {
   switch (key) {
     case 'generation_budget':
       return `${value.toLocaleString()} seconds`;
+    case 'generation_token_limit':
+      return value ? `${value.toLocaleString()} reported tokens` : 'No limit';
     case 'scheme_source_chars':
     case 'scheme_package_chars':
       return `${value.toLocaleString()} characters`;
@@ -190,9 +194,9 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
 }) {
   return <ul className="generation-results-list">{data.views.map(view => <li key={view.kind}>
     <label className="generation-result-choice"><input type="checkbox" checked={selected.includes(view.kind)}
-      aria-label={`Select ${labels[view.kind]} for regeneration`}
+      aria-label={`Select ${generationKindLabels[view.kind]} for regeneration`}
       disabled={disabled || !onToggle || !!busy[view.kind] || view.state === 'running' || view.state === 'waiting'}
-      onChange={event => onToggle?.(view.kind, event.target.checked)} /><span>{labels[view.kind]}</span></label>
+      onChange={event => onToggle?.(view.kind, event.target.checked)} /><span>{generationKindLabels[view.kind]}</span></label>
     <strong>{states[view.state]}</strong>
     <div className="generation-result-description">
       {view.kind === 'scheme' && schemeFocus && <label>Scheme focus for next run
@@ -230,12 +234,13 @@ export function GenerationResultRows({ data, selected = [], onToggle, busy = {},
 
 /** Reads only. Polling stops once no view is running or waiting. */
 export function GenerationResults({ base, refreshVersion, onState, selected = [], onSelectionChange, busy = {},
-  onRegenerateSelected, regenerateDisabled = false, bulkActions, schemeFocus, onSchemeFocusChange, schemeFocusDisabled, provider }: {
+  onRegenerateSelected, regenerateDisabled = false, bulkActions, actionUsage, schemeFocus, onSchemeFocusChange, schemeFocusDisabled, provider }: {
   base: string; refreshVersion: number; onState: (state: GenerationResultsState) => void;
   selected?: readonly ProjectGenerationKind[]; onSelectionChange?: (selected: ProjectGenerationKind[]) => void;
   busy?: Partial<Record<ProjectGenerationKind, boolean>>;
   onRegenerateSelected?: () => void; regenerateDisabled?: boolean;
   bulkActions?: ReactNode;
+  actionUsage?: ReactNode;
   schemeFocus?: SchemeFocus; onSchemeFocusChange?: (value: SchemeFocus) => void; schemeFocusDisabled?: boolean;
   provider?: GenerationProvider;
 }) {
@@ -270,6 +275,7 @@ export function GenerationResults({ base, refreshVersion, onState, selected = []
         disabled={regenerateDisabled || current.loading || !!current.error || !onRegenerateSelected}>Regenerate selected</button>}
       {bulkActions}
     </div>
+    {actionUsage}
     {current.loading && !current.data && <p className="muted">Loading generation status…</p>}
     {current.error && <><ErrorBox error={`Could not load generation status: ${current.error}`} />
       <button className="quiet" onClick={() => setReload(value => value + 1)}>Reload status</button></>}

@@ -20,6 +20,7 @@ class ConfigError(ValueError):
 DEFAULT_EXTRACTION_WORKERS = 0
 AUTO_EXTRACTION_WORKERS_LIMIT = 6
 MAX_EXTRACTION_WORKERS = 2_147_483_647
+MAX_GENERATION_TOKEN_LIMIT = 2_147_483_647
 SCHEME_SOURCE_CHARS_OPTIONS = (40_000, 60_000, 80_000)
 DEFAULT_SCHEME_SOURCE_CHARS = SCHEME_SOURCE_CHARS_OPTIONS[0]
 SCHEME_READ_BYTES_OPTIONS = (2 * 1024**2, 4 * 1024**2, 8 * 1024**2)
@@ -46,6 +47,8 @@ port = 8766
 generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
+# Stop at this provider-reported token total for one generation. Set 0 for unlimited.
+generation_token_limit = 0
 # Set 0 for Auto, or a positive number for a fixed worker count.
 extraction_workers = {DEFAULT_EXTRACTION_WORKERS}
 # Conversation review depth: quality (Thorough), balanced, or economy (Summary-assisted).
@@ -78,16 +81,19 @@ class Settings:
     scheme_source_chars: int = DEFAULT_SCHEME_SOURCE_CHARS
     scheme_read_bytes: int = DEFAULT_SCHEME_READ_BYTES
     scheme_package_chars: int = DEFAULT_SCHEME_PACKAGE_CHARS
+    generation_token_limit: int = 0
 
     def apply_environment(self):
         workers = _extraction_worker_setting(self.extraction_workers)
         budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
+        token_limit = _generation_token_limit(self.generation_token_limit)
         profile = _profile(self.generation_profile)
         scheme_environment = {env: str(_scheme_preset(name, getattr(self, name)))
                               for name, (env, _) in _SCHEME_SETTINGS.items()}
         os.environ['PROJECTHUB_PORT'] = str(self.port)
         os.environ['PROJECTHUB_DATA_DIR'] = str(self.data_dir)
         os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(budget)
+        os.environ['PROJECTHUB_GENERATION_TOKEN_LIMIT'] = str(token_limit)
         os.environ['PROJECTHUB_GENERATION_TIMEOUT'] = str(self.generation_timeout)
         os.environ['PROJECTHUB_EXTRACTION_WORKERS'] = str(workers)
         os.environ['PROJECTHUB_GENERATION_PROFILE'] = profile
@@ -129,6 +135,10 @@ def _integer(value, name, minimum, maximum):
 
 def _extraction_worker_setting(value):
     return _integer(value, 'ai.extraction_workers', 0, MAX_EXTRACTION_WORKERS)
+
+
+def _generation_token_limit(value):
+    return _integer(value, 'ai.generation_token_limit', 0, MAX_GENERATION_TOKEN_LIMIT)
 
 
 def _available_cpu_count():
@@ -203,7 +213,9 @@ def load_settings(environ: Mapping[str, str] | None = None):
         data = {}
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
         raise ConfigError('Could not read ProjectHub configuration. Check its permissions and TOML syntax.') from exc
-    allowed = {'server': {'port', 'data_dir'}, 'ai': {'generation_timeout', 'generation_budget', 'codex_home', 'extraction_workers', 'generation_profile', *_SCHEME_SETTINGS},
+    allowed = {'server': {'port', 'data_dir'},
+               'ai': {'generation_timeout', 'generation_budget', 'generation_token_limit', 'codex_home',
+                      'extraction_workers', 'generation_profile', *_SCHEME_SETTINGS},
                'history': {'auto_sync', 'sync_interval'}}
     if set(data) - allowed.keys():
         raise ConfigError('Unknown configuration section. Allowed sections: server, ai, history.')
@@ -223,6 +235,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
             'ai.generation_timeout', 30, 3600),
         generation_budget=_integer(env.get('PROJECTHUB_GENERATION_BUDGET', ai.get('generation_budget', 900)),
                                    'ai.generation_budget', 30, 7200),
+        generation_token_limit=_generation_token_limit(
+            env.get('PROJECTHUB_GENERATION_TOKEN_LIMIT', ai.get('generation_token_limit', 0))),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
         extraction_workers=_extraction_worker_setting(
             env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS))),
@@ -248,13 +262,16 @@ def create_config(environ: Mapping[str, str] | None = None):
     return path
 
 
-def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, scheme_changes=None):
+def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, token_limit=None, scheme_changes=None):
     selected_workers = _extraction_worker_setting(
         os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers) if workers is None else workers)
     effective_profile = _profile(os.environ.get('PROJECTHUB_GENERATION_PROFILE', configured.generation_profile)
                                  if profile is None else profile)
     effective_budget = _integer(os.environ.get('PROJECTHUB_GENERATION_BUDGET', configured.generation_budget)
                                 if budget is None else budget, 'ai.generation_budget', 30, 7200)
+    effective_token_limit = _generation_token_limit(
+        os.environ.get('PROJECTHUB_GENERATION_TOKEN_LIMIT', configured.generation_token_limit)
+        if token_limit is None else token_limit)
     result = {'extraction_workers': resolve_extraction_workers(selected_workers),
             'configured_extraction_workers': configured.extraction_workers,
             'selected_extraction_workers': selected_workers,
@@ -264,7 +281,10 @@ def _ai_settings_response(configured, *, workers=None, profile=None, budget=None
             'generation_profiles': list_generation_profiles(),
             'generation_budget': effective_budget,
             'configured_generation_budget': configured.generation_budget,
-            'min_generation_budget': 30, 'max_generation_budget': 7200}
+            'min_generation_budget': 30, 'max_generation_budget': 7200,
+            'generation_token_limit': effective_token_limit,
+            'configured_generation_token_limit': configured.generation_token_limit,
+            'min_generation_token_limit': 0, 'max_generation_token_limit': MAX_GENERATION_TOKEN_LIMIT}
     scheme_changes = scheme_changes or {}
     for name, (env, options) in _SCHEME_SETTINGS.items():
         value = getattr(configured, name)
@@ -279,6 +299,7 @@ def ai_worker_settings():
     with _settings_write_lock:
         configured_env = dict(os.environ)
         for key in ('PROJECTHUB_EXTRACTION_WORKERS', 'PROJECTHUB_GENERATION_PROFILE', 'PROJECTHUB_GENERATION_BUDGET',
+                    'PROJECTHUB_GENERATION_TOKEN_LIMIT',
                     *(env for env, _ in _SCHEME_SETTINGS.values())):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
@@ -288,6 +309,12 @@ def selected_extraction_workers():
     """Read the raw runtime setting, with a config fallback for direct starts."""
     workers = os.environ.get('PROJECTHUB_EXTRACTION_WORKERS')
     return _extraction_worker_setting(workers) if workers is not None else load_settings().extraction_workers
+
+
+def generation_token_limit():
+    """Read the stop threshold to capture at the start of the next generation."""
+    limit = os.environ.get('PROJECTHUB_GENERATION_TOKEN_LIMIT')
+    return _generation_token_limit(limit) if limit is not None else load_settings().generation_token_limit
 
 
 def _worker_config_text(original, workers):
@@ -303,7 +330,8 @@ def _ai_config_text(original, changes):
 
 def _ai_scalar_text(original, name, value):
     """Edit an application-owned scalar; comparison protects unsupported layouts."""
-    if name not in ('extraction_workers', 'generation_profile', 'generation_budget', *_SCHEME_SETTINGS):
+    if name not in ('extraction_workers', 'generation_profile', 'generation_budget', 'generation_token_limit',
+                    *_SCHEME_SETTINGS):
         raise ConfigError('Unsupported AI setting.')
     encoded = str(value) if type(value) is int else '"' + value + '"'
     data = tomllib.loads(original)
@@ -352,7 +380,8 @@ def save_ai_worker_settings(workers):
 
 
 def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, generation_budget=_UNSET,
-                     scheme_source_chars=_UNSET, scheme_read_bytes=_UNSET, scheme_package_chars=_UNSET):
+                     generation_token_limit=_UNSET, scheme_source_chars=_UNSET, scheme_read_bytes=_UNSET,
+                     scheme_package_chars=_UNSET):
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
@@ -361,6 +390,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
         changes['generation_profile'] = _profile(generation_profile)
     if generation_budget is not _UNSET:
         changes['generation_budget'] = _integer(generation_budget, 'ai.generation_budget', 30, 7200)
+    if generation_token_limit is not _UNSET:
+        changes['generation_token_limit'] = _generation_token_limit(generation_token_limit)
     for name, value in (('scheme_source_chars', scheme_source_chars), ('scheme_read_bytes', scheme_read_bytes),
                         ('scheme_package_chars', scheme_package_chars)):
         if value is not _UNSET:
@@ -400,6 +431,7 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
             # Validate unmodified runtime overrides before changing the file too.
             result = _ai_settings_response(configured, workers=changes.get('extraction_workers'),
                                            profile=changes.get('generation_profile'), budget=changes.get('generation_budget'),
+                                           token_limit=changes.get('generation_token_limit'),
                                            scheme_changes=changes)
             if path.is_symlink() or (path.exists() != existed):
                 raise ConfigError('Settings changed while saving; reload and try again.')
@@ -414,6 +446,8 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
                 os.environ['PROJECTHUB_GENERATION_PROFILE'] = changes['generation_profile']
             if 'generation_budget' in changes:
                 os.environ['PROJECTHUB_GENERATION_BUDGET'] = str(changes['generation_budget'])
+            if 'generation_token_limit' in changes:
+                os.environ['PROJECTHUB_GENERATION_TOKEN_LIMIT'] = str(changes['generation_token_limit'])
             for name, (env, _) in _SCHEME_SETTINGS.items():
                 if name in changes:
                     os.environ[env] = str(changes[name])

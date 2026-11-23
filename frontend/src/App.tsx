@@ -2,6 +2,8 @@ import { planProjectGeneration, planRetryProjectGeneration, planSelectedProjectG
   type GenerationRequestProps, type ProjectGenerationKind, type KnowledgeGenerationOutcome,
   type KnowledgeSchemeDependency, type GenerationPlan, type SchemeFocus } from './generationBatch';
 import { GenerationResults, initializeGenerationSelection, type GenerationResultsState, type GenerationSelection } from './GenerationResults';
+import { GenerationActionUsage } from './GenerationActionUsage';
+import { createGenerationActionId } from './generationAction';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
@@ -346,6 +348,11 @@ function ProjectWorkspace({
   const [parametersVisited, setParametersVisited] = useState(false);
   const [parameterState, setParameterState] = useState({ busy: false, running: false });
   const [bulkRequests, setBulkRequests] = useState<Record<ProjectGenerationKind, number>>({ brief: 0, knowledge: 0, scheme: 0, qa: 0, parameters: 0 });
+  const [bulkActionIds, setBulkActionIds] = useState<Partial<Record<ProjectGenerationKind, string>>>({});
+  const [generationActions, setGenerationActions] = useState<{ id: string; kinds: ProjectGenerationKind[]; settled: boolean }[]>([]);
+  const settleGenerationAction = useCallback((id: string) => {
+    setGenerationActions(previous => previous.map(action => action.id === id ? { ...action, settled: true } : action));
+  }, []);
   const [bulkPending, setBulkPending] = useState<ProjectGenerationKind[]>([]);
   const [bulkSkipped, setBulkSkipped] = useState<ProjectGenerationKind[]>([]);
   const [bulkRequested, setBulkRequested] = useState(false);
@@ -445,6 +452,14 @@ function ProjectWorkspace({
     pendingScheme.current = plan.waitForKnowledge ? { project: base, request: bulkRequests.knowledge + 1 } : null;
     setBulkScheme(plan.waitForKnowledge ? 'waiting' : plan.schemeSkippedForKnowledge ? 'skipped' : 'none');
     if (!plan.start.length) return;
+    const actionId = createGenerationActionId();
+    const kinds: ProjectGenerationKind[] = plan.waitForKnowledge ? [...plan.start, 'scheme'] : plan.start;
+    setGenerationActions(previous => [...previous.filter(action => !action.settled), { id: actionId, kinds, settled: false }]);
+    setBulkActionIds(previous => {
+      const next = { ...previous };
+      for (const kind of plan.start) next[kind] = actionId;
+      return next;
+    });
     bulkDispatching.current = true; setBulkPending(plan.start);
     setGenerationResultsVersion(value => value + 1);
     setVisited({ brief: true, qa: true, scheme: true, knowledge: true }); setParametersVisited(true);
@@ -813,6 +828,9 @@ function ProjectWorkspace({
         <div hidden={view !== 'Generation' || !!results}>
           <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
             provider={generation.provider}
+            actionUsage={generationActions.map(action => <GenerationActionUsage key={action.id} base={base}
+              actionId={action.id} kinds={generationActions.length > 1 ? action.kinds : undefined}
+              pending={bulkPending.some(kind => bulkActionIds[kind] === action.id)} onSettled={settleGenerationAction} />)}
             schemeFocus={schemeFocus} onSchemeFocusChange={setSchemeFocus} schemeFocusDisabled={!!bulkPending.length || bulkScheme === 'waiting'}
             selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
             onRegenerateSelected={regenerateSelected} regenerateDisabled={bulkPending.length > 0
@@ -834,6 +852,7 @@ function ProjectWorkspace({
               recoveryVersion={recovery.version.brief} recoveryBusy={generationRecoveryBusy.brief}
               onRecoveryNeeded={() => recovery.recheck('brief')}
               generationRequest={bulkRequests.brief} onGenerationRequestHandled={started => bulkHandled('brief', started)}
+              generationActionId={bulkActionIds.brief}
               onGenerating={(active) => { observeGeneration('brief', active); setRunning(previous => ({ ...previous, brief: active })); }} />
           </div>
         )}
@@ -851,6 +870,7 @@ function ProjectWorkspace({
             <KnowledgePage base={base} generation={generation} link={knowledgeLink}
               visible={view === 'Knowledge' && knowledgeSubview === 'knowledge' && !results}
               showRecords onPublished={onResultActivated} onBusyChange={onAnalysisState} refreshRequest={bulkRequests.knowledge}
+              generationActionId={bulkActionIds.knowledge}
               onGenerationRequestHandled={started => bulkHandled('knowledge', started)}
               onGenerationOutcome={onKnowledgeOutcome}
               generateSchemeAfter={bulkScheme === 'waiting'} schemeFocus={queuedSchemeFocus} />
@@ -859,6 +879,7 @@ function ProjectWorkspace({
               <ProjectParameters base={base} generation={generation}
                 visible={view === 'Knowledge' && knowledgeSubview === 'parameters' && !results}
                 generationRequest={bulkRequests.parameters} onGenerationRequestHandled={started => bulkHandled('parameters', started)}
+                generationActionId={bulkActionIds.parameters}
                 onBusyChange={onParameterState} onResultActivated={onResultActivated} />
             </div>}
           </div>
@@ -868,6 +889,7 @@ function ProjectWorkspace({
             <ProjectQA base={base} generation={generation} visible={view === 'AI Q&A' && !results}
               onResultActivated={onResultActivated}
               generationRequest={bulkRequests.qa} onGenerationRequestHandled={started => bulkHandled('qa', started)}
+              generationActionId={bulkActionIds.qa}
               targetQuestion={searchTarget?.kind === 'qa' ? searchTarget.question : undefined}
               recoveryVersion={recovery.version.qa} recoveryBusy={generationRecoveryBusy.qa}
               onGenerating={(active) => { observeGeneration('qa', active); setRunning((previous) => ({ ...previous, qa: active })); }} />
@@ -881,6 +903,7 @@ function ProjectWorkspace({
               waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
                 || recovery.progress.scheme?.latest_attempt?.state === 'waiting'}
               generationRequest={bulkRequests.scheme} onGenerationRequestHandled={started => bulkHandled('scheme', started)}
+              generationActionId={bulkActionIds.scheme}
               recoveryVersion={recovery.version.scheme} recoveryBusy={generationRecoveryBusy.scheme}
               onFocusedGenerating={setFocusedSchemeRunning}
               onGenerating={(active) => { observeGeneration('scheme', active); setRunning((previous) => ({ ...previous, scheme: active })); }} />
@@ -1524,7 +1547,7 @@ function isValidQALimit(value: number) {
   return Number.isSafeInteger(value) && value >= 1;
 }
 
-function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true, generationRequest = 0, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean; onResultActivated?: () => void }) {
+function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBusy, targetQuestion, visible = true, generationRequest = 0, generationActionId, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & { onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean; targetQuestion?: string; visible?: boolean; onResultActivated?: () => void }) {
   const [saved, setSaved] = useState<SavedQA | null>(null);
   const [tagsBusy, setTagsBusy] = useState(false);
   const [tagRecovery, setTagRecovery] = useState(0);
@@ -1616,7 +1639,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
   }, [path, recoveryVersion, targetQuestion, tagRecovery]);
   const generationDisabled = tagsBusy || loading || generating || recoveryBusy || deleting || revisionLoading;
   const validLimit = isValidQALimit(Number(maxQuestions));
-  async function generate() {
+  async function generate(actionId?: string) {
     if (generationDisabled || generatingRef.current || !validLimit) return;
     invalidateRead();
     const identity = viewIdentity.current.begin();
@@ -1626,7 +1649,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
     setError('');
     setCancelled(false);
     try {
-      const result = await post(path, { confirmed: true, ...generationBody(generation), max_items: Number(maxQuestions) });
+      const result = await post(path, { confirmed: true, ...generationBody(generation, actionId), max_items: Number(maxQuestions) });
       if (!mounted.current || !viewIdentity.current.current(identity)) return;
       selectedRevision.current = null;
       setSaved(result);
@@ -1642,7 +1665,7 @@ function ProjectQA({ base, generation, onGenerating, recoveryVersion, recoveryBu
       if (mounted.current) { setGenerating(false); onGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || deleting || revisionLoading || tagsBusy || !validLimit ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled);
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || deleting || revisionLoading || tagsBusy || !validLimit ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled, generationActionId);
   async function removeQuestion(question: string) {
     if (!saved || tagsBusy || revisionId !== null || loading || generatingRef.current || recoveryBusy || revisionLoading || deleting) return;
     if (!window.confirm(`Delete “${question}” from the current Q&A? Previous versions are kept, and refreshing may generate this question again.`)) return;
