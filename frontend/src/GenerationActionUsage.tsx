@@ -13,21 +13,30 @@ export function GenerationActionUsage({ base, actionId, kinds, pending, onSettle
 }) {
   const [usage, setUsage] = useState<GenerationActionStatus | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [retry, setRetry] = useState(0);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   useEffect(() => {
     const controller = new AbortController();
     void observeGenerationAction(controller.signal, () => pendingRef.current,
       signal => api(`${base}/codex/generation/actions/${actionId}`, { signal, cache: 'no-store' }),
-      setUsage).then(result => {
+      status => {
+        setUsage(status);
+        setUnavailable(false);
+      }).then(result => {
       if (controller.signal.aborted) return;
       setUnavailable(result === 'unavailable');
-      onSettled(actionId);
+      if (result === 'finished') onSettled(actionId);
     });
     return () => controller.abort();
-  }, [base, actionId, onSettled]);
+  }, [base, actionId, onSettled, retry]);
   const prefix = kinds?.length ? `${kinds.map(kind => generationKindLabels[kind]).join(' · ')} — ` : '';
-  if (!usage) return <p className="muted">{prefix}{unavailable ? 'Token usage unavailable.' : 'Waiting for token usage…'}</p>;
+  const retryButton = unavailable && <button type="button" className="quiet" onClick={() => {
+    setUnavailable(false);
+    setRetry(attempt => attempt + 1);
+  }}>Retry token usage</button>;
+  if (!usage) return <p className="muted">{prefix}{unavailable ? 'Token usage unavailable.' : 'Waiting for token usage…'}
+    {' '}{retryButton}</p>;
   const reported = usage.total_tokens?.toLocaleString();
   return <p className="muted">
     {prefix}<strong>{reported === undefined ? 'Reported tokens unavailable'
@@ -35,6 +44,6 @@ export function GenerationActionUsage({ base, actionId, kinds, pending, onSettle
     {reported === undefined && usage.limit > 0 && <> · Stop at {usage.limit.toLocaleString()}</>}
     {usage.reported_requests < usage.model_requests && <> · {usage.reported_requests} of {usage.model_requests} requests reported</>}
     {usage.reached && <> · Limit reached</>}
-    {unavailable && <> · Last available update</>}
+    {unavailable && <> · Last available update {' '}{retryButton}</>}
   </p>;
 }

@@ -769,7 +769,6 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
         raise HTTPException(422, 'Confirm sending project evidence to the selected provider to refresh the project analysis.')
     dependency_token = None
     try:
-        token_budget = _request_token_budget(project_id, body, request.app.state.engine)
         manager = generation_base(request.app, project_id, body.provider)
         selected = select_generation_manager(manager, body)
         scheme_manager, scheme_profile = None, None
@@ -778,6 +777,7 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
             scheme_manager = review_manager(manager, body, scheme_profile)
         instructions = read_project_instructions(db, project_id)
         db.rollback()
+        token_budget = _request_token_budget(project_id, body, request.app.state.engine)
         if body.generate_scheme:
             engine = request.app.state.engine
             dependency_token = attempts.queue_dependency(engine, project_id,

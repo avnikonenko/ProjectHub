@@ -3,7 +3,8 @@ import { planProjectGeneration, planRetryProjectGeneration, planSelectedProjectG
   type KnowledgeSchemeDependency, type GenerationPlan, type SchemeFocus } from './generationBatch';
 import { GenerationResults, initializeGenerationSelection, type GenerationResultsState, type GenerationSelection } from './GenerationResults';
 import { GenerationActionUsage } from './GenerationActionUsage';
-import { createGenerationActionId } from './generationAction';
+import { createGenerationActionId, maxProjectGenerationActions, rememberGenerationAction, restoreGenerationActions,
+  type RememberedGenerationAction } from './generationAction';
 import { startReviewPolling } from './reviewPolling';
 import { AIEmphasis } from './AIEmphasis';
 import { TagGeneration } from './TagGeneration';
@@ -349,9 +350,9 @@ function ProjectWorkspace({
   const [parameterState, setParameterState] = useState({ busy: false, running: false });
   const [bulkRequests, setBulkRequests] = useState<Record<ProjectGenerationKind, number>>({ brief: 0, knowledge: 0, scheme: 0, qa: 0, parameters: 0 });
   const [bulkActionIds, setBulkActionIds] = useState<Partial<Record<ProjectGenerationKind, string>>>({});
-  const [generationActions, setGenerationActions] = useState<{
-    id: string; kinds: ProjectGenerationKind[]; pending: ProjectGenerationKind[]; settled: boolean;
-  }[]>([]);
+  const [generationActions, setGenerationActions] = useState<(RememberedGenerationAction & {
+    pending: ProjectGenerationKind[]; settled: boolean;
+  })[]>(() => restoreGenerationActions(projectId).map(action => ({ ...action, pending: [], settled: false })));
   const settleGenerationAction = useCallback((id: string) => {
     setGenerationActions(previous => previous.map(action => action.id === id ? { ...action, settled: true } : action));
   }, []);
@@ -461,8 +462,11 @@ function ProjectWorkspace({
     if (!plan.start.length) return;
     const actionId = createGenerationActionId();
     const kinds: ProjectGenerationKind[] = plan.waitForKnowledge ? [...plan.start, 'scheme'] : plan.start;
-    setGenerationActions(previous => [...previous.filter(action => !action.settled),
-      { id: actionId, kinds, pending: plan.start, settled: false }]);
+    const action = { id: actionId, kinds, startedAt: Date.now() };
+    const retainedActions = generationActions.filter(previous => !previous.settled).slice(1 - maxProjectGenerationActions);
+    rememberGenerationAction(projectId, action, retainedActions.map(previous => previous.id));
+    setGenerationActions([...retainedActions,
+      { ...action, pending: plan.start, settled: false }]);
     setBulkActionIds(previous => {
       const next = { ...previous };
       for (const kind of plan.start) next[kind] = actionId;

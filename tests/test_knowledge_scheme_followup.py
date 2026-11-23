@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
-from backend.app.integrations.codex import generation_attempts as attempts, progress, router as routes, scheme
+from backend.app.integrations.codex import generation_attempts as attempts, generation_token_budget, progress, router as routes, scheme
 from backend.app.integrations.codex.ai_instructions import ai_instructions
 from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
@@ -84,6 +84,33 @@ def _reported_request(name):
     request.bind_turn('test-turn')
     return lambda count: request.record({'threadId': name, 'turnId': 'test-turn',
                                          'tokenUsage': {'total': {'totalTokens': count}}})
+
+
+def test_rejected_knowledge_account_does_not_reserve_token_action(api, monkeypatch):
+    monkeypatch.setattr(generation_token_budget, '_actions', {})
+    monkeypatch.setattr(generation_token_budget, '_MAX_ACTIONS', 1)
+    select_manager = routes.select_generation_manager
+
+    def validate(manager, payload):
+        if payload.model == 'unavailable':
+            raise CodexError('The selected generation account is unavailable.')
+        return select_manager(manager, payload)
+
+    monkeypatch.setattr(routes, 'select_generation_manager', validate)
+    prefix = '/api/projects/1/codex'
+    for _ in range(2):
+        action = str(uuid4())
+        rejected = api.client.post(f'{prefix}/knowledge/brief', json=body(
+            model='unavailable', generation_action_id=action))
+        assert rejected.status_code == 503
+        assert rejected.json()['detail'] == 'The selected generation account is unavailable.'
+        assert api.client.get(f'{prefix}/generation/actions/{action}').status_code == 404
+
+    action = str(uuid4())
+    accepted = api.client.post(f'{prefix}/knowledge/brief', json=body(
+        generate_scheme=False, generation_action_id=action))
+    assert accepted.status_code == 200, accepted.text
+    assert api.client.get(f'{prefix}/generation/actions/{action}').status_code == 200
 
 
 def test_parallel_routes_share_one_allowance_and_preserve_the_saved_scheme(api, monkeypatch):

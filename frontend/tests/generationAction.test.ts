@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createGenerationActionId, observeGenerationAction, parseGenerationActionStatus } from '../src/generationAction.ts';
+import { createGenerationActionId, observeGenerationAction, parseGenerationActionStatus,
+  rememberGenerationAction, restoreGenerationActions, type RememberedGenerationAction } from '../src/generationAction.ts';
 import { dispatchGenerationRequest } from '../src/generationBatch.ts';
 import { generationBody } from '../src/generationProvider.ts';
 
@@ -16,6 +17,32 @@ test('a Generate action uses a UUID without adding it to unrelated request bodie
   const generation = { model: 'chosen', effort: 'low' };
   assert.equal(generationBody(generation, id).generation_action_id, id);
   assert.equal(Object.hasOwn(generationBody(generation), 'generation_action_id'), false);
+});
+
+test('saved action identities survive a workspace remount and stay project-scoped', () => {
+  let saved: string | null = null;
+  const storage = { getItem: () => saved, setItem: (_key: string, value: string) => { saved = value; } };
+  const now = 50_000_000;
+  const action: RememberedGenerationAction = { id: createGenerationActionId(), kinds: ['knowledge', 'scheme'], startedAt: now };
+  const other = { ...action, id: createGenerationActionId() };
+  const next = { ...action, id: createGenerationActionId() };
+  rememberGenerationAction(1, action, [], storage);
+  rememberGenerationAction(2, other, [], storage);
+  assert.deepEqual(restoreGenerationActions(1, storage, now), [action]);
+  assert.deepEqual(restoreGenerationActions(2, storage, now), [other]);
+
+  rememberGenerationAction(1, next, [action.id], storage);
+  assert.deepEqual(restoreGenerationActions(1, storage, now), [action, next]);
+  rememberGenerationAction(1, action, [], storage);
+  assert.deepEqual(restoreGenerationActions(1, storage, now), [action]);
+  assert.deepEqual(restoreGenerationActions(2, storage, now), [other]);
+  assert.deepEqual(restoreGenerationActions(3, storage, now), []);
+  assert.deepEqual(restoreGenerationActions(1, storage, now + 24 * 60 * 60 * 1000), []);
+  saved = JSON.stringify([{ ...action, id: 'invalid/path', projectId: 1 },
+    { ...action, kinds: ['unsupported'], projectId: 1 }]);
+  assert.deepEqual(restoreGenerationActions(1, storage, now), []);
+  saved = 'invalid JSON';
+  assert.deepEqual(restoreGenerationActions(1, storage, now), []);
 });
 
 test('usage may be unavailable, but malformed counts are rejected', () => {
@@ -76,6 +103,21 @@ test('skipped and rejected dispatches settle only their own action', async () =>
   assert.deepEqual(settled, ['skip-id']);
   await Promise.resolve();
   assert.deepEqual(settled, ['skip-id', 'failed-id']);
+});
+
+test('a known active job recovers after eight failed reads and reports its final total', async () => {
+  const totals: (number | null)[] = [];
+  const delays: number[] = [];
+  let reads = 0;
+  const outcome = await observeGenerationAction(new AbortController().signal, () => false, async () => {
+    if (++reads === 1) return active;
+    if (reads <= 9) throw new Error('Usage temporarily unavailable');
+    return finished;
+  }, status => totals.push(status.total_tokens), async (_signal, delay) => { delays.push(delay); });
+  assert.equal(outcome, 'finished');
+  assert.deepEqual(totals, [60, 120, 120, 120]);
+  assert.deepEqual(delays.slice(0, 6), [1500, 3000, 6000, 10_000, 10_000, 10_000]);
+  assert.deepEqual(delays.slice(-2), [1500, 1500]);
 });
 
 test('usage polling retains the last count on failures and ignores responses after unmount', async () => {
