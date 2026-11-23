@@ -4,7 +4,13 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.6] - 2026-11-23
+
 - Ask about a saved General or Focused Scheme, including earlier General Scheme versions, with answers linked to supporting evidence.
+- Find relevant passages within long saved Scheme excerpts and record when the question context includes only part of a source.
+- Auto generation workers adjust to demand, provider rate limits, and local memory pressure. Fixed worker counts remain available.
+- Set one reported-token limit for a Generate action, including parallel jobs and a Scheme queued after Knowledge. The combined counter resumes after a project switch or same-tab reload.
+- Keep rejected or busy generation requests from using up the shared token-action registry.
 
 ## [0.2.5] - 2026-11-23
 
