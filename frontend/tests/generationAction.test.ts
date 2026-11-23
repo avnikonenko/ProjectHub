@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createGenerationActionId, observeGenerationAction, parseGenerationActionStatus } from '../src/generationAction.ts';
+import { dispatchGenerationRequest } from '../src/generationBatch.ts';
 import { generationBody } from '../src/generationProvider.ts';
 
 const active = { limit: 100, total_tokens: 60, reported_requests: 1, model_requests: 2, reached: false, active_jobs: 1 };
@@ -37,6 +38,44 @@ test('usage polling covers temporarily missing jobs, dispatch and follow-up hand
   assert.equal(outcome, 'finished');
   assert.equal(reads, statuses.length);
   assert.deepEqual(totals, [60, 60, 60, 60, 60, 60, 120, 120, 120]);
+});
+
+test('a dispatched HTTP request keeps usage polling alive before backend admission', async () => {
+  const actionId = createGenerationActionId();
+  let completeRequest!: () => void;
+  const request = new Promise<void>(resolve => { completeRequest = resolve; });
+  let requestPending = true;
+  dispatchGenerationRequest('start', id => {
+    assert.equal(id, actionId);
+    return request;
+  }, started => assert.equal(started, true), actionId, id => {
+    assert.equal(id, actionId);
+    requestPending = false;
+  });
+
+  const statuses = [idle, idle, idle, idle, idle, active, finished, finished, finished];
+  let reads = 0;
+  const totals: (number | null)[] = [];
+  const outcome = await observeGenerationAction(new AbortController().signal, () => requestPending, async () => {
+    const status = statuses[reads++];
+    assert.ok(status);
+    if (status === finished) completeRequest();
+    return status;
+  }, status => totals.push(status.total_tokens), noWait);
+  assert.equal(outcome, 'finished');
+  assert.equal(requestPending, false);
+  assert.equal(reads, statuses.length);
+  assert.equal(totals.at(-1), 120);
+});
+
+test('skipped and rejected dispatches settle only their own action', async () => {
+  const settled: string[] = [];
+  const onSettled = (id: string) => { settled.push(id); };
+  dispatchGenerationRequest('skip', async () => assert.fail('Unexpected request'), undefined, 'skip-id', onSettled);
+  dispatchGenerationRequest('start', async () => { throw new Error('Request failed'); }, undefined, 'failed-id', onSettled);
+  assert.deepEqual(settled, ['skip-id']);
+  await Promise.resolve();
+  assert.deepEqual(settled, ['skip-id', 'failed-id']);
 });
 
 test('usage polling retains the last count on failures and ignores responses after unmount', async () => {

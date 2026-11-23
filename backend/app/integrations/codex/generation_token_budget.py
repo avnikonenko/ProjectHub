@@ -1,5 +1,5 @@
 """Shared provider-reported token accounting for an AI generation action."""
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
 import threading
 from time import monotonic
@@ -38,6 +38,18 @@ class TokenBudget:
         if self.reached:
             raise GenerationTokenLimitExceeded(self.limit)
 
+    @contextmanager
+    def track_job(self):
+        """Keep the action active while a job runs or waits to start."""
+        with self._lock:
+            self._users += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._users -= 1
+                self._last_used = monotonic()
+
     def _model_started(self):
         with self._lock:
             self.check()
@@ -74,18 +86,12 @@ class TokenBudget:
 
 @contextmanager
 def use_token_budget(budget):
-    if budget is not None:
-        with budget._lock:
-            budget._users += 1
-    token = _current.set(budget)
-    try:
-        yield budget
-    finally:
-        _current.reset(token)
-        if budget is not None:
-            with budget._lock:
-                budget._users -= 1
-                budget._last_used = monotonic()
+    with budget.track_job() if budget is not None else nullcontext():
+        token = _current.set(budget)
+        try:
+            yield budget
+        finally:
+            _current.reset(token)
 
 
 def current_token_budget():

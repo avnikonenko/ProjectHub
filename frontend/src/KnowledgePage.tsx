@@ -32,6 +32,7 @@ type Props = {
   refreshRequest?: number;
   generationActionId?: string;
   onGenerationRequestHandled?: GenerationRequestProps['onGenerationRequestHandled'];
+  onGenerationRequestSettled?: GenerationRequestProps['onGenerationRequestSettled'];
   onGenerationOutcome?: (outcome: KnowledgeGenerationOutcome) => void;
   generateSchemeAfter?: boolean;
   schemeFocus?: SchemeFocus;
@@ -109,7 +110,7 @@ export function EarlierKnowledgeResult({ result, onDownload }: {
   </details>;
 }
 
-export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, generationActionId, onBusyChange, onGenerationRequestHandled, onGenerationOutcome, generateSchemeAfter = false, schemeFocus }: Props) {
+export function KnowledgePage({ base, generation, link, visible = true, onPublished, showRecords = true, externalBusy = false, refreshRequest = 0, generationActionId, onBusyChange, onGenerationRequestHandled, onGenerationRequestSettled, onGenerationOutcome, generateSchemeAfter = false, schemeFocus }: Props) {
   const projectId = Number(base.split('/')[2]);
   const projectLink = link?.projectId === projectId ? link : null;
   const publicationKey = projectLink?.publicationId ?? '';
@@ -313,7 +314,8 @@ export function KnowledgePage({ base, generation, link, visible = true, onPublis
   const error = load.key === loadKey ? load.error : '';
   const blocked = !!(externalBusy || tagsBusy || busy || revisionBusy || currentPreview?.loading || isLoading);
   useEffect(() => { onBusyChange?.({ busy: blocked, running: busy }); }, [blocked, busy, onBusyChange]);
-  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || revisionBusy ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge, onGenerationRequestHandled, generationActionId);
+  useGenerationRequest(base, refreshRequest, externalBusy || tagsBusy || busy || revisionBusy ? 'skip' : currentPreview?.loading || isLoading ? 'wait' : 'ready', generateKnowledge,
+    onGenerationRequestHandled, generationActionId, onGenerationRequestSettled);
   const feedback = <>
     <ErrorBox error={error} />
     <ErrorBox error={currentNotice?.error || ''} />

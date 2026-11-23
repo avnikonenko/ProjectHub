@@ -727,11 +727,8 @@ def generate_analysis_preview(project_id: int, body: GenerationInput, request: R
 
 
 def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, publication_id,
-                                     dependency_token, profile=None, focus: SchemeFocus = 'balanced', token_budget=None):
+                                     dependency_token, profile, focus: SchemeFocus, token_budget, reservation):
     """Server-owned follow-up, independent of the selected browser project."""
-    if dependency_token is None:
-        return
-
     def finish_waiting(state, error=None):
         # If execution started, its progress attempt has already replaced the
         # waiting token. Only a pre-start outcome can still match this token.
@@ -744,8 +741,9 @@ def _generate_scheme_after_knowledge(engine, project_id, manager, instructions, 
     try:
         log.info('Scheme follow-up requested for project=%s after Knowledge publication=%s',
                  project_id, publication_id)
-        with use_token_budget(token_budget), use_project_instructions(instructions), \
+        with reservation, use_token_budget(token_budget), use_project_instructions(instructions), \
              use_knowledge_profile(profile or review_profile()):
+            reservation.close()
             refresh_scheme(engine, project_id, manager, expected_publication_id=publication_id, focus=focus,
                            dependency_token=dependency_token)
         finish_waiting('completed')
@@ -788,16 +786,24 @@ def knowledge_brief(project_id: int, body: KnowledgeGenerationInput, request: Re
                           'generation_token_limit': token_budget.limit})
         with use_token_budget(token_budget), use_project_instructions(instructions):
             result = generate_knowledge_brief(request.app.state.engine, project_id, selected, publish=True)
-        if body.generate_scheme:
-            publication_id = result.get('publication_id')
-            if result.get('published') is not True or not isinstance(publication_id, str) or not publication_id:
-                raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
-            if dependency_token is None:
-                return {**result, 'scheme_requested': False}
-            background_tasks.add_task(_generate_scheme_after_knowledge,
-                                      request.app.state.engine, project_id, scheme_manager, instructions,
-                                      publication_id, dependency_token, scheme_profile, body.scheme_focus, token_budget)
-            result = {**result, 'scheme_requested': True}
+            if body.generate_scheme:
+                publication_id = result.get('publication_id')
+                if result.get('published') is not True or not isinstance(publication_id, str) or not publication_id:
+                    raise CodexError('Knowledge generation did not confirm saving its result; Scheme was not started.')
+                if dependency_token is None:
+                    return {**result, 'scheme_requested': False}
+                # Keep the action active between the Knowledge response and
+                # admission of the server-owned background job.
+                reservation = ExitStack()
+                reservation.enter_context(token_budget.track_job())
+                try:
+                    background_tasks.add_task(_generate_scheme_after_knowledge, engine, project_id,
+                                              scheme_manager, instructions, publication_id, dependency_token,
+                                              scheme_profile, body.scheme_focus, token_budget, reservation)
+                except BaseException:
+                    reservation.close()
+                    raise
+                result = {**result, 'scheme_requested': True}
         return result
     except BriefBusy as exc:
         if dependency_token:

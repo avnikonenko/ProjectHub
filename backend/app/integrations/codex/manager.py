@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 from contextlib import ExitStack, contextmanager
-from contextvars import ContextVar
+from contextvars import Context, ContextVar
 from functools import partial
 from pathlib import Path
 
@@ -921,7 +921,8 @@ class CodexManager:
                 optional_work_expired = True
                 raise
             except GenerationTokenLimitExceeded:
-                token_limit_reached = not done.is_set()
+                with event_lock:
+                    token_limit_reached = turn_id not in completed
                 raise
             finally:
                 cancellation = progress.current_cancel_event()
@@ -940,7 +941,7 @@ class CodexManager:
                         finally:
                             interrupted.set()
                     try:
-                        threading.Thread(target=interrupt, daemon=True,
+                        threading.Thread(target=Context().run, args=(interrupt,), daemon=True,
                                          name='projecthub-generation-cancel').start()
                     except (RuntimeError, OSError):
                         log.warning('Could not start generation cancellation helper; closing its transport.')

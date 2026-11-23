@@ -194,10 +194,12 @@ batches and retries. A longer limit can allow more requests to complete.
 can use as input. Other Scheme inspection limits apply separately.
 
 **Settings → Stop at reported tokens** defaults to `0` (unlimited). A positive
-limit applies to the combined token total for each Generate action. **Regenerate
+limit applies to the combined token total for each Generate action. After
+changing the setting, wait for the save confirmation before starting. **Regenerate
 selected**, **Regenerate all**, and **Retry unfinished** each start a fresh total.
 All jobs, parallel batches, and internal retries for that action share the limit,
-including Scheme when it waits for Knowledge.
+including Scheme when it waits for Knowledge. Reusing a locally saved batch
+does not start a model request or add tokens to the total.
 
 ProjectHub stops starting model requests and attempts to interrupt active work
 when reports reach the limit. Provider reports can arrive late or omit usage,

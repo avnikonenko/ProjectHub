@@ -48,7 +48,7 @@ type EvidenceFreshness = {
   git?: { change_detection_limited?: boolean } | null;
 };
 
-export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, generationActionId, onGenerationRequestHandled, onResultActivated }: GenerationProps & GenerationRequestProps & {
+export function ProjectBrief({ base, evidenceVersion, visible, generation, onGenerating, onRecoveryNeeded, recoveryVersion, recoveryBusy, externalBusy = false, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, onResultActivated }: GenerationProps & GenerationRequestProps & {
   visible: boolean; generation: Generation; onGenerating: (active: boolean) => void;
   onRecoveryNeeded?: () => void;
   onResultActivated?: () => void;
@@ -150,7 +150,8 @@ export function ProjectBrief({ base, evidenceVersion, visible, generation, onGen
       }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled, generationActionId);
+  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate,
+    onGenerationRequestHandled, generationActionId, onGenerationRequestSettled);
   const visibleSections = briefSections(brief);
   const sources = citedSources(brief?.sources ?? [], visibleSections.flatMap(({ entries }) =>
     entries.flatMap((entry) => entry.source_ids),

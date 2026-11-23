@@ -209,12 +209,18 @@ def test_real_manager_protocol_mock_counts_each_fresh_turn_once(env):
     assert snapshot['token_usage']['reported_requests'] == 2
 
 
-def test_real_manager_interrupts_active_turn_when_reported_usage_reaches_limit(env, monkeypatch):
+@pytest.mark.parametrize('formatting_error', [False, True])
+def test_real_manager_interrupts_active_turn_when_reported_usage_reaches_limit(env, monkeypatch, formatting_error):
     class ActiveUsageClient(ReusableBriefClient):
         def request(self, method, params):
             if method == 'turn/start':
                 event = notification(thread=params['threadId'], turn='active-turn')
                 self.on_event('thread/tokenUsage/updated', event)
+                if formatting_error:
+                    self.on_event('item/agentMessage/delta', {
+                        'threadId': params['threadId'], 'turnId': 'active-turn', 'itemId': 'answer',
+                        'delta': '{}' + '\n' * 5000,
+                    })
                 return {'turn': {'id': 'active-turn'}}
             return super().request(method, params)
 

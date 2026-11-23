@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from . import progress
 from .ai_instructions import ai_instructions
 from .generation_metrics import begin_model_request
+from .generation_token_budget import GenerationTokenLimitExceeded
 from .manager import TransientGenerationError, generation_timeout
 from .protocol import CodexError, JSONFormattingError
 
@@ -211,13 +212,24 @@ def _generation_failure(returncode, output, errors, error_bytes):
     return failure
 
 
-def _exchange(process, data, timeout, *, record_failed_usage=None):
+def _exchange(process, data, timeout, *, record_buffered_usage=None):
     """Feed stdin and drain stdout concurrently under bounded deadline and memory."""
     deadline = time.monotonic() + timeout
     output = bytearray()
     errors = bytearray()
     error_bytes = 0
     pending = memoryview(data)
+
+    def check_cancelled():
+        try:
+            progress.check_cancelled()
+        except GenerationTokenLimitExceeded:
+            # Another request can reach the limit after this CLI has already
+            # sent its complete result. Keep any usage already in the buffers.
+            if record_buffered_usage is not None:
+                record_buffered_usage(output, errors)
+            raise
+
     with selectors.DefaultSelector() as channels:
         os.set_blocking(process.stdin.fileno(), False)
         os.set_blocking(process.stdout.fileno(), False)
@@ -227,7 +239,7 @@ def _exchange(process, data, timeout, *, record_failed_usage=None):
             os.set_blocking(process.stderr.fileno(), False)
             channels.register(process.stderr, selectors.EVENT_READ)
         while channels.get_map() or process.poll() is None:
-            progress.check_cancelled()
+            check_cancelled()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise CodexError('Claude generation exceeded its model-call timeout.')
@@ -261,10 +273,10 @@ def _exchange(process, data, timeout, *, record_failed_usage=None):
                                 raise CodexError('Claude generation exceeded its response limit.')
                 except BlockingIOError:
                     continue
-    progress.check_cancelled()
+    check_cancelled()
     if process.returncode != 0 or _failure_details(output) is not None or _failure_details(errors) is not None:
-        if record_failed_usage is not None:
-            record_failed_usage(output, errors)
+        if record_buffered_usage is not None:
+            record_buffered_usage(output, errors)
         raise _generation_failure(process.returncode, output, errors, error_bytes)
     return output
 
@@ -323,7 +335,7 @@ def _record_usage(request, request_id, result):
     return True
 
 
-def _record_failed_usage(request, request_id, output, errors):
+def _record_buffered_usage(request, request_id, output, errors):
     # Prefer the CLI result on stdout. A confirmed result on bounded stderr
     # can supply usage when stdout is missing it, without counting both.
     for raw in (output, errors):
@@ -474,8 +486,8 @@ class ClaudeGenerationManager:
                                       stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       start_new_session=True) as process:
                     try:
-                        failed_usage = partial(_record_failed_usage, request, request_id) if request is not None else None
-                        output = _exchange(process, data, remaining(), record_failed_usage=failed_usage)
+                        record_usage = partial(_record_buffered_usage, request, request_id) if request is not None else None
+                        output = _exchange(process, data, remaining(), record_buffered_usage=record_usage)
                     except BaseException:
                         _terminate(process)
                         raise

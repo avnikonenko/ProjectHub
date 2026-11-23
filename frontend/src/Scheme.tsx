@@ -431,7 +431,7 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
   </div>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   onFocusedGenerating?: (active: boolean) => void;
@@ -511,7 +511,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   }
   useGenerationRequest(base, generationRequest,
     generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading || questionBusy ? 'wait' : 'ready',
-    actionId => generate(queuedFocus, actionId), onGenerationRequestHandled, generationActionId);
+    actionId => generate(queuedFocus, actionId), onGenerationRequestHandled, generationActionId, onGenerationRequestSettled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection?.sources ?? [];
   const prefix = base.split('/')[2] + '-scheme';

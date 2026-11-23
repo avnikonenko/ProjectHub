@@ -10,6 +10,7 @@ export type GenerationRequestProps = {
   generationRequest?: number;
   generationActionId?: string;
   onGenerationRequestHandled?: (started: boolean) => void;
+  onGenerationRequestSettled?: (actionId: string) => void;
 };
 export type KnowledgeGenerationOutcome = {
   request: number;
@@ -95,16 +96,28 @@ export function claimGenerationRequest(tracker: GenerationRequestTracker, identi
   return state === 'ready' ? 'start' : 'skip';
 }
 
+export function dispatchGenerationRequest(action: 'start' | 'skip',
+  generate: (actionId?: string) => Promise<void>, handled?: (started: boolean) => void,
+  actionId?: string, settled?: (actionId: string) => void) {
+  if (action === 'start') {
+    // Keep the action pending while a dispatched request waits for server admission.
+    const finish = () => { if (actionId) settled?.(actionId); };
+    void generate(actionId).then(finish, finish);
+  }
+  handled?.(action === 'start');
+  if (action === 'skip' && actionId) settled?.(actionId);
+}
+
 export function useGenerationRequest(identity: string, sequence: number, state: GenerationRequestState,
-  generate: (actionId?: string) => Promise<void>, handled?: (started: boolean) => void, actionId?: string) {
+  generate: (actionId?: string) => Promise<void>, handled?: (started: boolean) => void, actionId?: string,
+  settled?: (actionId: string) => void) {
   const tracker = useRef<GenerationRequestTracker>({ identity, sequence: 0 });
-  const current = useRef({ generate, handled }); current.current = { generate, handled };
+  const current = useRef({ generate, handled, settled }); current.current = { generate, handled, settled };
   useEffect(() => {
     const action = claimGenerationRequest(tracker.current, identity, sequence, state);
     if (action === null) return;
     // The normal handler remains the only POST/save/recovery path.
-    if (action === 'start') void current.current.generate(actionId);
-    current.current.handled?.(action === 'start');
+    dispatchGenerationRequest(action, current.current.generate, current.current.handled, actionId, current.current.settled);
   }, [identity, sequence, state, actionId]);
 }
 

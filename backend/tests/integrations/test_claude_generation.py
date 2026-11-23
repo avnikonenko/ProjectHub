@@ -95,6 +95,41 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
     assert metrics.snapshot()['token_usage']['total_tokens'] == 20
 
 
+def test_claude_keeps_buffered_usage_when_another_request_reaches_the_limit(fake_cli, monkeypatch):
+    fake_cli('''import json, sys
+sys.stdin.read()
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False,
+                  'structured_output': {},
+                  'usage': {'input_tokens': 12, 'output_tokens': 8,
+                            'cache_read_input_tokens': 0, 'cache_creation_input_tokens': 0}}), flush=True)
+''')
+    monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '15')
+    manager = claude_generation.ClaudeGenerationManager(None)
+    metrics = GenerationMetrics()
+    progress.begin(815, 'brief', metrics=metrics)
+    try:
+        sibling = metrics.begin_model_request('sibling')
+        sibling.bind_turn('sibling')
+        original_read = claude_generation.os.read
+
+        def read_with_sibling_report(fd, size):
+            chunk = original_read(fd, size)
+            if b'"input_tokens": 12' in chunk:
+                sibling.record({'threadId': 'sibling', 'turnId': 'sibling',
+                                'tokenUsage': {'total': {'totalTokens': 15}}})
+            return chunk
+
+        monkeypatch.setattr(claude_generation.os, 'read', read_with_sibling_report)
+        with collect_generation_metrics(metrics), pytest.raises(GenerationTokenLimitExceeded):
+            manager.generate_brief('input', {'type': 'object'})
+    finally:
+        progress.finish(815)
+
+    usage = metrics.snapshot()['token_usage']
+    assert usage['total_tokens'] == 35
+    assert usage['reported_requests'] == 2
+
+
 def test_claude_keeps_unsupported_bounds_in_the_prompt_for_existing_validators(fake_cli):
     fake_cli('''import json, sys
 schema = json.loads(sys.argv[sys.argv.index('--json-schema') + 1])

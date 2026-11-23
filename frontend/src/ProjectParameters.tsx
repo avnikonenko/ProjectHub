@@ -207,7 +207,7 @@ export function ParameterList({ snapshot, prefix, query = '', component = '' }: 
   </>;
 }
 
-export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onResultActivated }: GenerationRequestProps & {
+export function ProjectParameters({ base, generation, visible, externalBusy = false, onBusyChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, onResultActivated }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean; externalBusy?: boolean;
   onBusyChange?: (state: Busy) => void;
   onResultActivated?: () => void;
@@ -302,7 +302,8 @@ export function ProjectParameters({ base, generation, visible, externalBusy = fa
       if (active.current === run) { active.current = null; setGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recovering || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate, onGenerationRequestHandled, generationActionId);
+  useGenerationRequest(base, generationRequest, generating || recovering || revisionLoading || externalBusy ? 'skip' : loading ? 'wait' : 'ready', generate,
+    onGenerationRequestHandled, generationActionId, onGenerationRequestSettled);
   const choices = [...new Set(snapshot?.items.map(item => item.component).filter(Boolean) ?? [])].sort();
   const freshness = parameterFreshnessLabel(result?.freshness, revisionId !== null);
   return <section className="card project-parameters" aria-busy={busy}>

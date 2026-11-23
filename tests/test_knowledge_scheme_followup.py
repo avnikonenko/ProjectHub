@@ -135,7 +135,14 @@ def test_parallel_routes_share_one_allowance_and_preserve_the_saved_scheme(api, 
 def test_queued_scheme_keeps_the_knowledge_allowance(api, monkeypatch):
     monkeypatch.setenv('PROJECTHUB_GENERATION_TOKEN_LIMIT', '100')
     original_publish = routes.generate_knowledge_brief
+    original_followup = routes._generate_scheme_after_knowledge
     action = str(uuid4())
+    scheduled, resume = Event(), Event()
+
+    def delay_followup(*args, **kwargs):
+        scheduled.set()
+        assert resume.wait(5)
+        return original_followup(*args, **kwargs)
 
     def publish(engine, pid, selected, *, publish):
         progress.begin(pid, 'knowledge', engine=engine)
@@ -159,10 +166,21 @@ def test_queued_scheme_keeps_the_knowledge_allowance(api, monkeypatch):
 
     monkeypatch.setattr(routes, 'generate_knowledge_brief', publish)
     monkeypatch.setattr(routes, 'refresh_scheme', followup)
+    monkeypatch.setattr(routes, '_generate_scheme_after_knowledge', delay_followup)
     prefix = '/api/projects/1/codex'
-    response = api.client.post(f'{prefix}/knowledge/brief', json=body(generation_action_id=action))
+    status_path = f'{prefix}/generation/actions/{action}'
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        request = pool.submit(api.client.post, f'{prefix}/knowledge/brief', json=body(generation_action_id=action))
+        try:
+            assert scheduled.wait(5)
+            status = api.client.get(status_path).json()
+            assert status['active_jobs'] == 1 and status['total_tokens'] == 60
+        finally:
+            resume.set()
+        response = request.result(timeout=10)
     assert response.status_code == 200 and response.json()['scheme_requested'] is True
-    assert api.client.get(f'{prefix}/generation/actions/{action}').json()['total_tokens'] == 100
+    status = api.client.get(status_path).json()
+    assert status['active_jobs'] == 0 and status['total_tokens'] == 100
     with Session(api.engine) as db:
         assert db.get(ProjectKnowledge, 1).snapshot['publication_id'] == 'new-knowledge'
         assert db.get(ProjectScheme, 1).snapshot == api.old_scheme
