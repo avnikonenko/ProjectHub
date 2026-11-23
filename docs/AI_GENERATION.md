@@ -31,6 +31,37 @@ Open **AI Q&A** to read answers from saved evidence and follow their citations.
 
 ![Example AI Q&A tab with three saved answers and numbered source citations](images/projecthub-qa.png)
 
+## Cache reuse
+
+ProjectHub stores validated batch results in its local database as they finish.
+Each result is keyed by the project, processing stage, source content and
+context, and generation settings. A matching key reuses the saved result and
+skips the model call. When there is no match, ProjectHub processes the batch and
+caches the validated result for later runs.
+
+| Source change | What happens on the next generation |
+| --- | --- |
+| Add a chat or link a session | Matching batches from existing sources are reused. New batches are processed as needed. |
+| Continue a session | Earlier matching batches are reused. New messages may change the final batch. |
+| Edit or replace a conversation | Batches with changed text or surrounding context are processed again. Other matching batches are reused. |
+| Remove a conversation or unlink a session | The removed source is excluded from new generation. Other matching batches are reused. Relinking the same session to the same project can reuse its cache. |
+
+Unlinking keeps the original session. Removing a source leaves cached content
+and saved versions in place. Use **Generate** to refresh the views you want
+updated. Knowledge can keep older interpretations with an evidence warning
+and leave them out of the new Knowledge Summary.
+
+Changing the model, reasoning effort, review profile, or AI instructions can
+require fresh batches. Knowledge can reuse matching batches across Codex
+accounts when both the model and reasoning effort are set explicitly. Runs
+using Codex defaults use account-specific caches.
+
+Even with cache hits, ProjectHub may check sources and ask the model to write
+the final result. Scheme can reuse matching local inspection results and makes
+a fresh model request when regenerated. **Processing diagnostics** shows cache
+reuse where available. Provider-reported cached input tokens refer to requests
+that were sent to the model.
+
 ## Progress, cancellation and timeouts
 
 Progress shows the stage, completed batches and cache reuse when available.
@@ -43,15 +74,10 @@ cancelled runs preserve earlier saved results. Attempt details retain the last
 stage and batch counts after a restart. Claude quota errors show the reset time
 when the provider supplies it in a recognized format.
 
-After a timeout or interruption, click **Retry unfinished**. Views with batch
-caches can reuse completed batches that match the current inputs, even after a
-server restart. A Scheme retry can reuse local inspection results and sends a
-fresh model request. Reload the page to reconnect to a run still active on the
-same server.
+After a timeout or interruption, click **Retry unfinished**. Matching batches
+remain available after a server restart. Reload the page to reconnect to a run
+still active on the same server.
 
-Knowledge can reuse completed batches after switching Codex accounts when the
-model and reasoning effort are both explicitly set and the inputs still match.
-Runs with Codex defaults use account-specific caches.
 Knowledge retries a confirmed temporary service or response-stream failure once
 within the same time budget. Usage limits and authorization failures end the attempt.
 
