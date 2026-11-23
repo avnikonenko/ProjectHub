@@ -135,8 +135,10 @@ function SchemeDiagram({ graph }: { graph: SchemeGraph }) {
     void import('mermaid').then(async ({ default: mermaid }) => {
       // Generated diagrams have no HTML labels or navigation. Strict mode also
       // disables Mermaid callbacks and treats labels as untrusted text.
+      // Numeric entities expand non-ASCII labels. The maximum supported graph
+      // (60 nodes and 120 edges) can exceed Mermaid's default text limit.
       mermaid.initialize({ theme: theme === 'dark' ? 'dark' : 'default', startOnLoad: false, htmlLabels: false, securityLevel: 'strict', suppressErrorRendering: true,
-        flowchart: { htmlLabels: false, useMaxWidth: true } });
+        maxTextSize: 200_000, flowchart: { htmlLabels: false, useMaxWidth: true } });
       const result = await mermaid.render('scheme' + id, graph.mermaid);
       if (!active || !element) return;
       const svg = new DOMParser().parseFromString(result.svg, 'image/svg+xml').documentElement;

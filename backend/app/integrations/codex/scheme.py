@@ -260,14 +260,20 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False,
     return {**validated, 'mermaid': render_mermaid(validated)}
 
 
+def _read_graph_response(raw, label):
+    if isinstance(raw, str) and len(raw) > MAX_OUTPUT_CHARS:
+        raise CodexError(f'{label} response exceeds the {MAX_OUTPUT_CHARS:,}-character limit.')
+    try:
+        if not isinstance(raw, str):
+            raise ValueError('Response is not text')
+        return json.loads(raw)
+    except (ValueError, RecursionError) as exc:
+        raise CodexError(f'{label} returned invalid JSON.') from exc
+
+
 def validate_output(raw, evidence, *, complete_knowledge_refs=False,
                     max_nodes=DEFAULT_SCHEME_MAX_NODES, max_edges=DEFAULT_SCHEME_MAX_EDGES):
-    try:
-        if not isinstance(raw, str) or len(raw) > MAX_OUTPUT_CHARS:
-            raise ValueError('Invalid response size')
-        result = json.loads(raw)
-    except (ValueError, RecursionError) as exc:
-        raise CodexError('Scheme generation returned invalid JSON.') from exc
+    result = _read_graph_response(raw, 'Scheme generation')
     _keys(result, ('architecture', 'workflow', 'dependencies'))
     sources = {source['id']: source for source in evidence['sources']}
     architecture = _validate_graph(result['architecture'], 'architecture', sources,
@@ -462,7 +468,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'Show where the searchable records come from, including a dedicated import handler if one writes '
             'the indexed record. Cite the import code and use the trigger table to connect the correct ingestion '
             'path. Do not turn imported records into linked-session turns. For each matching index and search '
-            'handoff cite both IDs from these inspected migration/query pairs: '
+            'handoff cite both IDs from these inspected migration/query pairs. When an edge does not fit '
+            'the graph limits, describe the handoff in a supported workflow node citing both IDs: '
             + json.dumps(index_pairs) + '. '
         ) if index_pairs else ''
         lifecycle_guidance = (
@@ -478,6 +485,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
             f'For each graph, limit the node count to {max_nodes} and the edge count to {max_edges}. '
+            'Prioritize the most useful supported components and relationships within those limits. '
             'Keep both diagrams at project-capability level: help a user understand what the project does '
             'and how its main capabilities connect. Use concise domain-language labels supported by the '
             'evidence. Put module names, command names, file formats, and implementation mechanics in '
@@ -487,7 +495,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'than vague labels such as artifacts. '
             'In architecture, include the supported producer/consumer and orchestration handoffs between '
             'components, including preparation outputs consumed by validation and reporting when evidenced. '
-            'Do not leave a supported handoff only in the explanation, or invent edges to force connectivity. '
+            'Show supported handoffs as edges when they fit. Describe handoffs that cannot fit in a node or '
+            'the explanation. Do not invent edges to force connectivity. '
             'Each data-flow arrow requires evidence that the receiving stage accepts what the source '
             'stage produces. If a downstream tool consumes a derived table, report that table on the '
             'handoff from its producer. A raw input to an earlier stage is insufficient for a direct arrow '
@@ -512,8 +521,8 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'trigger, and query. Keep separate indexes distinct. When a generation handler delegates to '
             'implementation that validates and saves results, show that handoff too. '
             'Keep generation routes and their outputs separate when the evidence shows distinct results. '
-            'Use about 8–15 major nodes when useful, never more than 20 '
-            'nodes or 40 edges per graph. Every node and edge must cite supplied source_ids. '
+            'Use about 8–15 major nodes when useful and within the node limit. '
+            'Every node and edge must cite supplied source_ids. '
             'For every source_ids list, copy 1–6 distinct IDs exactly from the top-level sources list. '
             'Do not use IDs from citations embedded in source text, shared-session aliases, or dependency IDs. '
             'Use observed for static evidence, proposed for plans, uncertain for unsupported or conflicting '
@@ -606,7 +615,9 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             repair = ('The previous workflow omitted a supported index handoff. For each of the following '
                       'migration and query citation pairs, show how the record named in the trigger is indexed '
                       'and returned through the matching query. Cite both IDs in the workflow and keep distinct '
-                      'indexes separate. Every edge endpoint must exactly match a node ID in its own graph. '
+                      'indexes separate within the graph limits. If an edge cannot fit, describe the handoff '
+                      'in a supported workflow node that cites both IDs. Every edge endpoint must exactly '
+                      'match a node ID in its own graph. '
                       'Citation pairs: ' + json.dumps(missing) + '. ') if missing else ''
         if repair and citation_error is None:
             repair += ('Keep the node IDs, relationships and citations from this validated draft. Treat it as '

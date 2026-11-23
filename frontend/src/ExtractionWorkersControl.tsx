@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react';
 import { api, patch } from './api';
 import { ErrorBox } from './ui';
 import { Feedback } from './Feedback';
@@ -188,6 +188,18 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
       pendingTimers.clear();
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (!active) return;
+    setNotices(previous => {
+      const nodes = previous.scheme_max_nodes;
+      const edges = previous.scheme_max_edges;
+      if (nodes?.state !== 'saved' && edges?.state !== 'saved') return previous;
+      return { ...previous,
+        scheme_max_nodes: nodes?.state === 'saved' ? undefined : nodes,
+        scheme_max_edges: edges?.state === 'saved' ? undefined : edges };
+    });
+  }, [active]);
 
   useEffect(() => {
     if (!active) return;
@@ -452,7 +464,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
         Limits apply separately to each Architecture, Workflow, and Focused Scheme diagram.
         {schemeNodeLimit && <> The default is 20 nodes.</>}
         {schemeEdgeLimit && <> The default is 40 edges. Set the edge limit to 0 to draw only nodes.</>}
-        {' '}Changes apply to the next generation.
+        {' '}After changing a limit, wait for the save confirmation before starting the next generation.
       </small></p>}
       {([
         { name: 'scheme_max_nodes', label: 'Maximum nodes', setting: schemeNodeLimit },

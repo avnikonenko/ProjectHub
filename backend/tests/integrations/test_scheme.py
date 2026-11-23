@@ -63,6 +63,13 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
     assert dependencies[0]['purpose_source_ids'] == ['file:api.py']
 
 
+def test_graph_response_distinguishes_size_limit_from_invalid_json():
+    with pytest.raises(CodexError, match='response exceeds the 100,000-character limit'):
+        scheme.validate_output(json.dumps(output()) + ' ' * scheme.MAX_OUTPUT_CHARS, evidence())
+    with pytest.raises(CodexError, match='returned invalid JSON'):
+        scheme.validate_output('{', evidence())
+
+
 def test_scheme_uses_configured_limit_per_graph_and_preserves_the_saved_result(tmp_path, monkeypatch):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -81,6 +88,7 @@ def test_scheme_uses_configured_limit_per_graph_and_preserves_the_saved_result(t
     class Manager:
         def generate_brief(self, prompt, schema):
             assert f'For each graph, limit the node count to {self.nodes} and the edge count to {self.edges}.' in prompt
+            assert 'never more than 20 nodes or 40 edges' not in prompt
             for kind in ('architecture', 'workflow'):
                 graph = schema['properties'][kind]['properties']
                 assert graph['nodes']['maxItems'] == self.nodes
@@ -575,7 +583,9 @@ def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid', 'degraded', 'expired', 'provider_error', 'cancelled'])
+@pytest.mark.parametrize('repair', [
+    'covered', 'nodes_only', 'omitted', 'invalid', 'degraded', 'expired', 'provider_error', 'cancelled',
+])
 def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -596,6 +606,8 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     inspected['route_query_paths'] = ['query.py']
     monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: deepcopy(inspected))
     clock = [1000]
+    if repair == 'nodes_only':
+        monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '0')
     if repair == 'expired':
         monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '60')
         monkeypatch.setattr(progress.time, 'monotonic', lambda: clock[0])
@@ -605,12 +617,15 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
         def generate_brief(self, prompt, schema):
             prompts.append(prompt)
             graph = output()
+            if repair == 'nodes_only':
+                graph['architecture']['edges'] = []
+                assert schema['properties']['workflow']['properties']['edges']['maxItems'] == 0
             if len(prompts) > 1:
                 if repair == 'provider_error':
                     raise CodexError('Provider is temporarily unavailable.')
                 if repair == 'cancelled':
                     raise progress.GenerationCancelled()
-                if repair in {'covered', 'degraded'}:
+                if repair in {'covered', 'degraded', 'nodes_only'}:
                     graph['workflow']['nodes'] = [
                         {**node('find', refs=['migration', 'query']), 'type': 'operation'},
                     ]
@@ -636,10 +651,14 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
     assert '["migration", "query"]' in prompts[-1]
     warning = any('did not fully cite' in value for value in saved['coverage']['limitations'])
-    assert warning == (repair != 'covered')
+    assert warning == (repair not in {'covered', 'nodes_only'})
     rewrite_warning = any('optional indexing rewrite failed' in value for value in saved['coverage']['limitations'])
     assert rewrite_warning == (repair in {'invalid', 'expired', 'provider_error'})
-    assert saved['architecture']['edges'][0]['target'] == 'replacement'
+    if repair == 'nodes_only':
+        assert 'If an edge cannot fit, describe the handoff' in prompts[-1]
+        assert not saved['architecture']['edges'] and not saved['workflow']['edges']
+    else:
+        assert saved['architecture']['edges'][0]['target'] == 'replacement'
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved
     engine.dispose()

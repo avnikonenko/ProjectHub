@@ -145,7 +145,9 @@ def test_invalid_focused_instruction(instruction):
 
 
 @pytest.mark.parametrize('rewrite', ['supported', 'invalid', 'unrelated'])
-def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monkeypatch, rewrite):
+@pytest.mark.parametrize('max_edges', [0, 40])
+def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monkeypatch, rewrite, max_edges):
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', str(max_edges))
     monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
         'sources': [
             {'id': 'repo:template', 'path': 'templates/methods.in', 'provenance': 'repository configuration',
@@ -169,6 +171,42 @@ def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monke
     assert 'repo:template' in prompts[1].splitlines()[0]
     assert bool(saved['graph']['nodes']) == (rewrite == 'supported')
     assert saved['coverage']['partial'] == (rewrite != 'supported')
+
+
+@pytest.mark.parametrize('max_nodes,max_edges,contract_fits', [(2, 0, False), (1, 40, False), (2, 1, True)])
+def test_focused_skips_handoff_retries_that_cannot_fit(database, monkeypatch, max_nodes, max_edges, contract_fits):
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', str(max_nodes))
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', str(max_edges))
+    monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
+        'sources': [{'id': 'repo:file', 'path': 'example.py', 'text': 'Bounded code',
+                     'local_handoffs': [{'type': 'value_transfer',
+                                         'from_symbol': 'read', 'from_line': 2,
+                                         'to_symbol': 'write', 'to_line': 3,
+                                         'context': 'write consumes the result of read'}]}],
+        'coverage': {'partial': False, 'limitations': []},
+    })
+
+    class Manager:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            assert self.calls == 1
+            package = json.loads(prompt.splitlines()[-1])
+            assert bool(package.get('required_handoffs')) == contract_fits
+            assert package['sources'][0]['local_handoffs']
+            assert schema['properties']['edges']['maxItems'] == max_edges
+            result = diagram('repo:file')
+            if max_nodes > 1:
+                result['nodes'].append({**result['nodes'][0], 'id': 'another'})
+            return json.dumps(result)
+
+    saved = focused_scheme.refresh_focused_scheme(database, 1, Manager(), 'Trace read into write')
+    assert saved['diagnostics']['ai_requests'] == 1
+    assert len(saved['graph']['nodes']) == max_nodes and not saved['graph']['edges']
+    assert saved['coverage']['partial']
+    assert any(('could not be verified' if contract_fits else 'configured graph limits') in warning
+               for warning in saved['coverage']['limitations'])
 
 
 @pytest.mark.parametrize('repair', ['valid', 'reversed', 'empty', 'expired'])
