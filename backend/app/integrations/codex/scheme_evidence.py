@@ -34,6 +34,7 @@ from .scheme_namelist import namelist_excerpt
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
 from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations
 from .scheme_route_evidence import python_route_declarations
+from .scheme_cli_choices import cli_choice_rows
 from .scheme_workflow_sql import workflow_sql_rows
 
 _MAX_PATHS = 300
@@ -54,7 +55,7 @@ _SCOPE_WORD = re.compile(r'[^\W_]+')
 _SCOPE_CAMEL_CASE = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
 _SCOPE_PATH_TOKEN = re.compile(r'([`"])([\w./ -]+)\1|(?<![\w./-])(/?(?:[\w.-]+/)*[\w.-]+)')
 _LIKELY_FILE_SUFFIXES = frozenset(
-    '.c .cpp .css .csv .go .h .html .ini .java .js .json .jsx .md .mjs .pdf .png .py .rb .rs .rst .sh .sql '
+    '.c .cpp .css .csv .go .h .html .in .ini .java .js .json .jsx .md .mjs .pdf .png .py .rb .rs .rst .sh .sql '
     '.toml .ts .tsx .txt .xml .yaml .yml .zip'.split())
 _SCOPE_STOP_WORDS = frozenset(
     'about also both can code could describe diagram explain from give have how include into just '
@@ -105,6 +106,22 @@ class _EvidenceScope:
                       if name and ('.' in PurePosixPath(name).name or named_file_kind(name)
                                    or _scheme_category(name) == 'docs')}
         self.excluded_references = set()
+        self.preferred_basenames = {}
+
+    def prefer_tracked_basenames(self, paths, tracked):
+        for path in paths:
+            name = PurePosixPath(path.casefold()).name
+            if name in self.paths and path in tracked:
+                self.preferred_basenames.setdefault(name, set()).add(path)
+        for matches in self.preferred_basenames.values():
+            production = {path for path in matches if not _nonproduction_copy(path)}
+            if production:
+                matches.intersection_update(production)
+
+    def shadowed_basename(self, path):
+        folded = path.casefold()
+        preferred = self.preferred_basenames.get(PurePosixPath(folded).name)
+        return bool(preferred and path not in preferred and not ('/' in path and folded in self.paths))
 
     def score(self, value):
         if not self.terms:
@@ -117,6 +134,8 @@ class _EvidenceScope:
         return sum(hits.values())
 
     def path_rank(self, path):
+        if self.shadowed_basename(path):
+            return 0, 0
         return int(bool(self.matching_references(path))), self.score(path)
 
     def matching_references(self, path):
@@ -440,6 +459,12 @@ def _historical_path(relative):
                for part in PurePosixPath(relative).parts[:-1])
 
 
+def _nonproduction_copy(relative):
+    return _historical_path(relative) or any(
+        part.casefold() in {'test', 'tests', 'fixtures', 'example', 'examples'}
+        for part in PurePosixPath(relative).parts[:-1])
+
+
 def _scheme_order(relative):
     path = PurePosixPath(relative)
     category = _scheme_category(relative)
@@ -591,6 +616,9 @@ def _repository(repository_path, patterns, *, inventory=None, requested=None):
             # Report the user's reference, so a basename cannot reveal hidden locations.
             requested.excluded_references.update(requested.matching_references(path))
     paths = safe
+    if requested is not None and any('/' not in name for name in requested.paths):
+        listed_tracked, _ = _git(root, 'ls-files', '-z', '--cached', deadline=deadline)
+        requested.prefer_tracked_basenames(paths, {os.fsdecode(value) for value in listed_tracked.split(b'\0') if value})
     limits = []
     if len(paths) > _MAX_PATHS:
         limits.append('Code structure display is limited to 300 safe paths; source inspection uses separate byte and time budgets.')
@@ -1106,10 +1134,11 @@ def _client_navigation_declarations(value, masked, owner_at):
     return declarations
 
 
-def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None):
+def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None,
+                        named_python=False):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
-    flow, workflow, route_owners = [], [], set()
+    flow, workflow, choices, route_owners = [], [], [], set()
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
             parsed = ast.parse(value)
@@ -1121,6 +1150,15 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
             elif focus:
                 routes = python_route_declarations(parsed)
                 flow = python_flow_declarations(parsed, focus, predicate_shape=_predicate_shape)
+                if named_python:
+                    traced, _ = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
+                    if traced:
+                        flow = traced
+                    guarded_options = {name for _, row in flow if ' under ' in row
+                                       for name in re.findall(r'\bargs\.([A-Za-z_]\w*)', row.partition(':')[0])}
+                    choices = sorted((row for row in cli_choice_rows(parsed)
+                                      if focus(row[1]) or row[1].split()[1][2:].replace('-', '_') in guarded_options),
+                                     key=lambda row: -focus(row[1]))
             elif trace_imports is not None:
                 flow, called = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
                 trace_imports.update(called)
@@ -1279,12 +1317,14 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
     used = len(rendered[0]) + 1
     # Keep room for explicit routes and concrete handoffs ahead of call-name lists.
     ordered_routes = sorted(routes, key=lambda item: -focus(item[1])) if focus else routes
-    flow_allowance = _MAX_FOCUSED_FLOW_CHARS if focus else 1400
+    full_trace = not focus or (named_python and flow and flow[0][1].startswith('Python entrypoint flow '))
+    flow_allowance = 1400 if full_trace else _MAX_FOCUSED_FLOW_CHARS
     route_calls = [row for row in calls if row[1].split(' uses call syntax:')[0].rsplit('.', 1)[-1] in route_owners]
     for rows, allowance, count in ((workflow, 480, 8),
                                     (ordered_routes, _MAX_FOCUSED_ROUTE_CHARS, 8),
                                     (route_calls, 700, 5),
-                                    (flow, flow_allowance, 8 if focus else 16)):
+                                    (choices, 200, 2),
+                                    (flow, flow_allowance, 16 if full_trace else 8)):
         ceiling = min(used + allowance, _MAX_EXCERPT)
         for number, statement in rows[:count]:
             line = f'L{number}: {statement[:320]}'
@@ -1528,8 +1568,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
               'max_file_bytes': _MAX_BYTES, 'max_source_chars': source_budget,
               'max_package_chars': package_budget, 'max_tree_paths': _MAX_PATHS,
               'max_metadata_bytes': _MAX_METADATA_BYTES, 'max_metadata_seconds': _METADATA_SECONDS}
-    if not focus:
-        policy['max_entrypoint_file_bytes'] = _MAX_ENTRYPOINT_FILE_BYTES
+    policy['max_entrypoint_file_bytes'] = _MAX_ENTRYPOINT_FILE_BYTES
     try:
         patterns = (*_exclusions(), *_CODE_PRIVATE)
         root, paths, candidates, repo_limits = (_repository(repository_path, patterns, inventory=inventory, requested=focus)
@@ -1545,7 +1584,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
     if focus:
         path_ranks = {relative: focus.path_rank(relative) for relative in paths}
         requested_paths = {relative for relative, (exact, _) in path_ranks.items() if exact}
-        named_files = {relative for relative in requested_paths if named_file_kind(relative)}
+        named_files = {relative for relative in requested_paths if named_file_kind(relative)
+                       or PurePosixPath(relative).suffix.casefold() == '.in' and not _manifest(relative)}
         if focus.terms & _MIGRATION_SCOPE_WORDS:
             migration_paths = sorted(relative for relative in paths if _python_migration(relative))
             half = _MAX_FOCUSED_MIGRATIONS // 2
@@ -1560,7 +1600,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                          or relative in named_files
                          or path_ranks[relative][0] and PurePosixPath(relative).suffix.lower() in _CODE_EXTENSIONS)]
         promoted.extend(sorted(scoped_migrations))
-        candidates = sorted(dict.fromkeys([*candidates, *promoted]), key=focus_order)
+        candidates = sorted((path for path in dict.fromkeys([*candidates, *promoted])
+                             if not focus.shadowed_basename(path)), key=focus_order)
         paths.sort(key=focus_order)
     else:
         migrations = sorted(relative for relative in paths if _python_migration(relative))
@@ -1590,7 +1631,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             file_omission_reasons.update(dict.fromkeys(eligible - marked_paths, f'metadata_{metadata_stop}'))
             paths = [relative for relative in paths if relative in marked_paths]
             candidates = [relative for relative in candidates if relative in marked_paths]
-        scope_identity = {'scope': focus.value, 'scope_policy': 9, 'requested_paths': sorted(focus.paths),
+        scope_identity = {'scope': focus.value, 'scope_policy': 10, 'requested_paths': sorted(focus.paths),
+                          'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
         key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v16', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
@@ -1625,7 +1667,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         # Directory names set initial priority, not whether explicitly imported
         # code can participate in the application. Resolve imports against every
         # safe code path; unreferenced backups remain outside initial candidates.
-        code_paths = {path for path in paths if _scheme_category(path) == 'code'}
+        code_paths = {path for path in paths if _scheme_category(path) == 'code'
+                      and (not focus or not focus.shadowed_basename(path))}
         requirement_paths = {path for path in candidates if PurePosixPath(path).name.lower().startswith('requirements')}
         entrypoint_paths = set()
         declared_modules = {}
@@ -1679,8 +1722,9 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     omitted_reasons['requested_file_too_large'] = omitted_reasons.get('requested_file_too_large', 0) + 1
                     limitations.add('Some named files exceeded the 64 KiB per-file inspection limit.')
                     continue
-                extended = (not focus and PurePosixPath(relative).suffix == '.py'
-                            and relative in (entrypoint_paths | reachable_paths))
+                named_python = bool(focus and relative in requested_paths and PurePosixPath(relative).suffix == '.py')
+                extended = named_python or (not focus and PurePosixPath(relative).suffix == '.py'
+                                            and relative in (entrypoint_paths | reachable_paths))
                 file_limit = _MAX_ENTRYPOINT_FILE_BYTES if extended else _MAX_BYTES
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget,
                               **({'max_file_bytes': file_limit} if extended else {}))
@@ -1737,7 +1781,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                         limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
                     called_names = set()
                     returned_calls = set()
-                    syntax = (_structural_excerpt(value, relative, focus=focus.score)
+                    syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python)
                               if focus else _structural_excerpt(value, relative,
                                   entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names,
                                   route_imports=returned_calls))
@@ -1786,7 +1830,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 elif is_code:
                     excerpt = '\n'.join(part for part in (declared_excerpt, syntax) if part)
                     provenance = 'repository test source' if _scheme_category(relative) == 'tests' else 'observed in code'
-                elif relative in configuration_paths:
+                elif relative in configuration_paths or relative in named_files and PurePosixPath(relative).suffix.casefold() == '.in':
                     excerpt = namelist_excerpt(value, limit=_MAX_EXCERPT)
                     provenance = 'repository configuration'
                 elif relative in named_files:

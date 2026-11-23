@@ -9,6 +9,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Recover missing original citations when Scheme cites published Knowledge, with one retry if the citations exceed the per-claim limit.
 - Improve general Scheme coverage of application entry points, code handoffs, and configuration choices within the same overall evidence budget.
 - Preserve evidence for full-text indexing and search handoffs in general Scheme.
+- Improve Focused Scheme evidence for named source files, configuration defaults, and active entrypoint calls.
 
 ## [0.2.5] - 2026-11-21
 

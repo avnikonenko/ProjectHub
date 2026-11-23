@@ -1,5 +1,6 @@
 """Explicit file scopes use the existing repository safeguards and record skips."""
 import json
+import subprocess
 
 from backend.app.integrations.codex import scheme_evidence
 from backend.tests.integrations.test_scheme_evidence import repository, setup
@@ -66,5 +67,53 @@ def test_named_file_coverage_reports_unlinked_repository(tmp_path):
             {'path': 'Dockerfile', 'reason': 'repository_unavailable'},
             {'path': 'schema.sql', 'reason': 'repository_unavailable'},
         ]
+    finally:
+        engine.dispose()
+
+
+def test_focus_uses_tracked_template_by_basename_and_honors_explicit_path(tmp_path):
+    repo = repository(tmp_path)
+    for directory, body in {'templates': '&active\n secret="PRIVATE_TEMPLATE_VALUE"\n/\n#&optional\n#/\n',
+                            'tests': '&fixture\n/\n', 'old_copy': '&scratch\n/\n'}.items():
+        (repo / directory).mkdir()
+        (repo / directory / 'methods.in').write_text(body)
+    subprocess.run(['git', '-C', str(repo), 'add', 'templates/methods.in', 'tests/methods.in'], check=True)
+    engine = setup(tmp_path, repo)
+    try:
+        first = scheme_evidence.collect_evidence(engine, 1, scope='Explain defaults in methods.in')
+        templates = {source['path']: source['text'] for source in first['sources']
+                     if source.get('path', '').endswith('methods.in')}
+        assert templates == {'templates/methods.in':
+                             'L1: Active namelist section &active\nL4: Commented-out namelist section &optional'}
+        assert not first['coverage'].get('requested_file_omissions')
+        second = scheme_evidence.collect_evidence(engine, 1, scope='Read old_copy/methods.in and methods.in')
+        assert any(source.get('path') == 'old_copy/methods.in' for source in second['sources'])
+    finally:
+        engine.dispose()
+
+
+def test_focus_keeps_named_entrypoint_handoff_after_old_prefix_limit(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'drive.py').write_text(
+        'import argparse\nfrom operations import restore_checkpoint, run_backend\n'
+        + '# padding\n' * 7000
+        + 'def main():\n'
+          '    parser = argparse.ArgumentParser()\n'
+          '    parser.add_argument("--program", choices=["fast", "accurate"], default="fast")\n'
+          '    args = parser.parse_args()\n'
+          '    restore_checkpoint()\n'
+          '    if args.program in ("fast", "accurate"):\n'
+          '        run_backend(args.program)\n'
+          'if __name__ == "__main__":\n'
+          '    main()\n'
+    )
+    engine = setup(tmp_path, repo)
+    try:
+        result = scheme_evidence.collect_evidence(engine, 1, scope='Trace checkpoint and backend dispatch in drive.py')
+        excerpt = next(source['text'] for source in result['sources'] if source.get('path') == 'drive.py')
+        assert 'CLI --program choices: fast, accurate (default: fast)' in excerpt
+        assert 'main: restore_checkpoint()' in excerpt
+        assert 'run_backend(args.program)' in excerpt
+        assert result['diagnostics']['bytes_read'] <= scheme_evidence.DEFAULT_SCHEME_READ_BYTES
     finally:
         engine.dispose()

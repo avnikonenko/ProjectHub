@@ -120,3 +120,30 @@ def test_cancelled_focused_scheme_keeps_saved_result(database, monkeypatch):
 def test_invalid_focused_instruction(instruction):
     with pytest.raises(ValidationError):
         routes.FocusedSchemeGenerationInput(confirmed=True, instruction=instruction)
+
+
+@pytest.mark.parametrize('rewrite', ['supported', 'invalid', 'unrelated'])
+def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monkeypatch, rewrite):
+    monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
+        'sources': [
+            {'id': 'repo:template', 'path': 'templates/methods.in', 'provenance': 'repository configuration',
+             'text': 'L1: Active namelist section &first\nL4: Commented-out namelist section &second'},
+            {'id': 'repo:search', 'text': 'Index each turn.'},
+        ],
+        'coverage': {'partial': False, 'limitations': []},
+    })
+    prompts = []
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                return json.dumps({'nodes': [], 'edges': [], 'explanation': 'The template is available.'})
+            return json.dumps(diagram({'supported': 'repo:template', 'invalid': 'foreign',
+                                       'unrelated': 'repo:search'}[rewrite]))
+
+    saved = focused_scheme.refresh_focused_scheme(database, 1, Manager(), 'Explain methods.in defaults')
+    assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
+    assert 'repo:template' in prompts[1].splitlines()[0]
+    assert bool(saved['graph']['nodes']) == (rewrite == 'supported')
+    assert saved['coverage']['partial'] == (rewrite != 'supported')

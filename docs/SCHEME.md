@@ -53,7 +53,11 @@ conversations reach search results, including storage and indexing.
 The generator prioritizes evidence relevant to your instruction and cites the
 sources that support the diagram. Name a file to prioritize it. Supported build
 files, SQL schemas, and YAML files contribute structural excerpts with values
-omitted. **Coverage → Requested files skipped** explains any named files that
+omitted. A bare filename prefers the tracked source, and a repository-relative
+path selects the exact file. Named Python files can use a longer bounded read
+to show entrypoint calls and relevant CLI choices. Named Fortran namelist
+templates can show which sections are active or commented out.
+**Coverage → Requested files skipped** explains any named files that
 did not supply evidence. Scope matching recognizes forms such as “cache” and
 “cached”. When a matching paragraph in a long saved conversation is too large to
 include, the diagram can use a short excerpt around the match.
@@ -64,7 +68,8 @@ with query values omitted from the excerpts.
 
 The current diagram and its instruction are
 saved together. A successful rerun replaces that focused result. To rerun a
-focused scheme, use its own button.
+focused scheme, use its own button. An empty draft with matching named evidence,
+or a draft that leaves a named namelist uncited, can get one targeted retry.
 
 ## Saved Knowledge
 
