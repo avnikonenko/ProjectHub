@@ -14,7 +14,7 @@ const display = (value: string) => value.replaceAll('_', ' ');
 
 type ConversationHit = SearchSnippetData & (
   { kind: 'codex'; session_id: number; session_title: string; turn_id: string }
-  | { kind: 'chatgpt'; note_id: number; title: string }
+  | { kind: 'chatgpt'; note_id: number; title: string; note_created_at?: string }
 );
 type ConversationPage = { results: ConversationHit[]; next_offset: number | null };
 
@@ -54,7 +54,8 @@ export function KnowledgeHistorySearch({ projectId, query }: { projectId: number
       <button type="button" className="secondary" onClick={() => load([...offsets])}>Retry search</button></>}
     {page && !page.results.length && <p>No original conversations match this search.</p>}
     {page?.results.map(hit => {
-      const href = hit.kind === 'chatgpt' ? chatGPTTranscriptHref({ projectId, noteId: hit.note_id, query })
+      const href = hit.kind === 'chatgpt' ? chatGPTTranscriptHref({ projectId, noteId: hit.note_id, query,
+        createdAt: hit.note_created_at })
         : historyTurnHref({ projectId, sessionId: hit.session_id, turnId: hit.turn_id });
       return <article key={href} className="list-item">
         <a href={href}>{hit.kind === 'chatgpt' ? hit.title : hit.session_title}</a>

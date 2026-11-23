@@ -9,6 +9,7 @@ from sqlalchemy import literal_column, select, text
 from sqlalchemy.orm import Session
 
 from ...models import Project, ProjectBrief, Decision, Note, utcnow
+from ...source_identity import recycled_note_ids
 from .archive import archive_history, conversation_overviews, summarize_evidence, archive_worker_scope, archive_diagnostics
 from .knowledge_profiles import current_knowledge_profile
 from .generation_metrics import GenerationMetrics, collect_generation_metrics
@@ -129,18 +130,20 @@ def note_evidence(db, project_id, *, shared_only=False, exclude_shared=False):
         query = query.where(shared_chat)
     elif exclude_shared:
         query = query.where(~shared_chat)
+    recycled = recycled_note_ids(db, project_id)
     for note in db.scalars(query.order_by(Note.id)):
         imported = note.kind == 'document' and isinstance(note.conversation, dict)
         transcript_status = note.conversation.get('completeness') if imported else None
         warning = ('Imported transcript is partial. Only stored messages are available.\n' if transcript_status == 'partial'
                    else 'Completeness of the imported transcript is not established.\n' if transcript_status == 'unknown' else '')
         text = f'{note.title}\n{warning}{note.content}\nReference: {note.reference}'
+        incarnation = {'note_created_at': recycled[note.id]} if note.id in recycled else {}
         for offset in range(0, len(text), 1500):
             excerpt = text[offset:offset + 1500]
             source = {'id': f'note:{note.id}:{offset // 1500 + 1}',
                       'label': f'{"AI note" if note.kind == "ai_note" else "Note"} #{note.id} · {note.title}',
                       'note_id': note.id, 'kind': note.kind, 'text': excerpt, 'updated_at': note.updated_at,
-                      **({'share': True} if imported else {})}
+                      **({'share': True} if imported else {}), **incarnation}
             yield {'text': excerpt, 'sources': [source]}
 
 

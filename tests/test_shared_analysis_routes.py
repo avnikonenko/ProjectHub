@@ -179,7 +179,10 @@ def test_legacy_get_and_revision_history_remain_read_only_and_project_scoped(api
     assert api.client.get(prefix + '/brief').json() == old
     listing = api.client.get(prefix + '/revisions?kind=brief').json()
     assert [row['id'] for row in listing['results']] == [own_id]
-    assert api.client.get(prefix + f'/revisions/{own_id}').json() == {'kind': 'brief', 'snapshot': old}
+    assert api.client.get(prefix + f'/revisions/{own_id}',
+                          params={'expected_generated_at': old['generated_at']}).json() == {
+                              'kind': 'brief', 'snapshot': old,
+                          }
     assert api.client.get(prefix + f'/revisions/{foreign_id}').status_code == 404
     assert api.calls == []
 

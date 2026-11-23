@@ -70,7 +70,7 @@ test('history recognises canonical local imports and legacy shared links while k
   assert.equal(conversationSourcesPath('/projects/2', local), '/projects/2/conversations/3/sources');
   assert.throws(() => conversationSourcesPath('/projects/1', local), /selected project/);
   assert.throws(() => conversationSourcesPath('/projects/2/../1', local), /selected project/);
-  const copy = { id: 1, filename: 'Original.JSON', created_at: '2026-11-20T10:00:00Z' };
+  const copy = { id: 1, filename: 'Original.JSON', created_at: '2026-11-20T10:00:00Z', content_hash: 'a'.repeat(64) };
   assert.deepEqual(parseConversationSources([copy]), [copy]);
   assert.throws(() => parseConversationSources([copy, copy]), /could not be read/);
 });

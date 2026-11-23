@@ -497,9 +497,11 @@ def revisions(project_id: int, db: DB, kind: str = 'brief',
 
 
 @router.get('/revisions/{revision_id}')
-def revision_snapshot(project_id: int, revision_id: int, db: DB):
+def revision_snapshot(project_id: int, revision_id: int, db: DB,
+                      expected_generated_at: Annotated[str | None, Query(max_length=128)] = None):
     project(db, project_id)
     row = scoped(db, GenerationRevision, project_id, revision_id)
+    _require_revision_identity(row, expected_generated_at)
     snapshot = scheme_snapshot_for_display(row.snapshot) if row.kind == 'scheme' else row.snapshot
     if row.kind == 'knowledge':
         snapshot = knowledge_with_legacy_summary(db, project_id, snapshot)
@@ -507,11 +509,14 @@ def revision_snapshot(project_id: int, revision_id: int, db: DB):
 
 
 @router.post('/revisions/{revision_id}/activate')
-def activate_saved_revision(project_id: int, revision_id: int, db: DB):
+def activate_saved_revision(project_id: int, revision_id: int, db: DB,
+                            expected_generated_at: Annotated[str | None, Query(max_length=128)] = None):
     project(db, project_id)
-    kind = scoped(db, GenerationRevision, project_id, revision_id).kind
+    row = scoped(db, GenerationRevision, project_id, revision_id)
+    kind = row.kind
     if kind not in REVISION_KINDS:
         raise HTTPException(404, 'This saved version is unavailable.')
+    _require_revision_identity(row, expected_generated_at)
     db.rollback()
     lease = generation_lock.for_job(project_id, kind)
     if not lease.acquire(blocking=False):
@@ -521,6 +526,7 @@ def activate_saved_revision(project_id: int, revision_id: int, db: DB):
         row = scoped(db, GenerationRevision, project_id, revision_id)
         if row.kind != kind:
             raise HTTPException(404, 'This saved version is unavailable.')
+        _require_revision_identity(row, expected_generated_at)
         snapshot = activate_revision(db, row)
         db.commit()
         if kind == 'qa':
@@ -534,11 +540,9 @@ def activate_saved_revision(project_id: int, revision_id: int, db: DB):
 
 
 @router.delete('/revisions/{revision_id}', status_code=204)
-def delete_brief_revision(project_id: int, revision_id: int, db: DB):
+def delete_brief_revision(project_id: int, revision_id: int, db: DB,
+                          expected_generated_at: Annotated[str | None, Query(max_length=128)] = None):
     project(db, project_id)
-    row = scoped(db, GenerationRevision, project_id, revision_id)
-    if row.kind != 'brief':
-        raise HTTPException(404, 'Saved overview not found.')
     # Pin current publication/Overview while copying any legacy summary and
     # deleting its backing revision, so another publisher cannot be overwritten.
     from sqlalchemy import text
@@ -546,12 +550,20 @@ def delete_brief_revision(project_id: int, revision_id: int, db: DB):
     db.execute(text('BEGIN IMMEDIATE'))
     db.expire_all()
     row = scoped(db, GenerationRevision, project_id, revision_id)
+    if row.kind != 'brief':
+        raise HTTPException(404, 'Saved overview not found.')
+    _require_revision_identity(row, expected_generated_at)
     if active_revision_id(db, project_id, 'brief') == row.id:
         raise HTTPException(409, 'The current overview cannot be deleted.')
     preserve_legacy_knowledge_summary(db, project_id)
     preserve_legacy_knowledge_revision_summaries(db, project_id, row)
     db.delete(row)
     db.commit()
+
+
+def _require_revision_identity(row, expected_generated_at):
+    if row.generated_at != expected_generated_at:
+        raise HTTPException(409, 'Reload the version history and select the saved version again.')
 
 
 @router.get('/generation/status')
@@ -1319,7 +1331,9 @@ def review_responses(project_id: int, session_id: int, db: DB,
 
 
 @router.delete('/sessions/{session_id}/responses/{event_id}', status_code=204)
-def delete_review_response(project_id: int, session_id: int, event_id: int, db: DB):
+def delete_review_response(project_id: int, session_id: int, event_id: int, db: DB,
+                           expected_created_at: Annotated[str | None, Query(max_length=128)] = None):
+    begin_session_write(db)
     project(db, project_id)
     scoped(db, CodexSession, project_id, session_id)
     event = scoped(db, CodexEvent, project_id, event_id)
@@ -1328,6 +1342,8 @@ def delete_review_response(project_id: int, session_id: int, event_id: int, db: 
             or not isinstance(item, dict) or item.get('type') != 'agentMessage'
             or not isinstance(item.get('text'), str)):
         raise HTTPException(404, 'Saved Codex response not found in this session.')
+    if event.created_at != expected_created_at:
+        raise HTTPException(409, 'Reload the saved Codex responses and try again.')
     db.delete(event)
     db.commit()
 

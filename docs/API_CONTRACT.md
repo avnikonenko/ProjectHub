@@ -35,6 +35,8 @@ Project fields are `{id,name,pinned,codex_account,description,goals,status,repos
 - `POST /{pid}/conversations/preview` accepts `{url}` for a public share link, `{filename,content,source_url?}` for a UTF-8 file, or `{session_id,profile?,title?}` for local Claude Code history. It returns the detected provider, completeness, roles, sample, and a fingerprint. Preview leaves project data unchanged. An inaccessible share can return 403, a missing local transcript 404, an ambiguous local match 409, and invalid input 422.
 - `POST /{pid}/conversations/import` accepts the same source and its `fingerprint`. It requires `confirm_partial:true` to save a partial import and `replace_existing:true` to update an existing conversation. A changed preview or exact duplicate returns 409. Claude exports with a known conversation UUID match by that UUID across source URLs. Preview and import return 409 if the supplied URL conflicts with a saved conversation's identity.
 - `GET /{pid}/conversations/{nid}/sources` lists the saved source copies. Append `/{source_id}` to download a copy. Both routes check project ownership.
+- Transcript links use `GET /{pid}/notes/{nid}?transcript=true` with the original note's `created_at` when available. Copy downloads can send the same `created_at` and the source copy's `content_hash`. A mismatched identity or an ambiguous legacy link to a recycled note ID returns 404.
+- Edits and deletions can send `created_at` from the note metadata. Mutations with a mismatched identity or an ambiguous recycled note ID return 409.
 
 ## Legacy questions and answers
 
@@ -55,7 +57,7 @@ Answer: `{id,project_id,question_id,solution,explanation,advantages,limitations,
 - `POST /{pid}/decisions/{did}/tasks`: `{title?,description?,priority?}`; requires accepted decision, returns linked task.
   Status validation and task creation share a serialized write transaction with acceptance/reopening.
 - `POST /{pid}/tasks`: `{title,pinned?,description?,priority?,status?,question_id?,decision_id?,session_id?}`.
-- `PATCH /{pid}/tasks/{tid}`: same editable fields.
+- `PATCH /{pid}/tasks/{tid}`: same editable fields. Edits and deletions can send `created_at` from the TODO list. A mismatched identity or an ambiguous recycled TODO ID returns 409.
 
 Decision: `{id,project_id,title,description,next_step,rationale,alternatives,evidence,limitations,status,question_id,answer_id,created_at,updated_at}`.
 
@@ -82,7 +84,9 @@ Task fields are `{id,project_id,pinned,title,description,priority,status,questio
 - `GET /{pid}/codex/brief`: latest saved brief, or `null`. This never requests generation.
 - `GET /{pid}/codex/revisions?kind=brief&offset=0`: `{results,next_offset,active_id}` with up to ten newest revision summaries and the ID of the active revision, when available. Supported kinds are `brief`, `qa`, `scheme`, `knowledge`, and `parameters`. `GET /{pid}/codex/revisions/{id}` returns `{kind,snapshot}` for a project-owned revision.
 - `POST /{pid}/codex/revisions/{id}/activate` restores a saved revision as the active result and returns `{kind,snapshot}`. It preserves the generation history and original generation timestamps. Knowledge activation requires a paired Summary. A successful new generation saves its revision atomically and becomes active.
+- Revision reads, activation, and deletion require `expected_generated_at` from the selected revision in the list. An omitted or mismatched timestamp returns 409 for an existing project-owned revision.
 - `GET /{pid}/codex/sessions/{sid}/responses?offset=0&limit=3`: completed assistant responses, separately paginated from the raw event log. Returns `{events,total,latest_id}`; each page is oldest-to-newest within a newest-first page window. Limit is 1–50; cross-project sessions return 404. The raw `/events` endpoint retains its 500-event bound.
+- `DELETE /{pid}/codex/sessions/{sid}/responses/{id}` requires `expected_created_at` from the selected response. An omitted or mismatched timestamp returns 409 for an existing response in that project and session.
 - Saved brief/Q&A responses include nullable `generation:{account,model,effort}` metadata for the snapshot. Both generation paths include project-scoped notes and AI notes as untrusted reference sources.
 - `GET /{pid}/codex/generation/status?kind=brief`: progress for `brief`, `qa`, `scheme`, `knowledge`, `ask`, `tags`, or `parameters`. Includes `state`, `stage`, counters, `error`, and `latest_attempt`. During an active run, `live_token_usage` contains `total_tokens` (null before the first total), `reported_requests` (requests that supplied a total), and `model_requests`. The counter is process-local. The latest recorded attempt persists, and running or waiting attempts are marked interrupted at startup.
 - `GET /{pid}/codex/generation/summary`: `{project_id,views}` with saved-result metadata and the latest attempt for each of Overview, Knowledge, Scheme, Q&A, and Implementation Choices.

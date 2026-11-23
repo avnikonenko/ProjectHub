@@ -16,7 +16,7 @@ export type ConversationPreview = ConversationSummary & {
   fingerprint: string;
   existing: { id: number; title: string; duplicate: boolean } | null;
 };
-export type ConversationSource = { id: number; filename: string; created_at: string };
+export type ConversationSource = { id: number; filename: string; created_at: string; content_hash: string };
 const MAX_FILE_BYTES = 16 * 1024 * 1024;
 const object = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -105,7 +105,8 @@ export function conversationSourcesPath(base: string, note: RecordData) {
 
 export function parseConversationSources(raw: unknown): ConversationSource[] {
   if (!Array.isArray(raw) || raw.some(value => !object(value) || !count(value.id) || value.id === 0
-    || !name(value.filename) || !name(value.created_at))
+    || !name(value.filename) || !name(value.created_at) || typeof value.content_hash !== 'string'
+    || !/^[a-f0-9]{64}$/.test(value.content_hash))
     || new Set(raw.map(value => value.id)).size !== raw.length) {
     throw new Error('The conversation source copies could not be read.');
   }

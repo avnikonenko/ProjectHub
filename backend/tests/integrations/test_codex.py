@@ -687,7 +687,7 @@ def test_delete_review_response_requires_project_session_and_completed_message(s
     first, second = create_session(setup), create_session(setup)
     with Session(setup.engine) as db:
         db.add_all([
-            CodexEvent(id=101, project_id=1, session_id=first, method='item/completed',
+            CodexEvent(id=101, project_id=1, session_id=first, method='item/completed', created_at='replacement',
                        payload={'item': {'type': 'agentMessage', 'text': 'Saved response'}}),
             CodexEvent(id=102, project_id=1, session_id=first, method='turn/completed', payload={}),
         ])
@@ -696,7 +696,10 @@ def test_delete_review_response_requires_project_session_and_completed_message(s
     assert setup.client.delete(f'{base}/{second}/responses/101').status_code == 404
     assert setup.client.delete(f'/api/projects/2/codex/sessions/{first}/responses/101').status_code == 404
     assert setup.client.delete(f'{base}/{first}/responses/102').status_code == 404
-    assert setup.client.delete(f'{base}/{first}/responses/101').status_code == 204
+    response = f'{base}/{first}/responses/101'
+    assert setup.client.delete(response).status_code == 409
+    assert setup.client.delete(response, params={'expected_created_at': 'retired'}).status_code == 409
+    assert setup.client.delete(response, params={'expected_created_at': 'replacement'}).status_code == 204
     result = setup.client.get(f'{base}/{first}/events').json()
     assert result['session']['id'] == first
     assert [event['id'] for event in result['events']] == [102]
@@ -713,10 +716,10 @@ def test_delete_only_older_overview_revision_in_project(setup):
                         (3, 2, 'brief', 'older'), (4, 1, 'qa', 'older'))])
         db.commit()
     route = '/api/projects/1/codex/revisions'
-    assert setup.client.delete(f'{route}/2').status_code == 409
+    assert setup.client.delete(f'{route}/2', params={'expected_generated_at': 'latest'}).status_code == 409
     assert setup.client.delete(f'{route}/3').status_code == 404
     assert setup.client.delete(f'{route}/4').status_code == 404
-    assert setup.client.delete(f'{route}/1').status_code == 204
+    assert setup.client.delete(f'{route}/1', params={'expected_generated_at': 'older'}).status_code == 204
     assert setup.client.get(f'{route}/1').status_code == 404
     assert setup.client.get('/api/projects/1/codex/brief').json()['generated_at'] == 'latest'
 

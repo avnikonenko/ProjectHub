@@ -14,7 +14,7 @@ import type { GenerationDiagnostics } from './generationDiagnostics';
 import { knowledgeHref, readKnowledgeLink, type KnowledgeLink } from './knowledge';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { version } from '../package.json';
-import { api, patch, post } from './api';
+import { api, patch, post, recordMutationPath } from './api';
 import { NoteCard } from './NoteCard';
 import { LazyNote, useLoadedNote } from './LazyNote';
 import { noteEditPatch } from './noteEditing';
@@ -593,14 +593,14 @@ function ProjectWorkspace({
   const projectNotes = notes.filter((note) => !importedConversation(note));
   const conversationActions = {
     busy,
-    rename: (conversation: RecordData) => edit('Rename conversation', [titleField], `/notes/${conversation.id}`, conversation),
+    rename: (conversation: RecordData) => edit('Rename conversation', [titleField], recordMutationPath(`/notes/${conversation.id}`, conversation), conversation),
     remove: (conversation: RecordData) => {
       const message = linkedClaudeSession(conversation)
         ? `Remove linked session “${conversation.title}” and its saved copies from this project? The original stays in Claude Code.`
         : `Remove imported conversation “${conversation.title}” and its saved source copies from this project?`;
       if (window.confirm(message)) {
         void run(async () => {
-          await api(`${base}/notes/${conversation.id}`, { method: 'DELETE' });
+          await api(`${base}${recordMutationPath(`/notes/${conversation.id}`, conversation)}`, { method: 'DELETE' });
           setGenerationResultsVersion(version => version + 1);
         });
       }
@@ -629,7 +629,9 @@ function ProjectWorkspace({
   const completedTodos = matchingTodos.filter((task) => task.status === 'completed').sort(todoOrder);
   const matchingNotes = (searchTarget?.kind === 'notes'
     ? projectNotes.filter((note) => note.id === searchTarget.id) : projectNotes).reverse();
-  const todoRow = (task: RecordData) => (
+  const todoRow = (task: RecordData) => {
+    const path = recordMutationPath(`/tasks/${task.id}`, task);
+    return (
     <li className="record-row" key={task.id}>
       <div className="todo-content">
         <label>
@@ -639,7 +641,7 @@ function ProjectWorkspace({
             disabled={busy}
             onChange={(event) => {
               const status = event.target.checked ? 'completed' : 'backlog';
-              void run(() => patch(`${base}/tasks/${task.id}`, { status }));
+              void run(() => patch(`${base}${path}`, { status }));
             }}
           />
           <span>{task.title}</span>
@@ -651,7 +653,7 @@ function ProjectWorkspace({
           aria-label={`${task.pinned ? 'Unpin' : 'Pin'} TODO: ${task.title}`}
           title={task.pinned ? 'Unpin TODO' : 'Pin TODO'}
           aria-pressed={Boolean(task.pinned)} disabled={busy}
-          onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, { pinned: !task.pinned })); }}>
+          onClick={() => { void run(() => patch(`${base}${path}`, { pinned: !task.pinned })); }}>
           <svg viewBox="0 0 24 24" width="16" height="16"
             fill={task.pinned ? 'currentColor' : 'none'} stroke="currentColor"
             strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -662,7 +664,7 @@ function ProjectWorkspace({
           aria-label={`${task.status === 'not_planned' ? 'Move to open TODOs' : 'Mark not planned'}: ${task.title}`}
           title={task.status === 'not_planned' ? 'Move to open TODOs' : 'Mark not planned'}
           aria-pressed={task.status === 'not_planned'} disabled={busy}
-          onClick={() => { void run(() => patch(`${base}/tasks/${task.id}`, {
+          onClick={() => { void run(() => patch(`${base}${path}`, {
             status: task.status === 'not_planned' ? 'backlog' : 'not_planned',
           })); }}>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
@@ -674,16 +676,17 @@ function ProjectWorkspace({
         </button>
         <EditButton label={`Edit TODO: ${task.title}`} disabled={busy}
           onClick={() => edit('Edit TODO', [{ ...titleField, maxLength: 500 },
-            { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], `/tasks/${task.id}`, task,
+            { name: 'description', label: 'Notes', type: 'textarea', rows: 8 }], path, task,
             (data) => ({ title: String(data.title).trim(), description: data.description }))} />
         <DeleteButton label={`Delete TODO: ${task.title}`} disabled={busy} onClick={() => {
             if (window.confirm(`Delete TODO “${task.title}”?`)) {
-              void run(() => api(`${base}/tasks/${task.id}`, { method: 'DELETE' }));
+              void run(() => api(`${base}${path}`, { method: 'DELETE' }));
             }
           }} />
       </div>
     </li>
-  );
+    );
+  };
   const tabs = [
     'Generation',
     'Dashboard',
@@ -1086,10 +1089,10 @@ function ProjectWorkspace({
                     onEditReady={(loaded, identity) => edit('Edit note', [titleField,
                       { name: 'content', label: 'Markdown content', type: 'textarea' },
                       { name: 'kind', label: 'Kind' }, { name: 'reference', label: 'Reference' },
-                    ], `/notes/${n.id}`, loaded, values => noteEditPatch(values, loaded), identity)}
+                    ], recordMutationPath(`/notes/${n.id}`, n), loaded, values => noteEditPatch(values, loaded), identity)}
                     onDelete={() => {
                       if (window.confirm(`Delete note “${n.title}”?`)) {
-                        void run(() => api(`${base}/notes/${n.id}`, { method: 'DELETE' }));
+                        void run(() => api(`${base}${recordMutationPath(`/notes/${n.id}`, n)}`, { method: 'DELETE' }));
                       }
                     }} reference={
                     n.reference && (
@@ -1897,7 +1900,8 @@ function ConversationSource({ base, note, manage, onRefresh }: {
       </div>}
     </div>
     {onRefresh ? <p className="muted">Claude Code · Linked for reading</p> : <ImportedConversationInfo note={note} />}
-    <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: note.id })}>Read saved transcript</a>
+    <a href={chatGPTTranscriptHref({ projectId: Number(base.split('/')[2]), noteId: note.id,
+      createdAt: note.created_at })}>Read saved transcript</a>
     {hasConversationMetadata(note) && <ConversationSourceCopies base={base} note={note} />}
   </article>;
 }
@@ -1950,7 +1954,8 @@ function ImportedTranscript({ base, share, passageNotes }: {
       {hasConversationMetadata(share) && <ConversationSourceCopies base={base} note={share} />}
       <LazyNote base={base} note={share}>{loaded => (
         <SaveablePassage context={passageNotes} title={share.title ?? 'Conversation passage'}
-          reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id })}>
+          reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: share.id,
+            createdAt: share.created_at })}>
           <div className="shared-transcript">{loaded.content}</div>
         </SaveablePassage>
       )}</LazyNote>
@@ -1991,7 +1996,7 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
       {historyLink && 'noteId' in historyLink ? (
         <IndexedImportedTranscript key={`${historyLink.noteId}/${historyLink.query ?? ''}`}
           note={notes.find((note) => note.id === historyLink.noteId && importedConversation(note))}
-          query={historyLink.query} onClose={onLeaveHistory} passageNotes={passageNotes} />
+          query={historyLink.query} createdAt={historyLink.createdAt} onClose={onLeaveHistory} passageNotes={passageNotes} />
       ) : historyLink ? (
         <IndexedHistoryTurn key={`${historyLink.sessionId}/${historyLink.turnId}`}
           prefix={`${base}/codex`} target={historyLink} indexVersion={indexVersion}
@@ -2028,13 +2033,13 @@ function ProjectHistory({ base, projectId, historyLink, notes, onLeaveHistory, o
 }
 
 function IndexedImportedTranscript(props: {
-  note?: RecordData; query?: string; onClose: () => void; passageNotes: PassageNoteContext;
+  note?: RecordData; query?: string; createdAt?: string; onClose: () => void; passageNotes: PassageNoteContext;
 }) {
-  const loaded = useLoadedNote(props.passageNotes.base, props.note ?? { id: 0 }, !!props.note);
+  const loaded = useLoadedNote(props.passageNotes.base, props.note ?? { id: 0 }, !!props.note, props.createdAt ?? null);
   if (!props.note || loaded.note) return <LoadedImportedTranscript {...props} note={loaded.note ?? undefined} />;
   return <section className="card saved-history" aria-busy={loaded.loading}>
     <div className="section-title">
-      <h2>{props.note.title || 'Saved conversation transcript'}</h2>
+      <h2>Saved conversation transcript</h2>
       <button className="secondary" onClick={props.onClose}>Browse conversations</button>
     </div>
     {loaded.loading && <Feedback>Loading saved content…</Feedback>}
@@ -2069,7 +2074,8 @@ function LoadedImportedTranscript({ note, query, onClose, passageNotes }: {
           <ImportedConversationInfo note={note} />
           {hasConversationMetadata(note) && <ConversationSourceCopies base={passageNotes.base} note={note} />}
           <SaveablePassage context={passageNotes} title={note.title ?? 'Conversation passage'}
-            reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: note.id })}>
+            reference={chatGPTTranscriptHref({ projectId: passageNotes.projectId, noteId: note.id,
+              createdAt: note.created_at })}>
           <div className="shared-transcript">
             {match ? (
               <>
@@ -2831,11 +2837,14 @@ function CodexReview({ base, generation, onNotesChanged, onManageSessions }: {
                     </div>
                     <div className="note-actions">
                       <Badge value="unverified" />
-                      <DeleteButton label={`Delete saved Codex response #${message.id}`} disabled={busy}
+                      <DeleteButton label={`Delete saved Codex response #${message.id}`} disabled={busy || typeof message.created_at !== 'string'}
                         onClick={() => {
+                          const createdAt = message.created_at;
+                          if (typeof createdAt !== 'string') return;
                           if (!window.confirm(`Delete saved Codex response #${message.id} from ProjectHub? The original Codex session is kept.`)) return;
                           void action(async () => {
-                            await api(`${prefix}/sessions/${sessionId}/responses/${message.id}`, { method: 'DELETE' });
+                            const version = new URLSearchParams({ expected_created_at: createdAt });
+                            await api(`${prefix}/sessions/${sessionId}/responses/${message.id}?${version}`, { method: 'DELETE' });
                             responseVersion.current += 1;
                             setEvents((current: any) => current && ({
                               ...current,

@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from .integrations.codex.scheme import render_mermaid
 from .models import CodexSession, Note, Task
+from .source_identity import recycled_note_ids
 
 
 _PAGES = (
@@ -143,17 +144,26 @@ def _refs(ids, numbered, prefix='source'):
                     for key in dict.fromkeys(_strings(ids)) if key in numbered)
 
 
+def _note_link_matches(note_id, created_at, source_paths):
+    if type(note_id) is not int or note_id not in source_paths['_saved_notes']:
+        return False
+    if created_at is not None:
+        return created_at == source_paths['_saved_notes'][note_id]
+    return note_id not in source_paths['_recycled_notes']
+
+
 def _source_links(source, source_paths, page):
     links = []
+    note = source.get('note_id')
+    note_matches = _note_link_matches(note, source.get('note_created_at'), source_paths)
     for field, kind, label in (('note_id', 'notes', 'Saved transcript'), ('note_id', 'uploads', 'Saved upload'),
                                ('session_id', 'sessions', 'Saved Codex session')):
         identifier = source.get(field)
-        if type(identifier) is int:
+        if type(identifier) is int and (field != 'note_id' or note_matches):
             path = source_paths.get(kind, {}).get(identifier)
             if link := _local_link(label, path, page):
                 links.append(link)
-    note = source.get('note_id')
-    if not links and type(note) is int and note in source_paths.get('_saved_notes', ()) and page != 'notes.md':
+    if not links and note_matches and page != 'notes.md':
         links.append(_link(f'Note {note}', f'notes.md#note-{note}'))
     for item in _records(source.get('shared_sessions')):
         identifier = item.get('session_id')
@@ -432,7 +442,7 @@ def _todo(archive, db, project, source_paths):
 
 
 def _note_rows(db, project_id):
-    return db.execute(select(Note.id, Note.title, Note.kind, Note.reference, Note.updated_at)
+    return db.execute(select(Note.id, Note.title, Note.kind, Note.reference, Note.created_at, Note.updated_at)
                       .where(Note.project_id == project_id).order_by(Note.id))
 
 
@@ -468,14 +478,15 @@ def _excerpt_source(reference, project_id, source_paths):
         return None, None
     try:
         params = parse_qs(reference[len(prefix):], keep_blank_values=True, strict_parsing=True, errors='strict',
-                          max_num_fields=3)
+                          max_num_fields=4)
     except ValueError:
         return None, None
     if params.get('project') != [str(project_id)] or any(len(values) != 1 for values in params.values()):
         return None, None
-    if params.keys() in ({'project', 'note'}, {'project', 'note', 'q'}):
+    if 'note' in params and params.keys() <= {'project', 'note', 'q', 'created_at'}:
         note_id = params['note'][0]
-        if re.fullmatch(r'[1-9][0-9]{0,18}', note_id) and int(note_id) in source_paths['_saved_notes']:
+        created_at = params.get('created_at', [None])[0]
+        if re.fullmatch(r'[1-9][0-9]{0,18}', note_id) and _note_link_matches(int(note_id), created_at, source_paths):
             path = source_paths.get('notes', {}).get(int(note_id))
             link = _local_link('Source transcript', path, 'notes.md')
             return link or _link(f'Source note {note_id}', f'#note-{note_id}'), None
@@ -497,7 +508,8 @@ def _notes(archive, db, project, source_paths):
             out.write(f'## Note {note.id}\n\n**{_inline(note.title)}**\n\n')
             _field(out, 'Kind', note.kind)
             _field(out, 'Updated', note.updated_at)
-            if links := _source_links({'note_id': note.id, 'reference': note.reference}, source_paths, 'notes.md'):
+            if links := _source_links({'note_id': note.id, 'note_created_at': note.created_at, 'reference': note.reference},
+                                      source_paths, 'notes.md'):
                 # A source already has its own exported transcript or original file.
                 if note.id in source_paths.get('notes', {}) or note.id in source_paths.get('uploads', {}):
                     out.write(f'- {links}\n')
@@ -548,9 +560,11 @@ def _source_index(archive, db, project, source_paths):
 
 def write_project_markdown(archive, db, project, saved, source_paths):
     """Write readable views into an existing project ZIP read snapshot."""
+    notes = db.execute(select(Note.id, Note.created_at).where(Note.project_id == project.id))
     source_paths = {
         **source_paths,
-        '_saved_notes': set(db.scalars(select(Note.id).where(Note.project_id == project.id))),
+        '_saved_notes': {identifier: stamp for identifier, stamp in notes},
+        '_recycled_notes': recycled_note_ids(db, project.id),
         '_saved_sessions': set(db.scalars(select(CodexSession.id).where(CodexSession.project_id == project.id))),
     }
     saved = {name: _mapping(result) for name, result in saved.items() if _owned(_mapping(result), project.id)}

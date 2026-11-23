@@ -7,6 +7,7 @@ import json
 import subprocess
 import sqlite3
 import tracemalloc
+from urllib.parse import urlencode
 from zipfile import ZipFile
 
 import pytest
@@ -16,8 +17,9 @@ from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 
 from backend.app.main import create_app
-from backend.app.models import (CodexSession, GenerationRevision, Note, Project, ProjectBrief, ProjectFocusedScheme,
-                                ProjectHistoryBatch, ProjectKnowledge, ProjectQA, ProjectScheme, Task)
+from backend.app.models import (CodexSession, ConversationImportSource, GenerationRevision, Note, Project,
+                                ProjectBrief, ProjectFocusedScheme, ProjectHistoryBatch, ProjectKnowledge, ProjectQA,
+                                ProjectScheme, Task)
 from backend.app.project_export import _ExportResponse, project_archive_response, project_export_response
 
 
@@ -58,6 +60,60 @@ def test_export_includes_saved_ai_and_cache_records_without_foreign_data(state):
     assert 'pub-2' not in response.text and 'source-2' not in response.text
     assert data['history_turns'] == [] and data['history_index'] == []
     assert client.get('/api/projects/999/export').status_code == 404
+
+
+def test_archive_does_not_link_historical_evidence_to_a_recycled_note(state):
+    app, client = state
+    with Session(app.state.engine) as db:
+        original = Note(project_id=1, kind='document', title='Original conversation', reference='https://example.test/old',
+                        content='Original text', conversation={}, created_at='2026-11-21T12:00:00+00:00')
+        db.add(original)
+        db.flush()
+        note_id, original_stamp = original.id, original.created_at
+        db.commit()
+    assert client.delete(f'/api/projects/1/notes/{note_id}').status_code == 204
+
+    # Reproduce a database where an older release had already reused the ID.
+    replacement_stamp = '2026-11-22T12:00:00+00:00'
+    current_file = b'Replacement original bytes'
+    with Session(app.state.engine) as db:
+        db.add(Note(id=note_id, project_id=1, kind='document', title='Replacement conversation',
+                    reference='https://example.test/new', content='Replacement text', conversation={},
+                    created_at=replacement_stamp))
+        db.flush()
+        db.add(ConversationImportSource(project_id=1, note_id=note_id, filename='new.md',
+                                        reference='https://example.test/new',
+                                        content_hash=sha256(current_file).hexdigest(), payload=current_file))
+        old_history = f'#history?project=1&note={note_id}'
+        current_history = '#history?' + urlencode({'project': 1, 'note': note_id, 'created_at': replacement_stamp})
+        db.add_all([
+            Note(project_id=1, title='Old excerpt', content='Original quote', reference=old_history),
+            Note(project_id=1, title='New excerpt', content='Replacement quote', reference=current_history),
+            ProjectBrief(project_id=1, generated_at='now', sections={}, coverage=[], sources=[
+                {'id': 'original', 'note_id': note_id, 'note_created_at': original_stamp,
+                 'reference': 'https://example.test/old', 'text': 'Original text'},
+                {'id': 'legacy', 'note_id': note_id, 'text': 'Unstamped older evidence'},
+                {'id': 'replacement', 'note_id': note_id, 'note_created_at': replacement_stamp,
+                 'reference': 'https://example.test/new', 'text': 'Replacement text'},
+            ]),
+        ])
+        db.commit()
+
+    response = client.get('/api/projects/1/export.zip')
+    assert response.status_code == 200
+    with ZipFile(BytesIO(response.content)) as archive:
+        transcript_path = f'sources/conversations/{note_id}.txt'
+        overview = archive.read('overview.md').decode()
+        first_sources, replacement_source = overview.split('### Source 3')
+        assert '[Original source](https://example.test/old)' in first_sources
+        assert 'Unstamped older evidence' in first_sources
+        assert transcript_path not in first_sources
+        assert transcript_path in replacement_source
+        assert archive.read('notes.md').decode().count(f'[Source transcript]({transcript_path})') == 1
+        assert archive.read(transcript_path) == b'Replacement text'
+        records = json.loads(archive.read('project.json'))
+        assert records['source_paths']['notes'][str(note_id)] == transcript_path
+        assert archive.read(records['conversation_import_sources'][0]['archive_path']) == current_file
 
 
 def test_project_archive_includes_readable_views_and_project_owned_sources(state):
@@ -153,7 +209,7 @@ def test_exports_preserve_active_parameters_and_archive_the_focused_diagram(stat
                     for pid in (1, 2) for number, timestamp in enumerate(('old', 'new'), start=1)])
         db.commit()
     base = '/api/projects/1'
-    assert client.post(base + '/codex/revisions/11/activate').status_code == 200
+    assert client.post(base + '/codex/revisions/11/activate', params={'expected_generated_at': 'old'}).status_code == 200
     plain = client.get(base + '/export').json()
     with ZipFile(BytesIO(client.get(base + '/export.zip').content)) as archive:
         bundled = json.loads(archive.read('project.json'))
@@ -228,7 +284,8 @@ def test_legacy_scheme_with_non_utf8_omission_still_loads_and_exports(state):
         revision_id = revision.id
         db.commit()
     for suffix in ('scheme', f'revisions/{revision_id}'):
-        response = client.get(f'/api/projects/1/codex/{suffix}')
+        params = {'expected_generated_at': snapshot['generated_at']} if suffix.startswith('revisions/') else {}
+        response = client.get(f'/api/projects/1/codex/{suffix}', params=params)
         assert response.status_code == 200
         assert response.json()['snapshot']['coverage']['file_omissions'] == {'total': 2, 'files': [readable]}
     response = client.get('/api/projects/1/export')

@@ -10,7 +10,7 @@ export type KnowledgeEvidence = {
 };
 export type KnowledgeSource = {
   id: string; label?: string; text?: string; role?: string;
-  session_id?: number; turn_id?: string; note_id?: number;
+  session_id?: number; turn_id?: string; note_id?: number; note_created_at?: string;
 };
 export type KnowledgeItem = {
   id: string; project_id?: number; statement: string; category: string;
@@ -67,7 +67,7 @@ export function parseKnowledgeResponse(raw: unknown, projectId: number): Knowled
     if (value.sources.some((source) => {
       if (!object(source) || typeof source.id !== 'string' || sourceIds.has(source.id)
         || (source.project_id !== undefined && source.project_id !== projectId)
-        || ['label', 'text', 'role', 'turn_id'].some((key) => source[key] !== undefined && typeof source[key] !== 'string'))
+        || ['label', 'text', 'role', 'turn_id', 'note_created_at'].some((key) => source[key] !== undefined && typeof source[key] !== 'string'))
         return true;
       sourceIds.add(source.id); return false;
     })
@@ -189,7 +189,7 @@ export function knowledgeSourceHref(projectId: number, source: KnowledgeSource |
   if (Number.isSafeInteger(source.session_id) && source.session_id! > 0 && typeof source.turn_id === 'string' && source.turn_id)
     return historyTurnHref({ projectId, sessionId: source.session_id!, turnId: source.turn_id });
   if (Number.isSafeInteger(source.note_id) && source.note_id! > 0)
-    return chatGPTTranscriptHref({ projectId, noteId: source.note_id! });
+    return chatGPTTranscriptHref({ projectId, noteId: source.note_id!, createdAt: source.note_created_at });
   return null;
 }
 

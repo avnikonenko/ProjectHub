@@ -25,7 +25,7 @@ def test_revisions_page_and_project_scope(tmp_path):
         assert len(first['results']) == 10 and len(second['results']) == 3
         assert second['next_offset'] is None
         rid = first['results'][0]['id']
-        assert revision_snapshot(1, rid, db)['snapshot']['generated_at'] == '12'
+        assert revision_snapshot(1, rid, db, first['results'][0]['generated_at'])['snapshot']['generated_at'] == '12'
         with pytest.raises(HTTPException) as error:
             revision_snapshot(2, rid, db)
         assert error.value.status_code == 404

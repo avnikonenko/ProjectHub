@@ -9,6 +9,7 @@ export type BriefSource = {
   turn_id?: string;
   decision_id?: number;
   note_id?: number;
+  note_created_at?: string;
   share?: boolean;
   kind?: string;
   shared_sessions?: { session_id: number; turn_id: string; session_title?: string }[];
@@ -103,7 +104,8 @@ export function BriefSources({ sources, prefix, openInNewTab = false, allowSourc
               </div>
             )}
             {allowSourceNavigation && source.share && source.note_id !== undefined && (
-              <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id })}>Read full transcript</a>
+              <a {...linkOptions} href={chatGPTTranscriptHref({ projectId, noteId: source.note_id,
+                createdAt: source.note_created_at })}>Read full transcript</a>
             )}
           </details>
         </li>

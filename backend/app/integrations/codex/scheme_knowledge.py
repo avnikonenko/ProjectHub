@@ -10,6 +10,7 @@ import re
 from sqlalchemy import text
 
 from ...services import require_project
+from ...source_identity import recycled_note_ids
 from .knowledge_sources import CONVERSATION_EXTENT_SQL, CONVERSATION_NOTE_SQL
 
 
@@ -76,7 +77,7 @@ def _publication_metadata(db, project_id):
     return dict(row) if row is not None else None
 
 
-def _origin(db, project_id, ref, descriptor):
+def _origin(db, project_id, ref, descriptor, recycled=None):
     """Return project-authorized navigation and cheap quotation availability.
 
     Quotation availability is deliberately not a fresh agreement/context check.
@@ -102,8 +103,16 @@ def _origin(db, project_id, ref, descriptor):
     if note_id is not None and session_id is not None:
         return None
     if isinstance(note_id, int) and not isinstance(note_id, bool) and note_id > 0:
-        stable = re.fullmatch(r'chatgpt:note:\d+:mid:([0-9a-f]{24}):p:\d+', source_id)
-        ordinal = re.fullmatch(r'chatgpt:note:\d+:m:(\d{1,9}):p:\d+', source_id)
+        if recycled is None:
+            recycled = recycled_note_ids(db, project_id, note_id)
+        created_at = recycled.get(note_id)
+        prefix = f'chatgpt:note:{note_id}'
+        if created_at is not None:
+            prefix += ':incarnation:' + _hash(created_at)[:24]
+            if descriptor.get('note_created_at') != created_at or not source_id.startswith(prefix + ':'):
+                return {}, 'unavailable', {'note_id': note_id, 'reason': 'replaced_local_record'}
+        stable = re.fullmatch(prefix + r':mid:([0-9a-f]{24}):p:\d+', source_id)
+        ordinal = re.fullmatch(prefix + r':m:(\d{1,9}):p:\d+', source_id)
         message_id = descriptor.get('message_id')
         if not (stable and _short(message_id, 512) and _hash(message_id)[:24] == stable[1]):
             message_id = None
@@ -126,6 +135,8 @@ def _origin(db, project_id, ref, descriptor):
         if row is None:
             return None
         navigation = {'note_id': note_id}
+        if created_at is not None:
+            navigation['note_created_at'] = created_at
         if row['imported'] or (isinstance(row['reference'], str) and re.fullmatch(
                 r'https://chatgpt\.com/share/[0-9a-f-]{36}/?', row['reference'], re.I)):
             navigation['share'] = True
@@ -219,7 +230,8 @@ def collect_published_knowledge(db, project_id):
         params = {f'id_{index}': identifier for index, identifier in enumerate(sorted(identifiers))}
         names = ','.join(':' + key for key in params)
         params['pid'] = project_id
-        columns = ('id', 'project_id', 'label', 'role', 'revision', 'session_id', 'turn_id', 'note_id', 'message_id')
+        columns = ('id', 'project_id', 'label', 'role', 'revision', 'session_id', 'turn_id', 'note_id',
+                   'message_id', 'note_created_at')
         source_projection = ','.join(f"'{field}',json_extract(e.value,'$.{field}')" for field in columns)
         source_rows = db.execute(text('SELECT substr(json_object(' + source_projection + '),1,4001) AS source '
             "FROM project_knowledge k,json_each(k.snapshot,'$.sources') e WHERE k.project_id=:pid "
@@ -228,6 +240,7 @@ def collect_published_knowledge(db, project_id):
             if len(source_row.source) <= 4000:
                 descriptor = json.loads(source_row.source)
                 descriptors.setdefault(descriptor['id'], descriptor)
+    recycled = recycled_note_ids(db, project_id)
     used, emitted, availability, origin_markers = 0, set(), {}, []
     for item in candidates:
         evidence, states, origin_keys = [], [], []
@@ -244,7 +257,7 @@ def collect_published_knowledge(db, project_id):
             # Omitted descriptor project_id means legacy metadata, not foreign.
             if descriptor.get('project_id') is None:
                 descriptor = {key: value for key, value in descriptor.items() if key != 'project_id'}
-            origin = _origin(db, project_id, ref, descriptor)
+            origin = _origin(db, project_id, ref, descriptor, recycled)
             if origin is None:
                 break
             navigation, state, origin_marker = origin

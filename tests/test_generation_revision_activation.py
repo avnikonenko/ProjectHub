@@ -56,7 +56,7 @@ def _history(client, kind):
 
 
 def _activate(client, revision_id):
-    return client.post(f'{BASE}/revisions/{revision_id}/activate')
+    return client.post(f'{BASE}/revisions/{revision_id}/activate', params={'expected_generated_at': OLDER})
 
 
 def _overview(generated_at, message):
@@ -81,7 +81,34 @@ def test_overview_activation_preserves_both_generations_with_identical_timestamp
         history = _history(client, 'brief')
         assert history['active_id'] == wanted
         assert [row['id'] for row in history['results']] == [newer_id, old_id]
-        assert client.delete(f'{BASE}/revisions/{wanted}').status_code == 409
+        assert client.delete(f'{BASE}/revisions/{wanted}', params={'expected_generated_at': OLDER}).status_code == 409
+
+
+def test_stale_overview_selection_cannot_read_activate_or_delete_reused_revision_id(application):
+    client, engine = application
+    current = _overview(OLDER, 'Still active')
+    replacement = _overview(FUTURE, 'New version')
+    with Session(engine) as db:
+        current_id, replacement_id = _revisions(db, 'brief', current, replacement)
+        db.add(ProjectBrief(project_id=1, **current))
+        db.commit()
+
+    # Model a revision ID recycled by an older database before this upgrade.
+    url = f'{BASE}/revisions/{replacement_id}'
+    assert client.get(url).status_code == 409
+    assert client.post(f'{url}/activate').status_code == 409
+    assert client.delete(url).status_code == 409
+    stale = {'expected_generated_at': NEWER}
+    assert client.get(url, params=stale).status_code == 409
+    assert client.post(f'{url}/activate', params=stale).status_code == 409
+    assert client.delete(url, params=stale).status_code == 409
+    assert _history(client, 'brief')['active_id'] == current_id
+
+    matching = {'expected_generated_at': FUTURE}
+    assert client.get(url, params=matching).json() == {'kind': 'brief', 'snapshot': replacement}
+    assert client.post(f'{url}/activate', params=matching).status_code == 200
+    expected_current = {'expected_generated_at': OLDER}
+    assert client.delete(f'{BASE}/revisions/{current_id}', params=expected_current).status_code == 204
 
 
 def test_parameters_activation_persists_without_copying_revisions_or_changing_attempts(application, monkeypatch):
@@ -194,7 +221,7 @@ def test_same_timestamp_qa_mutations_require_the_active_revision(application, mo
     assert response.status_code == 200, response.text
     assert response.json()['revision_id'] == old_id
     assert response.json()['items'] == []
-    assert client.get(f'{BASE}/revisions/{new_id}').json()['snapshot'] == new
+    assert client.get(f'{BASE}/revisions/{new_id}', params={'expected_generated_at': OLDER}).json()['snapshot'] == new
 
 
 def test_activation_rolls_back_current_artifact_if_selection_cannot_be_saved(application):

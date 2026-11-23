@@ -57,13 +57,13 @@ before(async () => {
     server: { middlewareMode: true, hmr: false }, appType: 'custom',
     plugins: [{ name: 'generation-hook-host', enforce: 'pre',
       transform(source, id) {
-        if (/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|generationBatch\.ts)$/.test(id)) {
+        if (/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|generationBatch\.ts)$/.test(id)) {
           return source.replace("from 'react'", "from 'virtual:generation-hooks'");
         }
       },
       resolveId(id, importer) {
         if (id === 'virtual:generation-hooks') return '\0generation-hook-host';
-        if (!importer?.match(/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|generationBatch\.ts)$/)) return;
+        if (!importer?.match(/\/src\/(?:GenerationStatus\.tsx|Scheme\.tsx|RevisionHistory\.tsx|generationBatch\.ts)$/)) return;
         if (id === 'react') return '\0generation-hook-host';
         if (id.startsWith('react/jsx')) return '\0generation-jsx-stub';
         if (importer.endsWith('/GenerationStatus.tsx') && (id === './Feedback' || id === './ui')) return '\0generation-ui-stub';
@@ -245,6 +245,50 @@ test('switching to Focused Scheme preserves the pending normal revision view', a
     find(regularView, node => node.type === RevisionHistory).props.onLoadingChange(false);
     findButton('Architecture').props.onClick(); await settle();
     assert.equal(findButton('Generate Scheme').props.disabled, false);
+  } finally { host.dispose(); globalThis.fetch = original; }
+});
+
+test('revision actions retain the timestamp of the selected saved result', async () => {
+  function find(tree: any, predicate: (node: any) => boolean): any {
+    if (!tree) return undefined;
+    if (Array.isArray(tree)) return tree.map(node => find(node, predicate)).find(Boolean);
+    return predicate(tree) ? tree : find(tree.props?.children, predicate);
+  }
+  const original = globalThis.fetch;
+  const host = new HookHost();
+  const stamp = '2026-01-01T12:00:00+01:00';
+  const calls: { method: string; url: URL }[] = [];
+  let selectedId: number | null = null;
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(String(input), 'http://test.local');
+    calls.push({ method: options?.method ?? 'GET', url });
+    return Response.json(url.pathname.endsWith('/revisions') ? {
+      active_id: 2, results: [{ id: 1, generated_at: stamp }], next_offset: null,
+    } : { kind: 'brief', snapshot: { generated_at: stamp } });
+  };
+  host.renderView = () => RevisionHistory({
+    base: '/projects/1', kind: 'brief', version: '2026-01-02', disabled: false, selectedId,
+    onSelect(_: unknown, id: number | null) { selectedId = id; },
+    onLoadingChange() {},
+  });
+  try {
+    host.render(); await settle();
+    find(host.value, node => node.type === 'details').props.onToggle({ currentTarget: { open: true } });
+    await settle();
+    find(host.value, node => node.type === 'li').props.children[0].props.onClick();
+    await settle();
+    assert.equal(selectedId, 1);
+    const activate = find(host.value, node => node.type === 'button' && node.props.children === 'Use this version');
+    assert.equal(activate.props.disabled, false);
+    activate.props.onClick(); await settle();
+    assert.equal(selectedId, null);
+
+    assert.deepEqual(calls.filter(call => !call.url.pathname.endsWith('/revisions')).map(({ method, url }) => [
+      method, url.pathname, url.searchParams.get('expected_generated_at'),
+    ]), [
+      ['GET', '/api/projects/1/codex/revisions/1', stamp],
+      ['POST', '/api/projects/1/codex/revisions/1/activate', stamp],
+    ]);
   } finally { host.dispose(); globalThis.fetch = original; }
 });
 

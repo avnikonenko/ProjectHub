@@ -23,6 +23,7 @@ export function RevisionHistory<T>({
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState<RevisionPage | null>(null);
   const [offsets, setOffsets] = useState([0]);
+  const [picked, setPicked] = useState<{ scope: string; revision: Revision } | null>(null);
   const [loading, setLoading] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState('');
@@ -32,6 +33,8 @@ export function RevisionHistory<T>({
   const current = useRef({ onSelect, onLoadingChange, onActivated, onActiveRead, disabled });
   current.current = { onSelect, onLoadingChange, onActivated, onActiveRead, disabled };
   const prefix = `${base}/codex`;
+  const scope = `${prefix}/${kind}`;
+  const selected = picked?.scope === scope && picked.revision.id === selectedId ? picked.revision : null;
 
   useEffect(() => {
     setPage(null);
@@ -59,7 +62,12 @@ export function RevisionHistory<T>({
     return page?.active_id === undefined ? revision.generated_at === version : revision.id === page.active_id;
   }
 
-  async function select(id: number | null, activate = false) {
+  function revisionUrl(revision: Revision, activate = false) {
+    const query = new URLSearchParams({ expected_generated_at: revision.generated_at });
+    return `${prefix}/revisions/${revision.id}${activate ? '/activate' : ''}?${query}`;
+  }
+
+  async function select(revision: Revision | null, activate = false) {
     if (current.current.disabled || busy.current) return;
     busy.current = true;
     setSelecting(true);
@@ -68,29 +76,31 @@ export function RevisionHistory<T>({
     setError('');
     setNotice('');
     try {
-      if (id === null && current.current.onActiveRead) {
+      if (revision === null && current.current.onActiveRead) {
         const result = await api<unknown>(`${prefix}/${kind}`);
         if (request.current === requestId) {
           current.current.onActiveRead?.(result);
+          setPicked(null);
           setOffsets([0]);
         }
         return;
       }
       let snapshot: T | null;
-      if (id === null) {
+      if (revision === null) {
         snapshot = kind === 'scheme' || kind === 'parameters' || kind === 'knowledge'
           ? (await api<{ snapshot: T | null }>(`${prefix}/${kind}`)).snapshot
           : await api<T | null>(`${prefix}/${kind}`);
       } else {
-        const url = `${prefix}/revisions/${id}`;
         const result = await api<{ kind: string; snapshot: T }>(
-          activate ? `${url}/activate` : url, activate ? { method: 'POST' } : undefined,
+          revisionUrl(revision, activate), activate ? { method: 'POST' } : undefined,
         );
         if (result.kind !== kind) throw new Error('This saved version belongs to a different view.');
         snapshot = result.snapshot;
       }
       if (request.current === requestId) {
-        current.current.onSelect(snapshot, activate ? null : id);
+        const historical = activate ? null : revision;
+        setPicked(historical ? { scope, revision: historical } : null);
+        current.current.onSelect(snapshot, historical?.id ?? null);
         if (activate) {
           setOffsets([0]);
           setNotice('This version is now active.');
@@ -118,8 +128,11 @@ export function RevisionHistory<T>({
     setNotice('');
     try {
       const active = selectedId === revision.id ? await api<T | null>(`${prefix}/brief`) : undefined;
-      await api(`${prefix}/revisions/${revision.id}`, { method: 'DELETE' });
-      if (active !== undefined) current.current.onSelect(active, null);
+      await api(revisionUrl(revision), { method: 'DELETE' });
+      if (active !== undefined) {
+        setPicked(null);
+        current.current.onSelect(active, null);
+      }
       setPage(null);
       setOffsets([0]);
     } catch (e) {
@@ -136,7 +149,8 @@ export function RevisionHistory<T>({
       {selectedId !== null && (
         <div className="toolbar">
           <strong role="status">Viewing saved version</strong>
-          <button className="secondary" disabled={disabled || selecting} onClick={() => select(selectedId, true)}>
+          <button className="secondary" disabled={disabled || selecting || !selected}
+            onClick={() => { if (selected) void select(selected, true); }}>
             Use this version
           </button>
           <button className="quiet" disabled={disabled || selecting} onClick={() => select(null)}>
@@ -157,7 +171,7 @@ export function RevisionHistory<T>({
               return (
                 <li key={revision.id}>
                   <button className="quiet" disabled={disabled || selecting || selectedId === revision.id
-                    || (active && selectedId === null)} onClick={() => select(active ? null : revision.id)}>
+                    || (active && selectedId === null)} onClick={() => select(active ? null : revision)}>
                     {new Date(revision.generated_at).toLocaleString()}
                     {active ? ' · Active' : ''}
                     {selectedId === revision.id ? ' · Viewing' : ''}

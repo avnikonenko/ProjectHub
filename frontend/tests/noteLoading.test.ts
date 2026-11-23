@@ -25,6 +25,18 @@ test('already-loaded note content needs no request', async () => {
   assert.equal(await loadNote('/projects/2', complete), complete);
 });
 
+test('transcript links validate the original identity even when note text is already loaded', async () => {
+  const linkedAt = '2026-11-23T10:00:00+00:00';
+  const replacement = { ...complete, created_at: '2026-11-23T11:00:00+00:00' };
+  globalThis.fetch = async (url) => {
+    const request = new URL(String(url), 'http://localhost');
+    assert.equal(request.searchParams.get('transcript'), 'true');
+    assert.equal(request.searchParams.get('created_at'), linkedAt);
+    return Response.json(replacement);
+  };
+  await assert.rejects(loadNote('/projects/2', replacement, undefined, linkedAt), /original conversation/);
+});
+
 test('empty saved content is valid and is not replaced by invented text', async () => {
   const empty = { ...complete, content: '' };
   assert.equal(validateLoadedNote(empty, 2, 7), empty);

@@ -171,7 +171,9 @@ def main(argv=None):
             if item is None:
                 raise ValueError('TODO not found in this project. Run projecthub todo list --all.')
             already_completed = item.get('status') == 'completed'
-            result = item if already_completed else request('PATCH', f"{path}/{args.todo_id}", {'status': 'completed'})
+            created_at = item.get('created_at')
+            identity = '?' + urlencode({'created_at': created_at}) if isinstance(created_at, str) else ''
+            result = item if already_completed else request('PATCH', f"{path}/{args.todo_id}{identity}", {'status': 'completed'})
             if (not isinstance(result, dict) or result.get('id') != args.todo_id
                     or result.get('project_id') != project['id'] or result.get('status') != 'completed'):
                 raise ValueError('Could not confirm completion. Check projecthub todo list --all before retrying.')

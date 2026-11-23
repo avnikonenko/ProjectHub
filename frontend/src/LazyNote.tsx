@@ -6,8 +6,9 @@ import type { RecordData } from './types';
 type LoadedState = { identity: string; attempt: number; note: RecordData | null; error: string };
 
 /** Content belongs to this mounted reader, never to a cross-project/global cache. */
-export function useLoadedNote(base: string, note: RecordData, enabled = true) {
-  const identity = noteRequestIdentity(base, note);
+export function useLoadedNote(base: string, note: RecordData, enabled = true, transcriptCreatedAt?: string | null) {
+  const identity = JSON.stringify([noteRequestIdentity(base, note), transcriptCreatedAt === undefined,
+    transcriptCreatedAt]);
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<LoadedState | null>(null);
   useEffect(() => {
@@ -17,7 +18,7 @@ export function useLoadedNote(base: string, note: RecordData, enabled = true) {
     }
     const abort = new AbortController();
     setState(null);
-    loadNote(base, note, abort.signal)
+    loadNote(base, note, abort.signal, transcriptCreatedAt)
       .then((value) => {
         if (!abort.signal.aborted) setState({ identity, attempt, note: value, error: '' });
       })

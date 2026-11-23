@@ -29,7 +29,7 @@ _ACTIVE_COUNT = (
 )
 _CHATGPT_MATCHES = (
     "SELECT NULL,NULL,NULL,snippet(search_index,-1,:highlight_start,:highlight_end,'…',40),search_index.rank, "
-    "'chatgpt',n.id,n.title "
+    "'chatgpt',n.id,n.title,n.created_at "
     'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
     "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
     f"AND n.kind='document' AND ({CONVERSATION_NOTE_SQL} OR lower(n.reference) GLOB :reference)"
@@ -194,7 +194,7 @@ def search_history(db, project_id, query, offset=0, *, include_shared=False):
     if include_shared:
         # Apply the page limit after merging both sources so offsets never skip a match.
         query_sql = (
-            "SELECT c.*, 'codex' AS kind, NULL AS note_id, NULL AS title "
+            "SELECT c.*, 'codex' AS kind, NULL AS note_id, NULL AS title, NULL AS note_created_at "
             f'FROM ({_CODEX_MATCHES}) c UNION ALL {_CHATGPT_MATCHES} '
             'ORDER BY score,kind,session_id,turn_id,note_id'
         )
@@ -204,7 +204,7 @@ def search_history(db, project_id, query, offset=0, *, include_shared=False):
     rows = db.execute(text(query_sql + ' LIMIT :limit OFFSET :offset'), params).mappings().all()
     for row in rows[:PAGE_SIZE]:
         if include_shared and row['kind'] == 'chatgpt':
-            keys = ('kind', 'note_id', 'title', 'snippet')
+            keys = ('kind', 'note_id', 'title', 'snippet', 'note_created_at')
         else:
             keys = ('session_id', 'session_title', 'turn_id', 'snippet')
             if include_shared:

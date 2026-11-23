@@ -1,5 +1,5 @@
 export type HistoryTurnLink = { projectId: number; sessionId: number; turnId: string };
-export type ChatGPTTranscriptLink = { projectId: number; noteId: number; query?: string };
+export type ChatGPTTranscriptLink = { projectId: number; noteId: number; query?: string; createdAt?: string };
 export type HistoryLink = HistoryTurnLink | ChatGPTTranscriptLink;
 
 export function historyTurnHref({ projectId, sessionId, turnId }: HistoryTurnLink) {
@@ -8,9 +8,10 @@ export function historyTurnHref({ projectId, sessionId, turnId }: HistoryTurnLin
   })}`;
 }
 
-export function chatGPTTranscriptHref({ projectId, noteId, query }: ChatGPTTranscriptLink) {
+export function chatGPTTranscriptHref({ projectId, noteId, query, createdAt }: ChatGPTTranscriptLink) {
   const params = new URLSearchParams({ project: String(projectId), note: String(noteId) });
   if (query) params.set('q', query);
+  if (createdAt) params.set('created_at', createdAt);
   return `#history?${params}`;
 }
 
@@ -22,7 +23,10 @@ export function readHistoryLink(hash: string): HistoryLink | null {
   const noteId = Number(params.get('note'));
   if (!Number.isSafeInteger(projectId) || projectId < 1 ||
       !Number.isSafeInteger(noteId) || noteId < 1) return null;
-  return { projectId, noteId, query: params.get('q')?.slice(0, 2000) || undefined };
+  const createdAt = params.get('created_at');
+  if (createdAt !== null && (!createdAt || createdAt.length > 80)) return null;
+  return { projectId, noteId, query: params.get('q')?.slice(0, 2000) || undefined,
+    ...(createdAt ? { createdAt } : {}) };
 }
 
 export function readHistoryTurnLink(hash: string): HistoryTurnLink | null {

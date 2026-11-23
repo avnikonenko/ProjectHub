@@ -174,6 +174,7 @@ def test_unified_history_search_and_pagination(env):
     assert before['results'] == [{
         'kind': 'chatgpt', 'note_id': shared, 'title': 'Shared chat',
         'snippet': 'User:\nWhere is the [needle]?',
+        'note_created_at': client.get(f'/api/projects/1/notes/{shared}').json()['created_at'],
         'snippet_parts': [
             {'text': 'User:\nWhere is the ', 'match': False},
             {'text': 'needle', 'match': True},

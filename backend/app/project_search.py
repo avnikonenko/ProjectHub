@@ -270,6 +270,8 @@ def project_search(db, project_id, query, kind='all', offset=0):
                 shared = item['kind'] == 'chatgpt'
                 params = {'project': project_id, **({'note': item['note_id'], 'q': query} if shared else
                                                    {'session': item['session_id'], 'turn': item['turn_id']})}
+                if shared and item.get('note_created_at'):
+                    params['created_at'] = item['note_created_at']
                 title = (item['title'] if shared else item['session_title'] or 'Untitled session')[:500]
                 rows.append({'id': f"chatgpt:{item['note_id']}" if shared else f"codex:{item['session_id']}:{item['turn_id']}",
                              'title': title, 'title_parts': _plain_parts(title, terms, 500),

@@ -65,10 +65,10 @@ def test_deletion_preserves_each_paired_revision_and_legacy_activation(history):
         db.commit()
 
     with Session(history) as db:
-        delete_brief_revision(1, older_id, db)
+        delete_brief_revision(1, older_id, db, older_summary['generated_at'])
         assert db.get(GenerationRevision, original_id).snapshot == original
-        assert revision_snapshot(1, original_id, db)['snapshot']['summary'] == preferred_summary
-        delete_brief_revision(1, preferred_id, db)
+        assert revision_snapshot(1, original_id, db, original['generated_at'])['snapshot']['summary'] == preferred_summary
+        delete_brief_revision(1, preferred_id, db, preferred_summary['generated_at'])
 
     with Session(history) as db:
         assert db.get(GenerationRevision, preferred_id) is None
@@ -78,7 +78,9 @@ def test_deletion_preserves_each_paired_revision_and_legacy_activation(history):
         assert db.get(GenerationRevision, foreign_id).snapshot == foreign
         assert db.get(GenerationRevision, newer_id).snapshot == newer
         assert db.get(ProjectKnowledge, 1).snapshot == newer
-        assert activate_saved_revision(1, tagged_id, db)['snapshot'] == {**tagged, 'summary': preferred_summary}
+        assert activate_saved_revision(1, tagged_id, db, tagged['generated_at'])['snapshot'] == {
+            **tagged, 'summary': preferred_summary,
+        }
 
 
 def test_failed_delete_rolls_back_copy_to_historical_revision(history):
@@ -99,7 +101,7 @@ def test_failed_delete_rolls_back_copy_to_historical_revision(history):
     event.listen(history, 'before_cursor_execute', reject_delete)
     try:
         with Session(history) as db, pytest.raises(RuntimeError, match='Fixture delete failure'):
-            delete_brief_revision(1, overview_id, db)
+            delete_brief_revision(1, overview_id, db, summary['generated_at'])
     finally:
         event.remove(history, 'before_cursor_execute', reject_delete)
 

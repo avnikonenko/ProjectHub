@@ -26,3 +26,7 @@ export const post = (path: string, body: unknown = {}) =>
   api(path, { method: 'POST', body: JSON.stringify(body) });
 export const patch = (path: string, body: unknown) =>
   api(path, { method: 'PATCH', body: JSON.stringify(body) });
+
+export function recordMutationPath(path: string, record: { [key: string]: unknown }): string {
+  return typeof record.created_at === 'string' ? `${path}?${new URLSearchParams({ created_at: record.created_at })}` : path;
+}

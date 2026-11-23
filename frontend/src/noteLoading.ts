@@ -27,14 +27,24 @@ export function noteRequestIdentity(base: string, note: RecordData): string {
   return JSON.stringify([base, note.id, note.project_id, note.updated_at]);
 }
 
-export async function loadNote(base: string, note: RecordData, signal?: AbortSignal): Promise<RecordData> {
+export async function loadNote(base: string, note: RecordData, signal?: AbortSignal,
+  transcriptCreatedAt?: string | null): Promise<RecordData> {
   const projectId = noteTarget(base, note);
   signal?.throwIfAborted();
-  if (typeof note.content === 'string' && note.content_loaded !== false) {
+  if (transcriptCreatedAt === undefined && typeof note.content === 'string' && note.content_loaded !== false) {
     return validateLoadedNote(note, projectId, note.id);
   }
-  const value = await api<unknown>(`${base}/notes/${note.id}`, { signal });
+  const params = new URLSearchParams();
+  if (transcriptCreatedAt !== undefined) {
+    params.set('transcript', 'true');
+    if (transcriptCreatedAt !== null) params.set('created_at', transcriptCreatedAt);
+  }
+  const value = await api<unknown>(`${base}/notes/${note.id}${params.size ? '?' + params : ''}`, { signal });
   // A mock, proxy, or completed fetch may ignore an abort while decoding JSON.
   signal?.throwIfAborted();
-  return validateLoadedNote(value, projectId, note.id);
+  const loaded = validateLoadedNote(value, projectId, note.id);
+  if (typeof transcriptCreatedAt === 'string' && loaded.created_at !== transcriptCreatedAt) {
+    throw new Error('The original conversation is no longer available.');
+  }
+  return loaded;
 }

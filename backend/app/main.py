@@ -20,6 +20,7 @@ from . import conversation_ingest
 from .integrations.codex.history_search import search_history
 from .project_search import project_search
 from .project_export import audit_response, project_archive_response, project_export_response
+from .source_identity import matches_record_incarnation
 from .models import *
 from .project_removal import ProjectRemovalGate, next_project_id, remove_project, retry_removed_uploads
 from .schemas import *
@@ -282,12 +283,25 @@ def _create_app(data_dir, restart_controller, ownership):
         return [serialize(task) for task in tasks]
 
     @app.patch('/api/projects/{project_id}/tasks/{task_id}')
-    def update_task(project_id:int,task_id:int,payload:TaskPatch,db:Session=db_dep):
-        t=scoped(db,Task,project_id,task_id);values=payload.model_dump(exclude_unset=True);validate_links(db,project_id,{**serialize(t),**values});before=serialize(t);apply_values(t,values);audit(db,project_id,t,'updated',before);db.commit();return serialize(t)
+    def update_task(project_id: int, task_id: int, payload: TaskPatch, db: Session = db_dep,
+                    created_at: str | None = Query(default=None, max_length=80)):
+        task = scoped(db, Task, project_id, task_id)
+        if not matches_record_incarnation(db, task, created_at):
+            raise HTTPException(409, 'This TODO changed identity. Reload it before editing.')
+        values = payload.model_dump(exclude_unset=True)
+        before = serialize(task)
+        validate_links(db, project_id, {**before, **values})
+        apply_values(task, values)
+        audit(db, project_id, task, 'updated', before)
+        db.commit()
+        return serialize(task)
 
     @app.delete('/api/projects/{project_id}/tasks/{task_id}', status_code=204)
-    def delete_task(project_id: int, task_id: int, db: Session = db_dep):
+    def delete_task(project_id: int, task_id: int, db: Session = db_dep,
+                    created_at: str | None = Query(default=None, max_length=80)):
         task = scoped(db, Task, project_id, task_id)
+        if not matches_record_incarnation(db, task, created_at):
+            raise HTTPException(409, 'This TODO changed identity. Reload it before deleting.')
         audit(db, project_id, task, 'deleted', serialize(task))
         db.delete(task)
         db.commit()
@@ -297,8 +311,12 @@ def _create_app(data_dir, restart_controller, ownership):
     def get_notes(project_id:int,db:Session=db_dep):require_project(db,project_id);return [serialize(n) for n in records(db,Note,project_id)]
 
     @app.get('/api/projects/{project_id}/notes/{note_id}')
-    def get_note(project_id: int, note_id: int, db: Session = db_dep):
-        return serialize(scoped(db, Note, project_id, note_id))
+    def get_note(project_id: int, note_id: int, db: Session = db_dep, transcript: bool = False,
+                 created_at: str | None = Query(default=None, max_length=80)):
+        note = scoped(db, Note, project_id, note_id)
+        if transcript and not matches_record_incarnation(db, note, created_at):
+            raise HTTPException(404, 'The original conversation is no longer available.')
+        return serialize(note)
 
     @app.post('/api/projects/{project_id}/notes',status_code=201)
     def create_note(project_id:int,payload:NoteCreate,db:Session=db_dep):
@@ -341,8 +359,12 @@ def _create_app(data_dir, restart_controller, ownership):
         return serialize(note)
 
     @app.patch('/api/projects/{project_id}/notes/{note_id}')
-    def update_note(project_id:int,note_id:int,payload:NotePatch,db:Session=db_dep):
-        n=scoped(db,Note,project_id,note_id);values=payload.model_dump(exclude_unset=True)
+    def update_note(project_id:int,note_id:int,payload:NotePatch,db:Session=db_dep,
+                    created_at: str | None = Query(default=None, max_length=80)):
+        n = scoped(db, Note, project_id, note_id)
+        if not matches_record_incarnation(db, n, created_at):
+            raise HTTPException(409, 'This note changed identity. Reload it before editing.')
+        values = payload.model_dump(exclude_unset=True)
         if n.conversation is not None and any(key in values and values[key] != getattr(n, key)
                                               for key in ('content', 'kind', 'reference')):
             raise HTTPException(409, 'Use Import conversation to update this transcript and preserve its original source.')
@@ -412,11 +434,15 @@ def _create_app(data_dir, restart_controller, ownership):
         return [dict(row) for row in rows]
 
     @app.get('/api/projects/{project_id}/conversations/{note_id}/sources/{source_id}')
-    def download_conversation_source(project_id: int, note_id: int, source_id: int, db: Session = db_dep):
-        scoped(db, Note, project_id, note_id)
+    def download_conversation_source(project_id: int, note_id: int, source_id: int, db: Session = db_dep,
+                                     content_hash: str | None = Query(default=None, pattern=r'^[a-f0-9]{64}$'),
+                                     created_at: str | None = Query(default=None, max_length=80)):
+        note = scoped(db, Note, project_id, note_id)
+        if not matches_record_incarnation(db, note, created_at):
+            raise HTTPException(404, 'Source copy not found in this conversation.')
         source = db.scalar(select(ConversationImportSource).where(ConversationImportSource.project_id == project_id,
             ConversationImportSource.note_id == note_id, ConversationImportSource.id == source_id))
-        if source is None:
+        if source is None or (content_hash is not None and content_hash != source.content_hash):
             raise HTTPException(404, 'Source copy not found in this conversation.')
         return Response(source.payload, media_type='application/octet-stream', headers={
             'Content-Disposition': "attachment; filename*=UTF-8''" + quote(source.filename, safe=''),
@@ -424,8 +450,11 @@ def _create_app(data_dir, restart_controller, ownership):
         })
 
     @app.delete('/api/projects/{project_id}/notes/{note_id}', status_code=204)
-    def delete_note(project_id: int, note_id: int, db: Session = db_dep):
+    def delete_note(project_id: int, note_id: int, db: Session = db_dep,
+                    created_at: str | None = Query(default=None, max_length=80)):
         note = scoped(db, Note, project_id, note_id)
+        if not matches_record_incarnation(db, note, created_at):
+            raise HTTPException(409, 'This note changed identity. Reload it before deleting.')
         audit(db, project_id, note, 'deleted', serialize(note))
         db.delete(note)
         db.commit()

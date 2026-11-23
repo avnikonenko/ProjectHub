@@ -59,7 +59,8 @@ def test_preservation_only_stages_storage_and_does_not_revise_publication(legacy
 def test_deleting_backing_revision_preserves_summary_and_tags(legacy):
     engine, app, original, summary, (revision_id, _) = legacy
     with TestClient(app) as client:
-        response = client.delete(f'/api/projects/1/codex/revisions/{revision_id}')
+        response = client.delete(f'/api/projects/1/codex/revisions/{revision_id}',
+                                 params={'expected_generated_at': 'old'})
         assert response.status_code == 204
     with Session(engine) as db:
         assert db.get(GenerationRevision, revision_id) is None
@@ -76,7 +77,8 @@ def test_foreign_and_current_revision_rejections_do_not_materialize_summary(lega
         db.get(ProjectBrief, 1).generated_at = 'old'; db.commit()
     with TestClient(app) as client:
         assert client.delete(f'/api/projects/1/codex/revisions/{foreign_id}').status_code == 404
-        assert client.delete(f'/api/projects/1/codex/revisions/{revision_id}').status_code == 409
+        assert client.delete(f'/api/projects/1/codex/revisions/{revision_id}',
+                             params={'expected_generated_at': 'old'}).status_code == 409
     with Session(engine) as db:
         assert db.get(ProjectKnowledge, 1).snapshot == original
         assert db.get(GenerationRevision, revision_id).snapshot == summary
@@ -109,7 +111,8 @@ def test_delete_failure_rolls_back_summary_copy_and_revision_delete(legacy):
     event.listen(engine, 'before_cursor_execute', fail_delete)
     try:
         with TestClient(app, raise_server_exceptions=False) as client:
-            assert client.delete(f'/api/projects/1/codex/revisions/{revision_id}').status_code == 500
+            assert client.delete(f'/api/projects/1/codex/revisions/{revision_id}',
+                                 params={'expected_generated_at': 'old'}).status_code == 500
     finally:
         event.remove(engine, 'before_cursor_execute', fail_delete)
     assert writes == ['summary-staged']

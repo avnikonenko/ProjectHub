@@ -12,6 +12,7 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from ...models import CodexSession, Note, Project
+from ...source_identity import recycled_note_ids
 from .protocol import CodexError
 
 MAX_SOURCE_CHARS = 2_000_000
@@ -265,6 +266,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
             f'{CONVERSATION_EXTENT_SQL} AS transcript_end '
             "FROM notes WHERE project_id=:pid AND kind='document' ORDER BY id LIMIT :lim"),
             {'pid': project_id, 'lim': MAX_PARENTS + 1}).mappings())
+        recycled = recycled_note_ids(db, project_id)
         inventory = _source_inventory(db, project_id, sessions, notes)
         if len(sessions) > MAX_PARENTS or len(notes) > MAX_PARENTS:
             coverage['limitations'].append(
@@ -366,7 +368,12 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
             if not note['canonical'] and not shared:
                 return
             parent = f'chatgpt:note:{note["id"]}'
+            created_at = recycled.get(note['id'])
+            identity_metadata = {'note_created_at': created_at} if created_at is not None else {}
+            if created_at is not None:
+                parent += ':incarnation:' + _hash(created_at)[:24]
             entry = {'source_key': parent, 'note_id': note['id'], 'availability': 'available', 'revision': None}
+            entry.update(identity_metadata)
             if shared:
                 entry['url'] = note['reference']
             entries.append(entry)
@@ -441,6 +448,7 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
                 if not append(body, role, ordinal, parent, identity,
                               f'{note["title"]} · message {ordinal}', offset,
                               message_id=message_id, note_id=note['id'], reference=note['reference'],
+                              **identity_metadata,
                               **({'timestamp': timestamp} if timestamp is not None else {})):
                     coverage['unprocessed'].append(parent)
             if orders.get(parent):
@@ -467,6 +475,11 @@ def load_sources(engine, project_id, previous_manifest=None, *, balanced=None, c
         previous_entries = (previous_manifest or {}).get('entries', [])
         for old in previous_entries:
             if old['source_key'] in current_keys:
+                continue
+            created_at = recycled.get(old.get('note_id'))
+            if created_at is not None and old.get('note_created_at') != created_at:
+                entries.append({**old, 'availability': 'unavailable', 'reason': 'replaced_local_record'})
+                coverage['unavailable'].append(old['source_key'])
                 continue
             # A record omitted by limits/type changes is excluded, not deleted.
             exists = False

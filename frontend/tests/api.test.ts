@@ -11,9 +11,10 @@ afterEach(() => {
 
 test('history links preserve project scope and both source types', () => {
   const turn = { projectId: 27, sessionId: 4, turnId: 'turn/1' };
-  const transcript = { projectId: 27, noteId: 8, query: 'cafe & tea' };
+  const transcript = { projectId: 27, noteId: 8, query: 'cafe & tea', createdAt: '2026-11-23T10:00:00+00:00' };
   assert.deepEqual(readHistoryLink(historyTurnHref(turn)), turn);
   assert.deepEqual(readHistoryLink(chatGPTTranscriptHref(transcript)), transcript);
+  assert.deepEqual(readHistoryLink('#history?project=27&note=8'), { projectId: 27, noteId: 8, query: undefined });
   assert.equal(readHistoryLink('#history?project=0&note=8'), null);
   assert.equal(readHistoryLink('#history?project=27&note=1.5'), null);
 });

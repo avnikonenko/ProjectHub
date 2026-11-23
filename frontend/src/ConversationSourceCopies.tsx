@@ -36,8 +36,10 @@ function SourceCopies({ base, note }: { base: string; note: RecordData }) {
   </>;
   return state.sources.length ? <ul>{state.sources.map(source => {
     const date = Date.parse(source.created_at);
+    const identity = new URLSearchParams({ content_hash: source.content_hash });
+    if (note.created_at) identity.set('created_at', note.created_at);
     return <li key={source.id}>
-      <a href={`/api${state.path}/${source.id}`} download>{source.filename}</a>
+      <a href={`/api${state.path}/${source.id}?${identity}`} download>{source.filename}</a>
       {Number.isFinite(date) && <small> · Saved {new Date(date).toLocaleString()}</small>}
     </li>;
   })}</ul> : <p className="muted">No original source copies are available.</p>;

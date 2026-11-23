@@ -16,6 +16,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Include active generation revisions in both export formats and add a readable Focused Scheme to ZIP exports.
 - Keep validated diagrams when optional Scheme checks fail, and improve recovery from malformed generation responses.
 - Reveal newly started sessions in Sources and let saved Scheme versions open even if the current inspection fails to load.
+- Keep deleted conversation, source-copy, TODO, saved response, and saved version IDs retired. Older links whose identity cannot be confirmed show an unavailable source.
+- Allow separate project data directories to initialize concurrently in one process.
 
 ## [0.2.5] - 2026-11-21
 

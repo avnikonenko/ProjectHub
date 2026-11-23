@@ -1,4 +1,6 @@
 """Real SQLite/FTS and HTTP search tests; Codex is deliberately unavailable."""
+from urllib.parse import parse_qs, urlsplit
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -165,8 +167,12 @@ def test_imported_conversations_and_saved_passage_notes_are_grouped_separately(s
         db.commit()
     groups = get(client)
     assert {row['id'] for row in groups['conversations']['results']} == {'chatgpt:11', 'chatgpt:12'}
-    assert {row['href'] for row in groups['conversations']['results']} == {
-        '#history?project=1&note=11&q=ligand', '#history?project=1&note=12&q=ligand'}
+    for row in groups['conversations']['results']:
+        href = row['href']
+        query = parse_qs(urlsplit(href).fragment.split('?', 1)[1])
+        note_id = row['id'].removeprefix('chatgpt:')
+        note = client.get(f'/api/projects/1/notes/{note_id}').json()
+        assert query == {'project': ['1'], 'note': [note_id], 'q': ['ligand'], 'created_at': [note['created_at']]}
     assert {row['id'] for row in groups['notes']['results']} == {'notes:13', 'notes:14'}
     assert [row['id'] for row in get(client, 'notes', 'referenceonly')['notes']['results']] == ['notes:14']
 
