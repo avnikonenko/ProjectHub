@@ -203,9 +203,14 @@ does not start a model request or add tokens to the total.
 
 ProjectHub stops starting model requests and attempts to interrupt active work
 when reports reach the limit. Provider reports can arrive late or omit usage,
-so the total is approximate and in-flight
-requests may push it over the limit. Previously saved results and completed
-batch caches remain available. The provider's account limits still apply.
+so the total is approximate and in-flight requests may push it over the limit.
+Previously saved results and completed batch caches remain available. The
+provider's account limits still apply.
+
+In a browser test with simulated provider usage, Overview and Scheme shared a
+100-token limit. The counter rose from **55 / 100** to **107 / 100** and showed
+**Limit reached**. ProjectHub blocked further requests and kept the earlier
+saved Scheme.
 
 Expand **Coverage** below a generated result.
 
