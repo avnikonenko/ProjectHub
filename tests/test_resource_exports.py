@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import ClientDisconnect
 
 from backend.app.main import create_app
-from backend.app.models import (CodexSession, GenerationRevision, Note, Project, ProjectBrief,
+from backend.app.models import (CodexSession, GenerationRevision, Note, Project, ProjectBrief, ProjectFocusedScheme,
                                 ProjectHistoryBatch, ProjectKnowledge, ProjectQA, ProjectScheme, Task)
 from backend.app.project_export import _ExportResponse, project_archive_response, project_export_response
 
@@ -137,6 +137,36 @@ def test_project_archive_includes_readable_views_and_project_owned_sources(state
         assert not any(b'foreign body' in archive.read(member) or b'foreign history' in archive.read(member)
                        for member in names)
     assert client.get('/api/projects/999/export.zip').status_code == 404
+
+
+def test_exports_preserve_active_parameters_and_archive_the_focused_diagram(state):
+    app, client = state
+    graph = {'nodes': [{'id': 'save', 'label': 'Save', 'type': 'component', 'status': 'observed', 'source_ids': ['s1']}],
+             'edges': [], 'explanation': 'A focused description.'}
+    focused = {'generated_at': 'old', 'instruction': 'Show save behavior.', 'graph': graph,
+               'sources': [{'id': 's1', 'label': 'Saved source', 'text': 'Source excerpt.'}]}
+    with Session(app.state.engine) as db:
+        db.add_all([ProjectFocusedScheme(project_id=pid, snapshot=focused | {'instruction': 'Foreign instruction'}
+                                         if pid == 2 else focused) for pid in (1, 2)])
+        db.add_all([GenerationRevision(id=pid * 10 + number, project_id=pid, kind='parameters', generated_at=timestamp,
+                                       snapshot={'generated_at': timestamp, 'items': []})
+                    for pid in (1, 2) for number, timestamp in enumerate(('old', 'new'), start=1)])
+        db.commit()
+    base = '/api/projects/1'
+    assert client.post(base + '/codex/revisions/11/activate').status_code == 200
+    plain = client.get(base + '/export').json()
+    with ZipFile(BytesIO(client.get(base + '/export.zip').content)) as archive:
+        bundled = json.loads(archive.read('project.json'))
+        assert plain['parameters'] == bundled['parameters'] == {'generated_at': 'old', 'items': []}
+        assert plain['active_generation_revisions'] == bundled['active_generation_revisions']
+        assert plain['active_generation_revisions']['parameters'] == 11
+        assert plain['focused_scheme'] == bundled['focused_scheme'] == {'project_id': 1, 'snapshot': focused}
+        assert '[Focused Scheme](focused-scheme.md)' in archive.read('index.md').decode()
+        page = archive.read('focused-scheme.md').decode()
+        assert 'Show save behavior.' in page and 'A focused description.' in page and 'Foreign instruction' not in page
+        assert '[1](#source-1)' in page and 'Source excerpt.' in page
+        assert '[Mermaid diagram](diagrams/focused-scheme.mmd)' in page
+        assert b'Save #40;observed#41;' in archive.read('diagrams/focused-scheme.mmd')
 
 
 def test_cross_origin_subresources_cannot_start_project_exports(state, monkeypatch):

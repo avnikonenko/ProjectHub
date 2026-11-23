@@ -3,6 +3,7 @@ import hashlib
 import json
 from collections import Counter
 
+from fastapi import HTTPException
 from sqlalchemy import func, literal_column, or_, select
 
 from .integrations import chatgpt_share, conversation_import
@@ -66,17 +67,35 @@ def prepare(payload, engine=None):
     return values, source
 
 
-def _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider):
+def _retained_claude_sources(matches):
     # Older file imports retained the raw Claude export but did not index its UUID.
     source = ConversationImportSource
     latest_source = (select(source.id).where(source.project_id == Note.project_id, source.note_id == Note.id)
                      .order_by(source.id.desc()).limit(1).correlate(Note).scalar_subquery())
-    candidates = matches.limit(None).add_columns(source.payload).join(source, source.id == latest_source).where(
-        stored_id.is_(None), stored_provider == 'claude', source.filename.ilike('%.json'))
+    return matches.add_columns(source.payload).join(source, source.id == latest_source).where(
+        source.filename.ilike('%.json'))
+
+
+def _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider):
+    candidates = _retained_claude_sources(matches.limit(None)).where(stored_id.is_(None), stored_provider == 'claude')
     for row in db.execute(candidates.execution_options(yield_per=1)):
         if conversation_import.retained_claude_conversation_id(row.payload) == provider_id:
             return row
     return None
+
+
+def _linked_claude_id(metadata):
+    session = metadata.get('linked_session')
+    return session.get('id') if isinstance(session, dict) and session.get('provider') == 'claude' else None
+
+
+def _check_claude_identity(found, provider_id, retained_id=None):
+    previous = found.conversation or {}
+    if previous.get('provider') not in (None, 'other', 'claude') or any(
+        identity is not None and identity != provider_id
+        for identity in (previous.get('provider_conversation_id'), _linked_claude_id(previous), retained_id)
+    ):
+        raise HTTPException(409, 'This source belongs to a different saved conversation. Check its source link and identifier.')
 
 
 def _find_existing(db, project_id, values):
@@ -85,9 +104,20 @@ def _find_existing(db, project_id, values):
         Note.project_id == project_id, Note.kind == 'document').order_by(Note.id).limit(1)
     reference = values['reference']
     provider_id = metadata.get('provider_conversation_id')
-    local_session = metadata.get('linked_session')
+    known_claude_id = provider_id and metadata['provider'] == 'claude'
     stored_id = func.json_extract(Note.conversation, literal_column("'$.provider_conversation_id'"))
     stored_provider = func.json_extract(Note.conversation, literal_column("'$.provider'"))
+    identity_match = None
+    if known_claude_id:
+        linked_id = func.json_extract(Note.conversation, literal_column("'$.linked_session.id'"))
+        matching_id = matches.where(stored_provider == 'claude', or_(stored_id == provider_id, linked_id == provider_id))
+        # Prefer the linked row if a project already has duplicates from older imports.
+        matching_id = matching_id.order_by(None).order_by((linked_id == provider_id).desc(), Note.id)
+        identity_match = db.execute(matching_id).first()
+        if identity_match is None:
+            identity_match = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
+        if identity_match is not None:
+            _check_claude_identity(identity_match, provider_id)
     if reference:
         saved_conversation = Note.conversation.is_not(None)
         try:
@@ -100,37 +130,37 @@ def _find_existing(db, project_id, values):
             saved_conversation = or_(saved_conversation, Note.content == _legacy_chatgpt_content(values),
                                      Note.content.op('GLOB')('User:\n?*\n\nChatGPT:\n?*'),
                                      Note.content.op('GLOB')('ChatGPT:\n?*\n\nUser:\n?*'))
-        found = db.execute(matches.where(Note.reference == reference, saved_conversation)).first()
+        same_reference = matches.where(Note.reference == reference, saved_conversation)
+        if known_claude_id:
+            reference_matches = db.execute(same_reference.limit(2)).all()
+            if len(reference_matches) > 1:
+                raise HTTPException(409, 'This source link matches more than one saved conversation. Check the source link.')
+            found = next(iter(reference_matches), None)
+        else:
+            found = db.execute(same_reference).first()
         if found is not None:
+            if known_claude_id:
+                if identity_match is not None and identity_match.id != found.id:
+                    raise HTTPException(409, 'The source link and identifier match different saved conversations.')
+                retained = None
+                if (found.conversation or {}).get('provider') == 'claude' and not found.conversation.get(
+                        'provider_conversation_id'):
+                    retained = db.execute(_retained_claude_sources(same_reference.where(Note.id == found.id))).first()
+                retained_id = conversation_import.retained_claude_conversation_id(retained.payload) if retained else None
+                _check_claude_identity(found, provider_id, retained_id)
             return found
-        if metadata['provider'] == 'claude' and provider_id:
-            # A local session and an export can share a provider UUID while
-            # carrying different source references.
-            same_session = matches.where(stored_id == provider_id, stored_provider == 'claude')
-            if local_session:
-                found = db.execute(same_session).first()
-                if found is None:
-                    found = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
-            else:
-                linked_id = func.json_extract(Note.conversation, literal_column("'$.linked_session.id'"))
-                found = db.execute(same_session.where(linked_id == provider_id)).first()
-            if found is not None:
-                return found
         matches = matches.where(Note.reference == '')
+    if identity_match is not None:
+        return identity_match
     if metadata['provider'] != 'other':
         matches = matches.where(or_(stored_provider.is_(None), stored_provider.in_(('other', metadata['provider']))))
     if provider_id:
-        if not (reference and local_session):
-            found = db.execute(matches.where(stored_id == provider_id, stored_provider == metadata['provider'])).first()
-            if found is not None:
-                return found
-            found = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
-            if found is not None:
-                return found
         matches = matches.where(or_(stored_id.is_(None), stored_id == provider_id))
     found = db.execute(matches.where(Note.conversation.is_not(None),
         func.json_extract(Note.conversation, literal_column("'$.fingerprint'")) == metadata['fingerprint'],
     )).first()
+    if found is not None and known_claude_id:
+        _check_claude_identity(found, provider_id)
     if found is not None or reference or metadata['provider'] == 'claude':
         return found
     return db.execute(matches.where(Note.conversation.is_(None),
@@ -154,7 +184,8 @@ def preserve_source_identity(values, previous_reference, previous_metadata):
         provider_id = previous_metadata.get('provider_conversation_id')
         if provider_id:
             metadata.setdefault('provider_conversation_id', provider_id)
-        if previous_metadata.get('linked_session'):
+        linked_id = _linked_claude_id(previous_metadata)
+        if linked_id and metadata.get('provider_conversation_id', linked_id) == linked_id:
             metadata.setdefault('linked_session', previous_metadata['linked_session'])
 
 

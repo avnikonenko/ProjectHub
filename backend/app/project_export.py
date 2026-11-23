@@ -138,6 +138,8 @@ def _project_snapshot(db, project_id):
 
 
 def _write_project_json(handle, db, project, *, saved=None, source_paths=None):
+    from .integrations.codex.revisions import REVISION_KINDS, active_parameter_revision, active_revision_id
+
     project_id = project.id
     handle.write(b'{"project":')
     _write(handle, serialize(project))
@@ -178,9 +180,13 @@ def _write_project_json(handle, db, project, *, saved=None, source_paths=None):
         handle.write(b':')
         rows = db.execute(text(query), {'pid': project_id}).mappings()
         _array(handle, (dict(row) for row in rows))
+    handle.write(b',"parameters":')
+    parameters = (saved['parameters'] if saved is not None else
+                  db.scalar(active_parameter_revision(project_id, GenerationRevision.snapshot)))
+    _write(handle, parameters)
+    handle.write(b',"active_generation_revisions":')
+    _write(handle, {kind: active_revision_id(db, project_id, kind) for kind in REVISION_KINDS})
     if source_paths is not None:
-        handle.write(b',"parameters":')
-        _write(handle, saved['parameters'])
         handle.write(b',"source_paths":')
         _write(handle, source_paths)
         handle.write(b',"generation_attempts":')

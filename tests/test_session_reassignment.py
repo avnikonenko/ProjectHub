@@ -91,6 +91,41 @@ def test_unlink_then_link_another_project_uses_safe_move_and_linked_foreign_requ
     assert response.json()['project_id'] == 2 and response.json()['id'] == 9
 
 
+@pytest.mark.parametrize('blocked_by', ['status', 'owned_records'])
+def test_preview_uses_foreign_session_reassignment_eligibility_before_reading(api, blocked_by):
+    with Session(api.engine) as db:
+        row = db.get(CodexSession, 9)
+        row.is_linked = False
+        if blocked_by == 'status':
+            row.status = 'closed'
+        else:
+            db.add(Task(project_id=1, session_id=9, title='Retained task'))
+        db.commit()
+    api.manager.preview_association = lambda *args: pytest.fail('Ineligible session reached its provider reader')
+    response = api.client.post('/api/projects/2/codex/sessions/preview', json={'thread_id': 'external-thread'})
+    assert response.status_code == 409
+
+
+def test_preview_rechecks_foreign_session_after_provider_read(api):
+    with Session(api.engine) as db:
+        db.get(CodexSession, 9).is_linked = False
+        db.commit()
+    result = {'title': 'External design', 'sample': []}
+    api.manager.preview_association = lambda *args: result
+    route = '/api/projects/2/codex/sessions/preview'
+    payload = {'thread_id': 'external-thread'}
+    assert api.client.post(route, json=payload).json() == result
+
+    def preview(title, thread_id, account):
+        with Session(api.engine) as db:
+            db.get(CodexSession, 9).is_linked = True
+            db.commit()
+        return result
+
+    api.manager.preview_association = preview
+    assert api.client.post(route, json=payload).status_code == 409
+
+
 @pytest.mark.parametrize('source,target,status', [(3, 2, 404), (1, 999, 404), (1, 1, 422)])
 def test_move_enforces_source_and_destination_ownership_before_releasing(api, source, target, status):
     assert move(api, source=source, target=target).status_code == status

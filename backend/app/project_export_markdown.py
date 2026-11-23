@@ -15,7 +15,8 @@ from .models import CodexSession, Note, Task
 
 _PAGES = (
     ('Overview', 'overview.md'), ('Knowledge', 'knowledge.md'), ('AI Q&A', 'ai-qa.md'),
-    ('Scheme', 'scheme.md'), ('Implementation Choices & Limits', 'implementation-choices.md'),
+    ('Scheme', 'scheme.md'), ('Focused Scheme', 'focused-scheme.md'),
+    ('Implementation Choices & Limits', 'implementation-choices.md'),
     ('TODOs', 'todos.md'), ('Notes', 'notes.md'), ('Sources', 'sources/index.md'),
 )
 _MARKDOWN = re.compile(r'([\\`*_\[\]#|])')
@@ -290,34 +291,51 @@ def _qa(archive, project, snapshot, source_paths):
         _source_details(out, numbered, source_paths, path)
 
 
-def _diagrams(archive, project, scheme):
-    exported = {}
-    for name in ('architecture', 'workflow', 'saved-architecture'):
-        if name == 'saved-architecture':
-            mermaid = project.architecture_mermaid
-        else:
-            graph = _mapping(scheme.get(name))
-            mermaid = graph.get('mermaid')
-            if not mermaid and graph.get('nodes'):
-                try:
-                    mermaid = render_mermaid(graph)
-                except (ValueError, KeyError, TypeError, AttributeError):
-                    continue  # Keep older or malformed saved graphs in project.json.
-        if isinstance(mermaid, str) and mermaid.strip():
-            path = f'diagrams/{name}.mmd'
-            with archive.open(path, 'w', force_zip64=True) as member:
-                member.write(mermaid.encode('utf-8', errors='backslashreplace'))
-                if not mermaid.endswith('\n'):
-                    member.write(b'\n')
-            exported[name] = path
-    return exported
+def _write_diagram(archive, name, *, graph=None, mermaid=None):
+    if graph:
+        mermaid = graph.get('mermaid')
+        if not mermaid and graph.get('nodes'):
+            try:
+                mermaid = render_mermaid(graph)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                return None  # Keep older or malformed saved graphs in project.json.
+    if not isinstance(mermaid, str) or not mermaid.strip():
+        return None
+    path = f'diagrams/{name}.mmd'
+    with archive.open(path, 'w', force_zip64=True) as member:
+        member.write(mermaid.encode('utf-8', errors='backslashreplace'))
+        if not mermaid.endswith('\n'):
+            member.write(b'\n')
+    return path
+
+
+def _graph(out, graph, diagram, numbered):
+    if diagram:
+        out.write(_local_link('Mermaid diagram', diagram) + '\n')
+    _quote(out, graph.get('explanation'))
+    labels = {node['id']: node.get('label') or node['id'] for node in _records(graph.get('nodes'))
+              if isinstance(node.get('id'), str)}
+    for node in _records(graph.get('nodes')):
+        fields = [node.get(key) for key in ('label', 'status', 'description') if node.get(key)]
+        citations = _refs(node.get('source_ids'), numbered)
+        out.write(f'- {" · ".join(_inline(value) for value in fields)} {citations}\n')
+    if graph.get('edges'):
+        out.write('\n**Connections**\n\n')
+    for edge in _records(graph.get('edges')):
+        source, target = (_inline(labels.get(value, value)) if isinstance(value, str) else ''
+                          for value in (edge.get('source'), edge.get('target')))
+        relation = edge.get('label') or edge.get('type') or ''
+        out.write(f'- {source} → {target} · {_inline(relation)} {_refs(edge.get("source_ids"), numbered)}\n')
+    out.write('\n')
 
 
 def _scheme(archive, project, snapshot, source_paths):
     path = 'scheme.md'
-    diagrams = _diagrams(archive, project, snapshot)
+    manual = _write_diagram(archive, 'saved-architecture', mermaid=project.architecture_mermaid)
+    graphs = {key: _mapping(snapshot.get(key)) for key in ('architecture', 'workflow')}
+    diagrams = {key: _write_diagram(archive, key, graph=graph) for key, graph in graphs.items()}
     with _page(archive, path, 'Scheme') as out:
-        if manual := diagrams.get('saved-architecture'):
+        if manual:
             out.write(_local_link('Manually saved architecture (Mermaid)', manual) + '\n\n')
         if not snapshot:
             out.write('No saved generated Scheme.\n')
@@ -326,28 +344,11 @@ def _scheme(archive, project, snapshot, source_paths):
         inventory = _mapping(snapshot.get('dependency_inventory'))
         sources = {**_sources(inventory.get('sources'), project.id), **_sources(snapshot.get('sources'), project.id)}
         numbered = _numbered(sources)
-        for key in ('architecture', 'workflow'):
-            graph = _mapping(snapshot.get(key))
+        for key, graph in graphs.items():
             if not graph:
                 continue
             out.write(f'## {key.capitalize()}\n\n')
-            if key in diagrams:
-                out.write(_local_link('Mermaid diagram', diagrams[key]) + '\n')
-            _quote(out, graph.get('explanation'))
-            labels = {node['id']: node.get('label') or node['id'] for node in _records(graph.get('nodes'))
-                      if isinstance(node.get('id'), str)}
-            for node in _records(graph.get('nodes')):
-                fields = [node.get(key) for key in ('label', 'status', 'description') if node.get(key)]
-                citations = _refs(node.get('source_ids'), numbered)
-                out.write(f'- {" · ".join(_inline(value) for value in fields)} {citations}\n')
-            if graph.get('edges'):
-                out.write('\n**Connections**\n\n')
-            for edge in _records(graph.get('edges')):
-                source, target = (_inline(labels.get(value, value)) if isinstance(value, str) else ''
-                                  for value in (edge.get('source'), edge.get('target')))
-                relation = edge.get('label') or edge.get('type') or ''
-                out.write(f'- {source} → {target} · {_inline(relation)} {_refs(edge.get("source_ids"), numbered)}\n')
-            out.write('\n')
+            _graph(out, graph, diagrams[key], numbered)
         dependencies = inventory.get('dependencies') or snapshot.get('dependencies')
         if dependencies:
             out.write('## Dependencies\n\n')
@@ -356,6 +357,25 @@ def _scheme(archive, project, snapshot, source_paths):
                 fields = [item[key] for key in ('constraint', 'category', 'purpose') if item.get(key)]
                 refs = _refs([*_strings(item.get('source_ids')), *_strings(item.get('purpose_source_ids'))], numbered)
                 out.write(f'- **{_inline(title)}** {" · ".join(_inline(value) for value in fields)} {refs}\n')
+        _coverage(out, snapshot.get('coverage'))
+        _source_details(out, numbered, source_paths, path)
+
+
+def _focused_scheme(archive, project, saved, source_paths):
+    path = 'focused-scheme.md'
+    snapshot = _mapping(saved.get('snapshot'))
+    graph = _mapping(snapshot.get('graph'))
+    diagram = _write_diagram(archive, 'focused-scheme', graph=graph) if _owned(snapshot, project.id) else None
+    with _page(archive, path, 'Focused Scheme') as out:
+        if not snapshot or not _owned(snapshot, project.id):
+            out.write('No saved Focused Scheme.\n')
+            return
+        _meta(out, snapshot)
+        if instruction := snapshot.get('instruction'):
+            out.write('## Saved instruction\n\n')
+            _quote(out, instruction)
+        numbered = _numbered(_sources(snapshot.get('sources'), project.id))
+        _graph(out, graph, diagram, numbered)
         _coverage(out, snapshot.get('coverage'))
         _source_details(out, numbered, source_paths, path)
 
@@ -546,6 +566,7 @@ def write_project_markdown(archive, db, project, saved, source_paths):
     _knowledge(archive, project, _mapping(saved.get('knowledge')), source_paths)
     _qa(archive, project, _mapping(saved.get('qa')), source_paths)
     _scheme(archive, project, _mapping(saved.get('scheme')), source_paths)
+    _focused_scheme(archive, project, _mapping(saved.get('focused_scheme')), source_paths)
     _parameters(archive, project, _mapping(saved.get('parameters')), source_paths)
     _todo(archive, db, project, source_paths)
     _notes(archive, db, project, source_paths)

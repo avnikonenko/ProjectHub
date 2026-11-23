@@ -24,12 +24,13 @@ def test_markdown_export_has_readable_empty_views(tmp_path):
         db.commit()
         with render(db, project, {}) as result:
             assert set(result.namelist()) == {
-                'index.md', 'overview.md', 'knowledge.md', 'ai-qa.md', 'scheme.md',
+                'index.md', 'overview.md', 'knowledge.md', 'ai-qa.md', 'scheme.md', 'focused-scheme.md',
                 'implementation-choices.md', 'todos.md', 'notes.md', 'sources/index.md',
             }
             assert b'[Project index](../index.md)' in result.read('sources/index.md')
             assert b'No published Knowledge snapshot.' in result.read('knowledge.md')
             assert b'No saved generated Scheme.' in result.read('scheme.md')
+            assert b'No saved Focused Scheme.' in result.read('focused-scheme.md')
             assert b'No saved TODOs.' in result.read('todos.md')
     engine.dispose()
 

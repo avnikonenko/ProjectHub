@@ -36,7 +36,7 @@ from .revisions import (REVISION_KINDS, RevisionUnavailable, activate_revision, 
                         list_revisions, qa_revision_matches)
 from .history_duplicates import annotate_page
 from .history_search import HistoryIndexBusy, index_history, search_history, indexed_turn, update_active_count
-from .session_reassignment import reassign_session
+from .session_reassignment import check_session_reassignment, reassign_session
 from ...config import ConfigError, MAX_EXTRACTION_WORKERS, ai_worker_settings, save_ai_settings
 from ...generation_profiles import get_generation_profile
 from ...services import begin_session_write
@@ -1089,24 +1089,33 @@ def configure_session_link(project_id: int, session_id: int, body: SessionLinkIn
         return result
 
 
+def _preview_session_account(db, project_id, body):
+    existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
+    account = None if body.profile in (None, 'launch') else body.profile
+    if existing is not None:
+        if existing.project_id != project_id:
+            check_session_reassignment(db, existing.project_id, existing.id, project_id, require_unlinked=True)
+        if body.profile is not None and account != existing.codex_account:
+            raise HTTPException(409, 'Choose the original profile for this Codex session.')
+        account = existing.codex_account
+    return account
+
+
 @router.post('/sessions/preview')
 def preview_session_link(project_id: int, body: SessionInput, request: Request, db: DB):
     project(db, project_id)
     if not body.thread_id:
         raise HTTPException(422, 'Enter a Codex thread ID to preview.')
-    existing = db.scalar(select(CodexSession).where(CodexSession.thread_id == body.thread_id))
-    account = None if body.profile in (None, 'launch') else body.profile
-    if existing is not None:
-        if existing.project_id != project_id and existing.is_linked:
-            raise HTTPException(409, 'This Codex session is already linked to another project.')
-        if body.profile is not None and account != existing.codex_account:
-            raise HTTPException(409, 'Choose the original profile for this Codex session.')
-        account = existing.codex_account
+    account = _preview_session_account(db, project_id, body)
     db.rollback()
     try:
-        return manager_for(request.app).preview_association(body.title, body.thread_id, account)
+        result = manager_for(request.app).preview_association(body.title, body.thread_id, account)
     except CodexError as exc:
         raise HTTPException(503, str(exc)) from exc
+    project(db, project_id)
+    if _preview_session_account(db, project_id, body) != account:
+        raise HTTPException(409, 'The Codex session profile changed. Preview the session again.')
+    return result
 
 
 @router.post('/sessions', status_code=201)

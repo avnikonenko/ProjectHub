@@ -161,6 +161,12 @@ def test_link_claude_session_reuses_import_with_source_url(api, tmp_path, monkey
         with client.app.state.engine.begin() as db:
             db.execute(text("UPDATE notes SET conversation=json_remove(conversation, '$.provider_conversation_id') "
                             "WHERE id=:id"), {'id': note['id']})
+    conflicting_export = {**export, 'content': json.dumps({
+        **json.loads(export['content']), 'provider_conversation_id': '00000000-0000-4000-8000-000000000024',
+    })}
+    assert client.post(base + '/conversations/preview', json=conflicting_export).status_code == 409
+    alternate_reference = {**export, 'source_url': 'https://example.test/other-transcript-location'}
+    assert check(client, base, alternate_reference)['existing']['id'] == note['id']
     transcript.write_text(''.join(json.dumps({
         'type': message['role'], 'sessionId': session_id, 'uuid': message['id'],
         'parentUuid': messages[index - 1]['id'] if index else None,
@@ -177,8 +183,11 @@ def test_link_claude_session_reuses_import_with_source_url(api, tmp_path, monkey
     assert linked.json()['id'] == note['id'] and linked.json()['reference'] == original_url
     assert linked.json()['conversation']['linked_session']['id'] == session_id
     assert check(client, base, body)['existing']['duplicate'] is True
-    alternate_reference = {**export, 'source_url': 'https://example.test/other-transcript-location'}
     assert check(client, base, alternate_reference)['existing']['id'] == note['id']
+    assert client.post(base + '/conversations/preview', json=conflicting_export).status_code == 409
+    # Even an already-confirmed update cannot reuse a snapshot with a conflicting identifier.
+    assert save(client, base, conflicting_export, preview, replace_existing=True).status_code == 409
+    assert check(client, base, body)['existing']['duplicate'] is True
     sources = client.get(base + f"/conversations/{note['id']}/sources").json()
     assert len(client.get(base + '/notes').json()) == 1 and len(sources) == 2
 
@@ -205,6 +214,35 @@ def test_replacement_revalidates_input_and_preserves_source_and_message_identity
     revisions = client.get(base + f"/conversations/{note['id']}/sources").json()
     assert len(revisions) == 2 and revisions[0]['content_hash'] != revisions[1]['content_hash']
     assert client.get(base + f"/conversations/{note['id']}/sources/{revisions[1]['id']}").content == old['content'].encode()
+
+
+def test_claude_import_rejects_reference_owned_by_another_saved_transcript(api):
+    client, base, other = api
+    messages = [{'role': 'user', 'content': 'Question.'}, {'role': 'assistant', 'content': 'Answer.'}]
+    official = {'filename': 'claude.json', 'source_url': 'https://example.test/first',
+                'content': json.dumps({'title': 'Export', 'provider': 'claude', 'messages': messages,
+                                       'provider_conversation_id': '00000000-0000-4000-8000-000000000031'})}
+    imported = save(client, base, official, check(client, base, official)).json()
+    other_body = file_payload([*messages, {'role': 'user', 'content': 'Separate project transcript.'}],
+                              source='https://example.test/second')
+    second = save(client, base, other_body, check(client, base, other_body)).json()
+    conflicting = {**official, 'source_url': other_body['source_url']}
+    assert client.post(base + '/conversations/preview', json=conflicting).status_code == 409
+    assert check(client, other, conflicting)['existing'] is None
+
+    identical = check(client, base, official)
+    assert identical['existing']['duplicate'] is True
+    revised_link = {**official, 'source_url': 'https://example.test/new-location'}
+    preview = check(client, base, revised_link)
+    assert preview['existing']['id'] == imported['id']
+    assert preview['fingerprint'] != identical['fingerprint']
+    assert save(client, base, revised_link, identical, replace_existing=True).status_code == 409
+    assert save(client, base, revised_link, preview).status_code == 409
+    notes = {note['id']: note for note in client.get(base + '/notes').json()}
+    assert set(notes) == {imported['id'], second['id']}
+    assert notes[imported['id']]['reference'] == official['source_url']
+    assert notes[second['id']]['reference'] == other_body['source_url']
+    assert len(client.get(base + f"/conversations/{imported['id']}/sources").json()) == 1
 
 
 def test_partial_and_forbidden_sources_require_explicit_handling(api, monkeypatch):

@@ -11,7 +11,7 @@ from .history_search import _index_lock, update_active_count
 from .manager import record_dict
 
 
-def _checked_session(db, source_project_id, session_id, target_project_id, require_unlinked):
+def check_session_reassignment(db, source_project_id, session_id, target_project_id, *, require_unlinked):
     row = scoped(db, CodexSession, source_project_id, session_id)
     require_project(db, target_project_id)
     if source_project_id == target_project_id:
@@ -48,14 +48,16 @@ def reassign_session(db, source_project_id, session_id, target_project_id, manag
                 raise HTTPException(409, message)
             locks.callback(lock.release)
         try:
-            _checked_session(db, source_project_id, session_id, target_project_id, require_unlinked)
+            check_session_reassignment(db, source_project_id, session_id, target_project_id,
+                                       require_unlinked=require_unlinked)
             db.rollback()
             manager.release_session(session_id)
             db.expire_all()
             # A real SQLite write transaction prevents concurrent index/session
             # writers from changing ownership between validation and commit.
             db.execute(text('BEGIN IMMEDIATE'))
-            row = _checked_session(db, source_project_id, session_id, target_project_id, require_unlinked)
+            row = check_session_reassignment(db, source_project_id, session_id, target_project_id,
+                                             require_unlinked=require_unlinked)
             before = record_dict(row)
             row.project_id = target_project_id
             row.is_linked = True
