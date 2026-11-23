@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from backend.app.db import initialize
 from backend.app.integrations.codex import router as routes
 from backend.app.integrations.codex import scheme_ask
+from backend.app.integrations.codex.scheme_evidence import _records
+from backend.app.integrations.codex.scheme_passages import GAP
 from backend.app.integrations.codex.progress import GenerationCancelled
 from backend.app.models import (
     CodexSession, GenerationRevision, Note, Project, ProjectFocusedScheme, ProjectHistoryBatch, ProjectScheme,
@@ -232,6 +234,19 @@ def test_matching_graph_entry_brings_its_citation_even_when_code_uses_different_
     assert sum(row['kind'] == 'saved_scheme_evidence' for row in records) == 12
 
 
+def test_question_prefers_a_relevant_later_passage_within_saved_excerpt_budget():
+    rationale = 'Immutable manifests let a retry validate the original inputs after renaming.'
+    body = 'This is unrelated setup context. ' * 70 + '\n\n' + rationale
+    source = {'id': 'manifest', 'label': 'Backup planning', 'text': body}
+    snapshot = {'generated_at': _STAMP, 'architecture': _graph('Backup manifest format', ['manifest']),
+                'sources': [source]}
+
+    records = scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'Why use immutable manifests for backup?')
+
+    excerpt = next(row['text'] for row in records if row.get('scheme_source_id') == 'manifest')
+    assert rationale in excerpt and len(excerpt) <= 1800
+
+
 def test_saved_evidence_keeps_excerpt_but_drops_changed_or_unproven_transcript_links(tmp_path):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -284,6 +299,35 @@ def test_saved_turn_links_are_limited_to_currently_linked_matching_project_sessi
         db.flush()
         assert saved()['text'] == source['text']
         assert 'turn_id' not in saved()
+    engine.dispose()
+
+
+def test_selected_turn_spans_link_only_when_each_quote_matches_the_current_turn(tmp_path):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        project = Project(id=1, name='Fixture')
+        db.add(project)
+        db.flush()
+        db.add(CodexSession(id=10, project_id=1, thread_id='fixture'))
+        db.flush()
+        original = ('Input workflow reads a project.\n\n' + 'irrelevant text ' * 450
+                    + '\n\nOutput workflow saves the project.')
+        db.execute(text('INSERT INTO codex_history_turns(project_id,session_id,session_title,turn_id,status,messages,content) '
+                        "VALUES(1,10,'Thread','turn','completed','[]',:body)"), {'body': original})
+        sources, *_ = _records(db, project)
+        source = next(row for row in sources if row.get('turn_id') == 'turn')
+        assert GAP in source['text'] and len(source['excerpt_spans']) == 2
+        snapshot = {'generated_at': _STAMP, 'sources': [source]}
+
+        def saved():
+            return scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'How does the workflow save?',
+                                                    db=db, project_id=1)[1]
+
+        assert saved()['turn_id'] == 'turn'
+        db.execute(text("UPDATE codex_history_turns SET content=:body WHERE project_id=1 AND session_id=10 AND turn_id='turn'"),
+                   {'body': original.replace('saves', 'loads')})
+        assert 'turn_id' not in saved()
+        assert saved()['text'] == source['text']
     engine.dispose()
 
 

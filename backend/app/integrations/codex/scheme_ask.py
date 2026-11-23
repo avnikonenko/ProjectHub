@@ -10,6 +10,7 @@ from ...project_evidence import EvidenceReadError
 from .history_search import _SHARE_REFERENCE
 from .knowledge_sources import CONVERSATION_NOTE_SQL
 from .scheme_evidence import _EvidenceScope, collect_evidence
+from .scheme_passages import EXCERPT_CHARS, GAP, select_passages
 
 
 _SURROGATES = re.compile('[\ud800-\udfff]')
@@ -21,7 +22,11 @@ _NOTE_LINK = text(f"""SELECT 1 FROM notes WHERE project_id=:pid AND id=:nid AND 
 _TURN_LINK = text("""SELECT 1 FROM codex_history_turns h JOIN codex_sessions s
     ON s.project_id=h.project_id AND s.id=h.session_id AND s.is_linked=1
     WHERE h.project_id=:pid AND h.session_id=:sid AND h.turn_id=:tid AND h.status!='inProgress'
-    AND instr(h.content,:excerpt)>0""")
+    AND CASE WHEN :spans IS NULL THEN instr(h.content,:excerpt)>0 ELSE NOT EXISTS (
+        SELECT 1 FROM json_each(:spans) part
+        WHERE substr(h.content, json_extract(part.value,'$[0]') + 1, json_extract(part.value,'$[1]'))
+              IS NOT json_extract(part.value,'$[2]')
+    ) END""")
 
 
 def _clip(value, limit):
@@ -36,6 +41,41 @@ def _rows(rows):
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
+def _turn_link_spans(source):
+    """Recover exact source slices from their offsets and rendered lengths."""
+    spans = source.get('excerpt_spans')
+    if not isinstance(spans, list) or not 1 < len(spans) <= 64:
+        return None
+    excerpt = source['text']
+    cursor, previous_end = 0, -1
+    pieces = []
+    for span in spans:
+        if not isinstance(span, dict):
+            return None
+        start, end = span.get('start'), span.get('end')
+        if type(start) is not int or type(end) is not int or not previous_end < start < end < 2**63:
+            return None
+        width = end - start
+        piece_end = cursor + width
+        if piece_end > len(excerpt):
+            return None
+        pieces.append((start, width, excerpt[cursor:piece_end]))
+        if piece_end < len(excerpt) and not excerpt.startswith(GAP, piece_end):
+            return None
+        cursor = piece_end + len(GAP)
+        previous_end = end
+    return _json(pieces) if cursor == len(excerpt) + len(GAP) else None
+
+
+def _saved_excerpt(source, scope):
+    value = _clip(source.get('text'), 24_000)
+    prefix = _clip(value, 1800)
+    if len(value) <= 1800:
+        return prefix
+    selected = select_passages(value, 1800, priority=scope.score)['text']
+    return selected if scope.score(selected) > scope.score(prefix) else prefix
 
 
 def _entry_score(row, scope, labels):
@@ -119,11 +159,14 @@ def _current_navigation(db, project_id, source):
                                        'updated': updated})):
         return {'note_id': note_id, 'note_created_at': created, 'share': True}
 
+    spans = _turn_link_spans(source)
+
     def turn(record):
         session_id, turn_id = record.get('session_id'), record.get('turn_id')
         if (type(session_id) is int and 0 < session_id < 2**63 and isinstance(turn_id, str)
                 and 0 < len(turn_id) <= 200 and not _SURROGATES.search(turn_id)
-                and db.scalar(_TURN_LINK, {'pid': project_id, 'sid': session_id, 'tid': turn_id, 'excerpt': excerpt})):
+                and db.scalar(_TURN_LINK, {'pid': project_id, 'sid': session_id, 'tid': turn_id,
+                                           'excerpt': excerpt, 'spans': spans})):
             return {'session_id': session_id, 'turn_id': turn_id}
         return {}
 
@@ -178,13 +221,15 @@ def saved_scheme_passages(snapshot, kind, question, *, db=None, project_id=None)
     def rank(item):
         identifier = _clip(item.get('id'), 200)
         return (-references.get(identifier, 0),
-                -scope.score(_clip(item.get('label'), 240) + ' ' + _clip(item.get('text'), 1800)),
+                -scope.score(_clip(item.get('label'), 240) + ' ' + _clip(item.get('text'), EXCERPT_CHARS)),
                 identifier not in references)
 
     for source in sorted(evidence, key=rank):
         identifier = source.get('id')
-        excerpt = _clip(source.get('text'), 1800)
-        if not isinstance(identifier, str) or not excerpt.strip() or identifier in seen:
+        if not isinstance(identifier, str) or identifier in seen:
+            continue
+        excerpt = _saved_excerpt(source, scope)
+        if not excerpt.strip():
             continue
         seen.add(identifier)
         passage = {'scheme_source_id': _clip(identifier, 200), 'kind': 'saved_scheme_evidence',
