@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from threading import Lock
 from sqlalchemy import URL, create_engine, event
 from sqlalchemy.orm import Session
 from fastapi import Request
@@ -7,6 +8,9 @@ from alembic import command
 from alembic.config import Config
 
 from .resource_paths import runtime_resource
+
+
+_migration_lock = Lock()
 
 
 def default_data_dir():
@@ -29,7 +33,8 @@ def initialize(data_dir):
         connection.execute('PRAGMA busy_timeout=15000')
     cfg = Config()
     cfg.set_main_option('script_location', str(runtime_resource('migrations', 'migrations')).replace('%', '%%'))
-    with engine.begin() as connection:
+    # Alembic's environment and operation proxies are shared across threads.
+    with _migration_lock, engine.begin() as connection:
         cfg.attributes['connection'] = connection
         command.upgrade(cfg, 'head')
     db_path.chmod(0o600)
