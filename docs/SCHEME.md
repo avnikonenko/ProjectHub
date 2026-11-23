@@ -44,8 +44,9 @@ documented input alternatives that change which steps run. General diagrams
 describe the main workflow and its handoffs. Use Focused Scheme for exact
 parameter values and implementation details.
 If the workflow omits citations for an inspected indexing handoff, Scheme can
-retry once. A malformed optional rewrite leaves the validated draft available,
-with the remaining citation gap under coverage.
+retry once if enough time remains. It keeps the validated draft when the retry
+fails, removes supported content, or leaves the same citation gap. Remaining
+gaps appear under coverage.
 Find earlier results under **Scheme details → Previous versions**.
 When Scheme cites published Knowledge, ProjectHub can fill in its recorded
 original source references. If these would exceed the citation limit, it retries

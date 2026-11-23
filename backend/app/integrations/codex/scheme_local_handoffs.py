@@ -12,6 +12,9 @@ _MAX_ROWS = 12
 _COMPARISONS = {ast.Eq: operator.eq, ast.NotEq: operator.ne, ast.Lt: operator.lt,
                 ast.LtE: operator.le, ast.Gt: operator.gt, ast.GtE: operator.ge,
                 ast.Is: operator.is_, ast.IsNot: operator.is_not}
+_CONTAINER_MUTATORS = {'append', 'clear', 'discard', 'extend', 'insert', 'pop', 'popitem',
+                       'remove', 'reverse', 'setdefault', 'sort', 'update'}
+_INVALIDATED_GUARD = object()
 
 
 @dataclass(frozen=True)
@@ -39,20 +42,22 @@ def _may_terminate(statement):
     return any(isinstance(node, (ast.Return, ast.Raise)) for node in ast.walk(statement))
 
 
-def _known_truth(node, bindings):
+def _known_truth(node, bindings, assumptions=None):
     if isinstance(node, ast.Constant):
         return bool(node.value)
     if isinstance(node, ast.Name):
+        if assumptions is not None and type(assumptions.get(node.id)) is bool:
+            return assumptions[node.id]
         binding = bindings.get(node.id)
         return binding.truth if binding else None
     if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
-        inner = _known_truth(node.operand, bindings)
+        inner = _known_truth(node.operand, bindings, assumptions)
         return None if inner is None else not inner
     if isinstance(node, ast.BoolOp):
         terminal = isinstance(node.op, ast.Or)
         unknown = False
         for part in node.values:
-            outcome = _known_truth(part, bindings)
+            outcome = _known_truth(part, bindings, assumptions)
             if outcome is terminal:
                 return terminal
             unknown |= outcome is None
@@ -70,6 +75,101 @@ def _known_truth(node, bindings):
             except TypeError:
                 return None
     return None
+
+
+def _guard_assumptions(node, assumptions, local_names, taken):
+    """Carry truth facts for local names, whose rebinding can be tracked."""
+    facts = assumptions.copy()
+    while isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        node, taken = node.operand, not taken
+    if isinstance(node, ast.Name) and node.id in local_names:
+        facts[node.id] = taken
+    else:
+        # Attribute and indexed checks depend on local objects, but do not
+        # establish the truth of those objects themselves.
+        for part in ast.walk(node):
+            if isinstance(part, ast.Name) and part.id in local_names:
+                facts.setdefault(part.id, None)
+    return facts
+
+
+def python_bound_names(node):
+    """Names written by syntax, including bindings without an ast.Name target."""
+    names = set()
+    for part in ast.walk(node):
+        if isinstance(part, ast.Name) and isinstance(part.ctx, (ast.Store, ast.Del)):
+            names.add(part.id)
+        elif isinstance(part, ast.alias):
+            names.add(part.asname or part.name.split('.')[0])
+        elif isinstance(part, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef, ast.ExceptHandler,
+                               ast.MatchAs, ast.MatchStar)) and part.name is not None:
+            names.add(part.name)
+        elif isinstance(part, ast.MatchMapping) and part.rest is not None:
+            names.add(part.rest)
+        elif isinstance(part, ast.Global):
+            names.update(part.names)
+        elif isinstance(part, ast.Nonlocal):
+            names.update(part.names)
+    return names
+
+
+def may_mutate_container(node):
+    return any(
+        (isinstance(part, (ast.Attribute, ast.Subscript)) and isinstance(part.ctx, (ast.Store, ast.Del)))
+        or (isinstance(part, ast.Call) and isinstance(part.func, ast.Attribute)
+            and part.func.attr in _CONTAINER_MUTATORS)
+        for part in ast.walk(node))
+
+
+def python_guard_aliases(function):
+    """Collect plausible local aliases for conservative guard invalidation."""
+    aliases = defaultdict(set)
+    for node in ast.walk(function):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else (node.target,)
+        value = node.value
+        while isinstance(value, (ast.Attribute, ast.Subscript)):
+            value = value.value
+        if isinstance(value, ast.Name):
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    aliases[target.id].add(value.id)
+                    aliases[value.id].add(target.id)
+    return aliases
+
+
+def _possible_aliases(names, aliases):
+    names = set(names)
+    pending = list(names)
+    while pending:
+        for alias in aliases.get(pending.pop(), ()):
+            if alias not in names:
+                names.add(alias)
+                pending.append(alias)
+    return names
+
+
+def invalidate_mutable_guards(statement, assumptions, aliases):
+    """Retain the path already taken, but invalidate facts an effect can change."""
+    if not assumptions:
+        return
+    affected = set(assumptions) if may_mutate_container(statement) else set()
+    for node in ast.walk(statement):
+        if not isinstance(node, ast.Call):
+            continue
+        handed_to_call = [*node.args, *(keyword.value for keyword in node.keywords)]
+        if isinstance(node.func, ast.Attribute):
+            handed_to_call.append(node.func.value)
+        passed = {part.id for value in handed_to_call for part in ast.walk(value) if isinstance(part, ast.Name)}
+        affected.update(assumptions.keys() & _possible_aliases(passed, aliases))
+    assumptions.update(dict.fromkeys(affected, _INVALIDATED_GUARD))
+
+
+def has_unproven_guard(test, assumptions, aliases):
+    uncertain = _possible_aliases(
+        (name for name, value in assumptions.items() if value is _INVALIDATED_GUARD), aliases)
+    return any(isinstance(part, ast.Name) and part.id in uncertain for part in ast.walk(test))
 
 
 def _supported_guard(node):
@@ -104,10 +204,11 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
         # Nested declarations, including a global in a branch, are conservatively excluded.
         if any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(function)):
             continue
-        stack = [(list(reversed(function.body)), inputs, {}, (), ())]
+        aliases = python_guard_aliases(function)
+        stack = [(list(reversed(function.body)), inputs, {}, (), (), {})]
         created_paths = 1
         while stack and steps > 0:
-            pending, bindings, previous, guards, path = stack.pop()
+            pending, bindings, previous, guards, path, assumptions = stack.pop()
             while pending and steps > 0:
                 statement = pending.pop()
                 if isinstance(statement, tuple):
@@ -116,7 +217,10 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                 steps -= 1
                 if isinstance(statement, ast.If):
                     writes = any(isinstance(node, ast.NamedExpr) for node in ast.walk(statement.test))
-                    truth = None if writes else _known_truth(statement.test, bindings)
+                    invalidate_mutable_guards(statement.test, assumptions, aliases)
+                    if has_unproven_guard(statement.test, assumptions, aliases):
+                        break
+                    truth = None if writes else _known_truth(statement.test, bindings, assumptions)
                     if truth is not None:
                         pending.extend(reversed(statement.body if truth else statement.orelse))
                         continue
@@ -125,6 +229,7 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                             break
                         bindings.clear()
                         previous.clear()
+                        assumptions.clear()
                         path = ()
                         continue
                     test = shape(statement.test)
@@ -137,13 +242,16 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                     if not _supported_guard(statement.test):
                         unsupported.update((opposite, taken))
                     stack.append((pending + [guards, *reversed(statement.orelse)], bindings.copy(), previous.copy(),
-                                  (*guards, opposite), (*path, opposite)))
+                                  (*guards, opposite), (*path, opposite),
+                                  _guard_assumptions(statement.test, assumptions, bindings, False)))
+                    assumptions = _guard_assumptions(statement.test, assumptions, bindings, True)
                     pending.extend([guards, *reversed(statement.body)])
                     guards = (*guards, taken)
                     path = (*path, taken)
                     continue
                 if isinstance(statement, ast.Raise):
                     break
+                invalidate_mutable_guards(statement, assumptions, aliases)
                 current_guard = ' and '.join(guards)
                 target = None
                 value = None
@@ -162,11 +270,13 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                         break
                     bindings.clear()
                     previous.clear()
+                    assumptions.clear()
                     continue
 
                 if value is not None and any(isinstance(node, ast.NamedExpr) for node in ast.walk(value)):
                     bindings.clear()
                     previous.clear()
+                    assumptions.clear()
                     if isinstance(statement, ast.Return):
                         break
                     continue
@@ -216,6 +326,7 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                                     scores[key] = max(scores[key], focus(earlier))
                             previous[receiver_key] = name, call.lineno, call.col_offset, current_guard
                 if isinstance(target, ast.Name):
+                    assumptions.pop(target.id, None)
                     rendered = shape(value)
                     if name:
                         rendered = name + ('().' + value.attr if isinstance(value, ast.Attribute) else '()')
@@ -231,6 +342,7 @@ def local_handoff_rows(parsed, focus, *, shape, structured=None):
                     # Attribute writes and destructuring can change a receiver or an alias.
                     bindings.clear()
                     previous.clear()
+                    assumptions.clear()
                 if isinstance(statement, ast.Return):
                     break
         if steps <= 0 or stack:

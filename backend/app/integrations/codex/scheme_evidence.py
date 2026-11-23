@@ -34,7 +34,8 @@ from .scheme_migration_sql import compact_migration_sql, migration_sql_declarati
 from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_namelist import namelist_excerpt
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
-from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations, python_imported_symbols
+from .scheme_python_flow import (python_entrypoint_trace, python_flow_declarations, python_imported_symbols,
+                                 python_route_return_calls)
 from .scheme_route_evidence import python_route_declarations
 from .scheme_cli_choices import cli_choice_rows
 from .scheme_workflow_sql import workflow_sql_rows
@@ -588,14 +589,15 @@ def _index_workflows(sources, preferred_paths=()):
     for schema in sorted(sources, key=lambda source: source['path']):
         if not _python_migration(schema['path']):
             continue
-        indexes = set(_VIRTUAL_INDEX.findall(schema['text'])) & set(_INDEX_WRITE.findall(schema['text']))
+        indexes = {name.casefold() for name in _VIRTUAL_INDEX.findall(schema['text'])} & {
+            name.casefold() for name in _INDEX_WRITE.findall(schema['text'])}
         if not indexes:
             continue
         matches = []
         for source in sources:
             if source is schema or source['provenance'] != 'observed in code':
                 continue
-            queried = set(_INDEX_QUERY.findall(source['text']))
+            queried = {name.casefold() for name in _INDEX_QUERY.findall(source['text'])}
             if indexes & queried:
                 matches.append((source['path'] in preferred_paths, len(indexes & queried), len(queried), source))
         if matches:
@@ -1201,22 +1203,10 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
                         imported = python_imported_symbols(parsed)
                         for handler in ast.walk(parsed):
                             if isinstance(handler, (ast.FunctionDef, ast.AsyncFunctionDef)) and handler.name in route_owners:
-                                nodes = list(ast.walk(handler))
-                                shadowed = {node.id for node in nodes if isinstance(node, ast.Name)
-                                            and isinstance(node.ctx, (ast.Store, ast.Del))}
-                                shadowed.update(node.arg for node in nodes if isinstance(node, ast.arg))
-                                shadowed.update(node.asname or node.name for node in nodes if isinstance(node, ast.alias))
-                                if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not handler
-                                       for node in nodes):
-                                    continue
-                                for node in nodes:
-                                    if (isinstance(node, ast.Return) and isinstance(node.value, ast.Call)
-                                            and isinstance(node.value.func, ast.Name)
-                                            and (name := node.value.func.id) not in shadowed):
-                                        if route_support is not None:
-                                            route_support.add(name)
-                                        if imported.get(name):
-                                            route_imports[name] = imported[name]
+                                calls = python_route_return_calls(handler)
+                                if route_support is not None:
+                                    route_support.update(calls)
+                                route_imports.update((name, imported[name]) for name in calls if name in imported)
 
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
@@ -1695,7 +1685,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         scope_identity = {'scope': focus.value, 'scope_policy': 18, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v31', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v15' if focus else 'scheme-inspection-v32', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1742,6 +1732,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         route_targets = set()
         route_queries = set()
         route_callers = {}
+        python_prefixes = {}
+        prefix_chars = 0
         direct_handoffs = {}
         configuration_paths = set()
         configurations = {}
@@ -1851,11 +1843,16 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     called_names = set()
                     returned_calls = {}
                     support_names = set()
+                    roots = sorted(entrypoint_functions.get(relative, ()))
                     syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python,
                                                   admitted_handoffs=admitted_handoffs)
                               if focus else _structural_excerpt(value, relative,
-                                  entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names,
+                                  entrypoints=roots, trace_imports=called_names,
                                   route_imports=returned_calls, route_support=support_names))
+                    if (not focus and PurePosixPath(relative).suffix == '.py'
+                            and prefix_chars + len(value) <= DEFAULT_SCHEME_READ_BYTES):
+                        python_prefixes[relative] = (value, declared_excerpt, roots)
+                        prefix_chars += len(value)
                     if not focus and called_names:
                         entrypoint_paths.add(relative)
                     linked = _import_targets(value, relative, code_paths)
@@ -1954,6 +1951,23 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 omitted_reasons['unreadable_or_malformed'] = omitted_reasons.get('unreadable_or_malformed', 0) + 1
                 file_omission_reasons[relative] = 'unreadable_or_malformed'
                 limitations.add('Some selected files were unreadable, unsafe, malformed, binary, above 64 KiB, or too deeply nested.')
+        for source in sources[len(records):]:
+            relative = source['path']
+            if relative not in python_prefixes or source['provenance'] != 'observed in code':
+                continue
+            value, declared_excerpt, previous_roots = python_prefixes[relative]
+            roots = sorted(entrypoint_functions.get(relative, ()))
+            if roots == previous_roots:
+                continue
+            if time.monotonic() >= budget.deadline:
+                limitations.add('The inspection time limit prevented some late-discovered entrypoint traces.')
+                break
+            # A route or declaration may establish an entrypoint after its
+            # target was inspected. Reuse the already-read bounded prefix.
+            syntax = _structural_excerpt(value, relative, entrypoints=roots, trace_imports=set(), route_imports={})
+            source['text'] = '\n'.join(part for part in (declared_excerpt, syntax) if part)[:3200]
+            source['content_hash'] = hashlib.sha256(source['text'].encode()).hexdigest()
+            entrypoint_paths.add(relative)
         inspection_seconds = round(time.monotonic() - budget.started, 6)
         if not inspection_stop and inspection_seconds >= _INSPECTION_SECONDS:
             inspection_stop = 'time_budget'
@@ -2109,6 +2123,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         # Attach local accounting only after the AI package has been finalized.
         # A file with even one retained excerpt is counted as supplied.
         supplied_paths = {source['path'] for source in result['sources'] if source.get('path')}
+        result['route_query_paths'] = sorted(route_queries & supplied_paths)
         if inventory['listing_complete']:
             prepared_paths = {source['path'] for source in repository_sources}
             omitted_paths = eligible - supplied_paths

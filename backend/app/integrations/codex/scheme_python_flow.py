@@ -5,7 +5,8 @@ from collections import deque
 import heapq
 import re
 
-from .scheme_local_handoffs import _known_truth
+from .scheme_local_handoffs import (_guard_assumptions, _known_truth, has_unproven_guard, invalidate_mutable_guards,
+                                    may_mutate_container, python_bound_names, python_guard_aliases)
 
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -17,8 +18,6 @@ _TRACE_DEPTH = 3
 _TRACE_ROUTINES = 24
 _TRACE_NODES = 10000
 _TRACE_ROUTINE_ROWS = 8
-_CONTAINER_MUTATORS = {'append', 'clear', 'discard', 'extend', 'insert', 'pop', 'popitem',
-                       'remove', 'reverse', 'setdefault', 'sort', 'update'}
 _ARTIFACT_CALL = re.compile(r'(?:read|to|write)_(?:csv|tsv|json|parquet|feather|excel|hdf5?)$')
 _TRACE_ROUTINE_CALLS = {
     'ValueError', 'all', 'any', 'append', 'add_argument', 'add_argument_group', 'clear', 'close',
@@ -130,7 +129,9 @@ def python_flow_declarations(parsed, focus, *, predicate_shape):
                     score = owner_score + detail_score + 2 * (owner_score * parameter_scope + parameter_call_score)
                     context = f' under with {", ".join(contexts)}' if contexts else ''
                     label = f'Python flow {owner}{context}: {statement}'
-                    results.append(((-score, -detail_score, not is_guard, node.lineno), label))
+                    # Preserve a save callback ahead of repetitive status and
+                    # cancellation calls when the question concerns saving.
+                    results.append(((not commit_score, -score, -detail_score, not is_guard, node.lineno), label))
         pending.extend((child, owner, parameters, contexts)
                        for child in reversed(list(ast.iter_child_nodes(node)))
                        if not isinstance(child, ast.expr))
@@ -228,10 +229,13 @@ def _trace_group_rank(owner, priority):
     return (_trace_rank(leaf, '', True), priority)
 
 
-def _lifecycle_calls(body, owner, shape):
+def _lifecycle_calls(function, owner, shape):
     """Find a normal, syntactically reachable path from validated value to write."""
-    if any(isinstance(node, (ast.Global, ast.Nonlocal)) for statement in body for node in ast.walk(statement)):
+    if any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in ast.walk(function)):
         return []
+    args = function.args
+    local_names = {arg.arg for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs)}
+    aliases = python_guard_aliases(function)
     pairs = {}
     steps = 800
 
@@ -251,10 +255,6 @@ def _lifecycle_calls(body, owner, shape):
         return [name.id for name in ast.walk(node) if isinstance(name, ast.Name)
                 and isinstance(name.ctx, (ast.Store, ast.Del))]
 
-    def mutates_value(node):
-        return any(isinstance(part, (ast.Attribute, ast.Subscript))
-                   and isinstance(part.ctx, (ast.Store, ast.Del)) for part in ast.walk(node))
-
     def block(statements, paths, depth=0):
         nonlocal steps
         if depth > 5:
@@ -266,73 +266,88 @@ def _lifecycle_calls(body, owner, shape):
             if isinstance(statement, ast.If):
                 if any(isinstance(node, ast.NamedExpr) for node in ast.walk(statement.test)):
                     return []
-                truth = _known_truth(statement.test, {})
-                arms = (statement.body if truth else statement.orelse,) if truth is not None else (
-                    statement.body, statement.orelse)
-                paths = [result for arm in arms for result in block(
-                    arm, [dict(path) for path in paths], depth + 1)]
+                alternatives = {True: [], False: []}
+                may_mutate = may_mutate_container(statement.test)
+                for definitions, assumptions in paths:
+                    invalidate_mutable_guards(statement.test, assumptions, aliases)
+                    if has_unproven_guard(statement.test, assumptions, aliases):
+                        continue
+                    truth = _known_truth(statement.test, {}, assumptions)
+                    if may_mutate:
+                        definitions = {}
+                    for taken in (True, False) if truth is None else (truth,):
+                        facts = _guard_assumptions(statement.test, assumptions, local_names | definitions.keys(), taken)
+                        alternatives[taken].append((definitions.copy(), facts))
+                paths = block(statement.body, alternatives[True], depth + 1) + block(
+                    statement.orelse, alternatives[False], depth + 1)
             elif isinstance(statement, _CONTEXTS):
                 bound = {name for item in statement.items if item.optional_vars for name in targets(item.optional_vars)}
-                paths = block(statement.body, [{k: v for k, v in path.items() if k not in bound}
-                                               for path in paths], depth + 1)
+                for _, assumptions in paths:
+                    for item in statement.items:
+                        invalidate_mutable_guards(item.context_expr, assumptions, aliases)
+                paths = block(statement.body, [
+                    ({k: v for k, v in definitions.items() if k not in bound},
+                     {k: v for k, v in assumptions.items() if k not in bound})
+                    for definitions, assumptions in paths], depth + 1)
             elif isinstance(statement, ast.Try):
                 paths = block([*statement.body, *statement.orelse, *statement.finalbody], paths, depth + 1)
             else:
-                if mutates_value(statement):
-                    # Stored provenance could also be reachable through an alias.
-                    for path in paths:
-                        path.clear()
-                    continue
+                for _, assumptions in paths:
+                    invalidate_mutable_guards(statement, assumptions, aliases)
                 rebound = {name for node in ast.walk(statement) if isinstance(node, ast.NamedExpr)
                            for name in targets(node.target)}
+                if may_mutate_container(statement):
+                    # Stored provenance could also be reachable through an alias.
+                    for definitions, _ in paths:
+                        definitions.clear()
+                    continue
                 if rebound:
-                    for path in paths:
+                    for definitions, assumptions in paths:
                         for name in rebound:
-                            path.pop(name, None)
+                            definitions.pop(name, None)
+                            assumptions.pop(name, None)
                     continue
                 call = statement_call(statement)
-                if (call is not None and isinstance(call.func, ast.Attribute)
-                        and call.func.attr in _CONTAINER_MUTATORS
-                        and isinstance(call.func.value, ast.Name)
-                        and any(call.func.value.id in path for path in paths)):
-                    for path in paths:
-                        path.clear()
-                    continue
                 label = _call_shape(call, shape, max_arguments=5) if call is not None else ''
                 leaf = label.split('(', 1)[0].rsplit('.', 1)[-1]
                 row = (statement.lineno, f'Workflow call {owner}: {label}')
                 if isinstance(statement, (ast.Assign, ast.AnnAssign)):
                     assigned = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
                     names = {name for target in assigned for name in targets(target)}
-                    for path in paths:
+                    local_names.update(names)
+                    for definitions, assumptions in paths:
                         if re.match(r'(?:validate|verify)(?:_|$)', leaf):
                             checked = (row,)
                         elif all(isinstance(target, ast.Name) for target in assigned):
-                            checked = inputs(statement.value, path)
+                            checked = inputs(statement.value, definitions)
                         else:
                             checked = ()
                         for name in names:
-                            path.pop(name, None)
+                            assumptions.pop(name, None)
+                            definitions.pop(name, None)
                             if checked:
-                                path[name] = checked
+                                definitions[name] = checked
                 elif label and re.match(r'(?:save|persist|commit|write)(?:_|$)', leaf):
                     args = (*call.args, *(keyword.value for keyword in call.keywords if keyword.arg))
-                    for path in paths:
-                        for checked in (check for arg in args for check in inputs(arg, path)):
+                    for definitions, _ in paths:
+                        for checked in (check for arg in args for check in inputs(arg, definitions)):
                             pairs.setdefault((checked, row), None)
-                elif not isinstance(statement, (ast.Expr, ast.Pass, ast.Import, ast.ImportFrom)):
+                elif not isinstance(statement, (ast.Expr, ast.Pass)):
                     # An unsupported block could terminate or invalidate a binding.
                     if any(isinstance(node, (ast.Return, ast.Raise)) for node in ast.walk(statement)):
                         return []
-                    bound = set(targets(statement))
-                    paths = [{k: v for k, v in path.items() if k not in bound} for path in paths]
-            distinct = {tuple(sorted(path.items())): path for path in paths}
+                    bound = python_bound_names(statement)
+                    paths = [({k: v for k, v in definitions.items() if k not in bound},
+                              {k: v for k, v in assumptions.items() if k not in bound})
+                             for definitions, assumptions in paths]
+            distinct = {(tuple(sorted(definitions.items())), tuple(sorted(assumptions.items()))): (definitions, assumptions)
+                        for definitions, assumptions in paths}
             if len(distinct) > 8:
                 return []
             paths = list(distinct.values())
         return paths
 
-    block(body, [{}])
+    block(function.body, [({}, {})])
     return list(min(pairs, default=()))
 
 
@@ -349,12 +364,73 @@ def python_imported_symbols(parsed):
         elif isinstance(statement, _SCOPES):
             imported[statement.name] = None
         else:
-            for bound in ast.walk(statement):
-                if isinstance(bound, ast.Name) and isinstance(bound.ctx, (ast.Store, ast.Del)):
-                    imported[bound.id] = None
-                elif isinstance(bound, ast.alias):
-                    imported[bound.asname or bound.name.split('.')[0]] = None
+            imported.update(dict.fromkeys(python_bound_names(statement)))
     return {key: symbol for key, symbol in imported.items() if symbol}
+
+
+def python_route_return_calls(handler):
+    """Return unshadowed direct return calls on supported normal route paths."""
+    shadowed = python_bound_names(handler) | {node.arg for node in ast.walk(handler) if isinstance(node, ast.arg)}
+    aliases = python_guard_aliases(handler)
+    result = set()
+
+    def walk(statements, paths, depth=0):
+        if depth >= 6:
+            return []
+        for statement in statements:
+            if not paths:
+                break
+            if isinstance(statement, ast.Return):
+                value = statement.value
+                if isinstance(value, ast.Await):
+                    value = value.value
+                if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id not in shadowed:
+                    result.add(value.func.id)
+                return []
+            if isinstance(statement, ast.Raise):
+                return []
+            if isinstance(statement, ast.If):
+                if any(isinstance(node, ast.NamedExpr) for node in ast.walk(statement.test)):
+                    return []
+                alternatives = {True: [], False: []}
+                for assumptions in paths:
+                    invalidate_mutable_guards(statement.test, assumptions, aliases)
+                    if has_unproven_guard(statement.test, assumptions, aliases):
+                        continue
+                    truth = _known_truth(statement.test, {}, assumptions)
+                    for taken in (True, False) if truth is None else (truth,):
+                        alternatives[taken].append(_guard_assumptions(statement.test, assumptions, shadowed, taken))
+                paths = walk(statement.body, alternatives[True], depth + 1) + walk(
+                    statement.orelse, alternatives[False], depth + 1)
+            elif isinstance(statement, _CONTEXTS):
+                bound = {name for item in statement.items for name in python_bound_names(item)}
+                for assumptions in paths:
+                    for item in statement.items:
+                        invalidate_mutable_guards(item.context_expr, assumptions, aliases)
+                paths = walk(statement.body, [
+                    {k: v for k, v in assumptions.items() if k not in bound}
+                    for assumptions in paths], depth + 1)
+            elif isinstance(statement, ast.Try):
+                if statement.finalbody:
+                    return []
+                paths = walk([*statement.body, *statement.orelse], paths, depth + 1)
+            elif not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.Pass,
+                                            ast.Import, ast.ImportFrom, *_SCOPES)):
+                return []
+            else:
+                bound = python_bound_names(statement)
+                for assumptions in paths:
+                    invalidate_mutable_guards(statement, assumptions, aliases)
+                    for name in bound:
+                        assumptions.pop(name, None)
+            distinct = {tuple(sorted(assumptions.items())): assumptions for assumptions in paths}
+            if len(distinct) > 8:
+                return []
+            paths = list(distinct.values())
+        return paths
+
+    walk(handler.body, [{}])
+    return result
 
 
 def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distinguish_fixed_inputs=False,
@@ -381,7 +457,7 @@ def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distingu
         visited.add(owner)
         body = list(_trace_body(definitions[owner].body, fold_conditions=lifecycle_rows is not None))
         if lifecycle_rows is not None and depth == 0:
-            lifecycle_rows.extend(_lifecycle_calls(definitions[owner].body, owner, predicate_shape))
+            lifecycle_rows.extend(_lifecycle_calls(definitions[owner], owner, predicate_shape))
         receivers, shadows = _trace_receiver_types(body, classes, owner)
         arguments = definitions[owner].args
         shadows.update(arg.arg for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,

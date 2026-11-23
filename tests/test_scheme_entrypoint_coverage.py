@@ -1,5 +1,6 @@
 """Declared packaging entrypoints survive bounded, read-only Scheme inspection."""
 import ast
+import hashlib
 import json
 
 import pytest
@@ -276,14 +277,17 @@ def test_general_scheme_reserves_matching_index_writer_and_query(tmp_path, monke
     engine.dispose()
 
 
-def test_general_scheme_keeps_reachable_validation_and_save_calls(tmp_path):
+@pytest.mark.parametrize('implementation', ['jobs.py', 'app.py'])
+def test_general_scheme_keeps_reachable_validation_and_save_calls(tmp_path, implementation):
     repo = repository(tmp_path)
     (repo / 'router.py').write_text(
-        'from jobs import execute as process\n'
+        f'from {implementation[:-3]} import execute as process\n'
         '@router.post("/generate")\n'
-        'def request_generation():\n    return process()\n'
+        'def request_generation(body):\n'
+        '    if not body.confirmed:\n        raise ValueError()\n'
+        '    prepare(body)\n    return process()\n'
     )
-    (repo / 'jobs.py').write_text(
+    (repo / implementation).write_text(
         'def execute():\n    draft = produce()\n    cleaned = validate_result(draft)\n'
         '    save_result(cleaned)\n'
     )
@@ -292,8 +296,10 @@ def test_general_scheme_keeps_reachable_validation_and_save_calls(tmp_path):
         result = evidence.collect_evidence(engine, 1)
         sources = {item.get('path'): item['text'] for item in result['sources']}
         assert 'POST /generate' in sources['router.py']
-        assert 'Workflow call execute: validate_result(draft)' in sources['jobs.py']
-        assert 'Workflow call execute: save_result(cleaned)' in sources['jobs.py']
+        assert 'Workflow call execute: validate_result(draft)' in sources[implementation]
+        assert 'Workflow call execute: save_result(cleaned)' in sources[implementation]
+        entry = next(item for item in result['sources'] if item.get('path') == implementation)
+        assert entry['content_hash'] == hashlib.sha256(entry['text'].encode()).hexdigest()
     finally:
         engine.dispose()
 
@@ -327,10 +333,19 @@ def test_general_scheme_does_not_trace_a_shadowed_router_import(tmp_path):
     '    checked = validate_result(raw)\n    snapshot = {"value": checked}\n'
     '    snapshot.update({"value": raw})\n    save_result(snapshot)\n',
     '    if False and enabled:\n        checked = validate_result(raw)\n        save_result(checked)\n',
+    '    if enabled:\n        checked = validate_result(raw)\n    if not enabled:\n        save_result(checked)\n',
+    '    checked = validate_result(raw)\n    snapshot = {"value": checked}\n'
+    '    log(snapshot.clear())\n    save_result(snapshot)\n',
+    '    checked = validate_result(raw)\n    match raw:\n        case checked:\n'
+    '            pass\n    save_result(checked)\n',
+    '    values = [1]\n    if values:\n        values.clear()\n'
+    '    if values:\n        checked = validate_result(raw)\n        save_result(checked)\n',
+    '    values = [1]\n    alias = values\n    if values:\n        unknown_effect(alias)\n'
+    '    if values:\n        checked = validate_result(raw)\n        save_result(checked)\n',
 ])
 def test_general_lifecycle_ignores_unreachable_or_unrelated_persistence(body):
     rows = []
-    parsed = ast.parse('def entry():\n' + body)
+    parsed = ast.parse('def entry(enabled):\n' + body)
     python_entrypoint_trace(parsed, ['entry'], predicate_shape=evidence._predicate_shape, lifecycle_rows=rows)
     assert rows == []
 
@@ -340,6 +355,21 @@ def test_general_route_does_not_promote_overwritten_import():
     evidence._structural_excerpt(
         'from jobs import execute\nimport external as execute\n'
         '@router.post("/generate")\ndef generate():\n    return execute()\n',
+        'router.py', trace_imports=set(), route_imports=route_imports,
+    )
+    assert route_imports == {}
+
+
+@pytest.mark.parametrize('body', [
+    '    if False:\n        return execute()\n    return local()\n',
+    '    return local()\n    return execute()\n',
+    '    class execute:\n        pass\n    return execute()\n',
+    '    try:\n        return execute()\n    except Exception as execute:\n        raise\n',
+])
+def test_general_route_does_not_promote_unreachable_or_shadowed_returns(body):
+    route_imports = {}
+    evidence._structural_excerpt(
+        'from jobs import execute\n@router.post("/generate")\ndef generate():\n' + body,
         'router.py', trace_imports=set(), route_imports=route_imports,
     )
     assert route_imports == {}
@@ -379,8 +409,8 @@ def test_general_scheme_keeps_imported_callback_and_artifact_writer(tmp_path):
 
 def test_general_index_workflow_prefers_query_reachable_from_a_route():
     index = {'id': 'schema', 'path': 'migrations/search.py', 'provenance': 'observed in code',
-             'text': 'L2: CREATE VIRTUAL TABLE lookup USING fts5\n'
-                     'L3: CREATE TRIGGER add_lookup AFTER INSERT ON records: INSERT INTO lookup'}
+             'text': 'L2: CREATE VIRTUAL TABLE Lookup USING fts5\n'
+                     'L3: CREATE TRIGGER add_lookup AFTER INSERT ON records: INSERT INTO LOOKUP'}
     internal = {'id': 'internal', 'path': 'internal.py', 'provenance': 'observed in code',
                 'text': 'L2: SELECT FROM lookup WHERE lookup MATCH'}
     route_query = {**internal, 'id': 'search', 'path': 'search.py'}

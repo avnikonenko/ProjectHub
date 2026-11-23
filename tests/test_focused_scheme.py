@@ -149,8 +149,12 @@ def test_focused_named_evidence_gets_one_optional_coverage_retry(database, monke
     assert saved['coverage']['partial'] == (rewrite != 'supported')
 
 
-@pytest.mark.parametrize('repair_works', [True, False])
-def test_focused_checks_actual_handoff_edge_and_rejects_reversed_direction(database, monkeypatch, repair_works):
+@pytest.mark.parametrize('repair', ['valid', 'reversed', 'empty', 'expired'])
+def test_focused_checks_actual_handoff_edge_and_rejects_reversed_direction(database, monkeypatch, repair):
+    clock = [1000]
+    if repair == 'expired':
+        monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '60')
+        monkeypatch.setattr(progress.time, 'monotonic', lambda: clock[0])
     monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
         'sources': [{'id': 'repo:file', 'path': 'example.py', 'text': 'Bounded code',
                      'local_handoffs': [{'type': 'value_transfer',
@@ -165,12 +169,18 @@ def test_focused_checks_actual_handoff_edge_and_rejects_reversed_direction(datab
 
         def generate_brief(self, prompt, schema):
             self.calls += 1
+            if self.calls == 2:
+                if repair == 'empty':
+                    return json.dumps({'nodes': [], 'edges': [], 'explanation': 'No relationships available.'})
+                if repair == 'expired':
+                    clock[0] += 31
+                    progress.check_cancelled()
             contract, = json.loads(prompt.splitlines()[-1])['required_handoffs']
             graph = {'nodes': [
                 {**diagram('repo:file')['nodes'][0], 'id': contract[key]['id'], 'label': contract[key]['label']}
                 for key in ('source_node', 'target_node')
             ], 'edges': [], 'explanation': 'The source declares two operations.'}
-            order = ('source_node', 'target_node') if self.calls == 2 and repair_works else ('target_node', 'source_node')
+            order = ('source_node', 'target_node') if self.calls == 2 and repair == 'valid' else ('target_node', 'source_node')
             graph['edges'].append({'source': contract[order[0]]['id'], 'target': contract[order[1]]['id'],
                                    'type': 'value_transfer', 'status': 'observed',
                                    'label': 'Model wording', 'source_ids': ['repo:file']})
@@ -179,10 +189,20 @@ def test_focused_checks_actual_handoff_edge_and_rejects_reversed_direction(datab
     manager = Manager()
     saved = focused_scheme.refresh_focused_scheme(database, 1, manager, 'Trace read into write')
     assert manager.calls == 2
-    assert bool(saved['graph']['edges']) == repair_works
-    assert saved['coverage']['partial'] == (not repair_works)
-    if repair_works:
+    assert bool(saved['graph']['edges']) == (repair == 'valid')
+    assert saved['coverage']['partial'] == (repair != 'valid')
+    if repair == 'valid':
         assert saved['graph']['edges'][0]['label'] == 'Direct value transfer'
         assert {node['description'] for node in saved['graph']['nodes']} == {'write consumes the result of read'}
     else:
         assert len(saved['graph']['nodes']) == 2
+
+
+def test_focused_reserved_edge_type_is_normalized_before_handoff_checks():
+    raw = diagram('repo:file')
+    raw['nodes'].append({**raw['nodes'][0], 'id': 'store'})
+    raw['edges'].append({'source': raw['nodes'][0]['id'], 'target': 'store', 'type': 'value_transfer ',
+                         'status': 'observed', 'label': 'Unsupported', 'source_ids': ['repo:file']})
+    graph = focused_scheme._graph(json.dumps(raw), {'repo:file': {'id': 'repo:file'}})
+    assert focused_scheme.check_contracts(graph, []) == (
+        set(), {(raw['nodes'][0]['id'], 'store', 'value_transfer')})

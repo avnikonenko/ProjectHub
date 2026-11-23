@@ -526,7 +526,7 @@ def test_legacy_scheme_unicode_is_readable_without_altering_persisted_result(tmp
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid', 'provider_error', 'cancelled'])
+@pytest.mark.parametrize('repair', ['covered', 'omitted', 'invalid', 'degraded', 'expired', 'provider_error', 'cancelled'])
 def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -540,8 +540,16 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
                  'L2: CREATE TRIGGER index_doc AFTER INSERT ON docs: INSERT INTO doc_fts'},
         {'id': 'query', 'path': 'query.py', 'provenance': 'observed in code',
          'label': 'Runtime query', 'text': 'L8: SELECT FROM doc_fts WHERE doc_fts MATCH'},
+        {'id': 'internal', 'path': 'internal.py', 'provenance': 'observed in code',
+         'label': 'Internal queries', 'text': 'L5: SELECT FROM doc_fts WHERE doc_fts MATCH\n'
+         'L8: SELECT FROM other_fts WHERE other_fts MATCH'},
     ]
+    inspected['route_query_paths'] = ['query.py']
     monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: deepcopy(inspected))
+    clock = [1000]
+    if repair == 'expired':
+        monkeypatch.setenv('PROJECTHUB_GENERATION_BUDGET', '60')
+        monkeypatch.setattr(progress.time, 'monotonic', lambda: clock[0])
     prompts = []
 
     class Manager:
@@ -553,10 +561,15 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
                     raise CodexError('Provider is temporarily unavailable.')
                 if repair == 'cancelled':
                     raise progress.GenerationCancelled()
-                if repair == 'covered':
+                if repair in {'covered', 'degraded'}:
                     graph['workflow']['nodes'] = [
                         {**node('find', refs=['migration', 'query']), 'type': 'operation'},
                     ]
+                if repair == 'degraded':
+                    graph['architecture'].update(nodes=[], edges=[])
+                if repair == 'expired':
+                    clock[0] += 31
+                    progress.check_cancelled()
                 if repair == 'invalid':
                     graph['architecture']['edges'][0]['target'] = 'missing'
             return json.dumps(graph)
@@ -576,7 +589,7 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     warning = any('did not fully cite' in value for value in saved['coverage']['limitations'])
     assert warning == (repair != 'covered')
     rewrite_warning = any('optional indexing rewrite failed' in value for value in saved['coverage']['limitations'])
-    assert rewrite_warning == (repair in {'invalid', 'provider_error'})
+    assert rewrite_warning == (repair in {'invalid', 'expired', 'provider_error'})
     assert saved['architecture']['edges'][0]['target'] == 'replacement'
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved

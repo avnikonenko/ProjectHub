@@ -60,6 +60,47 @@ def test_disjoint_branch_assignments_remain_visible_at_the_same_consumer():
     assert 'unresolved' not in report.casefold()
 
 
+def test_mutually_exclusive_guards_do_not_link_producer_and_consumer():
+    source = """
+        def execute(enabled):
+            if enabled:
+                value = prepare()
+            if not enabled:
+                store(value)
+    """
+    rows = _rows(source, 'Trace prepare into store')
+    _bundle(rows, 'store', 'Unresolved input')
+    assert all('Direct value transfer' not in report for _, report in rows)
+
+
+def test_condition_mutated_through_an_alias_does_not_establish_a_handoff():
+    rows = _rows("""
+        def execute():
+            values = [1]
+            alias = values
+            if values:
+                alias.clear()
+            if values:
+                value = prepare()
+                store(value)
+    """, 'Trace prepare into store')
+    assert all('Direct value transfer' not in report for _, report in rows)
+
+
+def test_unknown_effect_receiving_a_guard_alias_does_not_establish_a_handoff():
+    rows = _rows("""
+        def execute():
+            values = [1]
+            alias = values
+            if values:
+                unknown_effect(alias)
+            if values:
+                value = prepare()
+                store(value)
+    """, 'Trace prepare into store')
+    assert all('Direct value transfer' not in report for _, report in rows)
+
+
 def test_fixed_and_configured_inputs_are_preserved_without_literal_text():
     rows = _rows("""
         def execute(options):

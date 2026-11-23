@@ -12,6 +12,10 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Improve Focused Scheme evidence for named source files, configuration defaults, and active entrypoint calls.
 - Check selected Focused Scheme handoffs against the actual code endpoints, relationship, and condition.
 - Improve General Scheme evidence for major workflow alternatives and validation-to-save paths. Collapse identical diagram edges.
+- Check project ownership before previewing Codex sessions and reject conflicting Claude conversation identities before replacing an import.
+- Include active generation revisions in both export formats and add a readable Focused Scheme to ZIP exports.
+- Keep validated diagrams when optional Scheme checks fail, and improve recovery from malformed generation responses.
+- Reveal newly started sessions in Sources and let saved Scheme versions open even if the current inspection fails to load.
 
 ## [0.2.5] - 2026-11-21
 
