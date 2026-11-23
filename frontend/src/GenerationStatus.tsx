@@ -21,6 +21,7 @@ export type Progress = {
   sessions: number;
   error?: string;
   started_at?: string;
+  request_id?: string | null;
   cancel_requested?: boolean;
   batch_total?: number;
   batch_completed?: number;
@@ -217,7 +218,7 @@ function durationLabel(seconds: number) {
 }
 
 export function GenerationStatus({
-  base, kind, label, onRunningChange, sharedProgress, onProgressUpdate,
+  base, kind, label, onRunningChange, sharedProgress, onProgressUpdate, askRequestId,
 }: {
   base: string;
   kind: GenerationKind;
@@ -225,10 +226,13 @@ export function GenerationStatus({
   onRunningChange?: (running: boolean) => void;
   sharedProgress?: Progress | null;
   onProgressUpdate?: (progress: Progress) => void;
+  askRequestId?: string | null;
 }) {
   const [localProgress, setProgress] = useState<Progress | null>(null);
   const externallyManaged = sharedProgress !== undefined;
-  const progress = externallyManaged ? sharedProgress : localProgress;
+  const status = externallyManaged ? sharedProgress : localProgress;
+  const ownsProgress = kind !== 'ask' || (!!askRequestId && status?.request_id === askRequestId);
+  const progress = ownsProgress ? status : null;
   const [error, setError] = useState('');
   const [cancelError, setCancelError] = useState('');
   const [cancellingFor, setCancellingFor] = useState<string | null>(null);
@@ -236,8 +240,8 @@ export function GenerationStatus({
   const [startedAt, setStartedAt] = useState(Date.now);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    onRunningChange?.(progress?.state === 'running');
-  }, [progress?.state, onRunningChange]);
+    onRunningChange?.(status?.state === 'running');
+  }, [status?.state, onRunningChange]);
   useEffect(() => {
     if (progress?.state !== 'running') return;
     const timer = setInterval(() => setElapsed(Math.max(0, Math.floor((Date.now() - startedAt) / 1000))), 1000);
@@ -254,7 +258,11 @@ export function GenerationStatus({
     }
     if (sharedProgress?.cancel_requested || sharedProgress?.state === 'cancelled') setCancelError('');
   }, [externallyManaged, sharedProgress]);
-  useEffect(() => () => { cancelRequest.current?.abort(); cancelRequest.current = null; }, [base, kind]);
+  useEffect(() => {
+    setCancelError('');
+    setCancellingFor(null);
+    return () => { cancelRequest.current?.abort(); cancelRequest.current = null; };
+  }, [base, kind, askRequestId]);
   useEffect(() => {
     if (externallyManaged) return;
     const abort = new AbortController();
@@ -335,6 +343,9 @@ export function GenerationStatus({
   const budget = progress?.budget_seconds;
   const hasBudget = typeof budget === 'number' && Number.isFinite(budget) && budget > 0;
   const liveUsage = progress?.state === 'running' ? parseLiveTokenUsage(progress.live_token_usage) : null;
+  if (kind === 'ask' && !ownsProgress) {
+    return status?.state === 'running' ? <Feedback>Another question for this project is running.</Feedback> : null;
+  }
   if (kind === 'ask' && (!progress || progress.state === 'idle' || progress.state === 'completed')) return null;
   return (
     <>

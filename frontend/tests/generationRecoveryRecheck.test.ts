@@ -277,6 +277,10 @@ test('Scheme question controls select the exact saved General, historical, or Fo
     const initial = askControl(host.value);
     assert.deepEqual(initial.props.context, { kind: 'scheme', generated_at: general.generated_at });
 
+    initial.props.onBusyChange(true); await settle();
+    assert.equal(find(host.value, node => node.type === RevisionHistory).props.disabled, true);
+    assert.equal(find(host.value, node => node.type === 'button' && node.props.children === 'Generate Scheme').props.disabled, true);
+    askControl(host.value).props.onBusyChange(false); await settle();
     find(host.value, node => node.type === RevisionHistory).props.onSelect(previous, 21); await settle();
     const historical = askControl(host.value);
     assert.deepEqual(historical.props.context, { kind: 'scheme', generated_at: previous.generated_at, revision_id: 21 });
@@ -292,7 +296,7 @@ test('Scheme question controls select the exact saved General, historical, or Fo
   } finally { host.dispose(); focused.dispose(); globalThis.fetch = original; }
 });
 
-test('the shared question form sends only its Scheme identity and ignores late answers after unmounting', async () => {
+test('the shared question form sends a request ID and its Scheme identity and ignores late answers after unmounting', async () => {
   function find(tree: any, type: string): any {
     if (!tree) return undefined;
     if (Array.isArray(tree)) return tree.map(node => find(node, type)).find(Boolean);
@@ -315,7 +319,9 @@ test('the shared question form sends only its Scheme identity and ignores late a
     await settle();
     find(host.value, 'form').props.onSubmit({ preventDefault() {} });
     assert.equal(request?.url, '/api/projects/7/codex/ask');
-    assert.deepEqual(JSON.parse(request?.options?.body as string), {
+    const { request_id: requestId, ...body } = JSON.parse(request?.options?.body as string);
+    assert.match(requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    assert.deepEqual(body, {
       question: 'Explain the handoff', confirmed: true, model: 'selected-model', effort: 'low',
       provider: 'claude', ai_profile: 'local', scheme_context: schemeContext,
     });

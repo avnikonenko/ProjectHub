@@ -24,6 +24,8 @@ from ...project_evidence import (
     _code_hints, _excluded, _exclusions, _git, _repository_root,
 )
 from ...services import require_project
+from .history_search import _SHARE_REFERENCE
+from .knowledge_sources import CONVERSATION_NOTE_SQL
 from .scheme_passages import GAP, READ_CHARS, EXCERPT_CHARS, select_passages
 from .scheme_environments import environment_dependencies, is_environment_manifest
 from .scheme_js_scope import focused_call_owner, focused_ui_declarations
@@ -1146,18 +1148,41 @@ def _client_navigation_declarations(value, masked, owner_at):
     return declarations
 
 
+def _parse_python_excerpt(value, *, truncated):
+    try:
+        return ast.parse(value)
+    except (ValueError, RecursionError):
+        return None
+    except SyntaxError as error:
+        if not truncated:
+            return None
+        line = error.lineno
+    # A byte boundary can leave an unfinished expression or block at the end.
+    # Recover only the nearby, parseable prefix and keep all original line numbers.
+    lines = value.split('\n')
+    floor = max(1, len(lines) - 40)
+    for _ in range(4):
+        if line is None or not floor < line <= len(lines) + 1:
+            return None
+        lines = lines[:line - 1]
+        try:
+            return ast.parse('\n'.join(lines))
+        except (ValueError, RecursionError):
+            return None
+        except SyntaxError as error:
+            line = min(error.lineno, len(lines)) if error.lineno is not None else None
+    return None
+
+
 def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None,
-                        named_python=False, admitted_handoffs=None, route_support=None):
+                        named_python=False, admitted_handoffs=None, route_support=None, truncated=False):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
     flow, workflow, choices, handoffs, route_owners = [], [], [], [], set()
     lifecycle, artifacts = [], []
     relationships = {}
     if PurePosixPath(relative).suffix.lower() == '.py':
-        try:
-            parsed = ast.parse(value)
-        except (SyntaxError, ValueError, RecursionError):
-            parsed = None
+        parsed = _parse_python_excerpt(value, truncated=truncated)
         if parsed is not None:
             if _python_migration(relative):
                 migration_sql = compact_migration_sql(migration_sql_declarations(parsed))
@@ -1448,16 +1473,17 @@ def _records(db, project, *, scope=None):
         'FROM codex_history_turns h JOIN codex_sessions s ON s.id=h.session_id AND s.project_id=h.project_id '
         "WHERE h.project_id=:pid AND s.is_linked=1 AND h.status!='inProgress' ORDER BY h.id DESC LIMIT 12"),
         {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+    imported = f"kind='document' AND ({CONVERSATION_NOTE_SQL} OR lower(reference) GLOB :share) AS share"
     notes = db.execute(text('SELECT id,substr(title,1,160) AS title,substr(content,1,:read_chars) AS window,'
-                           '0 AS window_start,kind,updated_at,'
+                           f'0 AS window_start,kind,updated_at,created_at,{imported},'
                            'length(content) AS content_length,length(title) AS title_length '
                            'FROM notes WHERE project_id=:pid ORDER BY id DESC LIMIT 7'),
-                       {'pid': project.id, 'read_chars': READ_CHARS}).mappings().all()
+                       {'pid': project.id, 'read_chars': READ_CHARS, 'share': _SHARE_REFERENCE}).mappings().all()
     if scope and scope.fts_query:
         from .history_search import search_markers
 
         start, end = search_markers()
-        params = {'pid': project.id, 'read_chars': READ_CHARS, 'query': scope.fts_query,
+        params = {'pid': project.id, 'read_chars': READ_CHARS, 'query': scope.fts_query, 'share': _SHARE_REFERENCE,
                   'start': start, 'end': end, 'gap': start + end}
         focused_turns = _focused_record_windows(db,
             'SELECT h.id,substr(snippet(codex_history_fts,0,:start,:end,:gap,24),1,:read_chars) AS fragment,'
@@ -1472,7 +1498,8 @@ def _records(db, project, *, scope=None):
             'FROM search_index JOIN notes n ON n.id=search_index.entity_id AND n.project_id=search_index.project_id '
             "WHERE search_index MATCH :query AND search_index.entity_type='notes' AND n.project_id=:pid "
             'ORDER BY score,n.id DESC LIMIT 7', 'notes',
-            'substr(record.title,1,160) AS title,record.kind,record.updated_at,length(record.title) AS title_length',
+            f'substr(record.title,1,160) AS title,record.kind,record.updated_at,record.created_at,{imported},'
+            'length(record.title) AS title_length',
             params)
         # Keep the best window when a matching record also appears in the recent
         # results. Relevance order takes precedence over the recency fallback.
@@ -1563,7 +1590,8 @@ def _records(db, project, *, scope=None):
         if selected['text']:
             sources.append(_source(f"note:{row['id']}", row['title'], selected['text'],
                 'imported discussion' if row['kind'] == 'document' else 'project note',
-                date=row['updated_at'], **metadata))
+                date=row['updated_at'], **metadata,
+                **({'note_id': row['id'], 'note_created_at': row['created_at'], 'share': True} if row['share'] else {})))
             note_budget -= len(selected['text'])
     brief = db.execute(text('SELECT substr(sections,1,1800),generated_at,length(sections) FROM project_briefs WHERE project_id=:pid'),
                        {'pid': project.id}).first()
@@ -1575,7 +1603,7 @@ def _records(db, project, *, scope=None):
     return sources, markers, limitations, excerpt_count
 
 
-def collect_evidence(engine, project_id, limits=None, *, scope=None):
+def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cache=True):
     """Inspect only bounded local inputs. The resulting snapshot preserves supplied evidence."""
     started = time.monotonic()
     focus = _EvidenceScope(scope) if scope and scope.strip() else None
@@ -1685,7 +1713,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         scope_identity = {'scope': focus.value, 'scope_policy': 18, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v15' if focus else 'scheme-inspection-v32', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v16' if focus else 'scheme-inspection-v33', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1838,20 +1866,21 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 if is_code:
                     # Metadata already participates in the cache key; a large file
                     # contributes only a bounded prefix, never an implied full scan.
-                    if isinstance(marker, list) and marker[3] > file_limit:
+                    truncated = isinstance(marker, list) and marker[3] > file_limit
+                    if truncated:
                         limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
                     called_names = set()
                     returned_calls = {}
                     support_names = set()
                     roots = sorted(entrypoint_functions.get(relative, ()))
                     syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python,
-                                                  admitted_handoffs=admitted_handoffs)
+                                                  admitted_handoffs=admitted_handoffs, truncated=truncated)
                               if focus else _structural_excerpt(value, relative,
                                   entrypoints=roots, trace_imports=called_names,
-                                  route_imports=returned_calls, route_support=support_names))
+                                  route_imports=returned_calls, route_support=support_names, truncated=truncated))
                     if (not focus and PurePosixPath(relative).suffix == '.py'
                             and prefix_chars + len(value) <= DEFAULT_SCHEME_READ_BYTES):
-                        python_prefixes[relative] = (value, declared_excerpt, roots)
+                        python_prefixes[relative] = (value, declared_excerpt, roots, truncated)
                         prefix_chars += len(value)
                     if not focus and called_names:
                         entrypoint_paths.add(relative)
@@ -1955,7 +1984,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             relative = source['path']
             if relative not in python_prefixes or source['provenance'] != 'observed in code':
                 continue
-            value, declared_excerpt, previous_roots = python_prefixes[relative]
+            value, declared_excerpt, previous_roots, truncated = python_prefixes[relative]
             roots = sorted(entrypoint_functions.get(relative, ()))
             if roots == previous_roots:
                 continue
@@ -1964,7 +1993,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 break
             # A route or declaration may establish an entrypoint after its
             # target was inspected. Reuse the already-read bounded prefix.
-            syntax = _structural_excerpt(value, relative, entrypoints=roots, trace_imports=set(), route_imports={})
+            syntax = _structural_excerpt(value, relative, entrypoints=roots, trace_imports=set(), route_imports={},
+                                         truncated=truncated)
             source['text'] = '\n'.join(part for part in (declared_excerpt, syntax) if part)[:3200]
             source['content_hash'] = hashlib.sha256(source['text'].encode()).hexdigest()
             entrypoint_paths.add(relative)
@@ -2164,7 +2194,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         result['fingerprint'] = _digest({key: result[key] for key in
             ('sources', 'dependencies', 'dependency_inventory', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
                 'published_knowledge': knowledge['marker'], **scope_identity})
-        if inspection_stop != 'time_budget' and dependency_stop != 'time_budget' and not metadata_stop:
+        if persist_cache and inspection_stop != 'time_budget' and dependency_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))
                 if (db.get(Project, project_id) is not None

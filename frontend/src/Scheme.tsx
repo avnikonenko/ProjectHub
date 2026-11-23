@@ -270,17 +270,32 @@ function GraphEvidence({ graph, numbers, prefix, sources }: { graph: SchemeGraph
   </details>;
 }
 
-function AskAboutScheme({ base, generation, visible, context }: {
+function AskAboutScheme({ base, generation, visible, context, disabled, onBusyChange }: {
   base: string; generation: Generation; visible: boolean; context: SchemeAnswerContext;
+  disabled: boolean; onBusyChange: (busy: boolean) => void;
 }) {
   const [open, setOpen] = useState<boolean | null>(null);
+  const [pending, setPending] = useState(false);
+  const [askedContext, setAskedContext] = useState<SchemeAnswerContext | null>(null);
+  const [formVersion, setFormVersion] = useState(0);
   const panelId = useId();
+  const earlierVersion = askedContext !== null && askedContext.generated_at !== context.generated_at;
   return <>
     <button type="button" className="secondary" aria-expanded={!!open} aria-controls={panelId}
       onClick={() => setOpen(current => !current)}>Ask about this Scheme</button>
     <div id={panelId} hidden={!open}>
-      {open !== null && <AskProject base={base} projectId={Number(base.split('/')[2])}
-        generation={generation} visible={visible && open} schemeContext={context} />}
+      {earlierVersion && <Feedback>This question uses an earlier Scheme version.</Feedback>}
+      {earlierVersion && !pending && <button type="button" className="secondary" onClick={() => {
+        setAskedContext(null);
+        setFormVersion(version => version + 1);
+      }}>Ask about the current version</button>}
+      {open !== null && <AskProject key={formVersion} base={base} projectId={Number(base.split('/')[2])}
+        generation={generation} visible={visible && open} schemeContext={askedContext ?? context}
+        disabled={disabled || earlierVersion} onBusyChange={busy => {
+          if (busy) setAskedContext(context);
+          setPending(busy);
+          onBusyChange(busy);
+        }} />}
     </div>
   </>;
 }
@@ -293,6 +308,7 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
   const [loading, setLoading] = useState(true);
   const [retryLoad, setRetryLoad] = useState(0);
   const [generating, setGenerating] = useState(false);
+  const [questionBusy, setQuestionBusy] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [submissionError, setSubmissionError] = useState<{
     message: string; instruction: string; savedAt?: string; previousStartedAt?: string;
@@ -334,7 +350,7 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
 
   async function generate() {
     const requested = instruction.trim();
-    if (!requested || loading || loadError || recovery.checking || active || inFlight.current) return;
+    if (!requested || loading || loadError || recovery.checking || active || inFlight.current || questionBusy) return;
     inFlight.current = true;
     previousAttempt.current = status?.started_at;
     setGenerating(true);
@@ -383,13 +399,14 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
           Show what happens when an AI generation is cancelled, from clicking Cancel to preserving the previous saved result.
         </small>
       </details>
-      <button type="submit" className="secondary" disabled={busy || !!loadError || !instruction.trim()}>
+      <button type="submit" className="secondary" disabled={busy || questionBusy || !!loadError || !instruction.trim()}>
         Generate focused scheme
       </button>
     </form>
     <small className="muted">Generation sends your instruction and selected project evidence to {generationDestination(generation.provider)}.</small>
-    {snapshot && <AskAboutScheme key={`${base}:${snapshot.generated_at}`} base={base} generation={generation}
-      visible={visible} context={{ kind: 'focused_scheme', generated_at: snapshot.generated_at }} />}
+    {snapshot && <AskAboutScheme base={base} generation={generation}
+      visible={visible} disabled={busy} onBusyChange={setQuestionBusy}
+      context={{ kind: 'focused_scheme', generated_at: snapshot.generated_at }} />}
     <ErrorBox error={loadError || recovery.error || (recoveredSubmission ? '' : submissionError?.message ?? '')} />
     {loadError && <button type="button" className="secondary" onClick={() => setRetryLoad(value => value + 1)}>Retry loading</button>}
     <Feedback>{notice || (recoveredCancellation && cancelledGenerationMessage)}</Feedback>
@@ -431,6 +448,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   const [revisionLoading, setRevisionLoading] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [generating, setGenerating] = useState(false);
+  const [questionBusy, setQuestionBusy] = useState(false);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const inFlight = useRef(false);
@@ -459,7 +477,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   }, [path, recoveryVersion, visible, generationRequest, refresh]);
 
   async function generate(requestedFocus: SchemeFocus) {
-    if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge) return;
+    if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy) return;
     inFlight.current = true;
     resultRead.current++;
     setGenerating(true);
@@ -491,7 +509,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
       if (alive.current) { setGenerating(false); onGenerating(false); }
     }
   }
-  useGenerationRequest(base, generationRequest, generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading ? 'wait' : 'ready',
+  useGenerationRequest(base, generationRequest,
+    generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading || questionBusy ? 'wait' : 'ready',
     () => generate(queuedFocus), onGenerationRequestHandled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection?.sources ?? [];
@@ -525,11 +544,12 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
       </select>
     </label>
     <button type="button" className="secondary" onClick={() => void generate(focus)}
-      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge}>
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy}>
       Generate Scheme
     </button>
-    {snapshot && <AskAboutScheme key={`${base}:${snapshot.generated_at}:${revisionId}`} base={base}
-      generation={generation} visible={visible && !focused} context={{
+    {snapshot && <AskAboutScheme key={`${base}:${revisionId}`} base={base}
+      generation={generation} visible={visible && !focused} onBusyChange={setQuestionBusy}
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge} context={{
         kind: 'scheme', generated_at: snapshot.generated_at, ...(revisionId !== null ? { revision_id: revisionId } : {}),
       }} />}
     <small className="muted">Generation sends selected project evidence to {generationDestination(generation.provider)}.</small>
@@ -549,7 +569,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
       {snapshot && <SavedGeneration generation={snapshot.generation} />}
       {snapshot && <SchemeKnowledgeContext context={snapshot.knowledge_context} />}
       <RevisionHistory<SchemeSnapshot> base={base} kind="scheme" version={latestVersion}
-        disabled={loading || generating || recoveryBusy || waitingForKnowledge} selectedId={revisionId}
+        disabled={loading || generating || recoveryBusy || waitingForKnowledge || questionBusy} selectedId={revisionId}
         onActivated={onResultActivated} onLoadingChange={value => {
           selectingRevision.current = value;
           if (value) { resultRead.current++; setLoading(false); }

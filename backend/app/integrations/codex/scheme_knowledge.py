@@ -119,9 +119,9 @@ def _origin(db, project_id, ref, descriptor, recycled=None):
         message = "CASE WHEN m.type='object' THEN m.value ELSE '{}' END"
         start = f"json_extract({message},'$.start')"
         end = f"json_extract({message},'$.end')"
-        row = db.execute(text(f'WITH note AS (SELECT id,updated_at,reference,content,conversation, '
+        row = db.execute(text(f'WITH note AS (SELECT id,created_at,updated_at,reference,content,conversation, '
             f"kind='document' AND {CONVERSATION_NOTE_SQL} AS imported FROM notes WHERE project_id=:pid AND id=:nid) "
-            'SELECT id,updated_at,reference,imported,'
+            'SELECT id,created_at,updated_at,reference,imported,'
             f'(imported AND {CONVERSATION_EXTENT_SQL}>length(content)) AS invalid_extent,'
             'CASE WHEN imported THEN EXISTS (SELECT 1 '
             "FROM json_each(conversation,'$.messages') m WHERE "
@@ -134,9 +134,7 @@ def _origin(db, project_id, ref, descriptor, recycled=None):
              'message_id': message_id, 'ordinal': int(ordinal[1]) - 1 if ordinal else None}).mappings().first()
         if row is None:
             return None
-        navigation = {'note_id': note_id}
-        if created_at is not None:
-            navigation['note_created_at'] = created_at
+        navigation = {'note_id': note_id, 'note_created_at': row['created_at']}
         if row['imported'] or (isinstance(row['reference'], str) and re.fullmatch(
                 r'https://chatgpt\.com/share/[0-9a-f-]{36}/?', row['reference'], re.I)):
             navigation['share'] = True

@@ -12,6 +12,8 @@ export type BriefSource = {
   note_created_at?: string;
   share?: boolean;
   kind?: string;
+  evidence_availability?: string;
+  evidence_availability_as_of?: string;
   shared_sessions?: { session_id: number; turn_id: string; session_title?: string }[];
 };
 export function citedSources(sources: BriefSource[], ids: string[]) {
@@ -37,10 +39,12 @@ function CitationGroup({ ids, numbers, prefix, sources = [] }: {
       href={`#${target}`} aria-label={detailed ? undefined : `Read source ${number}`}
       onClick={(event) => {
         event.preventDefault();
-        for (let element = document.getElementById(target); element; element = element.parentElement) {
+        const source = document.getElementById(target);
+        for (let element = source; element; element = element.parentElement) {
           if (element instanceof HTMLDetailsElement) element.open = true;
         }
-        document.getElementById(target)?.scrollIntoView({ block: 'nearest' });
+        source?.querySelector('summary')?.focus({ preventScroll: true });
+        source?.scrollIntoView({ block: 'nearest' });
       }}>
       {detailed ? `[${number}] ${byId.get(id)?.label || 'Source ' + number}` : `[${number}]`}
     </a>;
@@ -81,6 +85,8 @@ export function BriefSources({ sources, prefix, openInNewTab = false, allowSourc
                   : source.label}
             </summary>
             {source.turn_id && <small>{source.label}</small>}
+            {source.evidence_availability_as_of && source.evidence_availability &&
+              <small className="muted">Source status when Scheme was saved: {source.evidence_availability}</small>}
             <pre className="json-report">{source.text}</pre>
             {allowSourceNavigation && source.session_id !== undefined && source.turn_id && (
               <a {...linkOptions} href={historyTurnHref({ projectId, sessionId: source.session_id, turnId: source.turn_id })}>

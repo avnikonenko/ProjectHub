@@ -2,17 +2,26 @@
 import json
 import re
 
+from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
 from ...config import ConfigError, scheme_inspection_limits
 from ...project_evidence import EvidenceReadError
+from .history_search import _SHARE_REFERENCE
+from .knowledge_sources import CONVERSATION_NOTE_SQL
 from .scheme_evidence import _EvidenceScope, collect_evidence
 
 
 _SURROGATES = re.compile('[\ud800-\udfff]')
 _REPOSITORY_PROVENANCE = {'observed in code', 'repository test source', 'repository configuration',
                           'repository file structure', 'project documentation', 'dependency manifest'}
-_NAVIGATION_FIELDS = ('session_id', 'turn_id', 'note_id', 'note_created_at', 'share', 'shared_sessions')
+_NOTE_LINK = text(f"""SELECT 1 FROM notes WHERE project_id=:pid AND id=:nid AND created_at=:created
+    AND kind='document' AND ({CONVERSATION_NOTE_SQL} OR lower(reference) GLOB :share)
+    AND (instr(content,:excerpt)>0 OR updated_at=:updated)""")
+_TURN_LINK = text("""SELECT 1 FROM codex_history_turns h JOIN codex_sessions s
+    ON s.project_id=h.project_id AND s.id=h.session_id AND s.is_linked=1
+    WHERE h.project_id=:pid AND h.session_id=:sid AND h.turn_id=:tid AND h.status!='inProgress'
+    AND instr(h.content,:excerpt)>0""")
 
 
 def _clip(value, limit):
@@ -27,6 +36,12 @@ def _rows(rows):
 
 def _json(value):
     return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+
+
+def _entry_score(row, scope, labels):
+    terms = [value for value in row.values() if isinstance(value, str)]
+    terms.extend(labels.get(row.get(key), '') for key in ('source', 'target'))
+    return scope.score(' '.join(terms))
 
 
 def _saved_graph(graph, scope):
@@ -52,13 +67,9 @@ def _saved_graph(graph, scope):
                     if identifier in node_labels and identifier not in included_nodes:
                         value[f'{endpoint}_label'] = node_labels[identifier]
             values.append(value)
-        def rank(value):
-            return scope.score(' '.join(str(value.get(field, '')) for field in fields) + ' ' + ' '.join(
-                node_labels.get(value.get(field), '') for field in ('source', 'target')))
-
         encoded_lengths = [len(_json(value)) + 1 for value in values]
         selected = set()
-        for index in sorted(range(len(values)), key=lambda idx: -rank(values[idx])):
+        for index in sorted(range(len(values)), key=lambda idx: -_entry_score(values[idx], scope, node_labels)):
             size = encoded_lengths[index]
             if size <= remaining - reserve:
                 selected.add(index)
@@ -92,7 +103,41 @@ def _saved_dependencies(snapshot, scope):
     return {'dependencies': dependencies, 'omitted_dependencies': len(rows) - len(dependencies)}
 
 
-def saved_scheme_passages(snapshot, kind, question):
+def _current_navigation(db, project_id, source):
+    if db is None or source.get('evidence_availability') in ('unavailable', 'excluded'):
+        return {}
+    excerpt = source['text']
+    if len(excerpt) > 24_000 or _SURROGATES.search(excerpt):
+        return {}
+    note_id, created = source.get('note_id'), source.get('note_created_at')
+    updated = source.get('date')
+    updated = updated if _clip(updated, 128) == updated else None
+    if (source.get('share') is True and type(note_id) is int and 0 < note_id < 2**63
+            and isinstance(created, str) and created and _clip(created, 128) == created
+            and db.scalar(_NOTE_LINK, {'pid': project_id, 'nid': note_id, 'created': created,
+                                       'share': _SHARE_REFERENCE, 'excerpt': excerpt,
+                                       'updated': updated})):
+        return {'note_id': note_id, 'note_created_at': created, 'share': True}
+
+    def turn(record):
+        session_id, turn_id = record.get('session_id'), record.get('turn_id')
+        if (type(session_id) is int and 0 < session_id < 2**63 and isinstance(turn_id, str)
+                and 0 < len(turn_id) <= 200 and not _SURROGATES.search(turn_id)
+                and db.scalar(_TURN_LINK, {'pid': project_id, 'sid': session_id, 'tid': turn_id, 'excerpt': excerpt})):
+            return {'session_id': session_id, 'turn_id': turn_id}
+        return {}
+
+    navigation = turn(source)
+    shared = source.get('shared_sessions')
+    if isinstance(shared, list):
+        alternates = [{**linked, 'session_title': _clip(record.get('session_title'), 200)}
+                      for record in _rows(shared[:4]) if (linked := turn(record))]
+        if alternates:
+            navigation['shared_sessions'] = alternates
+    return navigation
+
+
+def saved_scheme_passages(snapshot, kind, question, *, db=None, project_id=None):
     title = 'Saved Focused Scheme' if kind == 'focused_scheme' else 'Saved Scheme'
     coverage = snapshot.get('coverage')
     coverage = coverage if isinstance(coverage, dict) else {}
@@ -116,17 +161,27 @@ def saved_scheme_passages(snapshot, kind, question):
     if dependencies['dependencies']:
         values.append(('Dependencies', dependencies))
 
-    references = {ref for _, value in values for rows in value.values() if isinstance(rows, list)
-                  for row in rows if isinstance(row, dict) for ref in row.get('source_ids', [])}
+    references = {}
+    for _, value in values:
+        labels = {node['id']: node.get('label', '') for node in value.get('nodes', []) if 'id' in node}
+        for section in ('nodes', 'edges', 'dependencies'):
+            for row in value.get(section, []):
+                score = _entry_score(row, scope, labels)
+                for ref in row.get('source_ids', []):
+                    references[ref] = max(references.get(ref, 0), score)
     evidence = _rows(snapshot.get('sources'))
     inventory = snapshot.get('dependency_inventory')
     if isinstance(inventory, dict):
         evidence.extend(_rows(inventory.get('sources')))
     seen = set()
     selected = []
-    for source in sorted(evidence, key=lambda item: (
-            not isinstance(item.get('id'), str) or item['id'] not in references,
-            -scope.score(_clip(item.get('label'), 240) + ' ' + _clip(item.get('text'), 1800)))):
+    def rank(item):
+        identifier = _clip(item.get('id'), 200)
+        return (-references.get(identifier, 0),
+                -scope.score(_clip(item.get('label'), 240) + ' ' + _clip(item.get('text'), 1800)),
+                identifier not in references)
+
+    for source in sorted(evidence, key=rank):
         identifier = source.get('id')
         excerpt = _clip(source.get('text'), 1800)
         if not isinstance(identifier, str) or not excerpt.strip() or identifier in seen:
@@ -138,12 +193,13 @@ def saved_scheme_passages(snapshot, kind, question):
         for key in ('provenance', 'path', 'evidence_availability'):
             if isinstance(source.get(key), str):
                 passage[key] = _clip(source[key], 300)
-        if source.get('evidence_availability') not in ('unavailable', 'excluded'):
-            passage.update({key: source[key] for key in _NAVIGATION_FIELDS if key in source})
+        if 'evidence_availability' in passage:
+            passage['evidence_availability_as_of'] = snapshot['generated_at']
+        passage.update(_current_navigation(db, project_id, source))
         selected.append(passage)
         if len(selected) >= 12:
             break
-    if references - seen:
+    if references.keys() - {_clip(identifier, 200) for identifier in seen}:
         context['limitations'].append('Some source excerpts cited in the diagram were outside this question’s context budget.')
     return ([{'kind': 'saved_scheme_interpretation', 'label': f'{title} · {label}', 'text': _json(value)}
              for label, value in values] + selected)
@@ -156,7 +212,7 @@ def current_repository_passages(engine, project_id, question):
         return []
     try:
         limits = tuple(min(value, cap) for value, cap in zip(scheme_inspection_limits(), (24_000, 1_000_000, 96_000)))
-        inspection = collect_evidence(engine, project_id, limits, scope=question)
+        inspection = collect_evidence(engine, project_id, limits, scope=question, persist_cache=False)
     except (ConfigError, EvidenceReadError, OSError, SQLAlchemyError):
         return [{'kind': 'current_repository_status', 'label': 'Current repository lookup',
                  'text': 'Current repository evidence was unavailable for this question.'}]
@@ -171,4 +227,15 @@ def current_repository_passages(engine, project_id, question):
                              'label': 'Current repository · ' + path, 'provenance': provenance})
             if len(passages) == 4:
                 break
+    coverage = inspection.get('coverage') or {}
+    omissions = _rows(coverage.get('requested_file_omissions'))
+    files = coverage.get('file_counts') or {}
+    if omissions:
+        detail = _json([{'path': _clip(row.get('path'), 300), 'reason': _clip(row.get('reason'), 100)}
+                        for row in omissions[:6]])
+        passages.append({'kind': 'current_repository_status', 'label': 'Current repository lookup',
+                         'text': 'No current excerpt was supplied for these requested files: ' + detail})
+    elif not passages and files.get('listing_complete') is False:
+        passages.append({'kind': 'current_repository_status', 'label': 'Current repository lookup',
+                         'text': 'The current repository could not be fully inspected for this question.'})
     return passages

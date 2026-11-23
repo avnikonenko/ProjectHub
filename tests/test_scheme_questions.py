@@ -6,13 +6,16 @@ import subprocess
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from backend.app.db import initialize
 from backend.app.integrations.codex import router as routes
 from backend.app.integrations.codex import scheme_ask
 from backend.app.integrations.codex.progress import GenerationCancelled
-from backend.app.models import GenerationRevision, Note, Project, ProjectFocusedScheme, ProjectScheme
+from backend.app.models import (
+    CodexSession, GenerationRevision, Note, Project, ProjectFocusedScheme, ProjectHistoryBatch, ProjectScheme,
+)
 
 
 _STAMP = '2026-08-04T10:00:00Z'
@@ -34,7 +37,7 @@ def scheme_questions(tmp_path, monkeypatch):
                     conversation={'messages': []})
         db.add_all([note, Note(project_id=2, title='Private cross-project note', content='Index private')])
         db.flush()
-        source = {'id': 'history', 'label': 'Conversation', 'text': 'Index original chat',
+        source = {'id': 'history', 'label': 'Conversation', 'text': 'Index original chat', 'evidence_availability': 'available',
                   'note_id': note.id, 'note_created_at': note.created_at, 'share': True}
 
         def general(stamp, label):
@@ -98,6 +101,7 @@ def test_ask_uses_selected_scheme_and_preserves_original_links(scheme_questions,
     assert any(p.get('scheme_source_id') == 'history' for p in passages)
     source, = result.json()['sources']
     assert source['note_id'] and source['note_created_at'] and source['share']
+    assert source['evidence_availability_as_of'] == context['generated_at']
     assert result.json()['answer'].endswith('[1]')
 
 
@@ -133,8 +137,9 @@ def test_ask_keeps_selected_scheme_while_matching_current_repository(scheme_ques
         db.get(Project, 1).repository_path = '/fixture/repository'
         db.commit()
 
-    def inspect(engine_arg, project_id, limits, *, scope):
+    def inspect(engine_arg, project_id, limits, *, scope, persist_cache):
         assert engine_arg is engine and project_id == 1 and scope == 'What is Index?'
+        assert persist_cache is False
         assert all(value <= cap for value, cap in zip(limits, (24_000, 1_000_000, 96_000)))
         with Session(engine) as db:
             db.get(ProjectScheme, 1).snapshot = {'generated_at': 'changed', 'architecture': _graph('Replacement')}
@@ -211,3 +216,97 @@ def test_ask_recovers_from_repository_read_error_but_obeys_cancellation(scheme_q
         records = captured[0]['passages']
         assert any(p['kind'] == 'current_repository_status' for p in records)
         assert not any('Sensitive filesystem detail' in p['text'] for p in records)
+
+
+def test_matching_graph_entry_brings_its_citation_even_when_code_uses_different_words():
+    sources = [{'id': f'other:{index}', 'label': 'Logging source', 'text': 'Set logging output.'} for index in range(12)]
+    nodes = [{'id': f'Other{index}', 'label': 'Logging', 'source_ids': [source['id']]}
+             for index, source in enumerate(sources)]
+    sources.append({'id': 'restore', 'label': 'state.py', 'text': 'return load_state(handle)'})
+    nodes.append({'id': 'Checkpoint', 'label': 'Checkpoint restore', 'source_ids': ['restore']})
+    snapshot = {'generated_at': _STAMP, 'architecture': {'nodes': nodes}, 'sources': sources}
+
+    records = scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'How does checkpoint restore work?')
+
+    assert any(row.get('scheme_source_id') == 'restore' for row in records)
+    assert sum(row['kind'] == 'saved_scheme_evidence' for row in records) == 12
+
+
+def test_saved_evidence_keeps_excerpt_but_drops_changed_or_unproven_transcript_links(tmp_path):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Index project'))
+        db.flush()
+        note = Note(project_id=1, title='Conversation', kind='document', conversation={'messages': []},
+                    content='An older explanation for indexing')
+        db.add(note)
+        db.flush()
+        source = {'id': 'history', 'label': 'Conversation', 'text': note.content, 'share': True,
+                  'evidence_availability': 'available', 'note_id': note.id, 'note_created_at': note.created_at}
+
+        def saved(record):
+            snapshot = {'generated_at': _STAMP, 'sources': [record]}
+            return scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'Why indexing?', db=db, project_id=1)[1]
+
+        assert saved(source)['note_id'] == note.id
+        assert 'note_id' not in saved({**source, 'note_created_at': _OLD_STAMP})
+        note.content = 'A different explanation for indexing'
+        db.flush()
+        historical = saved(source)
+        assert historical['text'] == source['text']
+        assert historical['evidence_availability'] == 'available'
+        assert historical['evidence_availability_as_of'] == _STAMP
+        assert 'note_id' not in historical
+    engine.dispose()
+
+
+def test_saved_turn_links_are_limited_to_currently_linked_matching_project_sessions(tmp_path):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add_all([Project(name='Index project'), Project(name='Other project')])
+        db.flush()
+        session = CodexSession(id=10, project_id=1, thread_id='index-project')
+        db.add_all([session, CodexSession(id=20, project_id=2, thread_id='other-project')])
+        db.flush()
+        db.execute(text('INSERT INTO codex_history_turns(project_id,session_id,session_title,turn_id,status,messages,content) '
+                        "VALUES(:project,:session,'Thread','turn','completed','[]','User: Index original chat')"),
+                   [{'project': 1, 'session': 10}, {'project': 2, 'session': 20}])
+        source = {'id': 'history', 'label': 'Conversation', 'text': 'Index original chat',
+                  'session_id': 10, 'turn_id': 'turn', 'shared_sessions': [{'session_id': 20, 'turn_id': 'turn'}]}
+        snapshot = {'generated_at': _STAMP, 'sources': [source]}
+
+        def saved():
+            return scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'Why indexing?', db=db, project_id=1)[1]
+
+        assert saved()['turn_id'] == 'turn'
+        assert 'shared_sessions' not in saved()
+        session.is_linked = False
+        db.flush()
+        assert saved()['text'] == source['text']
+        assert 'turn_id' not in saved()
+    engine.dispose()
+
+
+def test_repository_question_reports_missing_checkout_and_does_not_persist_inspection(tmp_path):
+    engine, _ = initialize(tmp_path / 'data')
+    repository = tmp_path / 'repository'
+    with Session(engine) as db:
+        db.add(Project(name='Index project', repository_path=str(repository)))
+        db.commit()
+
+    question = 'What calls store in importer.py?'
+    missing = scheme_ask.current_repository_passages(engine, 1, question)
+    assert missing[0]['kind'] == 'current_repository_status'
+    assert 'importer.py' in missing[0]['text']
+    assert str(repository) not in missing[0]['text']
+
+    repository.mkdir()
+    (repository / 'importer.py').write_text('def index_messages():\n    store()\n')
+    subprocess.run(['git', 'init', '-q', str(repository)], check=True)
+    subprocess.run(['git', '-C', str(repository), 'add', 'importer.py'], check=True)
+    for query in (question, 'How does store work in importer.py?'):
+        assert any(row['kind'] == 'current_repository_evidence'
+                   for row in scheme_ask.current_repository_passages(engine, 1, query))
+    with Session(engine) as db:
+        assert db.scalar(select(func.count()).select_from(ProjectHistoryBatch)) == 0
+    engine.dispose()

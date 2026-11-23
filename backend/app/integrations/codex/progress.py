@@ -132,7 +132,7 @@ def automatic_worker_status():
 
 
 def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None,
-          worker_settings=None, **options):
+          request_id=None, worker_settings=None, **options):
     from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
@@ -155,6 +155,8 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, met
         _live_metrics[key] = metrics if metrics is not None else GenerationMetrics()
         _snapshots[key] = {**_idle(), 'state': 'running', 'stage': 'Starting generation',
                            'started_at': utcnow(), 'budget_seconds': budget}
+        if request_id is not None:
+            _snapshots[key]['request_id'] = request_id
         if settings is not None:
             _snapshots[key]['settings'] = settings
         _current.set((project_id, kind, event, workers))

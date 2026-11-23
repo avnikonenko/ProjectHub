@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 from threading import Event
 import time
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -38,16 +39,21 @@ def test_cancel_ask_targets_exact_project_run_and_releases_generation_lock(tmp_p
             pid = client.post('/api/projects', json={'name': 'One'}).json()['id']
             other = client.post('/api/projects', json={'name': 'Other'}).json()['id']
             base = f'/api/projects/{pid}/codex'
+            request_id = str(uuid4())
             with ThreadPoolExecutor(max_workers=1) as worker:
-                pending = worker.submit(client.post, base + '/ask', json={'confirmed': True, 'question': 'Explain it'})
+                pending = worker.submit(client.post, base + '/ask', json={
+                    'confirmed': True, 'question': 'Explain it', 'request_id': request_id,
+                })
                 try:
                     assert entered.wait(3)
                     status = client.get(base + '/generation/status?kind=ask').json()
+                    assert status['request_id'] == request_id
                     assert status['live_token_usage'] == {
                         'total_tokens': 42, 'reported_requests': 1, 'model_requests': 1,
                     }
                     other_status = client.get(f'/api/projects/{other}/codex/generation/status?kind=ask').json()
                     assert 'live_token_usage' not in other_status
+                    assert 'request_id' not in other_status
                     body = {'kind': 'ask', 'started_at': status['started_at']}
                     assert client.post(f'/api/projects/{other}/codex/generation/cancel', json=body).status_code == 409
                     assert client.post(base + '/generation/cancel', json={**body, 'started_at': 'stale'}).status_code == 409
@@ -60,10 +66,12 @@ def test_cancel_ask_targets_exact_project_run_and_releases_generation_lock(tmp_p
                     release.set()
             cancelled = client.get(base + '/generation/status?kind=ask').json()
             assert cancelled['state'] == 'cancelled'
+            assert cancelled['request_id'] == request_id
             assert 'live_token_usage' not in cancelled
             assert not routes.generation_lock.locked()
             assert client.post(base + '/generation/cancel', json=body).status_code == 409
             assert client.post(base + '/ask', json={'confirmed': True, 'question': 'Try again'}).json()['answer'] == 'Answer'
+            assert 'request_id' not in client.get(base + '/generation/status?kind=ask').json()
     finally:
         release.set()
         app.state.engine.dispose()

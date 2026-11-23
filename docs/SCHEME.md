@@ -103,6 +103,9 @@ The answer uses the diagram version you opened, its coverage notes, and
 available supporting evidence. ProjectHub can look for additional passages
 when needed. The question and selected evidence go to your chosen provider,
 and answers cite their sources. Asking leaves the saved diagram in place.
+Saved excerpts can still explain an older diagram after its sources change.
+ProjectHub offers a link to the original conversation when it can match the
+saved excerpt to that conversation.
 
 ## Dependencies
 

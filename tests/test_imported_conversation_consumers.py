@@ -95,7 +95,7 @@ def test_scheme_revalidates_quote_within_exact_imported_message_and_role(importe
     ref = {'source_id': source['id'], 'excerpt': 'Primary unicorn', 'role': 'user'}
     with Session(engine) as db:
         origin = scheme_knowledge._origin(db, 1, ref, source)
-        assert origin[:2] == ({'note_id': 1, 'share': True}, 'available')
+        assert origin[:2] == ({'note_id': 1, 'note_created_at': db.get(Note, 1).created_at, 'share': True}, 'available')
         assert scheme_knowledge._origin(db, 2, ref, source) is None
         note = db.get(Note, 1)
         metadata = deepcopy(note.conversation)
@@ -129,7 +129,7 @@ def test_older_import_with_nul_is_unavailable_without_editing_its_transcript(imp
         note.content, note.conversation = content, metadata
         db.commit()
         origin = scheme_knowledge._origin(db, 1, ref, source)
-        assert origin[:2] == ({'note_id': 1, 'share': True}, 'unavailable')
+        assert origin[:2] == ({'note_id': 1, 'note_created_at': note.created_at, 'share': True}, 'unavailable')
         assert origin[2]['quote_present'] is False
     bundle = knowledge_sources.load_sources(engine, 1)
     assert bundle['sources'] == []

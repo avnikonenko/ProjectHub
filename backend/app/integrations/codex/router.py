@@ -1,6 +1,7 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
 from typing import Annotated, Literal
 from pathlib import Path
+from uuid import UUID
 import logging
 import shutil
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, Request
@@ -197,6 +198,7 @@ class SchemeQuestionContext(Input):
 class AskInput(GenerationInput):
     question: str = Field(min_length=1, max_length=2000)
     scheme_context: SchemeQuestionContext | None = None
+    request_id: UUID | None = None
 
 
 def send_options(manager, body):
@@ -1040,11 +1042,13 @@ def ask_project(project_id: int, body: AskInput, request: Request, db: DB):
     if not job_lock.acquire(blocking=False):
         raise HTTPException(409, 'Another AI generation for this project view is running, or maintenance is active.')
     try:
-        progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False)
+        request_id = str(body.request_id) if body.request_id is not None else None
+        progress.begin(project_id, 'ask', engine=request.app.state.engine, saves_result=False, request_id=request_id)
         sources = matches
         if snapshot is not None:
             progress.update(project_id, stage='Gathering evidence for the saved Scheme')
-            sources = saved_scheme_passages(snapshot, scheme_context.kind, body.question)
+            sources = saved_scheme_passages(snapshot, scheme_context.kind, body.question, db=db, project_id=project_id)
+            db.rollback()
             sources.extend({**source, 'kind': 'current_project_passage',
                             'label': 'Current project · ' + source['label']} for source in matches)
             if repository_linked:

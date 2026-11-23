@@ -63,6 +63,26 @@ def test_scope_supplies_cancel_attempt_and_save_guard_from_code(tmp_path):
         engine.dispose()
 
 
+def test_truncated_python_preserves_complete_routes_before_partial_syntax():
+    source = (
+        'from fastapi import APIRouter\n'
+        'router = APIRouter()\n'
+        '@router.get("/records")\n'
+        'def records():\n'
+        '    return load_records()\n'
+        '\n'
+        'def unfinished():\n'
+        '    value = (\n'
+        '        combine()\n'
+    )
+    scope = evidence._EvidenceScope('How are records read?')
+    excerpt = evidence._structural_excerpt(source, 'routes.py', focus=scope.score, truncated=True)
+    assert 'L3: HTTP route GET /records -> records' in excerpt
+    assert 'combine' not in excerpt
+    complete = evidence._structural_excerpt(source, 'routes.py', focus=scope.score)
+    assert 'HTTP route' not in complete
+
+
 def test_client_navigation_evidence_uses_structural_fragments_only():
     source = (
         "// return '#from-comment?'\n"
