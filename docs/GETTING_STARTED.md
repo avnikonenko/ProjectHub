@@ -47,9 +47,9 @@ Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/pro
 
 ## Upgrade ProjectHub
 
-Stop ProjectHub, then [back up your data directory](#configuration-and-backups).
-Update using the same method you installed with. For a wheel upgrade, download
-the new wheel and substitute its filename in the commands below.
+Stop ProjectHub and install the new version using the same method. For a wheel
+upgrade, use the filename you downloaded. If you want a backup before upgrading,
+[copy your data directory](#configuration-and-backups) while ProjectHub is stopped.
 
 | Installation | Update command |
 | --- | --- |
@@ -57,7 +57,7 @@ the new wheel and substitute its filename in the commands below.
 | Conda | Run `conda activate projecthub`, then `python -m pip install --upgrade ./projecthub_local-0.2.5-py3-none-any.whl`. |
 | Git checkout | In the checkout, run `git pull --ff-only`, then `bash scripts/install.sh`. |
 
-Start ProjectHub again. It applies any database migrations at startup.
+Start ProjectHub again. Database migrations run automatically.
 
 ## Start a project
 
