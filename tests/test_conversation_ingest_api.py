@@ -245,6 +245,63 @@ def test_claude_import_rejects_reference_owned_by_another_saved_transcript(api):
     assert len(client.get(base + f"/conversations/{imported['id']}/sources").json()) == 1
 
 
+def test_legacy_claude_uuid_survives_a_replacement_without_identifier(api):
+    client, base, other = api
+    original_uuid = '00000000-0000-4000-8000-000000000041'
+    different_uuid = '00000000-0000-4000-8000-000000000042'
+    raw = {'provider': 'claude', 'provider_conversation_id': original_uuid, 'messages': [
+        {'role': 'user', 'content': 'Identical question.'},
+        {'role': 'assistant', 'content': 'Identical answer.'},
+    ]}
+    export = {'filename': 'claude.json', 'source_url': 'https://example.test/legacy',
+              'content': json.dumps(raw)}
+    saved = save(client, base, export, check(client, base, export)).json()
+    with client.app.state.engine.begin() as db:
+        db.execute(text("UPDATE notes SET conversation=json_remove(conversation, '$.provider_conversation_id') "
+                        "WHERE id=:id"), {'id': saved['id']})
+
+    different = {'filename': 'other-claude.json',
+                 'content': json.dumps({**raw, 'provider_conversation_id': different_uuid})}
+    assert check(client, base, different)['existing'] is None
+    replacement = {'filename': 'updated.md', 'source_url': export['source_url'],
+                   'content': '## User\nIdentical question.\n\n## Claude\nUpdated answer.\n'}
+    updated = save(client, base, replacement, check(client, base, replacement), replace_existing=True)
+    assert updated.status_code == 201 and updated.json()['id'] == saved['id']
+    generic = {**export, 'content': json.dumps({**raw, 'provider': 'other',
+               'provider_conversation_id': different_uuid})}
+    updated = save(client, base, generic, check(client, base, generic), replace_existing=True)
+    assert updated.status_code == 201 and updated.json()['id'] == saved['id']
+
+    alternate = {**export, 'source_url': 'https://example.test/legacy-relocated'}
+    assert check(client, base, alternate)['existing']['id'] == saved['id']
+    assert check(client, other, alternate)['existing'] is None
+    conflicting = {**different, 'source_url': export['source_url']}
+    assert client.post(base + '/conversations/preview', json=conflicting).status_code == 409
+    assert len(client.get(base + f"/conversations/{saved['id']}/sources").json()) == 3
+
+
+def test_claude_uuid_lookup_rejects_conflicting_legacy_copies(api):
+    client, base, _ = api
+    raw = {'provider': 'claude', 'provider_conversation_id': '00000000-0000-4000-8000-000000000051', 'messages': [
+        {'role': 'user', 'content': 'Question.'}, {'role': 'assistant', 'content': 'Answer.'},
+    ]}
+    source = {'filename': 'claude.json', 'source_url': 'https://example.test/ambiguous',
+              'content': json.dumps(raw)}
+    saved = save(client, base, source, check(client, base, source)).json()
+    contradictory = json.dumps({**raw, 'provider_conversation_id': '00000000-0000-4000-8000-000000000052'}).encode()
+    with client.app.state.engine.begin() as db:
+        db.execute(text("UPDATE notes SET conversation=json_remove(conversation, '$.provider_conversation_id') "
+                        "WHERE id=:id"), {'id': saved['id']})
+        db.execute(text('INSERT INTO conversation_import_sources '
+                        '(project_id, note_id, filename, reference, content_hash, payload, created_at) '
+                        'SELECT project_id, note_id, filename, reference, :hash, :payload, created_at '
+                        'FROM conversation_import_sources WHERE note_id=:id'),
+                   {'hash': hashlib.sha256(contradictory).hexdigest(), 'payload': contradictory, 'id': saved['id']})
+    for payload in (source, {**source, 'content': contradictory.decode()},
+                    {**source, 'source_url': 'https://example.test/ambiguous-relocated'}):
+        assert client.post(base + '/conversations/preview', json=payload).status_code == 409
+
+
 def test_partial_and_forbidden_sources_require_explicit_handling(api, monkeypatch):
     client, base, _ = api
     payload = {'filename': 'prompts.md', 'content': '## User\nFirst prompt\n\n## User\nSecond prompt\n'}

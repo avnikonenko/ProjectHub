@@ -164,11 +164,17 @@ def _provider_conversation_id(value, provider):
     return next(iter(identities), None)
 
 
+def _json_provider(value, provider_hint=None):
+    if 'chat_messages' in value:
+        return 'claude'
+    return value.get('provider', value.get('metadata', {}).get('provider', provider_hint or 'other'))
+
+
 def retained_claude_conversation_id(payload):
     """Recover an identity from an already-imported JSON source copy."""
     try:
         value = _single_conversation(json.loads(payload.decode('utf-8-sig'), object_pairs_hook=_unique_object))
-        return _provider_conversation_id(value, 'claude')
+        return _provider_conversation_id(value, _json_provider(value))
     except (ValueError, RecursionError):
         return None
 
@@ -182,7 +188,7 @@ def _json_messages(value, *, provider_hint=None):
         _error('A conversation must include a nonempty messages list.', 'no_transcript')
     if len(raw) > _MAX_MESSAGES:
         _error('The conversation has too many messages.', 'too_large')
-    provider = 'claude' if claude else value.get('provider', metadata.get('provider', provider_hint or 'other'))
+    provider = _json_provider(value, provider_hint)
     if provider not in ('chatgpt', 'claude', 'other'):
         _error('Unknown conversation provider.')
     messages, seen_ids = [], set()

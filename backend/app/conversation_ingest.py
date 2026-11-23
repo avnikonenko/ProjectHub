@@ -2,6 +2,7 @@
 import hashlib
 import json
 from collections import Counter
+from itertools import groupby
 
 from fastapi import HTTPException
 from sqlalchemy import func, literal_column, or_, select
@@ -67,21 +68,33 @@ def prepare(payload, engine=None):
     return values, source
 
 
-def _retained_claude_sources(matches):
+def _retained_claude_identities(db, matches, provider_id):
     # Older file imports retained the raw Claude export but did not index its UUID.
     source = ConversationImportSource
-    latest_source = (select(source.id).where(source.project_id == Note.project_id, source.note_id == Note.id)
-                     .order_by(source.id.desc()).limit(1).correlate(Note).scalar_subquery())
-    return matches.add_columns(source.payload).join(source, source.id == latest_source).where(
-        source.filename.ilike('%.json'))
+    copies = (matches.with_only_columns(Note.id, source.payload).limit(None)
+              .join(source, (source.project_id == Note.project_id) & (source.note_id == Note.id))
+              .where(source.filename.ilike('%.json')).order_by(None).order_by(source.note_id.desc(), source.id.desc()))
+    for note_id, rows in groupby(db.execute(copies.execution_options(yield_per=1)), key=lambda row: row.id):
+        identity = None
+        ambiguous = False
+        matches_uuid = False
+        for row in rows:
+            found = conversation_import.retained_claude_conversation_id(row.payload)
+            if found is not None:
+                identity = identity or found
+                ambiguous |= found != identity
+                matches_uuid |= found == provider_id
+        yield note_id, identity, ambiguous, matches_uuid
 
 
-def _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider):
-    candidates = _retained_claude_sources(matches.limit(None)).where(stored_id.is_(None), stored_provider == 'claude')
-    for row in db.execute(candidates.execution_options(yield_per=1)):
-        if conversation_import.retained_claude_conversation_id(row.payload) == provider_id:
-            return row
-    return None
+def _match_retained_claude_uuid(db, matches, legacy, provider_id):
+    matched_id = None
+    for note_id, _, ambiguous, matches_uuid in _retained_claude_identities(db, legacy, provider_id):
+        if matches_uuid:
+            if ambiguous or matched_id is not None:
+                raise HTTPException(409, 'This identifier has conflicting saved conversation records.')
+            matched_id = note_id
+    return db.execute(matches.where(Note.id == matched_id)).first() if matched_id is not None else None
 
 
 def _linked_claude_id(metadata):
@@ -107,6 +120,7 @@ def _find_existing(db, project_id, values):
     known_claude_id = provider_id and metadata['provider'] == 'claude'
     stored_id = func.json_extract(Note.conversation, literal_column("'$.provider_conversation_id'"))
     stored_provider = func.json_extract(Note.conversation, literal_column("'$.provider'"))
+    legacy = matches.where(stored_id.is_(None), stored_provider == 'claude')
     identity_match = None
     if known_claude_id:
         linked_id = func.json_extract(Note.conversation, literal_column("'$.linked_session.id'"))
@@ -115,7 +129,7 @@ def _find_existing(db, project_id, values):
         matching_id = matching_id.order_by(None).order_by((linked_id == provider_id).desc(), Note.id)
         identity_match = db.execute(matching_id).first()
         if identity_match is None:
-            identity_match = _match_retained_claude_uuid(db, matches, provider_id, stored_id, stored_provider)
+            identity_match = _match_retained_claude_uuid(db, matches, legacy, provider_id)
         if identity_match is not None:
             _check_claude_identity(identity_match, provider_id)
     if reference:
@@ -142,11 +156,13 @@ def _find_existing(db, project_id, values):
             if known_claude_id:
                 if identity_match is not None and identity_match.id != found.id:
                     raise HTTPException(409, 'The source link and identifier match different saved conversations.')
-                retained = None
-                if (found.conversation or {}).get('provider') == 'claude' and not found.conversation.get(
-                        'provider_conversation_id'):
-                    retained = db.execute(_retained_claude_sources(same_reference.where(Note.id == found.id))).first()
-                retained_id = conversation_import.retained_claude_conversation_id(retained.payload) if retained else None
+                retained_id = None
+                if identity_match is None:
+                    _, retained_id, ambiguous, _ = next(
+                        _retained_claude_identities(db, legacy.where(Note.id == found.id), provider_id),
+                        (None, None, False, False))
+                    if ambiguous:
+                        raise HTTPException(409, 'This source link has conflicting saved conversation identifiers.')
                 _check_claude_identity(found, provider_id, retained_id)
             return found
         matches = matches.where(Note.reference == '')
@@ -156,11 +172,22 @@ def _find_existing(db, project_id, values):
         matches = matches.where(or_(stored_provider.is_(None), stored_provider.in_(('other', metadata['provider']))))
     if provider_id:
         matches = matches.where(or_(stored_id.is_(None), stored_id == provider_id))
-    found = db.execute(matches.where(Note.conversation.is_not(None),
+    fingerprints = matches.where(Note.conversation.is_not(None),
         func.json_extract(Note.conversation, literal_column("'$.fingerprint'")) == metadata['fingerprint'],
-    )).first()
-    if found is not None and known_claude_id:
-        _check_claude_identity(found, provider_id)
+    )
+    if known_claude_id:
+        # UUID matching already inspected retained identities. Text alone may
+        # match an older import only when that row has no known identity.
+        for found in db.execute(fingerprints.limit(None).execution_options(yield_per=1)):
+            if _linked_claude_id(found.conversation or {}) is not None:
+                continue
+            _, retained_id, _, _ = next(
+                _retained_claude_identities(db, legacy.where(Note.id == found.id), provider_id),
+                (None, None, False, False))
+            if retained_id is None:
+                return found
+        return None
+    found = db.execute(fingerprints).first()
     if found is not None or reference or metadata['provider'] == 'claude':
         return found
     return db.execute(matches.where(Note.conversation.is_(None),
