@@ -14,6 +14,7 @@ from .scheme_passages import EXCERPT_CHARS, GAP, select_passages
 
 
 _SURROGATES = re.compile('[\ud800-\udfff]')
+_ASK_EXCERPT_CHARS = 1800
 _REPOSITORY_PROVENANCE = {'observed in code', 'repository test source', 'repository configuration',
                           'repository file structure', 'project documentation', 'dependency manifest'}
 _NOTE_LINK = text(f"""SELECT 1 FROM notes WHERE project_id=:pid AND id=:nid AND created_at=:created
@@ -70,12 +71,26 @@ def _turn_link_spans(source):
 
 
 def _saved_excerpt(source, scope):
-    value = _clip(source.get('text'), 24_000)
-    prefix = _clip(value, 1800)
-    if len(value) <= 1800:
-        return prefix
-    selected = select_passages(value, 1800, priority=scope.score)['text']
-    return selected if scope.score(selected) > scope.score(prefix) else prefix
+    source_text = source.get('text')
+    if not isinstance(source_text, str):
+        return ''
+    value = _clip(source_text[:24_000], 24_000)
+    limit = _ASK_EXCERPT_CHARS
+    if len(value) <= limit or not scope.terms:
+        return value[:limit]
+    best = value[:limit]
+    score = scope.score(best)
+    whole = select_passages(value, limit, priority=scope.score)['text']
+    if (whole_score := scope.score(whole)) > score:
+        best, score = whole, whole_score
+    # A saved paragraph may fit the Scheme's budget but not the question's.
+    # Overlapping windows preserve exact wording around late relevant text.
+    last = len(value) - limit
+    for start in (*range(limit // 2, last, limit // 2), last):
+        window = value[start:start + limit]
+        if (window_score := scope.score(window)) > score:
+            best, score = window, window_score
+    return best
 
 
 def _entry_score(row, scope, labels):
@@ -218,6 +233,7 @@ def saved_scheme_passages(snapshot, kind, question, *, db=None, project_id=None)
         evidence.extend(_rows(inventory.get('sources')))
     seen = set()
     selected = []
+    shortened = False
     def rank(item):
         identifier = _clip(item.get('id'), 200)
         return (-references.get(identifier, 0),
@@ -232,6 +248,7 @@ def saved_scheme_passages(snapshot, kind, question, *, db=None, project_id=None)
         if not excerpt.strip():
             continue
         seen.add(identifier)
+        shortened |= len(source['text']) > _ASK_EXCERPT_CHARS
         passage = {'scheme_source_id': _clip(identifier, 200), 'kind': 'saved_scheme_evidence',
                    'label': 'Saved evidence · ' + (_clip(source.get('label'), 190) or 'Project passage'),
                    'text': excerpt}
@@ -245,7 +262,11 @@ def saved_scheme_passages(snapshot, kind, question, *, db=None, project_id=None)
         if len(selected) >= 12:
             break
     if references.keys() - {_clip(identifier, 200) for identifier in seen}:
+        context['partial_coverage'] = True
         context['limitations'].append('Some source excerpts cited in the diagram were outside this question’s context budget.')
+    if shortened:
+        context['partial_coverage'] = True
+        context['limitations'].append('Some saved evidence excerpts were shortened for this question.')
     return ([{'kind': 'saved_scheme_interpretation', 'label': f'{title} · {label}', 'text': _json(value)}
              for label, value in values] + selected)
 

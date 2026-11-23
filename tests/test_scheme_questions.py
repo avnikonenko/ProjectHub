@@ -247,6 +247,22 @@ def test_question_prefers_a_relevant_later_passage_within_saved_excerpt_budget()
     assert rationale in excerpt and len(excerpt) <= 1800
 
 
+def test_question_recovers_late_rationale_inside_one_long_saved_paragraph():
+    rationale = 'Immutable manifests preserve source hashes across renames.'
+    body = 'Unrelated project setup details. ' * 72 + rationale
+    snapshot = {'generated_at': _STAMP,
+                'architecture': _graph('Backup manifest format', ['manifest']),
+                'sources': [{'id': 'manifest', 'text': body}]}
+
+    records = scheme_ask.saved_scheme_passages(snapshot, 'scheme', 'Why use immutable manifests across renames?')
+
+    excerpt = next(row['text'] for row in records if row.get('scheme_source_id') == 'manifest')
+    assert rationale in excerpt and excerpt in body and len(excerpt) <= 1800
+    coverage = json.loads(records[0]['text'])
+    assert coverage['partial_coverage'] is True
+    assert 'Some saved evidence excerpts were shortened for this question.' in coverage['limitations']
+
+
 def test_saved_evidence_keeps_excerpt_but_drops_changed_or_unproven_transcript_links(tmp_path):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
