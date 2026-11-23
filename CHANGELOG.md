@@ -4,6 +4,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.5] - 2026-11-23
+
 - Link local Codex and Claude Code sessions from Sources. Preview the conversation before linking, and refresh saved Claude Code transcripts as work continues.
 - Keep Claude Code history across compaction and reuse matching imports when linking. Newly linked sessions appear in the list immediately.
 - Recover missing original citations when Scheme cites published Knowledge, with one retry if the citations exceed the per-claim limit.
@@ -18,8 +20,6 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 - Reveal newly started sessions in Sources and let saved Scheme versions open even if the current inspection fails to load.
 - Keep deleted conversation, source-copy, TODO, saved response, and saved version IDs retired. Older links whose identity cannot be confirmed show an unavailable source.
 - Allow separate project data directories to initialize concurrently in one process.
-
-## [0.2.5] - 2026-11-21
 
 - Import public ChatGPT and Claude chats, JSON exports, and structured Markdown from Sources. Preview imports, manage saved conversations, and keep original source copies in project exports.
 - Generate with a signed-in Claude Code or Codex account. Check either provider in Settings and select the active project's AI profile.
