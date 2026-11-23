@@ -2,7 +2,6 @@
 from copy import deepcopy
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextvars import ContextVar, copy_context
-import os
 import threading
 import hashlib
 import json
@@ -14,7 +13,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 
 from ...models import ProjectHistoryBatch, ProjectKnowledge, GenerationRevision
-from ...config import DEFAULT_EXTRACTION_WORKERS, MAX_EXTRACTION_WORKERS
+from ...config import ConfigError, resolve_extraction_workers, selected_extraction_workers
 from .ai_instructions import ai_instructions
 from .manager import request_knowledge_json
 from .protocol import CodexError
@@ -891,11 +890,9 @@ def _extraction_workers(manager):
     from .knowledge_profiles import captured_knowledge_workers
     try:
         captured = captured_knowledge_workers()
-        workers = captured if captured is not None else int(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', str(DEFAULT_EXTRACTION_WORKERS)))
-    except ValueError as exc:
-        raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.') from exc
-    if not 1 <= workers <= MAX_EXTRACTION_WORKERS:
-        raise CodexError(f'PROJECTHUB_EXTRACTION_WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}.')
+        workers = captured if captured is not None else resolve_extraction_workers(selected_extraction_workers())
+    except ConfigError as exc:
+        raise CodexError(str(exc)) from exc
     return workers if callable(getattr(manager, 'independent_generation', None)) else 1
 
 

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app import config
+from backend.app.integrations.codex import progress
 from backend.app.main import create_app
 from backend.app.integrations.codex.manager import CodexManager
 
@@ -40,7 +41,8 @@ def test_read_is_global_non_mutating_and_shows_effective_override(settings_clien
     monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '12')
     assert client.get('/api/settings/ai').json() == {
         'extraction_workers': 12, 'configured_extraction_workers': 2,
-        'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
+        'selected_extraction_workers': 12,
+        'min_extraction_workers': 0, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
         'generation_profile': 'quality', 'configured_generation_profile': 'quality',
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
@@ -73,8 +75,23 @@ def test_patch_persists_one_field_and_applies_to_future_requests(settings_client
     assert client.get('/api/settings/ai').json()['extraction_workers'] == 3
 
 
+def test_automatic_worker_status_is_live_and_read_only(settings_client, monkeypatch):
+    client, path = settings_client
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '0')
+    original = path.read_bytes()
+    endpoint = '/api/settings/ai/workers'
+    before = client.get(endpoint).json()
+    assert before['ceiling'] == config.resolve_extraction_workers(0)
+    assert 1 <= before['target'] <= min(2, before['ceiling'])
+    assert before['active'] == before['waiting'] == 0
+    with progress.generation_request_slot():
+        assert client.get(endpoint).json()['active'] == 1
+    assert client.get(endpoint).json()['active'] == 0
+    assert path.read_bytes() == original
+
+
 @pytest.mark.parametrize('body', [
-    {'extraction_workers': 0}, {'extraction_workers': config.MAX_EXTRACTION_WORKERS + 1}, {'extraction_workers': True},
+    {'extraction_workers': -1}, {'extraction_workers': config.MAX_EXTRACTION_WORKERS + 1}, {'extraction_workers': True},
     {'extraction_workers': '3'}, {'extraction_workers': 2.0}, {},
     {'extraction_workers': 2, 'another_setting': 'not allowed'},
 ])
@@ -140,8 +157,8 @@ def test_missing_default_config_is_created_privately_only_on_save(settings_clien
     path = config.config_path()
     response = client.get('/api/settings/ai')
     assert response.status_code == 200
-    assert response.json()['extraction_workers'] == 10
-    assert response.json()['configured_extraction_workers'] == 10
+    assert response.json()['extraction_workers'] == config.resolve_extraction_workers(0)
+    assert response.json()['selected_extraction_workers'] == response.json()['configured_extraction_workers'] == 0
     assert not path.exists()
     assert client.patch('/api/settings/ai', json={'extraction_workers': 4}).status_code == 200
     assert config.load_settings().extraction_workers == 4
@@ -196,7 +213,8 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
     assert response.status_code == 200, response.text
     assert response.json() == {
         'extraction_workers': workers, 'configured_extraction_workers': workers,
-        'min_extraction_workers': 1, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
+        'selected_extraction_workers': workers,
+        'min_extraction_workers': 0, 'max_extraction_workers': config.MAX_EXTRACTION_WORKERS,
         'generation_profile': 'quality', 'configured_generation_profile': 'quality',
         'generation_profiles': config.list_generation_profiles(),
         'generation_budget': 900, 'configured_generation_budget': 900,
@@ -211,6 +229,24 @@ def test_worker_counts_above_four_persist_without_invoking_codex(settings_client
     assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == workers
     assert client.get('/api/settings/ai').json() == response.json()
 
+
+def test_auto_persists_selection_and_exposes_resolved_workers(settings_client, monkeypatch):
+    client, path = settings_client
+    monkeypatch.setattr(config.os, 'process_cpu_count', lambda: 3, raising=False)
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '0')
+    settings = client.get('/api/settings/ai').json()
+    assert settings['extraction_workers'] == 3
+    assert settings['selected_extraction_workers'] == 0
+    assert settings['configured_extraction_workers'] == 2
+
+    response = client.patch('/api/settings/ai', json={'extraction_workers': 0})
+    assert response.status_code == 200, response.text
+    settings = response.json()
+    assert settings['extraction_workers'] == 3
+    assert settings['selected_extraction_workers'] == settings['configured_extraction_workers'] == 0
+    assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '0'
+    assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == 0
+    assert client.get('/api/settings/ai').json() == settings
 
 def test_scheme_budget_controls_effective_and_restarted_inspections(settings_client, monkeypatch):
     client, path = settings_client

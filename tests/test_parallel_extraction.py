@@ -258,11 +258,11 @@ def test_workers_inherit_cancellation_and_budget(setup, monkeypatch, mode, worke
     finally: progress.finish(1)
 
 
-@pytest.mark.parametrize('value', ['0', str(MAX_EXTRACTION_WORKERS + 1), 'wrong'])
+@pytest.mark.parametrize('value', ['-1', str(MAX_EXTRACTION_WORKERS + 1), 'wrong'])
 def test_invalid_concurrency_is_explicit(setup, monkeypatch, value):
     engine, bundle, _ = setup
     monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', value)
-    with pytest.raises(CodexError, match=f'WORKERS must be from 1 to {MAX_EXTRACTION_WORKERS}'):
+    with pytest.raises(CodexError, match=f'ai.extraction_workers must be an integer from 0 to {MAX_EXTRACTION_WORKERS}'):
         knowledge.build_candidate(engine, 1, Manager(lambda *_: pytest.fail('No generation expected')), bundle)
 
 

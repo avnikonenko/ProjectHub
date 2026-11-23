@@ -208,13 +208,13 @@ def _reported_generation_failure(error):
         if status is not None and (type(status) is not int or not 100 <= status <= 599):
             return None
         if status == 429:
-            return 'the service rate limited the request (HTTP 429)', False
+            return 'the service rate limited the request (HTTP 429)', False, True
         if status in (401, 403):
-            return f'the service denied the request (HTTP {status})', False
+            return f'the service denied the request (HTTP {status})', False, False
         suffix = f' (HTTP {status})' if status is not None else ''
         transient = (status is None or status in (408, 500, 502, 503, 504)
                      or (kind == 'responseStreamDisconnected' and 200 <= status < 300))
-        return reason + suffix, transient
+        return reason + suffix, transient, False
     if not isinstance(info, str):
         return None
     reason = {
@@ -233,7 +233,10 @@ def _reported_generation_failure(error):
         'misalignmentPolicyViolation': 'the request was blocked by a safety policy',
         'inferenceHookDenied': 'the workspace denied inference for this request',
     }.get(info)
-    return (reason, info in ('serverOverloaded', 'internalServerError')) if reason else None
+    if reason:
+        return (reason, info in ('serverOverloaded', 'internalServerError'),
+                info in ('rateLimitExceeded', 'usageLimitExceeded'))
+    return None
 
 
 def brief_turn_error(turn, reported_failure=None):
@@ -242,9 +245,11 @@ def brief_turn_error(turn, reported_failure=None):
     failure = _reported_generation_failure(turn.get('error')) or reported_failure
     if failure is None:
         return CodexError('Codex did not complete brief generation; no supported failure reason was provided.')
-    reason, transient = failure
+    reason, transient, throttled = failure
     error_type = TransientGenerationError if transient else CodexError
-    return error_type(f'Codex did not complete brief generation: {reason}.')
+    error = error_type(f'Codex did not complete brief generation: {reason}.')
+    error.generation_throttled = throttled
+    return error
 
 
 def record_dict(row):
@@ -738,6 +743,7 @@ class CodexManager:
                     # replace an original generation exception during unwinding.
                     log.warning('Could not close generation transport.', exc_info=True)
 
+    @progress.generation_request_slot()
     def generate_brief(self, prompt, output_schema, *, model=None, effort=None, verify_connectors=False):
         """Generate in a separate ephemeral thread with inherited tools disabled.
 

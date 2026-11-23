@@ -8,8 +8,8 @@ port = 8766
 generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
-# Independent extraction requests; increase only after measuring account capacity.
-extraction_workers = 10
+# Set 0 for Auto, or a positive number for a fixed worker count.
+extraction_workers = 0
 # Conversation review depth: quality (Thorough), balanced, or economy (Summary-assisted).
 generation_profile = "quality"
 # Total source excerpt characters available to Scheme.

@@ -52,7 +52,7 @@ class Input(BaseModel):
 
 
 class AIWorkerSettingsInput(Input):
-    extraction_workers: int | None = Field(default=None, strict=True, ge=1, le=MAX_EXTRACTION_WORKERS)
+    extraction_workers: int | None = Field(default=None, strict=True, ge=0, le=MAX_EXTRACTION_WORKERS)
     generation_profile: Literal['quality', 'balanced', 'economy'] | None = None
     generation_budget: int | None = Field(default=None, strict=True, ge=30, le=7200)
     scheme_source_chars: int | None = Field(default=None, strict=True)
@@ -428,6 +428,11 @@ def get_global_ai_settings():
         raise HTTPException(422, 'Could not read ProjectHub AI settings. Check the settings file.')
     except OSError:
         raise HTTPException(503, 'ProjectHub AI settings are not accessible.')
+
+
+@settings_router.get('/ai/workers')
+def get_automatic_worker_status():
+    return progress.automatic_worker_status()
 
 
 @settings_router.patch('/ai')

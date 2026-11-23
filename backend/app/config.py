@@ -17,7 +17,8 @@ class ConfigError(ValueError):
     pass
 
 
-DEFAULT_EXTRACTION_WORKERS = 10
+DEFAULT_EXTRACTION_WORKERS = 0
+AUTO_EXTRACTION_WORKERS_LIMIT = 6
 MAX_EXTRACTION_WORKERS = 2_147_483_647
 SCHEME_SOURCE_CHARS_OPTIONS = (40_000, 60_000, 80_000)
 DEFAULT_SCHEME_SOURCE_CHARS = SCHEME_SOURCE_CHARS_OPTIONS[0]
@@ -45,7 +46,7 @@ port = 8766
 generation_timeout = 600
 # Overall generation budget across all batches (seconds).
 generation_budget = 900
-# Independent extraction requests; increase only after measuring account capacity.
+# Set 0 for Auto, or a positive number for a fixed worker count.
 extraction_workers = {DEFAULT_EXTRACTION_WORKERS}
 # Conversation review depth: quality (Thorough), balanced, or economy (Summary-assisted).
 generation_profile = "quality"
@@ -79,7 +80,7 @@ class Settings:
     scheme_package_chars: int = DEFAULT_SCHEME_PACKAGE_CHARS
 
     def apply_environment(self):
-        workers = _integer(self.extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+        workers = _extraction_worker_setting(self.extraction_workers)
         budget = _integer(self.generation_budget, 'ai.generation_budget', 30, 7200)
         profile = _profile(self.generation_profile)
         scheme_environment = {env: str(_scheme_preset(name, getattr(self, name)))
@@ -124,6 +125,28 @@ def _integer(value, name, minimum, maximum):
     if type(value) is not int or not minimum <= value <= maximum:
         raise ConfigError(f'{name} must be an integer from {minimum} to {maximum}.')
     return value
+
+
+def _extraction_worker_setting(value):
+    return _integer(value, 'ai.extraction_workers', 0, MAX_EXTRACTION_WORKERS)
+
+
+def _available_cpu_count():
+    process_cpu_count = getattr(os, 'process_cpu_count', None)
+    if process_cpu_count is not None and (count := process_cpu_count()):
+        return count
+    if hasattr(os, 'sched_getaffinity'):
+        try:
+            return len(os.sched_getaffinity(0))
+        except OSError:
+            pass
+    return os.cpu_count() or 1
+
+
+def resolve_extraction_workers(value):
+    """Resolve Auto against CPUs usable by the process and the Auto cap."""
+    selected = _extraction_worker_setting(value)
+    return selected or max(1, min(_available_cpu_count(), AUTO_EXTRACTION_WORKERS_LIMIT))
 
 
 def _boolean(value, name):
@@ -201,8 +224,8 @@ def load_settings(environ: Mapping[str, str] | None = None):
         generation_budget=_integer(env.get('PROJECTHUB_GENERATION_BUDGET', ai.get('generation_budget', 900)),
                                    'ai.generation_budget', 30, 7200),
         codex_home=None if home is None else _absolute_path(home, 'ai.codex_home'),
-        extraction_workers=_integer(env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS)),
-                                    'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS),
+        extraction_workers=_extraction_worker_setting(
+            env.get('PROJECTHUB_EXTRACTION_WORKERS', ai.get('extraction_workers', DEFAULT_EXTRACTION_WORKERS))),
         generation_profile=_profile(env.get('PROJECTHUB_GENERATION_PROFILE', ai.get('generation_profile', 'quality'))),
         history_auto_sync=_boolean(env.get('PROJECTHUB_HISTORY_AUTO_SYNC', history.get('auto_sync', True)),
                                    'history.auto_sync'),
@@ -226,16 +249,16 @@ def create_config(environ: Mapping[str, str] | None = None):
 
 
 def _ai_settings_response(configured, *, workers=None, profile=None, budget=None, scheme_changes=None):
-    effective_workers = _integer(os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers)
-                                 if workers is None else workers,
-                                 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+    selected_workers = _extraction_worker_setting(
+        os.environ.get('PROJECTHUB_EXTRACTION_WORKERS', configured.extraction_workers) if workers is None else workers)
     effective_profile = _profile(os.environ.get('PROJECTHUB_GENERATION_PROFILE', configured.generation_profile)
                                  if profile is None else profile)
     effective_budget = _integer(os.environ.get('PROJECTHUB_GENERATION_BUDGET', configured.generation_budget)
                                 if budget is None else budget, 'ai.generation_budget', 30, 7200)
-    result = {'extraction_workers': effective_workers,
+    result = {'extraction_workers': resolve_extraction_workers(selected_workers),
             'configured_extraction_workers': configured.extraction_workers,
-            'min_extraction_workers': 1, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
+            'selected_extraction_workers': selected_workers,
+            'min_extraction_workers': 0, 'max_extraction_workers': MAX_EXTRACTION_WORKERS,
             'generation_profile': effective_profile,
             'configured_generation_profile': configured.generation_profile,
             'generation_profiles': list_generation_profiles(),
@@ -259,6 +282,12 @@ def ai_worker_settings():
                     *(env for env, _ in _SCHEME_SETTINGS.values())):
             configured_env.pop(key, None)
         return _ai_settings_response(load_settings(configured_env))
+
+
+def selected_extraction_workers():
+    """Read the raw runtime setting, with a config fallback for direct starts."""
+    workers = os.environ.get('PROJECTHUB_EXTRACTION_WORKERS')
+    return _extraction_worker_setting(workers) if workers is not None else load_settings().extraction_workers
 
 
 def _worker_config_text(original, workers):
@@ -327,7 +356,7 @@ def save_ai_settings(*, extraction_workers=_UNSET, generation_profile=_UNSET, ge
     """Persist all requested scalars atomically, then update the next-run defaults."""
     changes = {}
     if extraction_workers is not _UNSET:
-        changes['extraction_workers'] = _integer(extraction_workers, 'ai.extraction_workers', 1, MAX_EXTRACTION_WORKERS)
+        changes['extraction_workers'] = _extraction_worker_setting(extraction_workers)
     if generation_profile is not _UNSET:
         changes['generation_profile'] = _profile(generation_profile)
     if generation_budget is not _UNSET:

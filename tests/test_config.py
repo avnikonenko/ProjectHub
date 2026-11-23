@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.app import cli
+from backend.app import cli, config
 from backend.app.config import ConfigError, MAX_EXTRACTION_WORKERS, Settings, TEMPLATE, config_path, create_config, load_settings
 
 
@@ -16,7 +16,7 @@ def test_defaults_and_xdg_paths(tmp_path):
     assert settings.port == 8766 and settings.generation_timeout == 600
     assert settings.data_dir == tmp_path / 'data/projecthub'
     assert settings.codex_home is None
-    assert settings.extraction_workers == 10
+    assert settings.extraction_workers == 0
     assert settings.generation_profile == 'quality'
     assert settings.history_auto_sync is True and settings.history_sync_interval == 60
 
@@ -87,7 +87,7 @@ def test_create_config_is_private_and_does_not_replace_existing_file(tmp_path):
     env = {'XDG_CONFIG_HOME': str(tmp_path)}
     path = create_config(env)
     assert path.read_text() == TEMPLATE
-    assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == 10
+    assert tomllib.loads(path.read_text())['ai']['extraction_workers'] == 0
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.parent.stat().st_mode & 0o777 == 0o700
     path.write_text('existing settings')
@@ -145,7 +145,7 @@ def test_example_template_matches_created_config():
     assert Path('config.example.toml').read_text() == TEMPLATE
 
 
-@pytest.mark.parametrize('workers', [1, 2, 3, 4, 5, 8, 10, 12, MAX_EXTRACTION_WORKERS])
+@pytest.mark.parametrize('workers', [0, 1, 2, 3, 4, 5, 8, 10, 12, MAX_EXTRACTION_WORKERS])
 def test_extraction_workers_file_setting_and_environment_override(tmp_path, workers):
     path = tmp_path / 'config.toml'
     path.write_text(f'[ai]\nextraction_workers = {workers}\n')
@@ -155,20 +155,20 @@ def test_extraction_workers_file_setting_and_environment_override(tmp_path, work
     assert load_settings({**env, 'PROJECTHUB_EXTRACTION_WORKERS': str(override)}).extraction_workers == override
 
 
-@pytest.mark.parametrize('value', ['true', 'false', '0', str(MAX_EXTRACTION_WORKERS + 1), '1.5', '"unknown"', '"do-not-print-this"'])
+@pytest.mark.parametrize('value', ['true', 'false', '-1', str(MAX_EXTRACTION_WORKERS + 1), '1.5', '"unknown"', '"do-not-print-this"'])
 def test_invalid_extraction_worker_config_has_sanitized_error(tmp_path, value):
     path = tmp_path / 'config.toml'
     path.write_text(f'[ai]\nextraction_workers = {value}\n')
-    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 0 to {MAX_EXTRACTION_WORKERS}') as exc:
         load_settings({'PROJECTHUB_CONFIG': str(path)})
     assert 'do-not-print-this' not in str(exc.value)
 
 
-@pytest.mark.parametrize('value', ['true', '0', str(MAX_EXTRACTION_WORKERS + 1), 'unknown', 'do-not-print-this', '1.5'])
+@pytest.mark.parametrize('value', ['true', '-1', str(MAX_EXTRACTION_WORKERS + 1), 'unknown', 'do-not-print-this', '1.5'])
 def test_invalid_extraction_worker_environment_has_sanitized_error(tmp_path, value):
-    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 0 to {MAX_EXTRACTION_WORKERS}') as exc:
         load_settings({'XDG_CONFIG_HOME': str(tmp_path), 'PROJECTHUB_EXTRACTION_WORKERS': value})
-    assert str(exc.value) == f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}.'
+    assert str(exc.value) == f'ai.extraction_workers must be an integer from 0 to {MAX_EXTRACTION_WORKERS}.'
 
 
 def test_extraction_worker_unknown_field_is_not_silently_ignored(tmp_path):
@@ -182,7 +182,7 @@ def test_extraction_worker_unknown_field_is_not_silently_ignored(tmp_path):
 def test_settings_preserves_positional_fields_and_applies_validated_worker_count(tmp_path, monkeypatch):
     # Existing positional callers retain every prior field's meaning.
     settings = Settings(8888, tmp_path, 120, None, 600, False, 90)
-    assert settings.extraction_workers == 10
+    assert settings.extraction_workers == 0
     assert settings.generation_budget == 600
     assert settings.history_auto_sync is False and settings.history_sync_interval == 90
     path = tmp_path / 'config.toml'
@@ -203,14 +203,46 @@ def test_settings_preserves_positional_fields_and_applies_validated_worker_count
     assert os.environ['PROJECTHUB_SCHEME_PACKAGE_CHARS'] == '140000'
 
 
-@pytest.mark.parametrize('value', [True, 0, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])
+@pytest.mark.parametrize('value', [True, -1, MAX_EXTRACTION_WORKERS + 1, 'do-not-print-this'])
 def test_direct_invalid_settings_worker_value_cannot_enter_environment(tmp_path, monkeypatch, value):
     monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '2')
     settings = Settings(8766, tmp_path, 600, None, extraction_workers=value)
-    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 1 to {MAX_EXTRACTION_WORKERS}') as exc:
+    with pytest.raises(ConfigError, match=f'ai.extraction_workers must be an integer from 0 to {MAX_EXTRACTION_WORKERS}') as exc:
         settings.apply_environment()
     assert 'do-not-print-this' not in str(exc.value)
     assert os.environ['PROJECTHUB_EXTRACTION_WORKERS'] == '2'
+
+
+def test_auto_workers_use_process_capacity_without_limiting_explicit_counts(monkeypatch):
+    monkeypatch.setattr(os, 'process_cpu_count', lambda: 2, raising=False)
+    assert config.resolve_extraction_workers('0') == 2
+    monkeypatch.setattr(os, 'process_cpu_count', lambda: 64)
+    assert config.resolve_extraction_workers(0) == config.AUTO_EXTRACTION_WORKERS_LIMIT
+    assert config.resolve_extraction_workers(10) == 10
+
+
+def test_auto_workers_fall_back_to_affinity_or_cpu_count(monkeypatch):
+    monkeypatch.setattr(os, 'process_cpu_count', lambda: None, raising=False)
+    monkeypatch.setattr(os, 'sched_getaffinity', lambda pid: {3, 8}, raising=False)
+    assert config.resolve_extraction_workers(0) == 2
+
+    def unsupported(pid):
+        raise OSError()
+
+    monkeypatch.setattr(os, 'sched_getaffinity', unsupported)
+    monkeypatch.setattr(os, 'cpu_count', lambda: None)
+    assert config.resolve_extraction_workers(0) == 1
+
+
+def test_selected_workers_fall_back_to_file_and_keep_auto_override(tmp_path, monkeypatch):
+    path = tmp_path / 'config.toml'
+    path.write_text('[ai]\nextraction_workers = 7\n')
+    monkeypatch.setenv('PROJECTHUB_CONFIG', str(path))
+    monkeypatch.delenv('PROJECTHUB_EXTRACTION_WORKERS', raising=False)
+    assert config.selected_extraction_workers() == 7
+    monkeypatch.setenv('PROJECTHUB_EXTRACTION_WORKERS', '0')
+    path.unlink()
+    assert config.selected_extraction_workers() == 0
 
 
 @pytest.mark.parametrize('budget', [30, 1200, 7200])

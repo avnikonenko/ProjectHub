@@ -8,6 +8,7 @@ import { generationProfileLabels, parseAdvancedSchemeSettings, parseGenerationPr
 type WorkerSettings = {
   extraction_workers: number;
   configured_extraction_workers: number;
+  selected_extraction_workers: number;
   min_extraction_workers: number;
   max_extraction_workers: number;
   profileSettings?: GenerationProfileSettings | null;
@@ -15,6 +16,18 @@ type WorkerSettings = {
   schemeSourceSettings?: ReturnType<typeof parseSchemeSourceSettings>;
   advancedSchemeSettings: ReturnType<typeof parseAdvancedSchemeSettings>;
 };
+
+type AutoWorkerStatus = { target: number; active: number; waiting: number; ceiling: number };
+
+function autoWorkerStatusResponse(value: unknown): AutoWorkerStatus | null {
+  if (!value || typeof value !== 'object') return null;
+  const { target, active, waiting, ceiling } = value as Partial<AutoWorkerStatus>;
+  const count = (item: unknown, minimum: number): item is number =>
+    typeof item === 'number' && Number.isSafeInteger(item) && item >= minimum;
+  return count(target, 1) && count(ceiling, target) && count(active, 0) && count(waiting, 0)
+    ? { target, active, waiting, ceiling }
+    : null;
+}
 
 const advancedSchemeFields = [
   {
@@ -34,13 +47,19 @@ type AdvancedSchemeField = typeof advancedSchemeFields[number]['name'];
 
 function settingsResponse(value: unknown): WorkerSettings {
   const settings = value as Partial<WorkerSettings> | null;
-  const validCount = (count: unknown) => typeof count === 'number'
-    && Number.isSafeInteger(count) && count >= 1;
-  if (!settings || !validCount(settings.extraction_workers)
-    || !validCount(settings.configured_extraction_workers)
-    || settings.min_extraction_workers !== 1 || !validCount(settings.max_extraction_workers)
-    || settings.extraction_workers! > settings.max_extraction_workers!
-    || settings.configured_extraction_workers! > settings.max_extraction_workers!) {
+  const validCount = (count: unknown, minimum = 1): count is number => typeof count === 'number'
+    && Number.isSafeInteger(count) && count >= minimum;
+  const minimum = settings?.min_extraction_workers;
+  const configured = settings?.configured_extraction_workers;
+  const max = settings?.max_extraction_workers;
+  const effective = settings?.extraction_workers;
+  // An older server has only fixed counts and returns the selected count as the effective count.
+  const selected = minimum === 1 ? effective : settings?.selected_extraction_workers;
+  if (!settings || (minimum !== 0 && minimum !== 1)
+    || !validCount(effective) || !validCount(max)
+    || !validCount(configured, minimum) || !validCount(selected, minimum)
+    || effective > max || configured > max || selected > max
+    || (selected > 0 && selected !== effective)) {
     throw new Error('AI settings returned an unsupported worker count.');
   }
   const budget = value as Record<string, unknown>;
@@ -51,13 +70,14 @@ function settingsResponse(value: unknown): WorkerSettings {
     const effective = budget.generation_budget;
     const configured = budget.configured_generation_budget;
     if (!validCount(min) || !validCount(max) || !validCount(effective) || !validCount(configured)
-      || Number(min) > Number(max) || Number(effective) < Number(min) || Number(effective) > Number(max)
-      || Number(configured) < Number(min) || Number(configured) > Number(max)) {
+      || min > max || effective < min || effective > max
+      || configured < min || configured > max) {
       throw new Error('AI settings returned an unsupported time budget.');
     }
-    budgetSettings = { value: Number(effective), configured: Number(configured), min: Number(min), max: Number(max) };
+    budgetSettings = { value: effective, configured, min, max };
   }
-  return { ...settings, profileSettings: parseGenerationProfileSettings(value), budgetSettings,
+  return { ...settings, selected_extraction_workers: selected,
+    profileSettings: parseGenerationProfileSettings(value), budgetSettings,
     schemeSourceSettings: parseSchemeSourceSettings(value), advancedSchemeSettings: parseAdvancedSchemeSettings(value) } as WorkerSettings;
 }
 
@@ -68,7 +88,7 @@ type Setting = { value: SettingOption; configured: SettingOption } &
 type SettingEdit = { field: SettingField; draft: string };
 type SaveNotice = { state: 'saving' | 'saved' } | { state: 'failed'; error: string };
 const savedMessages: Record<SettingField, string> = {
-  extraction_workers: 'Thread count saved.',
+  extraction_workers: 'AI worker setting saved.',
   generation_profile: 'Generation profile saved.',
   generation_budget: 'Overall time budget saved.',
   scheme_source_chars: 'Scheme excerpt budget saved.',
@@ -80,7 +100,7 @@ function settingFor(settings: WorkerSettings | null, field: SettingField): Setti
   if (!settings) return null;
   switch (field) {
     case 'extraction_workers':
-      return { value: settings.extraction_workers, configured: settings.configured_extraction_workers,
+      return { value: settings.selected_extraction_workers, configured: settings.configured_extraction_workers,
         min: settings.min_extraction_workers, max: settings.max_extraction_workers };
     case 'generation_profile': {
       const profile = settings.profileSettings;
@@ -112,6 +132,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const [reload, setReload] = useState(0);
   const [drafts, setDrafts] = useState<Partial<Record<SettingField, string>>>({});
   const [notices, setNotices] = useState<Partial<Record<SettingField, SaveNotice>>>({});
+  const [autoWorkerStatus, setAutoWorkerStatus] = useState<AutoWorkerStatus | null>(null);
   const mounted = useRef(true);
   const currentSettings = useRef<WorkerSettings | null>(null);
   const loadVersion = useRef(0);
@@ -247,7 +268,35 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const budget = settings?.budgetSettings;
   const schemeBudget = settings?.schemeSourceSettings;
   const advancedScheme = settings?.advancedSchemeSettings;
-  const validWorkers = settingValue(settingFor(settings, 'extraction_workers'), inputValue('extraction_workers')) !== undefined;
+  const workerInput = inputValue('extraction_workers');
+  const autoWorkers = workerInput === '0';
+  const showAutoStatus = autoWorkers && settings?.selected_extraction_workers === 0;
+  useEffect(() => {
+    setAutoWorkerStatus(null);
+    if (!active || !showAutoStatus) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function refreshStatus() {
+      try {
+        const response = await fetch('/api/settings/ai/workers', { signal, cache: 'no-store' });
+        const result = response.ok ? autoWorkerStatusResponse(await response.json()) : null;
+        if (!signal.aborted) setAutoWorkerStatus(result);
+        // Older servers still provide the CPU ceiling in the settings response.
+        if (response.status === 404 || response.status === 405) return;
+      } catch {
+        if (!signal.aborted) setAutoWorkerStatus(null);
+      }
+      if (!signal.aborted) timer = setTimeout(() => { void refreshStatus(); }, 3000);
+    }
+    void refreshStatus();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [active, showAutoStatus, refreshVersion, reload]);
+  const validWorkers = settingValue(settingFor(settings, 'extraction_workers'), workerInput) !== undefined;
+  const workerOverride = settings && settings.selected_extraction_workers !== settings.configured_extraction_workers;
   const validBudget = settingValue(budget, inputValue('generation_budget')) !== undefined;
   return <div>
     {loading && <Feedback>Loading AI settings…</Feedback>}
@@ -278,24 +327,42 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
     {profileSettings && profileSettings.generation_profile !== profileSettings.configured_generation_profile
       && <p><small>Startup environment overrides the saved profile ({generationProfileLabels[profileSettings.configured_generation_profile]}).</small></p>}
     <label>
-      AI workers per job
-      <input type="number" min={settings?.min_extraction_workers ?? 1}
-        max={settings?.max_extraction_workers} step={1}
-        aria-label="AI workers per job" aria-describedby={helpId}
-        aria-invalid={settings !== null && !validWorkers}
-        value={inputValue('extraction_workers')}
-        disabled={loading || settings === null}
-        placeholder={loading ? 'Loading…' : 'Workers per job'}
-        {...numericEvents('extraction_workers')} />
+      AI worker mode
+      <select aria-describedby={helpId} value={settings ? (autoWorkers ? 'auto' : 'fixed') : ''}
+        disabled={loading || !settings}
+        onChange={event => {
+          if (!settings) return;
+          const count = event.target.value === 'auto' ? 0
+            : settings.configured_extraction_workers || settings.extraction_workers;
+          changeSetting('extraction_workers', String(count));
+        }}>
+        {!settings && <option value="">{loading ? 'Loading…' : 'Unavailable'}</option>}
+        <option value="auto" disabled={settings?.min_extraction_workers !== 0}>Auto</option>
+        <option value="fixed">Fixed</option>
+      </select>
     </label>
+    {showAutoStatus && <p><small>{autoWorkerStatus
+      ? <>Auto target {autoWorkerStatus.target} of {autoWorkerStatus.ceiling} workers
+        {' '}· {autoWorkerStatus.active} active · {autoWorkerStatus.waiting} waiting</>
+      : <>Up to {settings.extraction_workers} {settings.extraction_workers === 1 ? 'worker' : 'workers'} shared across Auto jobs.</>
+    }</small></p>}
+    {settings && !autoWorkers && <label>
+      AI workers per job
+      <input type="number" min={1} max={settings.max_extraction_workers} step={1}
+        aria-describedby={helpId} aria-invalid={!validWorkers}
+        value={workerInput} disabled={loading} placeholder="Workers per job"
+        {...numericEvents('extraction_workers')} />
+    </label>}
     {saveFeedback('extraction_workers')}
-    {settings && !validWorkers && <Feedback>Enter a whole number from {settings.min_extraction_workers} to {settings.max_extraction_workers}.</Feedback>}
+    {settings && !validWorkers && <Feedback>Enter a whole number from 1 to {settings.max_extraction_workers}.</Feedback>}
     <SettingsHelp title="Worker-count explanation" id={helpId}>
-      <p>Maximum parallel AI batches for each generation job; 1 is serial, 10 is the default. Applies to the next job.
-        {' '}Concurrent jobs each get this limit, so total memory use and account requests can increase.</p>
+      <p>Auto shares a CPU-based ceiling across Auto jobs. It increases the target when batches keep waiting and
+        {' '}requests succeed, and reduces it when the provider throttles requests or local memory is low.</p>
+      <p>Fixed sets the maximum parallel batches for each job. Choose 1 to run batches serially.
+        {' '}Changes apply to the next job.</p>
     </SettingsHelp>
-    {settings && settings.extraction_workers !== settings.configured_extraction_workers
-      && <p><small>Startup environment overrides the saved value ({settings.configured_extraction_workers}).</small></p>}
+    {workerOverride && <p><small>Startup environment overrides the saved value
+      {' '}({settings.configured_extraction_workers || 'Auto'}).</small></p>}
     <label>
       Overall time budget (seconds)
       <input type="number" min={budget?.min ?? 30} max={budget?.max ?? 7200} step={1}

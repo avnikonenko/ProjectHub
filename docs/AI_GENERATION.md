@@ -169,9 +169,17 @@ started the run. [See how Scheme uses evidence.](SCHEME.md#generate-or-refresh)
 
 ### Other settings
 
-**AI workers per job** limits parallel batches for each job. The default is 10.
-Set it to 1 to run batches in sequence, or lower it if you hit memory or account
-limits.
+**AI worker mode** controls parallel batches. **Auto** starts with up to two
+concurrent requests and increases the limit when batches are waiting and
+requests keep succeeding. It reduces concurrency when the provider reports a
+request or usage limit or local memory is low. The ceiling is the number of
+CPUs available to ProjectHub, capped at six. Auto jobs share this limit across
+Codex and Claude Code in the same ProjectHub process. Settings shows the
+current limit, active requests, and queued requests.
+
+Choose a fixed count for a job limit outside the shared Auto limit. A count
+of 1 runs batches in sequence. In the configuration file, use
+`extraction_workers = 0` for Auto. Saved positive counts stay fixed.
 
 Settings save automatically and apply to the next run. Startup environment
 overrides can take precedence after restart. See the

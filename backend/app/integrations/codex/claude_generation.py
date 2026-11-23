@@ -200,6 +200,7 @@ def _generation_failure(returncode, output, errors, error_bytes):
                if returncode == 0 and category == 'unknown_exit'
                else f'Claude Code generation failed ({exit_label}{suffix}). {guidance}')
     failure = error_type(message)
+    failure.generation_throttled = category == 'rate_limited'
     failure.provider_diagnostics = {
         'provider': 'claude', 'exit_status': returncode,
         'category': category, 'stdout_bytes': len(output), 'stderr_bytes': error_bytes,
@@ -418,6 +419,7 @@ class ClaudeGenerationManager:
         # Every call owns its subprocess and isolated settings directory.
         yield self.for_generation(self.generation_model, self.generation_effort)
 
+    @progress.generation_request_slot()
     def generate_brief(self, prompt, output_schema, *, verify_connectors=False):
         # Compatibility with the shared generation interface. Isolation is
         # unconditional, including for callers that omit verify_connectors.

@@ -11,7 +11,7 @@ from ...version import VERSION
 
 
 class CodexError(RuntimeError):
-    pass
+    generation_throttled = False
 
 
 class MissingSourceHistory(CodexError):

@@ -228,6 +228,7 @@ def test_claude_failure_uses_only_allowlisted_machine_diagnostics(fake_cli, payl
     assert isinstance(caught.value, TransientGenerationError) is transient
     assert isinstance(caught.value, JSONFormattingError) is (category == 'structured_output_failure')
     assert caught.value.provider_diagnostics['category'] == category
+    assert caught.value.generation_throttled is (category == 'rate_limited')
     assert 'exit status 1' in str(caught.value)
     assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
     if category == 'rate_limited':

@@ -103,7 +103,7 @@ def test_both_fields_are_saved_in_one_atomic_replace(settings_client, monkeypatc
 @pytest.mark.parametrize('body', [
     {'generation_profile': None}, {'generation_profile': True}, {'generation_profile': 2},
     {'generation_profile': 'unknown'}, {'extraction_workers': None},
-    {'generation_profile': 'economy', 'extraction_workers': 0},
+    {'generation_profile': 'economy', 'extraction_workers': -1},
     {'generation_profile': 'economy', 'extraction_workers': None},
 ])
 def test_invalid_profiles_and_mixed_requests_leave_everything_unchanged(settings_client, body):

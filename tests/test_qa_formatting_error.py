@@ -242,6 +242,7 @@ def test_matching_terminal_error_notification_explains_failed_turn(generation, n
         manager.generate_brief('reference', {'type': 'object'})
 
     assert type(caught.value) is CodexError
+    assert caught.value.generation_throttled is (expected == 'rate limit')
     assert 'private' not in str(caught.value)
     assert len(clients) == 1 and clients[0].closed
 
@@ -257,6 +258,7 @@ def test_known_http_failures_are_sanitized_and_not_retried(generation, status, e
         module.request_knowledge_json(manager, 'reference', {'type': 'object'})
 
     assert type(caught.value) is CodexError
+    assert caught.value.generation_throttled is (status == 429)
     assert 'private' not in str(caught.value)
     assert len(clients) == 1 and clients[0].closed
 

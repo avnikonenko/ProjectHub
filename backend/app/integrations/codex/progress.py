@@ -10,11 +10,14 @@ import weakref
 
 from sqlalchemy.orm import Session
 
+from ...config import ConfigError, resolve_extraction_workers, selected_extraction_workers
 from ...models import utcnow
+from .adaptive_workers import AdaptiveWorkerPool
 from .generation_metrics import GenerationMetrics
 from .protocol import CodexError
 
 _lock = threading.Lock()
+_model_slots = AdaptiveWorkerPool()
 # Keys include the view; event identity additionally identifies a particular run.
 _active = {}
 _snapshots = {}
@@ -88,10 +91,35 @@ def _owned_run_lock(project_id):
         return _run_locks.get(key) if key is not None else None
 
 
+def _automatic_limit():
+    try:
+        return resolve_extraction_workers(0) if selected_extraction_workers() == 0 else None
+    except ConfigError as exc:
+        raise CodexError(str(exc)) from exc
+
+
+@contextmanager
+def generation_request_slot():
+    """Share Auto capacity across generation jobs and both provider transports."""
+    current = _current.get()
+    limit = current[3] if current is not None else _automatic_limit()
+    if limit is None:
+        yield
+        return
+    with _model_slots.slot(limit, check_cancelled=check_cancelled,
+                           is_throttle=lambda exc: isinstance(exc, CodexError) and exc.generation_throttled):
+        yield
+
+
+def automatic_worker_status():
+    return _model_slots.status(resolve_extraction_workers(0))
+
+
 def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, metrics=None, **options):
     from .ai_instructions import has_project_instructions
     from .generation_attempts import settings_for, start
     budget = _budget()
+    automatic_limit = _automatic_limit()
     settings = None if manager is None else {
         **settings_for(manager, engine), **options, 'generation_budget': budget,
         'project_instructions': has_project_instructions(),
@@ -112,7 +140,7 @@ def begin(project_id, kind, engine=None, *, saves_result=True, manager=None, met
                            'started_at': utcnow(), 'budget_seconds': budget}
         if settings is not None:
             _snapshots[key]['settings'] = settings
-        _current.set((project_id, kind, event))
+        _current.set((project_id, kind, event, automatic_limit))
         _stores[key] = weakref.ref(engine) if engine is not None else None
     if engine is not None:
         try:
