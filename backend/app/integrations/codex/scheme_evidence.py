@@ -1,6 +1,6 @@
 """Bounded Scheme inputs from local files and stored records; never runs project code or AI."""
 import ast
-from collections import deque
+from collections import Counter, deque
 from copy import deepcopy
 import hashlib
 from io import BytesIO
@@ -34,10 +34,11 @@ from .scheme_migration_sql import compact_migration_sql, migration_sql_declarati
 from .scheme_named_files import named_file_excerpt, named_file_kind
 from .scheme_namelist import namelist_excerpt
 from .scheme_python_dependencies import local_python_modules, python_imports, setup_dependencies
-from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations
+from .scheme_python_flow import python_entrypoint_trace, python_flow_declarations, python_imported_symbols
 from .scheme_route_evidence import python_route_declarations
 from .scheme_cli_choices import cli_choice_rows
 from .scheme_workflow_sql import workflow_sql_rows
+from .scheme_workflow_guides import is_workflow_alternative
 
 _MAX_PATHS = 300
 _MAX_BYTES = 65536
@@ -389,7 +390,7 @@ _CODE_EXTENSIONS = ('.py', *_JS_EXTENSIONS)
 _MIGRATION_SCOPE_WORDS = frozenset('database db fts fts5 index migration schema search sqlite table trigger'.split())
 _MAX_FOCUSED_MIGRATIONS = 48
 _MAX_FOCUSED_SCHEMA_SOURCES = 3
-_WORKFLOW_ROUTE = re.compile(r'/(?:import|search|generate|generation|scheme)(?=[/ ?])')
+_WORKFLOW_ROUTE = re.compile(r'/(?:import|search|generate|generation|brief|scheme|publish)(?=[/ ?])')
 _WORKFLOW_CONFIG = re.compile(r'(?<![\w.-])[\w.-]+\.(?:in|mdp)(?![\w.-])', re.I)
 _VIRTUAL_INDEX = re.compile(r'(?m)^L\d+: CREATE VIRTUAL TABLE (\w+) USING fts[345]\b', re.I)
 _INDEX_WRITE = re.compile(r'(?m)^L\d+: CREATE TRIGGERS? [^\n]+: [^\n]*\bINSERT INTO (\w+)\b', re.I)
@@ -582,7 +583,7 @@ def _general_repository_order(sources, entrypoints, declared_modules, handoffs, 
     return order
 
 
-def _index_workflows(sources):
+def _index_workflows(sources, preferred_paths=()):
     """Pair SQLite index maintenance with runtime queries on the same index."""
     for schema in sorted(sources, key=lambda source: source['path']):
         if not _python_migration(schema['path']):
@@ -596,10 +597,10 @@ def _index_workflows(sources):
                 continue
             queried = set(_INDEX_QUERY.findall(source['text']))
             if indexes & queried:
-                matches.append((len(indexes & queried), len(queried), source))
+                matches.append((source['path'] in preferred_paths, len(indexes & queried), len(queried), source))
         if matches:
-            matches.sort(key=lambda item: (-item[0], -item[1]))
-            yield [schema, matches[0][2]]
+            matches.sort(key=lambda item: (-item[0], -item[1], -item[2]))
+            yield [schema, matches[0][3]]
 
 
 def _repository(repository_path, patterns, *, inventory=None, requested=None):
@@ -734,6 +735,7 @@ def _guide_excerpt(value):
     ranges, _ = _passage_ranges(value)
     candidates = []
     prose_count = 0
+    alternative_used = False
     for left, right in ranges:
         body = value[left:right]
         if re.match(r"[ \t]*(`{3,}|~{3,})", body):
@@ -750,8 +752,11 @@ def _guide_excerpt(value):
         for heading in headings:
             candidates.append((2, left + heading.start(), left + heading.end()))
         # Prefer the introduction before later detailed configuration prose.
-        if len(body) <= 600 and (not headings or len(body.splitlines()) > len(headings)):
-            candidates.append((1 if prose_count < 2 else 3, left, right))
+        alternative = not alternative_used and len(body) <= 700 and is_workflow_alternative(body)
+        if (len(body) <= 600 or alternative) and (not headings or len(body.splitlines()) > len(headings)):
+            if alternative:
+                alternative_used = True
+            candidates.append((0 if alternative else 1 if prose_count < 2 else 3, left, right))
             prose_count += 1
     selected = []
     for _, left, right in sorted(candidates):
@@ -1140,10 +1145,11 @@ def _client_navigation_declarations(value, masked, owner_at):
 
 
 def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_imports=None, route_imports=None,
-                        named_python=False, admitted_handoffs=None):
+                        named_python=False, admitted_handoffs=None, route_support=None):
     """Bounded declarations, call syntax and selected structural details."""
     imports, declarations, calls, migration_sql, routes = [], [], [], [], []
     flow, workflow, choices, handoffs, route_owners = [], [], [], [], set()
+    lifecycle, artifacts = [], []
     relationships = {}
     if PurePosixPath(relative).suffix.lower() == '.py':
         try:
@@ -1175,23 +1181,42 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
                                       if focus(row[1]) or row[1].split()[1][2:].replace('-', '_') in guarded_options),
                                      key=lambda row: -focus(row[1]))
             elif trace_imports is not None:
-                flow, called = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape)
+                flow, called = python_entrypoint_trace(parsed, entrypoints, predicate_shape=_predicate_shape,
+                                                       lifecycle_rows=lifecycle, callback_symbols=route_imports,
+                                                       artifact_rows=artifacts)
                 trace_imports.update(called)
                 workflow = workflow_sql_rows(parsed)
                 candidates = [row for row in python_route_declarations(parsed)
                               if row[1].startswith('HTTP route ') and _WORKFLOW_ROUTE.search(row[1])]
                 if candidates:
                     # Give POST and GET handlers room before auxiliary endpoints.
-                    candidates.sort(key=lambda row: ('{' in row[1].split(' -> ')[0].rsplit('/', 1)[-1],
-                                                     '/preview ' in row[1], row[0]))
+                    candidates.sort(key=lambda row: (
+                        bool(re.search(r'/(?:preview|status|summary|cancel) ', row[1])),
+                        row[1].split(' -> ')[0].count('/'), row[0]))
                     routes = candidates[:5]
-                    route_owners = {row.split(' -> ')[-1] for _, row in routes}
+                    handler_names = Counter(node.name for node in ast.walk(parsed)
+                                            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)))
+                    route_owners = {name for _, row in routes if handler_names[name := row.split(' -> ')[-1]] == 1}
                     if route_imports is not None:
+                        imported = python_imported_symbols(parsed)
                         for handler in ast.walk(parsed):
                             if isinstance(handler, (ast.FunctionDef, ast.AsyncFunctionDef)) and handler.name in route_owners:
-                                route_imports.update(call.value.func.id for call in ast.walk(handler)
-                                    if isinstance(call, ast.Return) and isinstance(call.value, ast.Call)
-                                    and isinstance(call.value.func, ast.Name))
+                                nodes = list(ast.walk(handler))
+                                shadowed = {node.id for node in nodes if isinstance(node, ast.Name)
+                                            and isinstance(node.ctx, (ast.Store, ast.Del))}
+                                shadowed.update(node.arg for node in nodes if isinstance(node, ast.arg))
+                                shadowed.update(node.asname or node.name for node in nodes if isinstance(node, ast.alias))
+                                if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node is not handler
+                                       for node in nodes):
+                                    continue
+                                for node in nodes:
+                                    if (isinstance(node, ast.Return) and isinstance(node.value, ast.Call)
+                                            and isinstance(node.value.func, ast.Name)
+                                            and (name := node.value.func.id) not in shadowed):
+                                        if route_support is not None:
+                                            route_support.add(name)
+                                        if imported.get(name):
+                                            route_imports[name] = imported[name]
 
             class Visitor(ast.NodeVisitor):
                 def __init__(self):
@@ -1352,7 +1377,11 @@ def _structural_excerpt(value, relative, *, focus=None, entrypoints=(), trace_im
     full_trace = not focus or (named_python and flow and flow[0][1].startswith('Entry flow '))
     flow_allowance = 1400 if full_trace else _MAX_FOCUSED_FLOW_CHARS
     route_calls = [row for row in calls if row[1].split(' uses call syntax:')[0].rsplit('.', 1)[-1] in route_owners]
-    for rows, allowance, count in ((workflow, 480, 8),
+    artifact_calls = [row for row in dict.fromkeys(artifacts) if row[1].startswith('Workflow artifact call ')]
+    callback_calls = sorted((row for row in set(artifacts) if row[1].startswith('Workflow callback ')), reverse=True)
+    for rows, allowance, count in ((lifecycle, 360, 4),
+                                    ([*artifact_calls, *callback_calls], 320, 2),
+                                    (workflow, 480, 8),
                                     (ordered_routes, _MAX_FOCUSED_ROUTE_CHARS, 8),
                                     (route_calls, 700, 5),
                                     (choices, 200, 2),
@@ -1666,7 +1695,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         scope_identity = {'scope': focus.value, 'scope_policy': 18, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v17', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v14' if focus else 'scheme-inspection-v31', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
@@ -1692,7 +1721,10 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         # A vanished repository has no directory descriptor to anchor safe reads.
         pending = list(candidates) if root_fd is not None else []
         shared_stems = _shared_feature_stems(paths)
-        priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in {'main', 'app', 'index', 'server', 'cli'}
+        primary_stems = {'main', 'app', 'index', 'server', 'cli'}
+        if not focus:
+            primary_stems.update(('router', 'routes'))
+        priorities = {path: ((0, i) if PurePosixPath(path).stem.casefold() in primary_stems
                              else (1, -1) if PurePosixPath(path).stem.casefold() in shared_stems
                              else (99, i)) for i, path in enumerate(candidates)}
         last_area = None
@@ -1708,6 +1740,9 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
         reachable_paths = set()
         handoff_paths = set()
         route_targets = set()
+        route_queries = set()
+        route_callers = {}
+        direct_handoffs = {}
         configuration_paths = set()
         configurations = {}
         if not focus:
@@ -1757,7 +1792,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     continue
                 named_python = bool(focus and relative in requested_paths and PurePosixPath(relative).suffix == '.py')
                 extended = named_python or (not focus and PurePosixPath(relative).suffix == '.py'
-                                            and relative in (entrypoint_paths | reachable_paths))
+                                            and relative in (entrypoint_paths | reachable_paths | route_targets))
                 file_limit = _MAX_ENTRYPOINT_FILE_BYTES if extended else _MAX_BYTES
                 value = _read(root_fd, relative, allow_prefix=is_code, budget=budget,
                               **({'max_file_bytes': file_limit} if extended else {}))
@@ -1814,23 +1849,34 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                     if isinstance(marker, list) and marker[3] > file_limit:
                         limitations.add(f'Some source files were limited to a {file_limit // 1024} KiB prefix; later implementation may be omitted.')
                     called_names = set()
-                    returned_calls = set()
+                    returned_calls = {}
+                    support_names = set()
                     syntax = (_structural_excerpt(value, relative, focus=focus.score, named_python=named_python,
                                                   admitted_handoffs=admitted_handoffs)
                               if focus else _structural_excerpt(value, relative,
                                   entrypoints=sorted(entrypoint_functions.get(relative, ())), trace_imports=called_names,
-                                  route_imports=returned_calls))
+                                  route_imports=returned_calls, route_support=support_names))
                     if not focus and called_names:
                         entrypoint_paths.add(relative)
                     linked = _import_targets(value, relative, code_paths)
+                    if support_names:
+                        # Ambiguous bindings can guide query-source selection
+                        # without making the imported function a verified root.
+                        route_queries.update(_import_targets(value, relative, code_paths, called_names=support_names))
                     if returned_calls:
-                        route_targets.update(_import_targets(value, relative, code_paths, called_names=returned_calls))
+                        for name in sorted(returned_calls):
+                            targets = _import_targets(value, relative, code_paths, called_names={name})
+                            route_targets.update(targets)
+                            if len(targets) == 1 and PurePosixPath(targets[0]).suffix == '.py':
+                                entrypoint_functions.setdefault(targets[0], set()).add(returned_calls[name])
+                                route_callers.setdefault(targets[0], relative)
                     if not focus and called_names:
                         reachable_paths.update(_import_targets(value, relative, code_paths, called_names=called_names))
                         visible_calls = {name for line in syntax.splitlines() if 'Python entrypoint flow ' in line
                                          for name in re.findall(r'\b([A-Za-z_]\w*)(?:\.[A-Za-z_]\w*)*\(', line)}
-                        handoff_paths.update(_import_targets(value, relative, code_paths,
-                                                             called_names=called_names & visible_calls))
+                        direct = _import_targets(value, relative, code_paths, called_names=called_names & visible_calls)
+                        direct_handoffs[relative] = direct
+                        handoff_paths.update(direct)
                     for order, target in enumerate(linked):
                         eligible.add(target)
                         if target not in scanned:
@@ -1967,7 +2013,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
                 if not add_source(source, source_budget - repository_reserve):
                     deferred.append(source)
             workflow_limit = size + repository_reserve // 4
-            for workflow in _index_workflows(repository_sources):
+            for workflow in _index_workflows(repository_sources, preferred_paths=route_queries):
                 missing = [source for source in workflow if source['id'] not in included_ids]
                 if size + sum(len(source['text']) for source in missing) <= workflow_limit:
                     for source in missing:
@@ -1976,6 +2022,31 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None):
             for source in repository_sources:
                 if source['path'] in configuration_paths:
                     add_source(source, config_limit)
+            lifecycle_limit = size + repository_reserve // 4
+            by_path = {source['path']: source for source in repository_sources}
+            for implementation in repository_sources:
+                caller = by_path.get(route_callers.get(implementation['path']))
+                if caller is None or not any(marker in implementation['text']
+                                             for marker in ('Workflow call ', 'Workflow artifact call ')):
+                    continue
+                group = [caller, implementation]
+                if 'Workflow artifact call ' in implementation['text']:
+                    related = next((by_path[path] for path in direct_handoffs.get(caller['path'], ())
+                                    if path != implementation['path'] and path in by_path
+                                    and re.search(r'Workflow artifact call [^\n]*\bread_\w+\(', by_path[path]['text'])), None)
+                    if related:
+                        group.append(related)
+                missing = [source for source in group if source['id'] not in included_ids]
+                if size + sum(len(source['text']) for source in missing) <= lifecycle_limit:
+                    for source in missing:
+                        add_source(source, lifecycle_limit)
+                    break
+            # Preserve independent user-facing commands alongside a detailed
+            # handoff so that one workflow cannot crowd out the other branches.
+            command_limit = size + repository_reserve // 6
+            for path in declared_modules:
+                if path in by_path:
+                    add_source(by_path[path], command_limit)
             priority_order = [*(source for source in repository_sources if source['path'] not in scoped_migrations),
                               *deferred]
         for source in priority_order:

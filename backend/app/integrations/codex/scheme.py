@@ -214,7 +214,7 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False):
                                          complete_knowledge_refs=complete_knowledge_refs)
         cited_paths = (sources[ref].get('path') for ref in node['source_ids'])
         node['paths'] = list(dict.fromkeys(path for path in cited_paths if isinstance(path, str) and path))
-    seen_edges = set()
+    seen_edges = {}
     for index, edge in enumerate(edges):
         _keys(edge, ('source', 'target', 'label', 'type', 'status', 'source_ids'))
         if (not isinstance(edge['source'], str) or edge['source'] not in identifiers
@@ -227,10 +227,15 @@ def _validate_graph(graph, kind, sources, *, complete_knowledge_refs=False):
         edge['source_ids'] = _references(edge['source_ids'], sources, f'{kind}.edges[{index}].source_ids',
                                          complete_knowledge_refs=complete_knowledge_refs)
         key = (edge['source'], edge['target'], relation_type)
-        if key in seen_edges:
+        if (previous := seen_edges.get(key)) is not None:
+            if (kind != 'focused'
+                    and all(previous[field] == edge[field] for field in ('type', 'label', 'status'))
+                    and set(previous['source_ids']) == set(edge['source_ids'])):
+                continue
             raise CodexError('Scheme generation returned duplicate relationships.')
-        seen_edges.add(key)
-    return {**graph, 'mermaid': render_mermaid(graph)}
+        seen_edges[key] = edge
+    validated = {**graph, 'edges': list(seen_edges.values())}
+    return {**validated, 'mermaid': render_mermaid(validated)}
 
 
 def validate_output(raw, evidence, *, complete_knowledge_refs=False):
@@ -429,9 +434,15 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'handoff cite both IDs from these inspected migration/query pairs: '
             + json.dumps(index_pairs) + '. '
         ) if index_pairs else ''
+        lifecycle_guidance = (
+            'Keep independently invoked outputs on distinct workflow paths. A validation or save '
+            'step tied to one route must connect only to a generation node that explicitly includes '
+            'that route’s output. Give the edge a label that identifies the specific output. '
+        ) if any('Workflow call ' in source['text'] for source in evidence['sources']) else ''
         prompt = (
             _FOCUS_GUIDANCE[focus] +
             index_guidance +
+            lifecycle_guidance +
             'Explain this project visually using only the supplied evidence. Return architecture and workflow '
             'as separate structured graphs, not Mermaid. Architecture describes components and relationships; '
             'workflow describes operations and execution order. '
@@ -445,6 +456,10 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'In architecture, include the supported producer/consumer and orchestration handoffs between '
             'components, including preparation outputs consumed by validation and reporting when evidenced. '
             'Do not leave a supported handoff only in the explanation, or invent edges to force connectivity. '
+            'Each data-flow arrow requires evidence that the receiving stage accepts what the source '
+            'stage produces. If a downstream tool consumes a derived table, report that table on the '
+            'handoff from its producer. A raw input to an earlier stage is insufficient for a direct arrow '
+            'to the later tool. Use an indirect relationship only if the intervening stage is identified. '
             'First identify the project purpose from metadata, documentation, and application evidence. '
             'Show the primary end-to-end user or data workflow: '
             'inputs, meaningful processing or retrieval, persistence where relevant, and useful outputs. '
@@ -456,13 +471,15 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
             'rather than replacing them with only backend or library names. Show optional analysis as optional rather than '
             'silently omitting it or implying every command runs automatically. '
             'If the supplied evidence shows an active workflow and separate supported branches, represent those '
-            'branches explicitly. When a consulted configuration or code guard establishes a default, explain '
-            'what runs by default and what requires an option or a separate command. For an active handoff, cite '
+            'branches explicitly. Preserve documented alternatives when they bypass a step or change '
+            'the input consumed. Keep numeric settings for branches whose selection depends on them. '
+            'Do not imply an optional branch or a sample run is the only workflow. For an active handoff, cite '
             'the entrypoint or caller that invokes it. A helper definition alone does not establish that handoff. '
             'When a saved record, an index-maintenance trigger, and a search query are all supplied, show the '
             'connection from the saved record to the matching index and search result, citing the writer, '
             'trigger, and query. Keep separate indexes distinct. When a generation handler delegates to '
             'implementation that validates and saves results, show that handoff too. '
+            'Keep generation routes and their outputs separate when the evidence shows distinct results. '
             'Use about 8–15 major nodes when useful, never more than 20 '
             'nodes or 40 edges per graph. Every node and edge must cite supplied source_ids. '
             'For every source_ids list, copy 1–6 distinct IDs exactly from the top-level sources list. '

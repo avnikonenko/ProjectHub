@@ -72,7 +72,6 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
     (lambda result: result['architecture']['nodes'][0].update(type='output'), 'classification'),
     (lambda result: result['workflow'].update(explanation=''), 'invalid text'),
     (lambda result: result['dependencies'][0].update(id='invented'), 'invented'),
-    (lambda result: result['architecture']['edges'].append(deepcopy(result['architecture']['edges'][0])), 'duplicate relationships'),
     (lambda result: result['architecture'].update(mermaid='flowchart LR; dangerous'), 'invalid structure'),
 ])
 def test_invalid_graph_is_rejected(change, match):
@@ -80,6 +79,77 @@ def test_invalid_graph_is_rejected(change, match):
     change(result)
     with pytest.raises(CodexError, match=match):
         scheme.validate_output(json.dumps(result), evidence())
+
+
+@pytest.mark.parametrize('kind', ['architecture', 'workflow'])
+def test_general_scheme_collapses_exact_relationships_in_first_seen_order(kind):
+    result = output()
+    graph = deepcopy(result['architecture'])
+    if kind == 'workflow':
+        for entry in graph['nodes']:
+            entry['type'] = 'operation'
+    first = graph['edges'][0]
+    opposite = {**first, 'source': first['target'], 'target': first['source']}
+    graph['edges'].extend([opposite, {**first, 'source_ids': list(reversed(first['source_ids']))}])
+    result[kind] = graph
+
+    architecture, workflow, _ = scheme.validate_output(json.dumps(result), evidence())
+    validated = architecture if kind == 'architecture' else workflow
+    assert validated['edges'] == [first, opposite]
+    assert validated['mermaid'] == scheme.render_mermaid({**graph, 'edges': [first, opposite]})
+
+
+@pytest.mark.parametrize('change,match', [
+    ({'status': 'observed'}, 'duplicate relationships'),
+    ({'label': 'possibly replaces'}, 'duplicate relationships'),
+    ({'type': ' replaces '}, 'duplicate relationships'),
+    ({'source_ids': ['file:api.py']}, 'duplicate relationships'),
+    ({'source_ids': ['project:foreign']}, 'foreign evidence'),
+])
+def test_conflicting_or_invalid_general_duplicates_are_rejected(change, match):
+    result = output()
+    edges = result['architecture']['edges']
+    edges.append({**edges[0], **change})
+
+    with pytest.raises(CodexError, match=match):
+        scheme.validate_output(json.dumps(result), evidence())
+
+
+def test_focused_relationships_remain_strict_about_exact_duplicates():
+    graph = output()['architecture']
+    graph['edges'].append(deepcopy(graph['edges'][0]))
+    sources = {item['id']: item for item in evidence()['sources']}
+
+    with pytest.raises(CodexError, match='duplicate relationships'):
+        scheme._validate_graph(graph, 'focused', sources)
+
+
+def test_conflicting_general_duplicates_preserve_the_validated_saved_graph(tmp_path, monkeypatch):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Project'))
+        db.commit()
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: evidence())
+
+    class Manager:
+        result = output()
+
+        def generate_brief(self, prompt, schema):
+            return json.dumps(self.result)
+
+    manager = Manager()
+    edges = manager.result['architecture']['edges']
+    edges.append(deepcopy(edges[0]))
+    saved = scheme.refresh_scheme(engine, 1, manager)
+    assert saved['architecture']['edges'] == [edges[0]]
+
+    edges[1]['status'] = 'observed'
+    with pytest.raises(CodexError, match='duplicate relationships'):
+        scheme.refresh_scheme(engine, 1, manager)
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == saved
+        assert len(list(db.scalars(select(GenerationRevision)))) == 1
+    engine.dispose()
 
 
 def test_deterministic_mermaid_escapes_labels_and_uses_fixed_syntax():

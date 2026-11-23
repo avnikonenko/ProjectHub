@@ -3,6 +3,9 @@
 import ast
 from collections import deque
 import heapq
+import re
+
+from .scheme_local_handoffs import _known_truth
 
 
 _FUNCTIONS = (ast.FunctionDef, ast.AsyncFunctionDef)
@@ -14,6 +17,9 @@ _TRACE_DEPTH = 3
 _TRACE_ROUTINES = 24
 _TRACE_NODES = 10000
 _TRACE_ROUTINE_ROWS = 8
+_CONTAINER_MUTATORS = {'append', 'clear', 'discard', 'extend', 'insert', 'pop', 'popitem',
+                       'remove', 'reverse', 'setdefault', 'sort', 'update'}
+_ARTIFACT_CALL = re.compile(r'(?:read|to|write)_(?:csv|tsv|json|parquet|feather|excel|hdf5?)$')
 _TRACE_ROUTINE_CALLS = {
     'ValueError', 'all', 'any', 'append', 'add_argument', 'add_argument_group', 'clear', 'close',
     'debug', 'dict', 'enumerate', 'error', 'extend', 'format', 'get', 'getcwd', 'info', 'items', 'join', 'keys', 'len', 'list', 'open',
@@ -142,7 +148,7 @@ def _main_guard(node):
                     for left, right in ((test.left, test.comparators[0]), (test.comparators[0], test.left))))
 
 
-def _trace_body(statements):
+def _trace_body(statements, *, fold_conditions=False):
     """Traverse only this body's syntax with its two closest conditional guards."""
     pending = [(node, ()) for node in reversed(statements)]
     for _ in range(_TRACE_NODES):
@@ -153,8 +159,12 @@ def _trace_body(statements):
             continue
         yield node, guards
         if isinstance(node, ast.If):
+            known = (node.test.value if isinstance(node.test, ast.Constant) and type(node.test.value) is bool
+                     else None)
+            if fold_conditions and not any(isinstance(part, ast.NamedExpr) for part in ast.walk(node.test)):
+                known = _known_truth(node.test, {})
             for truth, items in ((False, node.orelse), (True, node.body)):
-                if isinstance(node.test, ast.Constant) and type(node.test.value) is bool and node.test.value != truth:
+                if known is not None and known != truth:
                     continue
                 pending.extend((child, (*guards, (node.test, truth))[-2:]) for child in reversed(items))
             pending.append((node.test, guards))
@@ -218,7 +228,137 @@ def _trace_group_rank(owner, priority):
     return (_trace_rank(leaf, '', True), priority)
 
 
-def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distinguish_fixed_inputs=False):
+def _lifecycle_calls(body, owner, shape):
+    """Find a normal, syntactically reachable path from validated value to write."""
+    if any(isinstance(node, (ast.Global, ast.Nonlocal)) for statement in body for node in ast.walk(statement)):
+        return []
+    pairs = {}
+    steps = 800
+
+    def inputs(node, definitions):
+        if isinstance(node, ast.Name):
+            return definitions.get(node.id, ())
+        if isinstance(node, (ast.Dict, ast.List, ast.Tuple, ast.Set)):
+            return tuple(dict.fromkeys(row for child in ast.iter_child_nodes(node)
+                                       for row in inputs(child, definitions)))
+        return ()
+
+    def statement_call(node):
+        value = node.value if isinstance(node, (ast.Assign, ast.AnnAssign, ast.Expr)) else None
+        return value if isinstance(value, ast.Call) else None
+
+    def targets(node):
+        return [name.id for name in ast.walk(node) if isinstance(name, ast.Name)
+                and isinstance(name.ctx, (ast.Store, ast.Del))]
+
+    def mutates_value(node):
+        return any(isinstance(part, (ast.Attribute, ast.Subscript))
+                   and isinstance(part.ctx, (ast.Store, ast.Del)) for part in ast.walk(node))
+
+    def block(statements, paths, depth=0):
+        nonlocal steps
+        if depth > 5:
+            return []
+        for statement in statements:
+            steps -= 1
+            if steps < 0 or not paths or isinstance(statement, (ast.Return, ast.Raise)):
+                return []
+            if isinstance(statement, ast.If):
+                if any(isinstance(node, ast.NamedExpr) for node in ast.walk(statement.test)):
+                    return []
+                truth = _known_truth(statement.test, {})
+                arms = (statement.body if truth else statement.orelse,) if truth is not None else (
+                    statement.body, statement.orelse)
+                paths = [result for arm in arms for result in block(
+                    arm, [dict(path) for path in paths], depth + 1)]
+            elif isinstance(statement, _CONTEXTS):
+                bound = {name for item in statement.items if item.optional_vars for name in targets(item.optional_vars)}
+                paths = block(statement.body, [{k: v for k, v in path.items() if k not in bound}
+                                               for path in paths], depth + 1)
+            elif isinstance(statement, ast.Try):
+                paths = block([*statement.body, *statement.orelse, *statement.finalbody], paths, depth + 1)
+            else:
+                if mutates_value(statement):
+                    # Stored provenance could also be reachable through an alias.
+                    for path in paths:
+                        path.clear()
+                    continue
+                rebound = {name for node in ast.walk(statement) if isinstance(node, ast.NamedExpr)
+                           for name in targets(node.target)}
+                if rebound:
+                    for path in paths:
+                        for name in rebound:
+                            path.pop(name, None)
+                    continue
+                call = statement_call(statement)
+                if (call is not None and isinstance(call.func, ast.Attribute)
+                        and call.func.attr in _CONTAINER_MUTATORS
+                        and isinstance(call.func.value, ast.Name)
+                        and any(call.func.value.id in path for path in paths)):
+                    for path in paths:
+                        path.clear()
+                    continue
+                label = _call_shape(call, shape, max_arguments=5) if call is not None else ''
+                leaf = label.split('(', 1)[0].rsplit('.', 1)[-1]
+                row = (statement.lineno, f'Workflow call {owner}: {label}')
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    assigned = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                    names = {name for target in assigned for name in targets(target)}
+                    for path in paths:
+                        if re.match(r'(?:validate|verify)(?:_|$)', leaf):
+                            checked = (row,)
+                        elif all(isinstance(target, ast.Name) for target in assigned):
+                            checked = inputs(statement.value, path)
+                        else:
+                            checked = ()
+                        for name in names:
+                            path.pop(name, None)
+                            if checked:
+                                path[name] = checked
+                elif label and re.match(r'(?:save|persist|commit|write)(?:_|$)', leaf):
+                    args = (*call.args, *(keyword.value for keyword in call.keywords if keyword.arg))
+                    for path in paths:
+                        for checked in (check for arg in args for check in inputs(arg, path)):
+                            pairs.setdefault((checked, row), None)
+                elif not isinstance(statement, (ast.Expr, ast.Pass, ast.Import, ast.ImportFrom)):
+                    # An unsupported block could terminate or invalidate a binding.
+                    if any(isinstance(node, (ast.Return, ast.Raise)) for node in ast.walk(statement)):
+                        return []
+                    bound = set(targets(statement))
+                    paths = [{k: v for k, v in path.items() if k not in bound} for path in paths]
+            distinct = {tuple(sorted(path.items())): path for path in paths}
+            if len(distinct) > 8:
+                return []
+            paths = list(distinct.values())
+        return paths
+
+    block(body, [{}])
+    return list(min(pairs, default=()))
+
+
+def python_imported_symbols(parsed):
+    """Retain unambiguous names bound by explicit module-level from imports."""
+    imported = {}
+    for statement in parsed.body:
+        if isinstance(statement, ast.ImportFrom):
+            for alias in statement.names:
+                if alias.name == '*':
+                    return {}
+                key = alias.asname or alias.name
+                imported[key] = None if key in imported else alias.name
+        elif isinstance(statement, _SCOPES):
+            imported[statement.name] = None
+        else:
+            for bound in ast.walk(statement):
+                if isinstance(bound, ast.Name) and isinstance(bound.ctx, (ast.Store, ast.Del)):
+                    imported[bound.id] = None
+                elif isinstance(bound, ast.alias):
+                    imported[bound.asname or bound.name.split('.')[0]] = None
+    return {key: symbol for key, symbol in imported.items() if symbol}
+
+
+def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distinguish_fixed_inputs=False,
+                            lifecycle_rows=None, callback_symbols=None, artifact_rows=None):
     """Trace direct static call syntax from declared or main-guard entrypoints."""
     classes = {node.name for node in parsed.body if isinstance(node, ast.ClassDef)}
     definitions = {node.name: node for node in parsed.body if isinstance(node, _FUNCTIONS)}
@@ -233,12 +373,15 @@ def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distingu
     pending = [(-100, 0, name) for name in roots[:_TRACE_ROUTINES]]
     heapq.heapify(pending)
     visited, called_names, groups = set(), set(), []
+    imported = python_imported_symbols(parsed) if callback_symbols is not None else {}
     while pending and len(visited) < _TRACE_ROUTINES:
         _, depth, owner = heapq.heappop(pending)
         if owner in visited:
             continue
         visited.add(owner)
-        body = list(_trace_body(definitions[owner].body))
+        body = list(_trace_body(definitions[owner].body, fold_conditions=lifecycle_rows is not None))
+        if lifecycle_rows is not None and depth == 0:
+            lifecycle_rows.extend(_lifecycle_calls(definitions[owner].body, owner, predicate_shape))
         receivers, shadows = _trace_receiver_types(body, classes, owner)
         arguments = definitions[owner].args
         shadows.update(arg.arg for arg in (*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs,
@@ -273,7 +416,19 @@ def python_entrypoint_trace(parsed, entrypoints=(), *, predicate_shape, distingu
             ) if guards else ''
             prefix, suffix = assignments.get(id(node), ('', ''))
             label = f'Python entrypoint flow {owner}{condition}: {prefix}{shape}{suffix}'
+            if artifact_rows is not None and _ARTIFACT_CALL.fullmatch(leaf):
+                artifact_rows.append((node.lineno, f'Workflow artifact call {owner}{condition}: {prefix}{shape}{suffix}'))
+            callbacks = [value.id for value in node.args[:2]
+                         if isinstance(value, ast.Name) and value.id in imported and value.id not in shadows]
+            if callbacks and leaf not in {'partial', 'isinstance', 'issubclass', 'type'}:
+                callback_symbols.update((local, imported[local]) for local in callbacks)
+                label += ' [passes imported name ' + ', '.join(callbacks) + ']'
+                if artifact_rows is not None:
+                    guard_lines = ', '.join(f'L{test.lineno}' for test, _ in guards)
+                    context = f' guarded at {guard_lines}' if guard_lines else ''
+                    artifact_rows.append((node.lineno, f'Workflow callback {owner}{context}: {shape}'))
             priority = _trace_rank(leaf, condition.casefold(), target in definitions)
+            priority -= 6 if callbacks else 0
             rank = (priority, not guards, node.lineno, node.col_offset)
             candidates.append((rank, node.lineno, label, target))
         candidates.sort()

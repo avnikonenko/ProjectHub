@@ -1,7 +1,11 @@
 """Declared packaging entrypoints survive bounded, read-only Scheme inspection."""
+import ast
 import json
 
+import pytest
+
 from backend.app.integrations.codex import scheme_evidence as evidence
+from backend.app.integrations.codex.scheme_python_flow import python_entrypoint_trace
 from backend.tests.integrations.test_scheme_evidence import repository, setup
 
 
@@ -270,3 +274,114 @@ def test_general_scheme_reserves_matching_index_writer_and_query(tmp_path, monke
     assert 'sample/zeta_prepare.py' in by_path
     assert sum(len(source['text']) for source in result['sources']) <= evidence.scheme_inspection_limits()[0]
     engine.dispose()
+
+
+def test_general_scheme_keeps_reachable_validation_and_save_calls(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'router.py').write_text(
+        'from jobs import execute as process\n'
+        '@router.post("/generate")\n'
+        'def request_generation():\n    return process()\n'
+    )
+    (repo / 'jobs.py').write_text(
+        'def execute():\n    draft = produce()\n    cleaned = validate_result(draft)\n'
+        '    save_result(cleaned)\n'
+    )
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_evidence(engine, 1)
+        sources = {item.get('path'): item['text'] for item in result['sources']}
+        assert 'POST /generate' in sources['router.py']
+        assert 'Workflow call execute: validate_result(draft)' in sources['jobs.py']
+        assert 'Workflow call execute: save_result(cleaned)' in sources['jobs.py']
+    finally:
+        engine.dispose()
+
+
+def test_general_scheme_does_not_trace_a_shadowed_router_import(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'router.py').write_text(
+        'from jobs import execute\n'
+        '@router.post("/generate")\n'
+        'def request_generation(execute):\n    return execute()\n'
+    )
+    (repo / 'jobs.py').write_text(
+        'def execute():\n    cleaned = validate_result(produce())\n    save_result(cleaned)\n'
+    )
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_evidence(engine, 1)
+        assert all('Workflow call execute:' not in item['text'] for item in result['sources'])
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize('body', [
+    '    checked = validate_result(draft)\n    return reply()\n    save_result(checked)\n',
+    '    if dry_run:\n        return validate_result(draft)\n    save_result(draft)\n',
+    '    settings = validate_config(config)\n    write_log(message)\n',
+    '    checked = validate_result(draft)\n    log((checked := draft))\n    save_result(checked)\n',
+    '    checked = validate_result(raw)\n    kept, discarded = checked, raw\n    save_result(discarded)\n',
+    '    checked = validate_result(raw)\n    snapshot = {"value": checked}\n'
+    '    snapshot["value"] = raw\n    save_result(snapshot)\n',
+    '    checked = validate_result(raw)\n    snapshot = {"value": checked}\n'
+    '    snapshot.update({"value": raw})\n    save_result(snapshot)\n',
+    '    if False and enabled:\n        checked = validate_result(raw)\n        save_result(checked)\n',
+])
+def test_general_lifecycle_ignores_unreachable_or_unrelated_persistence(body):
+    rows = []
+    parsed = ast.parse('def entry():\n' + body)
+    python_entrypoint_trace(parsed, ['entry'], predicate_shape=evidence._predicate_shape, lifecycle_rows=rows)
+    assert rows == []
+
+
+def test_general_route_does_not_promote_overwritten_import():
+    route_imports = {}
+    evidence._structural_excerpt(
+        'from jobs import execute\nimport external as execute\n'
+        '@router.post("/generate")\ndef generate():\n    return execute()\n',
+        'router.py', trace_imports=set(), route_imports=route_imports,
+    )
+    assert route_imports == {}
+
+
+def test_general_route_omits_handoff_when_handler_name_is_ambiguous():
+    route_imports = {}
+    result = evidence._structural_excerpt(
+        'from jobs import run_other\n'
+        '@router.post("/generate")\ndef handler():\n    return run_request()\n'
+        'class Other:\n    def handler(self):\n        return run_other()\n',
+        'router.py', trace_imports=set(), route_imports=route_imports,
+    )
+    assert 'POST /generate -> handler' in result
+    assert route_imports == {}
+
+
+def test_general_scheme_keeps_imported_callback_and_artifact_writer(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'main.py').write_text(
+        'from reports import build_report as render\n'
+        'def main():\n    run_job(render, settings)\n'
+        'if __name__ == "__main__":\n    main()\n'
+    )
+    (repo / 'reports.py').write_text(
+        'def build_report(table, output):\n    table.to_csv(output)\n'
+    )
+    engine = setup(tmp_path, repo)
+    try:
+        result = evidence.collect_evidence(engine, 1)
+        sources = {item.get('path'): item['text'] for item in result['sources']}
+        assert 'run_job(render, settings)' in sources['main.py']
+        assert 'Workflow artifact call build_report: table.to_csv(output)' in sources['reports.py']
+    finally:
+        engine.dispose()
+
+
+def test_general_index_workflow_prefers_query_reachable_from_a_route():
+    index = {'id': 'schema', 'path': 'migrations/search.py', 'provenance': 'observed in code',
+             'text': 'L2: CREATE VIRTUAL TABLE lookup USING fts5\n'
+                     'L3: CREATE TRIGGER add_lookup AFTER INSERT ON records: INSERT INTO lookup'}
+    internal = {'id': 'internal', 'path': 'internal.py', 'provenance': 'observed in code',
+                'text': 'L2: SELECT FROM lookup WHERE lookup MATCH'}
+    route_query = {**internal, 'id': 'search', 'path': 'search.py'}
+    assert list(evidence._index_workflows([index, internal, route_query], {'search.py'})) == [[index, route_query]]

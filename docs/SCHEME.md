@@ -39,6 +39,10 @@ referenced configuration sections alongside project guides. Longer entrypoint
 files can use a larger per-file read within the same overall inspection budget.
 General Scheme also reserves part of that budget for matching full-text index
 declarations, trigger writes, and application queries when found in the repository.
+It can also retain a route and its validation and save calls together, and keep
+documented input alternatives that change which steps run. General diagrams
+describe the main workflow and its handoffs. Use Focused Scheme for exact
+parameter values and implementation details.
 If the workflow omits citations for an inspected indexing handoff, Scheme can
 retry once. A malformed optional rewrite leaves the validated draft available,
 with the remaining citation gap under coverage.
