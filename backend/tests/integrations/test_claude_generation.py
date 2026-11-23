@@ -352,14 +352,34 @@ else:
     assert json.loads(result) == {'answer': 'ok'} and retries == [True]
 
 
-def test_claude_unknown_explicit_provider_failure_is_terminal(fake_cli):
-    fake_cli('print(\'{"type":"error","error":{"type":"unrecognized","message":"private"}}\')\n')
+@pytest.mark.parametrize('stream', ['stdout', 'stderr'])
+@pytest.mark.parametrize('payload', [
+    {'type': 'error', 'error': {'type': 'unrecognized', 'message': 'private'}},
+    {'type': 'result', 'is_error': True, 'result': 'private'},
+    {'type': 'result', 'subtype': 'error_unrecognized', 'result': 'private'},
+])
+def test_claude_unknown_explicit_provider_failure_is_terminal(fake_cli, stream, payload):
+    fake_cli('import sys\n' + ('print("{bad")\n' if stream == 'stderr' else '')
+             + f'print({json.dumps(payload)!r}, file=sys.{stream})\n')
     retries = []
     manager = claude_generation.ClaudeGenerationManager(None)
     with pytest.raises(CodexError) as caught:
         request_knowledge_json(manager, 'fixture', {'type': 'object'}, on_retry=lambda: retries.append(True))
-    assert not isinstance(caught.value, JSONFormattingError)
-    assert not retries and 'private' not in str(caught.value)
+    assert not isinstance(caught.value, (JSONFormattingError, TransientGenerationError))
+    assert not retries and caught.value.provider_diagnostics['category'] == 'unknown_exit'
+    assert 'private' not in str(caught.value) + repr(caught.value.provider_diagnostics)
+
+
+@pytest.mark.parametrize('error_type,category', [
+    ('authentication_error', 'authorization_denied'),
+    ('overloaded_error', 'unknown_exit'),
+])
+def test_claude_preserves_terminal_failure_precedence(error_type, category):
+    unknown = b'{"type":"error","error":{"type":"unrecognized"}}'
+    known = json.dumps({'type': 'error', 'error': {'type': error_type}}).encode()
+    failure = claude_generation._generation_failure(0, unknown, known, len(known))
+    assert not isinstance(failure, (JSONFormattingError, TransientGenerationError))
+    assert failure.provider_diagnostics['category'] == category
 
 
 def test_claude_machine_error_on_stderr_preempts_formatting_retry(fake_cli):
