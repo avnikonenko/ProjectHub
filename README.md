@@ -8,7 +8,7 @@
 
 **Keep your project knowledge organized and accessible across AI conversations and development sessions.**
 
-Working on long-running projects often means spreading important information across Codex sessions, ChatGPT or Claude conversations, and Git repositories. Decisions get buried, explanations become difficult to find, and returning to a project requires reconstructing its history.
+Working on long-running projects often means spreading important information across Codex and Claude Code sessions, ChatGPT and Claude chats, and Git repositories. Decisions get buried, explanations become difficult to find, and returning to a project requires reconstructing its history.
 
 **ProjectHub** is a local workspace that brings this information together.
 
@@ -17,15 +17,16 @@ Working on long-running projects often means spreading important information acr
 - **Preserve knowledge.** Capture decisions, requirements, reasoning, and unresolved questions with links to original conversations.
 - **Understand your project.** Generate overviews, searchable knowledge, Q&A, and diagrams of architecture, workflows, and dependencies.
 - **Explore previous work.** Search conversations to see why decisions were made. Inspect a linked Git repository to see how features were implemented.
-- **Continue with context.** Preview relevant project knowledge before sending it to a Codex session so you can build on previous work.
+- **Continue with context.** Use the optional ProjectHub skill to bring relevant project knowledge into Codex or Claude Code sessions.
 - **Stay organized.** Manage projects, notes, TODOs, and related conversations in one workspace.
 
 Designed for developers, researchers, and anyone working on long-running projects with AI assistance.
 
 ## What AI generates
 
-Open **Generate** and choose what to make or update. **AI Q&A** uses linked
-Codex sessions and imported conversations to create questions and answers.
+Choose **Codex** or **Claude Code** in the project’s **AI settings**. Open
+**Generate** and choose what to make or update. **AI Q&A** uses linked sessions
+and imported conversations to create questions and answers.
 **Scheme** can use those conversations and read parts of a linked Git repository
 to make diagrams. Use the links in saved results to see where the information came from.
 
@@ -96,8 +97,9 @@ Both routes use the same [saved data directory](#your-data). Open
 
 ## Example: Get back up to speed on Project X
 
-For Codex sessions or generation with Codex, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
-and run `codex login`. Local notes and browsing work without Codex.
+For AI generation, install and sign in to the CLI you want to use. Run
+`codex login` for Codex or `claude auth login` for Claude Code. You can browse
+saved projects and manage notes with ProjectHub alone. [AI setup guide](docs/AI_GENERATION.md#ai-provider)
 
 1. Click **Add project**, name it **Project X**, and link its local Git repository if you have one.
 2. In **Sources**, link a Codex or Claude Code session about Project X, or use **Import conversation** to add a past discussion.

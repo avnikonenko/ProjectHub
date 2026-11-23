@@ -3,7 +3,7 @@
 **Keep your project knowledge organized and accessible across AI conversations and development sessions.**
 
 On long-running projects, important information often ends up spread across Codex
-sessions, ChatGPT conversations, and Git repositories. When you return to a
+and Claude Code sessions, ChatGPT and Claude chats, and Git repositories. When you return to a
 project, it can be hard to find what you decided and why.
 
 **ProjectHub** is a local workspace that brings this information together.
@@ -13,7 +13,7 @@ project, it can be hard to find what you decided and why.
 - **Preserve knowledge.** Capture decisions, requirements, reasoning, and unresolved questions with links to original conversations.
 - **Understand your project.** Generate overviews, searchable knowledge, Q&A, and diagrams of architecture, workflows, and dependencies.
 - **Explore previous work.** Search conversations to see why decisions were made. Inspect a linked Git repository to see how features were implemented.
-- **Continue with context.** Preview relevant project knowledge before sending it to a Codex session so you can build on previous work.
+- **Continue with context.** Use the optional ProjectHub skill to bring relevant project knowledge into Codex or Claude Code sessions.
 - **Stay organized.** Manage projects, notes, TODOs, and related conversations in one workspace.
 
 Designed for developers, researchers, and anyone working on long-running projects with AI assistance.
@@ -22,8 +22,9 @@ Designed for developers, researchers, and anyone working on long-running project
 
 ## What AI generates
 
-Open **Generate** and choose what to make or update. **AI Q&A** uses linked
-Codex sessions and imported conversations to create questions and answers.
+Choose **Codex** or **Claude Code** in the project’s **AI settings**. Open
+**Generate** and choose what to make or update. **AI Q&A** uses linked sessions
+and imported conversations to create questions and answers.
 **Scheme** can use those conversations and read parts of a linked Git repository
 to make diagrams. Use the links in saved results to see where the information came from.
 

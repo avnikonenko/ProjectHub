@@ -105,10 +105,13 @@ requests, try a different model or reasoning effort.
 ### AI provider
 
 Choose **Codex** or **Claude Code** in the project's AI generation settings.
-Claude can generate Overview, Knowledge, Scheme, Q&A, Ask Project answers,
-Implementation Choices & Limits, and tags. Selected generation evidence goes
-to Anthropic when Claude is selected. Codex still handles linked Codex sessions
-and their history.
+Both can generate Overview, Knowledge, Scheme, Q&A, Ask Project answers,
+Implementation Choices & Limits, and tags. Generation sends selected evidence
+to OpenAI through Codex or to Anthropic through Claude Code. ProjectHub uses
+Codex to read linked Codex sessions and saved local transcripts for Claude Code sessions.
+
+Install the CLI you want to use on the machine running ProjectHub.
+[Codex CLI setup](https://learn.chatgpt.com/docs/codex/cli) · [Claude Code quickstart](https://code.claude.com/docs/en/quickstart)
 
 ### AI profiles
 

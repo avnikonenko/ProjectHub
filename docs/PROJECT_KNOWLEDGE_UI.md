@@ -35,9 +35,8 @@ Choose a version, then select **Use this version** to make it active.
 Projects with a result saved before automatic saving can also show an
 **Earlier Knowledge Summary** to read or download.
 
-Generation uses the project's Codex account, model, reasoning effort and
-instructions. See [AI generation](AI_GENERATION.md) for progress, cancellation
-and retries.
+Generation uses the project's selected Codex or Claude Code account, model,
+reasoning effort, and instructions. [Progress, cancellation, and retries](AI_GENERATION.md)
 
 ## Implementation Choices & Limits
 

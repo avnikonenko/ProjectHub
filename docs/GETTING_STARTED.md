@@ -47,13 +47,13 @@ Keep the checkout. If `projecthub` is outside your `PATH`, run `bash scripts/pro
 
 ## Start a project
 
-For Codex sessions or generation with Codex, install the [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
-and run `codex login` before linking a session or requesting generation. Local
-notes and browsing work without Codex.
+For AI generation, install and sign in to the CLI you want to use. Run
+`codex login` for Codex or `claude auth login` for Claude Code. You can browse
+saved projects and manage notes with ProjectHub alone. [AI setup guide](AI_GENERATION.md#ai-provider)
 
 1. Open [ProjectHub](http://127.0.0.1:8766) and click **Add project**. You can link a local Git repository.
 2. In **Sources**, link a Codex or Claude Code session, or use **Import conversation**.
-3. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. See the [generation guide](AI_GENERATION.md).
+3. Choose **Codex** or **Claude Code** in the project’s **AI settings**. In **Generate**, select **Overview** and **Knowledge**, then click **Regenerate selected**. [Generation guide](AI_GENERATION.md)
 4. Open **Overview** and **Knowledge → Knowledge Summary & records** to read your saved results. Follow citations to check the original evidence.
 
 Press Ctrl+C in the terminal to stop ProjectHub.

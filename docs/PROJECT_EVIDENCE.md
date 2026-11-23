@@ -5,8 +5,9 @@ Open **Overview** for the result, citations, **Coverage**, and **Previous versio
 
 ## What Overview uses
 
-Overview can use project metadata, notes, TODOs, linked Codex history, imported
-conversations, and Git excerpts. Generation sends selected evidence to Codex.
+Overview can use project metadata, notes, TODOs, linked Codex or Claude Code
+sessions, imported conversations, and Git excerpts. Generation sends selected
+evidence to the provider chosen in the project’s AI settings.
 Browsing and freshness checks use local data without running code or tests.
 
 Read-only repository inspection skips ignored untracked paths, submodule
