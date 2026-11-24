@@ -4,6 +4,8 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
+## [0.2.7] - 2026-11-24
+
 - Continue Q&A generation after a small, validated draft overflow and reuse completed draft batches on retry.
 
 ## [0.2.6] - 2026-11-24
