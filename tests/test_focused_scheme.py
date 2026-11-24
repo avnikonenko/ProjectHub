@@ -1,5 +1,6 @@
 """Focused Scheme storage, citations and progress with a mocked provider."""
 from importlib import import_module
+from itertools import islice, permutations
 import json
 from types import SimpleNamespace
 
@@ -266,3 +267,121 @@ def test_focused_reserved_edge_type_is_normalized_before_handoff_checks():
     graph = focused_scheme._graph(json.dumps(raw), {'repo:file': {'id': 'repo:file'}})
     assert focused_scheme.check_contracts(graph, []) == (
         set(), {(raw['nodes'][0]['id'], 'store', 'value_transfer')})
+
+
+def _handoff_source():
+    return {'id': 'repo:file', 'path': 'example.py', 'text': 'Bounded code',
+            'local_handoffs': [{'type': 'value_transfer',
+                                'from_symbol': 'read', 'from_line': 2,
+                                'to_symbol': 'write', 'to_line': 3,
+                                'context': 'write consumes the result of read'}]}
+
+
+def _handoff_diagram(contract):
+    nodes = [{**diagram(contract['source_id'])['nodes'][0],
+              'id': contract[endpoint]['id'], 'label': contract[endpoint]['label']}
+             for endpoint in ('source_node', 'target_node')]
+    edge = {'source': nodes[0]['id'], 'target': nodes[1]['id'], 'type': contract['type'],
+            'status': 'observed', 'label': 'Transfer', 'source_ids': [contract['source_id']]}
+    return {'nodes': nodes, 'edges': [edge], 'explanation': 'The source declares two operations.'}
+
+
+@pytest.mark.parametrize('rewrite', ['valid', 'reversed', 'description', 'unrelated'])
+def test_focused_retry_corrects_only_verified_endpoint_metadata(database, monkeypatch, rewrite):
+    source = _handoff_source()
+    monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
+        'sources': [source], 'coverage': {'partial': False, 'limitations': []},
+    })
+    contract, = focused_scheme.make_contracts([source])
+
+    class Manager:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            graph = _handoff_diagram(contract)
+            graph['nodes'].append(diagram(source['id'])['nodes'][0])
+            if self.calls == 1:
+                graph['nodes'][0]['label'] = 'Incorrect read label'
+                graph['nodes'][1]['status'] = 'uncertain'
+                if rewrite == 'reversed':
+                    edge = graph['edges'][0]
+                    edge['source'], edge['target'] = edge['target'], edge['source']
+            elif rewrite == 'description':
+                graph['nodes'][0]['description'] = 'Changed description'
+            elif rewrite == 'unrelated':
+                graph['nodes'][2]['label'] = 'Changed unrelated label'
+            return json.dumps(graph)
+
+    manager = Manager()
+    saved = focused_scheme.refresh_focused_scheme(database, 1, manager, 'Trace read into write')
+    assert manager.calls == 2
+    assert saved['graph']['nodes'][2]['label'] == 'Index saved text'
+    if rewrite in ('valid', 'reversed'):
+        assert saved['graph']['nodes'][0]['label'] == 'read'
+        assert saved['graph']['nodes'][1]['status'] == 'observed'
+        assert saved['graph']['edges'][0]['label'] == 'Direct value transfer'
+        assert not saved['coverage']['partial']
+    else:
+        assert saved['graph']['nodes'][0]['label'] == 'Incorrect read label'
+        assert saved['graph']['nodes'][0]['description'] == 'Store searchable text.'
+        assert not saved['graph']['edges']
+        assert saved['coverage']['partial']
+
+
+@pytest.mark.parametrize('patch_valid', [True, False])
+def test_large_focused_retry_uses_a_bounded_patch(database, monkeypatch, patch_valid):
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '120')
+    source = _handoff_source()
+    references = [f'repo:{"nested/" * 22}module{index}.py' for index in range(6)]
+    named = {'id': 'repo:template', 'path': 'methods.in', 'provenance': 'repository configuration',
+             'text': 'L1: Active namelist section &first'}
+    sources = [source, named, *({'id': ref, 'text': 'Recorded observations. ' * 75} for ref in references)]
+    monkeypatch.setattr(focused_scheme, 'collect_evidence', lambda *args, **kwargs: {
+        'sources': sources, 'coverage': {'partial': False, 'limitations': []},
+    })
+    contract, = focused_scheme.make_contracts([source])
+    graph = _handoff_diagram(contract)
+    required_edge = graph['edges'].pop()
+    for index in range(58):
+        graph['nodes'].append({
+            **graph['nodes'][0], 'id': f'existing{index}', 'source_ids': references,
+            'description': 'Recorded observations. ' * 17,
+        })
+    for start, end in islice(permutations(range(58), 2), 119):
+        graph['edges'].append({
+            **required_edge, 'source': f'existing{start}', 'target': f'existing{end}',
+            'type': 'uses', 'label': 'Recorded relationship between these two components.',
+            'source_ids': references,
+        })
+    draft = json.dumps(graph, separators=(',', ':'))
+
+    class Manager:
+        calls = 0
+
+        def generate_brief(self, prompt, schema):
+            self.calls += 1
+            if self.calls == 1:
+                assert len(prompt) + len(draft) > focused_scheme.MAX_INPUT_CHARS
+                return draft
+            assert self.calls == 2
+            assert len(prompt) < focused_scheme.MAX_INPUT_CHARS
+            assert set(schema['properties']) == {'nodes', 'edges'}
+            package = json.loads(prompt.splitlines()[-1])
+            assert package['required_handoffs'] == [contract]
+            assert package['missing_source_ids'] == [named['id']]
+            assert {item['id'] for item in package['sources']} == {source['id'], named['id']}
+            patched_node = {**graph['nodes'][0], 'source_ids': [source['id'], named['id']]}
+            edge = required_edge if patch_valid else {**required_edge, 'target': 'existing1'}
+            return json.dumps({'nodes': [patched_node], 'edges': [edge]})
+
+    manager = Manager()
+    saved = focused_scheme.refresh_focused_scheme(database, 1, manager, 'Trace read into write using methods.in')
+    assert manager.calls == saved['diagnostics']['ai_requests'] == 2
+    assert len(saved['graph']['nodes']) == 60
+    assert len(saved['graph']['edges']) == (120 if patch_valid else 119)
+    assert saved['graph']['nodes'][-1]['description'] == graph['nodes'][-1]['description']
+    assert saved['graph']['edges'][:119] == graph['edges']
+    assert saved['graph']['explanation'] == graph['explanation']
+    assert saved['coverage']['partial'] is not patch_valid

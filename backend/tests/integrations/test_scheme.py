@@ -744,3 +744,57 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     with Session(engine) as db:
         assert scheme.read_scheme(db, 1) == saved
     engine.dispose()
+
+
+@pytest.mark.parametrize('repair_node', ['item0', 'foreign-node'])
+def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypatch, repair_node):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='Large Scheme'))
+        db.commit()
+    inspected = evidence()
+    refs = [f'file:project/{"nested_component_" * 7}module_{i}.py' for i in range(6)]
+    pair = ('migration', 'query')
+    inspected['sources'] += [{'id': ref, 'text': 'Inspected indexing evidence.',
+                              'path': ref, 'provenance': 'observed in code'} for ref in [*refs, *pair]]
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: deepcopy(inspected))
+    monkeypatch.setattr(scheme, '_index_workflows', lambda *_, **__: [({'id': pair[0]}, {'id': pair[1]})])
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
+    monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '120')
+    response = output()
+    for kind, node_type in (('architecture', 'service'), ('workflow', 'operation')):
+        response[kind]['nodes'] = [{**node(f'item{i}', refs=refs if i else refs[:4]), 'type': node_type}
+                                   for i in range(60)]
+        response[kind]['edges'] = [
+            {'source': f'item{left}', 'target': f'item{right}', 'type': 'feeds', 'label': '',
+             'status': 'observed', 'source_ids': refs}
+            for left, right in islice(permutations(range(60), 2), 120)
+        ]
+    response['workflow']['nodes'][0].update(
+        label='Search indexed documents', description='Query the index populated by the document migration.')
+    raw = json.dumps(response, separators=(',', ':'))
+    assert scheme.MAX_INPUT_CHARS < len(raw) < scheme._graph_response_limit(60, 120, diagrams=2)
+    prompts = []
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            prompts.append(prompt)
+            if len(prompts) == 1:
+                return raw
+            assert set(schema['properties']) == {'additions'}
+            assert len(prompt) < scheme.MAX_INPUT_CHARS
+            assert '"missing_index_pairs":[["migration","query"]]' in prompt
+            return json.dumps({'additions': [{'node_id': repair_node, 'pair_index': 0}]})
+
+    try:
+        saved = scheme.refresh_scheme(engine, 1, Manager())
+        assert len(prompts) == saved['diagnostics']['ai_requests'] == 2
+        architecture, workflow, dependencies = scheme.validate_output(raw, inspected, max_nodes=60, max_edges=120)
+        assert saved['architecture'] == architecture and saved['dependencies'] == dependencies
+        assert scheme.preserves_graph(workflow, saved['workflow'])
+        remaining = scheme._missing_index_workflows(saved['workflow'], [pair])
+        assert remaining == ([] if repair_node == 'item0' else [pair])
+        if repair_node != 'item0':
+            assert saved['workflow'] == workflow
+    finally:
+        engine.dispose()
