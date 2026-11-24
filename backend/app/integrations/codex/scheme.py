@@ -41,6 +41,7 @@ _SURROGATES = re.compile(r'[\ud800-\udfff]')
 _OVERVIEW_CONTEXT_CHARS = 12_000
 _INDEX_MAINTENANCE = r'insert\w*|maintain\w*|populat\w*|refresh\w*|updat\w*|writ\w*|add\w*|sync\w*'
 _INDEX_SEARCH = r'quer(?:y\w*|ies|ied)|search\w*|match\w*|retriev\w*|look[ \t]+up'
+_INDEX_DENIAL = r"never|not|no\s+longer|cannot|can['’]t|don['’]t|doesn['’]t|won['’]t|mustn['’]t|avoid\w*|without"
 _NODE_TYPES = {
     'architecture': ('module', 'service', 'component', 'database', 'tool', 'interface', 'backend'),
     'workflow': ('input', 'operation', 'decision', 'validation', 'output'),
@@ -48,14 +49,29 @@ _NODE_TYPES = {
 _NODE_TYPES['focused'] = (*_NODE_TYPES['architecture'], *_NODE_TYPES['workflow'])
 
 
-def _missing_index_workflows(workflow, pairs):
+def _denies_index_handoff(text, table):
+    reference = rf'\b(?:{re.escape(table)}|(?:this|the)\s+(?:full[- ]text\s+)?(?:index|table))\b'
+    action = rf'\b(?:{_INDEX_MAINTENANCE}|{_INDEX_SEARCH})\b'
+    denial = rf'\b(?:{_INDEX_DENIAL})\b(?:\s+(?:ever|actually|directly|normally|be)){{0,2}}\s+{action}'
+    disabled = rf'{action}[^,]*?{reference}[\x60"\]]?\s+(?:is|are|was|were)\s+(?:disabled|forbidden|prohibited|unsupported)\b'
+    return any(re.search(reference, clause) and (re.search(denial, clause) or re.search(disabled, clause))
+               for clause in re.split(r'[;\n]|[.!?](?=\s|$)', text.casefold()))
+
+
+def _missing_index_workflows(workflow, index_handoffs):
     """Check citations on a node or handoff for the inspected index/query pair."""
-    nodes = {node['id']: set(node['source_ids']) for node in workflow['nodes'] if node['status'] == 'observed'}
+    nodes = {node['id']: (set(node['source_ids']), f"{node['label']}\n{node['description']}")
+             for node in workflow['nodes'] if node['status'] == 'observed'}
     citations = list(nodes.values())
-    citations.extend(set(edge['source_ids']) | nodes[edge['source']] | nodes[edge['target']]
-                     for edge in workflow['edges'] if edge['status'] == 'observed'
-                     and edge['source'] in nodes and edge['target'] in nodes)
-    return [pair for pair in pairs if not any(set(pair) <= refs for refs in citations)]
+    for edge in workflow['edges']:
+        if edge['status'] == 'observed' and edge['source'] in nodes and edge['target'] in nodes:
+            from_refs, from_text = nodes[edge['source']]
+            to_refs, to_text = nodes[edge['target']]
+            citations.append((set(edge['source_ids']) | from_refs | to_refs,
+                              '\n'.join((from_text, edge['label'], to_text))))
+    return [pair for pair, tables in index_handoffs.items()
+            if not any(set(pair) <= refs and any(not _denies_index_handoff(text, table) for table in tables)
+                       for refs, text in citations)]
 
 
 def preserves_graph(original, revised, *, invalid_edges=()):
@@ -406,13 +422,11 @@ def _index_operation(text, table, action):
     return re.search(rf'{action}[ \t]+{qualifiers}{table}|{table}{auxiliary}[ \t]+{action}', text)
 
 
-def _index_citation_repair(workflow, missing, sources):
+def _index_citation_repair(workflow, missing, sources, index_handoffs):
     # A large draft can exceed the retry input budget even when the graph
     # itself was valid. Ask only for citations on existing workflow nodes.
     references = dict.fromkeys(ref for pair in missing for ref in pair)
     text = {source['id']: source['text'] for source in sources if source['id'] in references}
-    tables = [index_handoff_tables(text.get(maintenance, ''), text.get(query, ''))
-              for maintenance, query in missing]
     targets = {}
     candidates = []
     for node in workflow['nodes']:
@@ -424,7 +438,8 @@ def _index_citation_repair(workflow, missing, sources):
                     if len(refs.union(pair)) <= 6 and any(
                         _index_operation(node_text, table, _INDEX_MAINTENANCE)
                         and _index_operation(node_text, table, _INDEX_SEARCH)
-                        for table in tables[index])]
+                        and not _denies_index_handoff(node_text, table)
+                        for table in index_handoffs[pair])]
         if not eligible:
             continue
         targets[node['id']] = set(eligible)
@@ -559,9 +574,13 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         else:
             schema['properties']['dependencies']['maxItems'] = 0
         schema['properties']['dependencies']['items']['properties']['source_ids']['items']['enum'] = source_ids
-        index_pairs = [(migration['id'], query['id']) for migration, query in _index_workflows(
-            [source for source in evidence['sources'] if source.get('path')],
-            preferred_paths=set(evidence.get('route_query_paths', ())))]
+        index_handoffs = {
+            (migration['id'], query['id']): index_handoff_tables(migration['text'], query['text'])
+            for migration, query in _index_workflows(
+                [source for source in evidence['sources'] if source.get('path')],
+                preferred_paths=set(evidence.get('route_query_paths', ())))
+        }
+        index_pairs = list(index_handoffs)
         index_guidance = (
             'Search is one capability, so keep it compact and leave room for the project’s other evidenced '
             'workflows, including AI generation and saving when present. Limit index internals to a few stages. '
@@ -713,7 +732,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                 'if all its recorded original citations cannot fit within six references. '
             )
         else:
-            missing = _missing_index_workflows(workflow, index_pairs)
+            missing = _missing_index_workflows(workflow, index_handoffs)
             repair = ('The previous workflow omitted a supported index handoff. For each of the following '
                       'migration and query citation pairs, show how the record named in the trigger is indexed '
                       'and returned through the matching query. Cite both IDs in the workflow and keep distinct '
@@ -727,7 +746,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
         retry_prompt = repair + 'Keep supported claims and return a complete replacement.\n' + prompt if repair else ''
         scoped_retry = None
         if repair and citation_error is None and len(retry_prompt) > MAX_INPUT_CHARS:
-            scoped_retry = _index_citation_repair(workflow, missing, evidence['sources'])
+            scoped_retry = _index_citation_repair(workflow, missing, evidence['sources'], index_handoffs)
         if repair and (len(retry_prompt) <= MAX_INPUT_CHARS or scoped_retry):
             try:
                 if citation_error is not None:
@@ -754,7 +773,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                             candidate, revised, revised_dependencies = validate_output(
                                 raw, evidence, complete_knowledge_refs=True, max_nodes=max_nodes, max_edges=max_edges)
                         progress.check_cancelled()
-                    if (set(_missing_index_workflows(revised, index_pairs)) < set(missing)
+                    if (set(_missing_index_workflows(revised, index_handoffs)) < set(missing)
                             and preserves_graph(architecture, candidate) and preserves_graph(workflow, revised)):
                         architecture, workflow = candidate, revised
                         previous = {item['id']: item for item in dependencies if item.get('purpose')}
@@ -771,7 +790,7 @@ def refresh_scheme(engine, project_id, manager, *, expected_publication_id=None,
                 ]
         elif citation_error is not None:
             raise citation_error
-        if _missing_index_workflows(workflow, index_pairs):
+        if _missing_index_workflows(workflow, index_handoffs):
             evidence['coverage']['partial'] = True
             evidence['coverage']['limitations'] = [
                 *evidence['coverage']['limitations'],

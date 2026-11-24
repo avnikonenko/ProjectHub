@@ -746,7 +746,35 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair_node', ['item0', 'item1', 'foreign-node'])
+@pytest.mark.parametrize('description,covered', [
+    ('The trigger populates doc_fts. Query doc_fts for documents.', True),
+    ('The trigger populates doc_fts. Do not query doc_fts.', False),
+    ('The trigger populates doc_fts. Never query this index.', False),
+    ('The trigger populates doc_fts. The index is not queried.', False),
+    ('The trigger populates doc_fts. Queries to doc_fts are disabled.', False),
+    ('Query doc_fts. The trigger no longer writes to doc_fts.', False),
+    ('Populate doc_fts. Query doc_fts and return only matching records.', True),
+])
+def test_index_citations_do_not_cover_denied_handoffs(description, covered):
+    pair = ('migration', 'query')
+    workflow = {'nodes': [{**node('search', refs=list(pair)), 'label': 'Query doc_fts',
+                           'type': 'operation', 'description': description}], 'edges': []}
+    assert scheme._missing_index_workflows(workflow, {pair: {'doc_fts'}}) == ([] if covered else [pair])
+
+
+def test_index_handoff_coverage_checks_the_edge_and_its_endpoints():
+    pair = ('migration', 'query')
+    workflow = {'nodes': [
+        {**node('write', refs=[pair[0]]), 'label': 'Populate doc_fts', 'description': 'A trigger updates doc_fts.'},
+        {**node('read', refs=[pair[1]]), 'label': 'Read reports', 'description': 'The dashboard displays reports.'},
+    ], 'edges': [{'source': 'write', 'target': 'read', 'status': 'observed', 'source_ids': [pair[1]],
+                  'label': 'Never query this index.'}]}
+    assert scheme._missing_index_workflows(workflow, {pair: {'doc_fts'}}) == [pair]
+    workflow['edges'][0]['label'] = 'Query doc_fts'
+    assert scheme._missing_index_workflows(workflow, {pair: {'doc_fts'}}) == []
+
+
+@pytest.mark.parametrize('repair_node', ['item0', 'item1', 'item2', 'foreign-node'])
 def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypatch, repair_node):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -781,6 +809,9 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
     response['workflow']['nodes'][1].update(
         label='Activity log', description='Display the name doc_fts while users update and search logs by timestamp.',
         source_ids=refs[:4])
+    response['workflow']['nodes'][2].update(
+        label='Query doc_fts', description='A trigger populates doc_fts. Never query this index.',
+        source_ids=refs[:4])
     raw = json.dumps(response, separators=(',', ':'))
     assert scheme.MAX_INPUT_CHARS < len(raw) < scheme._graph_response_limit(60, 120, diagrams=2)
     prompts = []
@@ -802,7 +833,7 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
         architecture, workflow, dependencies = scheme.validate_output(raw, inspected, max_nodes=60, max_edges=120)
         assert saved['architecture'] == architecture and saved['dependencies'] == dependencies
         assert scheme.preserves_graph(workflow, saved['workflow'])
-        remaining = scheme._missing_index_workflows(saved['workflow'], [pair])
+        remaining = scheme._missing_index_workflows(saved['workflow'], {pair: {'doc_fts'}})
         assert remaining == ([] if repair_node == 'item0' else [pair])
         if repair_node != 'item0':
             assert saved['workflow'] == workflow
