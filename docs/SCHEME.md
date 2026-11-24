@@ -37,7 +37,8 @@ Under **Settings → Advanced settings → Scheme**, set **Maximum nodes** (1 to
 independent and apply per diagram to Architecture, Workflow, and Focused Scheme.
 Set the edge limit to zero for a diagram with nodes only. Scheme generation
 becomes available when the updated limits finish saving. Use **Discard edit**
-to return to the saved value after an invalid edit or failed save.
+to drop an invalid edit or failed save. ProjectHub checks the value saved on
+the server before Scheme generation becomes available again.
 Larger graph limits also increase the response-size budget. It starts at
 100,000 characters and can reach 400,000 for General Scheme or 250,000 for
 Focused Scheme. Descriptions, citations, and dependency explanations share

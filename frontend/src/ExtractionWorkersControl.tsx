@@ -176,10 +176,12 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
   const [drafts, setDrafts] = useState<Partial<Record<SettingField, SettingEdit>>>({});
   const [notices, setNotices] = useState<Partial<Record<SettingField, SaveNotice>>>({});
   const [savingSchemeLimit, setSavingSchemeLimit] = useState(false);
+  const [schemeLimitRefresh, setSchemeLimitRefresh] = useState<{ pending: true } | { error: string } | null>(null);
   const [autoWorkerStatus, setAutoWorkerStatus] = useState<AutoWorkerStatus | null>(null);
   const mounted = useRef(true);
   const currentSettings = useRef<WorkerSettings | null>(null);
   const loadVersion = useRef(0);
+  const schemeLimitRefreshPending = useRef(false);
   const latestEdits = useRef<Partial<Record<SettingField, SettingEdit>>>({});
   const timers = useRef(new Map<SettingField, ReturnType<typeof setTimeout>>());
   const writeQueue = useRef(Promise.resolve());
@@ -207,7 +209,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
   }, [active]);
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || schemeLimitRefreshPending.current) return;
     const controller = new AbortController();
     const version = ++loadVersion.current;
     setLoading(true);
@@ -241,7 +243,9 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
       const schemeLimit = field === 'scheme_max_nodes' || field === 'scheme_max_edges';
       try {
         if (value === undefined) throw new Error('The permitted values changed. Choose another value.');
-        if (setting?.value === value && setting.configured === value) {
+        // A lost Scheme PATCH response can leave this comparison stale even
+        // when the user's new draft matches the last confirmed setting.
+        if (!schemeLimit && setting?.value === value && setting.configured === value) {
           setNotices(previous => ({ ...previous, [field]: undefined }));
         } else {
           if (schemeLimit) setSavingSchemeLimit(true);
@@ -295,12 +299,40 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
     }
   }
 
+  function refreshSavedSchemeLimits() {
+    if (schemeLimitRefreshPending.current) return;
+    schemeLimitRefreshPending.current = true;
+    ++loadVersion.current;
+    setLoading(false);
+    setSchemeLimitRefresh({ pending: true });
+    // Discarding a draft cannot establish whether a failed PATCH reached the
+    // server. Read its saved state after any earlier queued or in-flight saves.
+    writeQueue.current = writeQueue.current.then(async () => {
+      if (!mounted.current) return;
+      try {
+        const result = settingsResponse(await api<unknown>('/settings/ai', { cache: 'no-store' }));
+        if (!mounted.current) return;
+        currentSettings.current = result;
+        setSettings(result);
+        setLoadError('');
+        setSchemeLimitRefresh(null);
+      } catch (failure: unknown) {
+        if (mounted.current) {
+          setSchemeLimitRefresh({ error: failure instanceof Error ? failure.message : 'Could not read AI settings.' });
+        }
+      } finally {
+        schemeLimitRefreshPending.current = false;
+      }
+    });
+  }
+
   function discardSchemeEdit(field: 'scheme_max_nodes' | 'scheme_max_edges') {
     clearTimeout(timers.current.get(field));
     timers.current.delete(field);
     delete latestEdits.current[field];
     setDrafts(previous => ({ ...previous, [field]: undefined }));
     setNotices(previous => ({ ...previous, [field]: undefined }));
+    refreshSavedSchemeLimits();
   }
 
   function inputValue(field: SettingField) {
@@ -338,8 +370,13 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
   const schemeBudget = settings?.schemeSourceSettings;
   const schemeNodeLimit = settings?.schemeNodeLimitSettings;
   const schemeEdgeLimit = settings?.schemeEdgeLimitSettings;
+  const checkingSchemeLimits = schemeLimitRefresh !== null && 'pending' in schemeLimitRefresh;
   const graphEdits = [drafts.scheme_max_nodes, drafts.scheme_max_edges].filter(edit => edit !== undefined);
-  const schemeLimitsNotice = graphEdits.some(edit =>
+  const schemeLimitsNotice = schemeLimitRefresh
+    ? 'pending' in schemeLimitRefresh
+      ? 'Checking saved Scheme limits…'
+      : 'Retry checking the saved Scheme limits in Settings before generating a diagram.'
+    : graphEdits.some(edit =>
     settingValue(settingFor(settings, edit.field, edit.numericInput), edit.draft) === undefined)
     ? 'Correct or discard unsaved Scheme limits in Settings before generating a diagram.'
     : graphEdits.some(edit => notices[edit.field]?.state === 'failed')
@@ -493,6 +530,11 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
         {schemeEdgeLimit && <> The default is 40 edges. Set the edge limit to 0 to draw only nodes.</>}
         {' '}Scheme generation becomes available after your changes save.
       </small></p>}
+      {checkingSchemeLimits && <Feedback>Checking saved Scheme limits…</Feedback>}
+      {schemeLimitRefresh && 'error' in schemeLimitRefresh && <>
+        <ErrorBox error={`Could not check the saved Scheme limits. ${schemeLimitRefresh.error}`} />
+        <button type="button" className="secondary" onClick={refreshSavedSchemeLimits}>Retry checking saved limits</button>
+      </>}
       {([
         { name: 'scheme_max_nodes', label: 'Maximum nodes', setting: schemeNodeLimit },
         { name: 'scheme_max_edges', label: 'Maximum edges', setting: schemeEdgeLimit },
@@ -505,7 +547,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
             {label}
             <input type="number" min={setting.min} max={setting.max} step={1}
               aria-describedby={schemeGraphHelpId} aria-invalid={!valid}
-              value={input} disabled={loading}
+              value={input} disabled={loading || checkingSchemeLimits}
               {...numericEvents(name)} />
           </label>
           {saveFeedback(name)}
