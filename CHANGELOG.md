@@ -4,7 +4,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
-## [0.2.6] - 2026-11-23
+## [0.2.6] - 2026-11-24
 
 - Ask about a saved General or Focused Scheme, including earlier General Scheme versions, with answers linked to supporting evidence.
 - Find relevant passages within long saved Scheme excerpts and record when the question context includes only part of a source.
