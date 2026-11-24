@@ -304,8 +304,9 @@ function AskAboutScheme({ base, generation, visible, context, disabled, onBusyCh
   </>;
 }
 
-function FocusedScheme({ base, generation, visible, onGenerating }: {
+function FocusedScheme({ base, generation, visible, onGenerating, schemeLimitsNotice }: {
   base: string; generation: Generation; visible: boolean; onGenerating?: (active: boolean) => void;
+  schemeLimitsNotice: string;
 }) {
   const [snapshot, setSnapshot] = useState<FocusedSchemeSnapshot | null>(null);
   const [instruction, setInstruction] = useState('');
@@ -354,7 +355,8 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
 
   async function generate() {
     const requested = instruction.trim();
-    if (!requested || loading || loadError || recovery.checking || active || inFlight.current || questionBusy) return;
+    if (!requested || loading || loadError || recovery.checking || active || inFlight.current || questionBusy
+        || schemeLimitsNotice) return;
     inFlight.current = true;
     previousAttempt.current = status?.started_at;
     setGenerating(true);
@@ -403,10 +405,12 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
           Show what happens when an AI generation is cancelled, from clicking Cancel to preserving the previous saved result.
         </small>
       </details>
-      <button type="submit" className="secondary" disabled={busy || questionBusy || !!loadError || !instruction.trim()}>
+      <button type="submit" className="secondary"
+        disabled={busy || questionBusy || !!loadError || !instruction.trim() || !!schemeLimitsNotice}>
         Generate focused scheme
       </button>
     </form>
+    <Feedback>{schemeLimitsNotice}</Feedback>
     <small className="muted">Generation sends your instruction and selected project evidence to {generationDestination(generation.provider)}.</small>
     {snapshot && <AskAboutScheme base={base} generation={generation}
       visible={visible} disabled={busy} onBusyChange={setQuestionBusy}
@@ -435,13 +439,14 @@ function FocusedScheme({ base, generation, visible, onGenerating }: {
   </div>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, waitingForKnowledge = false, onResultActivated }: GenerationRequestProps & {
+export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, waitingForKnowledge = false, onResultActivated, schemeLimitsNotice }: GenerationRequestProps & {
   base: string; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   onFocusedGenerating?: (active: boolean) => void;
   waitingForKnowledge?: boolean;
   onResultActivated?: () => void;
   focus: SchemeFocus; queuedFocus: SchemeFocus; onFocusChange: (value: SchemeFocus) => void;
+  schemeLimitsNotice: string;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
   const [view, setView] = useState<(typeof schemeViews)[number]>('Architecture');
@@ -481,7 +486,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   }, [path, recoveryVersion, visible, generationRequest, refresh]);
 
   async function generate(requestedFocus: SchemeFocus, actionId?: string) {
-    if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy) return;
+    if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy
+        || schemeLimitsNotice) return;
     inFlight.current = true;
     resultRead.current++;
     setGenerating(true);
@@ -514,7 +520,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     }
   }
   useGenerationRequest(base, generationRequest,
-    generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip' : loading || questionBusy ? 'wait' : 'ready',
+    generating || recoveryBusy || revisionLoading || waitingForKnowledge ? 'skip'
+      : loading || questionBusy || schemeLimitsNotice ? 'wait' : 'ready',
     actionId => generate(queuedFocus, actionId), onGenerationRequestHandled, generationActionId, onGenerationRequestSettled);
   const snapshot = result?.snapshot;
   const sources = snapshot?.sources ?? result?.inspection?.sources ?? [];
@@ -527,9 +534,12 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     : undefined;
   const graph = view === 'Workflow' ? snapshot?.workflow : snapshot?.architecture;
   const focused = view === 'Focused Scheme';
-  const generationNote = <p className="scheme-generation-note"><small className="muted">
-    Generation sends selected project evidence to {generationDestination(generation.provider)}.
-  </small></p>;
+  const generationNote = <>
+    <p className="scheme-generation-note"><small className="muted">
+      Generation sends selected project evidence to {generationDestination(generation.provider)}.
+    </small></p>
+    <Feedback>{schemeLimitsNotice}</Feedback>
+  </>;
   return <section className="card scheme-panel" aria-busy={!focused && (loading || generating || recoveryBusy || revisionLoading)}>
     <nav className="tabs scheme-tabs" aria-label="Scheme views">
       {schemeViews.map((name) =>
@@ -539,7 +549,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
             setView(name);
           }}>{name}</button>)}
     </nav>
-    {visitedFocused && <FocusedScheme key={base} base={base} generation={generation} visible={focused && visible} onGenerating={onFocusedGenerating} />}
+    {visitedFocused && <FocusedScheme key={base} base={base} generation={generation} visible={focused && visible}
+      onGenerating={onFocusedGenerating} schemeLimitsNotice={schemeLimitsNotice} />}
     <div className="scheme-overview" hidden={focused}>
     <AIResultHeader title="Scheme" savedAt={snapshot?.generated_at} previous={revisionId !== null}
       freshness={freshness} />
@@ -557,7 +568,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     </details>
     {snapshot?.focus && <div><small>Saved focus · {schemeFocusLabels[snapshot.focus]}</small></div>}
     <button type="button" className="secondary" onClick={() => void generate(focus)}
-      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy}>
+      disabled={loading || generating || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy
+        || !!schemeLimitsNotice}>
       Generate Scheme
     </button>
     {snapshot ? <AskAboutScheme key={`${base}:${revisionId}`} base={base} afterButton={generationNote}

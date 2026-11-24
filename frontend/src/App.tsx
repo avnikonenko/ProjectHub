@@ -121,6 +121,7 @@ export default function App() {
     } catch { return null; }
   });
   const [error, setError] = useState('');
+  const [schemeLimitsNotice, setSchemeLimitsNotice] = useState('');
   const [adding, setAdding] = useState(false);
   const [pinningProject, setPinningProject] = useState<number | null>(null);
   const [removingProject, setRemovingProject] = useState<number | null>(null);
@@ -257,7 +258,7 @@ export default function App() {
           <div className="topbar-actions">
             <small className="app-version muted">ProjectHub v{version}</small>
             <ThemeToggle />
-            <AppSettings />
+            <AppSettings onSchemeLimitsNotice={setSchemeLimitsNotice} />
           </div>
         </header>
         <ErrorBox error={error} />
@@ -286,6 +287,7 @@ export default function App() {
             onProjectChanged={fetchProjects}
             onRemoveProject={removeProject}
             removingProject={removingProject}
+            schemeLimitsNotice={schemeLimitsNotice}
           />
         )}
       </div>
@@ -314,6 +316,7 @@ function ProjectWorkspace({
   historyLink,
   knowledgeLink,
   onLeaveHistory,
+  schemeLimitsNotice,
 }: {
   projectId: number;
   onProjectChanged: () => Promise<void>;
@@ -322,6 +325,7 @@ function ProjectWorkspace({
   historyLink: HistoryLink | null;
   knowledgeLink: KnowledgeLink | null;
   onLeaveHistory: () => void;
+  schemeLimitsNotice: string;
 }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [selectedView, setSelectedView] = useState('Dashboard');
@@ -451,7 +455,10 @@ function ProjectWorkspace({
   const selectedPlan = currentGenerationResults?.data && !currentGenerationResults.error
     ? planSelectedProjectGeneration(selectedGenerations, currentGenerationResults.data.views, generationBusy) : null;
   const allPlan = planProjectGeneration(generationBusy);
+  const schemeLimitsBlock = (plan: GenerationPlan | null) => !!schemeLimitsNotice
+    && !!plan && (plan.waitForKnowledge || plan.start.includes('scheme'));
   function dispatchGenerationPlan(plan: GenerationPlan) {
+    if (schemeLimitsBlock(plan)) return;
     recovery.clearAttemptErrors(plan.waitForKnowledge || plan.schemeSkippedForKnowledge
       ? [...plan.start, 'scheme'] : plan.start);
     setBulkRequested(true); setBulkSkipped(plan.schemeSkippedForKnowledge ? ['scheme'] : []);
@@ -838,6 +845,7 @@ function ProjectWorkspace({
           {!!bulkSkipped.length && <> Some views were skipped because their own generation or controls were busy or not ready.</>}
         </Feedback>}
         <div hidden={view !== 'Generation' || !!results}>
+          <Feedback>{schemeLimitsNotice}</Feedback>
           <GenerationResults base={base} refreshVersion={generationResultsVersion} onState={onGenerationResultsState}
             provider={generation.provider}
             actionUsage={generationActions.map(action => <GenerationActionUsage key={action.id} base={base}
@@ -846,14 +854,15 @@ function ProjectWorkspace({
             schemeFocus={schemeFocus} onSchemeFocusChange={setSchemeFocus} schemeFocusDisabled={!!bulkPending.length || bulkScheme === 'waiting'}
             selected={selectedGenerations} onSelectionChange={onGenerationSelection} busy={generationBusy}
             onRegenerateSelected={regenerateSelected} regenerateDisabled={bulkPending.length > 0
-              || bulkScheme === 'waiting' || !selectedPlan?.start.length}
+              || bulkScheme === 'waiting' || !selectedPlan?.start.length || schemeLimitsBlock(selectedPlan)}
             bulkActions={<>
-              <button className="secondary" disabled={!allPlan.start.length || bulkPending.length > 0 || bulkScheme === 'waiting'} onClick={regenerateAll}>
+              <button className="secondary" disabled={!allPlan.start.length || bulkPending.length > 0
+                || bulkScheme === 'waiting' || schemeLimitsBlock(allPlan)} onClick={regenerateAll}>
                 {bulkPending.length ? 'Starting generations…' : 'Regenerate all'}
               </button>
               <button className="secondary" disabled={bulkPending.length > 0 || bulkScheme === 'waiting'
                 || !currentGenerationResults || currentGenerationResults.loading || !!currentGenerationResults.error
-                || !retryPlan?.start.length} onClick={retryUnfinished}>Retry unfinished</button>
+                || !retryPlan?.start.length || schemeLimitsBlock(retryPlan)} onClick={retryUnfinished}>Retry unfinished</button>
             </>} />
         </div>
         {(visited.brief || view === 'Dashboard') && (
@@ -914,6 +923,7 @@ function ProjectWorkspace({
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
             <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+              schemeLimitsNotice={schemeLimitsNotice}
               onResultActivated={onResultActivated}
               focus={schemeFocus} queuedFocus={queuedSchemeFocus} onFocusChange={setSchemeFocus}
               waitingForKnowledge={bulkScheme === 'waiting' || (bulkScheme === 'requested' && recovery.checkingByKind.scheme)
@@ -1305,7 +1315,7 @@ function ProjectExport({ base, name }: { base: string; name: string }) {
   );
 }
 
-function AppSettings() {
+function AppSettings({ onSchemeLimitsNotice }: { onSchemeLimitsNotice: (notice: string) => void }) {
   const [addingProfile, setAddingProfile] = useState(false);
   const panel = useDisclosureDismiss(addingProfile);
   const [open, setOpen] = useState(false);
@@ -1322,7 +1332,8 @@ function AppSettings() {
           <SettingsHelp title="About appearance">
             <p>Colour palette, light or dark mode, and text size can be adjusted independently. Your choices are saved in this browser.</p>
           </SettingsHelp>
-          <ExtractionWorkersControl active={open} refreshVersion={aiSettingsVersion} />
+          <ExtractionWorkersControl active={open} refreshVersion={aiSettingsVersion}
+            onSchemeLimitsNotice={onSchemeLimitsNotice} />
           <DeferredDetails className="settings-help" summary={<summary>AI profiles</summary>}>
             {() => <>
               {open && <AIProfileConnections refreshVersion={aiSettingsVersion} />}

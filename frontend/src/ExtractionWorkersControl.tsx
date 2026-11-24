@@ -158,7 +158,11 @@ function settingValue(setting: Setting | null | undefined, draft: string) {
     ? value : undefined;
 }
 
-export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { active: boolean; refreshVersion?: number }) {
+export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeLimitsNotice }: {
+  active: boolean;
+  refreshVersion?: number;
+  onSchemeLimitsNotice: (notice: string) => void;
+}) {
   const helpId = useId();
   const budgetHelpId = useId();
   const tokenLimitHelpId = useId();
@@ -321,6 +325,16 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
   const schemeBudget = settings?.schemeSourceSettings;
   const schemeNodeLimit = settings?.schemeNodeLimitSettings;
   const schemeEdgeLimit = settings?.schemeEdgeLimitSettings;
+  const graphEdits = [drafts.scheme_max_nodes, drafts.scheme_max_edges].filter(edit => edit !== undefined);
+  const schemeLimitsNotice = graphEdits.some(edit =>
+    settingValue(settingFor(settings, edit.field, edit.numericInput), edit.draft) === undefined)
+    ? 'Correct the Scheme limits in Settings before generating a diagram.'
+    : graphEdits.some(edit => notices[edit.field]?.state === 'failed')
+      ? 'Retry saving the Scheme limits in Settings before generating a diagram.'
+      : graphEdits.length ? 'Saving Scheme limits…' : '';
+  useLayoutEffect(() => {
+    onSchemeLimitsNotice(schemeLimitsNotice);
+  }, [onSchemeLimitsNotice, schemeLimitsNotice]);
   const advancedScheme = settings?.advancedSchemeSettings;
   const hasSchemeSettings = schemeBudget || schemeNodeLimit || schemeEdgeLimit
     || advancedSchemeFields.some(({ name }) => advancedScheme?.[name]);
@@ -464,7 +478,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0 }: { activ
         Limits apply separately to each Architecture, Workflow, and Focused Scheme diagram.
         {schemeNodeLimit && <> The default is 20 nodes.</>}
         {schemeEdgeLimit && <> The default is 40 edges. Set the edge limit to 0 to draw only nodes.</>}
-        {' '}After changing a limit, wait for the save confirmation before starting the next generation.
+        {' '}Scheme generation becomes available after your changes save.
       </small></p>}
       {([
         { name: 'scheme_max_nodes', label: 'Maximum nodes', setting: schemeNodeLimit },
