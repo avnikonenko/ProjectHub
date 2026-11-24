@@ -752,7 +752,12 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     ('The trigger populates doc_fts. Never query this index.', False),
     ('The trigger populates doc_fts. The index is not queried.', False),
     ('The trigger populates doc_fts. Queries to doc_fts are disabled.', False),
+    ('The trigger populates doc_fts. Querying this index is not supported.', False),
+    ('The trigger populates doc_fts. Querying doc_fts isn’t supported.', False),
+    ('The trigger populates doc_fts. Searching this index is no longer available.', False),
     ('Query doc_fts. The trigger no longer writes to doc_fts.', False),
+    ('The trigger populates doc_fts. Querying this index is supported.', True),
+    ('The trigger populates doc_fts. Querying doc_fts is not only supported but recommended.', True),
     ('Populate doc_fts. Query doc_fts and return only matching records.', True),
 ])
 def test_index_citations_do_not_cover_denied_handoffs(description, covered):
@@ -774,7 +779,7 @@ def test_index_handoff_coverage_checks_the_edge_and_its_endpoints():
     assert scheme._missing_index_workflows(workflow, {pair: {'doc_fts'}}) == []
 
 
-@pytest.mark.parametrize('repair_node', ['item0', 'item1', 'item2', 'foreign-node'])
+@pytest.mark.parametrize('repair_node', ['item0', 'item1', 'item2', 'item3', 'foreign-node'])
 def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypatch, repair_node):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -811,6 +816,9 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
         source_ids=refs[:4])
     response['workflow']['nodes'][2].update(
         label='Query doc_fts', description='A trigger populates doc_fts. Never query this index.',
+        source_ids=refs[:4])
+    response['workflow']['nodes'][3].update(
+        label='Query doc_fts', description='A trigger populates doc_fts. Querying this index is not supported.',
         source_ids=refs[:4])
     raw = json.dumps(response, separators=(',', ':'))
     assert scheme.MAX_INPUT_CHARS < len(raw) < scheme._graph_response_limit(60, 120, diagrams=2)

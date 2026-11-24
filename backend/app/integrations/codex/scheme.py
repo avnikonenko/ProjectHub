@@ -53,8 +53,14 @@ def _denies_index_handoff(text, table):
     reference = rf'\b(?:{re.escape(table)}|(?:this|the)\s+(?:full[- ]text\s+)?(?:index|table))\b'
     action = rf'\b(?:{_INDEX_MAINTENANCE}|{_INDEX_SEARCH})\b'
     denial = rf'\b(?:{_INDEX_DENIAL})\b(?:\s+(?:ever|actually|directly|normally|be)){{0,2}}\s+{action}'
-    disabled = rf'{action}[^,]*?{reference}[\x60"\]]?\s+(?:is|are|was|were)\s+(?:disabled|forbidden|prohibited|unsupported)\b'
-    return any(re.search(reference, clause) and (re.search(denial, clause) or re.search(disabled, clause))
+    copula = r'(?:is|are|was|were)'
+    unavailable = (
+        rf'{copula}\s+(?:disabled|forbidden|prohibited|unsupported|unavailable)'
+        rf"|(?:{copula}\s+(?:currently\s+)?(?:not|no\s+longer)|{copula}n['’]t)"
+        r'\s+(?:(?:yet|currently)\s+)?(?:supported|enabled|available|allowed|permitted|implemented)'
+    )
+    denied_status = rf'{action}[^,]*?{reference}[\x60"\]]?\s+(?:{unavailable})\b'
+    return any(re.search(reference, clause) and (re.search(denial, clause) or re.search(denied_status, clause))
                for clause in re.split(r'[;\n]|[.!?](?=\s|$)', text.casefold()))
 
 
