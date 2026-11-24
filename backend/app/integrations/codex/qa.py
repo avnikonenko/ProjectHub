@@ -29,6 +29,7 @@ DEFAULT_QA_MAX_ITEMS = 25
 _GROUP_SIZE = 72
 _DRAFT_BATCH_ITEMS = 32
 _DRAFT_BATCH_CHARS = 24_000
+_DRAFT_OVERFLOW_ALLOWANCE = 4
 _draft_result = ContextVar('projecthub_qa_draft_result', default=None)
 _NUMERIC_MARKERS = r'(?:\[\d+(?:[ \t]*[,;–-][ \t]*\d+)*\][ \t]*)+'
 _MARKERS_ONLY = re.compile(_NUMERIC_MARKERS)
@@ -176,12 +177,13 @@ def _generate_items(manager, batch, *, engine=None, project_id=None):
     # drafts whose existing cache identity already includes that exact schema.
     request_prompt = (prompt.rstrip() + f' Return at most {limit} question-and-answer entries in items; '
                       'fewer are allowed. Keep the supplied evidence intact and select the most useful questions.\n')
+    trimmed = 0
+    outcome = _draft_result.get()
     try:
         raw = _generate_json(manager, request_prompt + serialized, schema)
         result = _validate_items(raw, indexed, limit)
     except InvalidQAOutput as exc:
-        # One bounded correction, in a fresh generation scope. Never truncate an
-        # over-limit response or salvage answers with missing/foreign citations.
+        # Give the model one correction in a fresh generation scope.
         if isinstance(exc, InvalidQAOutputLimit):
             correction = f'The previous attempt exceeded the output cap. Return at most {limit} entries, each with valid supplied IDs. '
         elif isinstance(exc, InvalidQACitation):
@@ -192,15 +194,27 @@ def _generate_items(manager, batch, *, engine=None, project_id=None):
                 'Correct the previous attempt: return only JSON with one items array. Each entry must contain '
                 f'question (1–{_FIELDS["question"]} characters), answer (1–{_FIELDS["answer"]} characters), '
                 'and source_ids copied from the supplied evidence. Do not add other fields, code fences or commentary. ')
-        raw = _generate_json(manager, correction + request_prompt + serialized, schema)
-        result = _validate_items(raw, indexed, limit)
+        if outcome is not None:
+            outcome['retries'] = outcome.get('retries', 0) + 1
+        raw = _generate_json(manager, correction + 'List entries in priority order. ' + request_prompt + serialized, schema)
+        items = _read_items(raw, limit, extra=_DRAFT_OVERFLOW_ALLOWANCE)
+        # Validate even the entries outside the cap. A minor overflow can be
+        # bounded locally, but it must never hide bad text or citations.
+        result = _resolve_items(items, indexed)
+        trimmed = max(0, len(items) - limit)
+        if trimmed:
+            raw = json.dumps({'items': items[:limit]}, ensure_ascii=False, separators=(',', ':'))
+            result = result[:limit]
+            if outcome is not None:
+                outcome['fallback'] = True
     if fingerprint is not None:
         with Session(engine) as db:
             # Identical evidence groups may complete concurrently. Retain the
             # first successful cache rather than failing a valid generation.
             db.execute(insert(ProjectHistoryBatch).values(
                 project_id=project_id, fingerprint=fingerprint,
-                evidence=[{'raw': raw, 'generation': _observed_provenance(manager)}],
+                evidence=[{'raw': raw, 'generation': _observed_provenance(manager),
+                           **({'overflow_trimmed': trimmed} if trimmed else {})}],
             ).on_conflict_do_nothing(index_elements=['project_id', 'fingerprint']))
             db.commit()
             # Resolve a concurrent winner exactly as a later cache replay does.
@@ -214,7 +228,11 @@ def _read_cached_draft(cached, indexed, limit):
         raise CodexError('Saved Q&A draft cache is invalid.')
     entry = cached.evidence[0]
     result = _validate_items(entry.get('raw'), indexed, limit)
-    _restore_provenance(entry, _draft_result.get())
+    outcome = _draft_result.get()
+    _restore_provenance(entry, outcome)
+    if outcome is not None:
+        trimmed = entry.get('overflow_trimmed')
+        outcome['fallback'] = type(trimmed) is int and 0 < trimmed <= _DRAFT_OVERFLOW_ALLOWANCE
     return result
 
 
@@ -394,7 +412,7 @@ class UnsafeQAText(InvalidQAOutput):
     """Legacy drafts admitted meaningless questions or non-UTF-8 text."""
 
 
-def _validate_items(raw, indexed, limit=8):
+def _read_items(raw, limit, *, extra=0):
     try:
         if not isinstance(raw, str) or len(raw) > max(30_000, limit * 1400):
             raise ValueError('Invalid response size')
@@ -406,8 +424,16 @@ def _validate_items(raw, indexed, limit=8):
     items = result['items']
     if not isinstance(items, list):
         raise InvalidQAOutput('Q&A generation returned an invalid items array.')
-    if len(items) > limit:
+    if len(items) > limit + extra:
         raise InvalidQAOutputLimit(f'Q&A generation exceeded the batch limit (returned {len(items)} items; allowed {limit}).')
+    return items
+
+
+def _validate_items(raw, indexed, limit=8):
+    return _resolve_items(_read_items(raw, limit), indexed)
+
+
+def _resolve_items(items, indexed):
     validated = []
     for item in items:
         if not isinstance(item, dict) or set(item) != {*_FIELDS, 'source_ids'}:
@@ -743,6 +769,10 @@ def refresh_qa(engine, project_id, manager, *, max_items=DEFAULT_QA_MAX_ITEMS):
         run_diagnostics = {**diagnostics(), 'input_records': len(evidence),
                            'input_chars': sum(len(source.get('text', '')) for source in evidence),
                            'cited_source_count': len(cited_ids)}
+        overflow_batches = run_diagnostics.get('qa_draft_fallback_batches', 0)
+        if overflow_batches:
+            coverage.append(f'Used the model’s priority order to keep entries within the limit in {overflow_batches} '
+                            'Q&A draft batches, after checking all entries and citation IDs.')
         fallback_batches = sum(run_diagnostics.get(phase + '_fallback_batches', 0)
                                for phase in ('qa_consolidate', 'qa_rank'))
         if fallback_batches:

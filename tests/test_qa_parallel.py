@@ -152,6 +152,46 @@ def test_legacy_manager_stays_sequential_with_captured_worker_setting(engine):
         progress.finish(1)
 
 
+def test_parallel_drafts_continue_after_repeated_small_overflow_and_reuse_cache(engine):
+    manager = ParallelManager()
+    evidence = points(25 * 32)
+    batches = [evidence[start:start + 32] for start in range(0, len(evidence), 32)]
+    overflow_batch = 17
+
+    def overflow(_prompt, payload):
+        if payload[0]['text'] == str(overflow_batch * 32):
+            return json.dumps({'items': [{
+                'question': f'Extra candidate {index}?', 'answer': 'Supported answer.', 'source_ids': ['1'],
+            } for index in range(26)]})
+        return None
+
+    progress.begin(1, 'qa')
+    try:
+        with archive.archive_worker_scope(3):
+            completed = qa._draft_jobs(engine, 1, manager, batches[:overflow_batch])
+    finally:
+        progress.finish(1)
+
+    manager.hook = overflow
+    progress.begin(1, 'qa')
+    try:
+        with archive.archive_worker_scope(3):
+            resumed = qa._draft_jobs(engine, 1, manager, batches)
+        assert resumed[:overflow_batch] == completed
+        assert len(resumed[overflow_batch]) == 24
+        assert resumed[-1][0][0]['question'] == 'Question 768?'
+        status = progress.read(1, 'qa')
+        assert status['batch_completed'] == status['batch_total'] == 25
+        assert status['cache_hits'] == 17
+        assert status['diagnostics']['qa_draft_retries'] == status['diagnostics']['qa_draft_fallback_batches'] == 1
+        assert manager.children == 26
+        with archive.archive_worker_scope(3):
+            assert qa._draft_jobs(engine, 1, manager, batches) == resumed
+        assert progress.read(1, 'qa')['cache_hits'] == 25 and manager.children == 26
+    finally:
+        progress.finish(1)
+
+
 def test_actual_child_metadata_uses_batch_order_then_final_consolidation(engine, monkeypatch):
     manager = ParallelManager()
     manager.publish_metadata = True
@@ -372,7 +412,7 @@ def test_formatting_fallback_uses_structural_adapter_without_mutating_contract(e
     ('not JSON', 'invalid JSON'),
     (json.dumps({'items': [{'question': 'Q?', 'answer': 'x' * 801, 'source_ids': ['1']}]}), 'invalid text'),
     (json.dumps({'items': [{'question': 'x' * 181, 'answer': 'A.', 'source_ids': ['1']}]}), 'invalid text'),
-    (json.dumps({'items': [{'question': 'Q?', 'answer': 'A.', 'source_ids': ['1']}] * 9}), 'batch limit'),
+    (json.dumps({'items': [{'question': 'Q?', 'answer': 'A.', 'source_ids': ['1']}] * 13}), 'batch limit'),
 ])
 def test_formatting_fallback_keeps_local_draft_bounds_and_rejects_malformed_output(engine, raw, message):
     manager = AdapterManager(raw)

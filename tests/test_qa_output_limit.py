@@ -83,19 +83,41 @@ def test_oversized_draft_gets_one_fresh_retry_with_full_evidence_and_caches_only
     assert len(manager.requests) == 2
 
 
-def test_persistent_overflow_is_not_truncated_cached_or_published(engine, monkeypatch):
+def test_small_persistent_overflow_keeps_validated_entries_in_priority_order_and_reuses_cache(engine):
+    batch = evidence() * 13
+    corrected = json.loads(reply(26, question='Prioritized', reference='2'))
+    answer = '保存された根拠。' * 100
+    for item in corrected['items']:
+        item['answer'] = answer
+    manager = Manager(reply(26, question='First attempt'), json.dumps(corrected, ensure_ascii=False))
+    result = qa.generate_items(manager, batch, engine=engine, project_id=1)
+    assert [item['question'] for item, _ in result] == [f'Prioritized {index}?' for index in range(24)]
+    assert all(item['source_ids'] == ['original:acceptance'] for item, _ in result)
+    assert all(item['answer'] == answer for item, _ in result)
+    assert 'List entries in priority order' in manager.requests[-1][1]
+    with Session(engine) as db:
+        cached = list(db.scalars(select(ProjectHistoryBatch)))
+        assert len(cached) == 1
+        entry, = cached[0].evidence
+        assert entry['overflow_trimmed'] == 2
+        assert len(json.loads(entry['raw'])['items']) == 24
+    assert qa.generate_items(manager, batch, engine=engine, project_id=1) == result
+    assert len(manager.requests) == 2
+
+
+def test_large_persistent_overflow_is_not_truncated_cached_or_published(engine, monkeypatch):
     batch = evidence()
     monkeypatch.setattr(qa, 'archive_history', lambda *args: (batch, []))
     earlier = [{'text': 'Previously completed draft.', 'sources': [
         {'id': 'original:earlier', 'text': 'Previously completed draft.'}]}]
     qa.generate_items(Manager(reply(1)), earlier, engine=engine, project_id=1)
-    manager = Manager(reply(9), reply(10))
+    manager = Manager(reply(9), reply(13))
     with Session(engine) as db:
         previous = qa.read_qa(db, 1)
         previous_caches = [(row.fingerprint, deepcopy(row.evidence))
                            for row in db.scalars(select(ProjectHistoryBatch))]
     with use_knowledge_profile(get_generation_profile('quality')):
-        with pytest.raises(qa.InvalidQAOutputLimit, match=r'returned 10 items; allowed 8'):
+        with pytest.raises(qa.InvalidQAOutputLimit, match=r'returned 13 items; allowed 8'):
             qa.refresh_qa(engine, 1, manager)
     assert manager.children == 2 and len(manager.requests) == 2
     with Session(engine) as db:
@@ -106,6 +128,21 @@ def test_persistent_overflow_is_not_truncated_cached_or_published(engine, monkey
 def test_overflow_correction_does_not_accept_foreign_evidence(engine):
     manager = Manager(reply(9), reply(1, reference='foreign'))
     with pytest.raises(qa.InvalidQACitation, match='foreign'):
+        qa.generate_items(manager, evidence(), engine=engine, project_id=1)
+    assert len(manager.requests) == 2
+    with Session(engine) as db:
+        assert not list(db.scalars(select(ProjectHistoryBatch)))
+
+
+@pytest.mark.parametrize('changes,error', [
+    ({'source_ids': ['foreign']}, qa.InvalidQACitation),
+    ({'answer': 'x' * 801}, qa.InvalidQAOutput),
+])
+def test_small_persistent_overflow_validates_items_past_the_retained_cap(engine, changes, error):
+    corrected = json.loads(reply(9))
+    corrected['items'][-1].update(changes)
+    manager = Manager(reply(9), json.dumps(corrected))
+    with pytest.raises(error):
         qa.generate_items(manager, evidence(), engine=engine, project_id=1)
     assert len(manager.requests) == 2
     with Session(engine) as db:
