@@ -586,13 +586,22 @@ def _general_repository_order(sources, entrypoints, declared_modules, handoffs, 
     return order
 
 
+def _maintained_indexes(text):
+    return ({name.casefold() for name in _VIRTUAL_INDEX.findall(text)}
+            & {name.casefold() for name in _INDEX_WRITE.findall(text)})
+
+
+def index_handoff_tables(maintenance_text, query_text):
+    """Identify tables verified by both an inspected index writer and query."""
+    return _maintained_indexes(maintenance_text) & {name.casefold() for name in _INDEX_QUERY.findall(query_text)}
+
+
 def _index_workflows(sources, preferred_paths=()):
     """Pair SQLite index maintenance with runtime queries on the same index."""
     for schema in sorted(sources, key=lambda source: source['path']):
         if not _python_migration(schema['path']):
             continue
-        indexes = {name.casefold() for name in _VIRTUAL_INDEX.findall(schema['text'])} & {
-            name.casefold() for name in _INDEX_WRITE.findall(schema['text'])}
+        indexes = _maintained_indexes(schema['text'])
         if not indexes:
             continue
         matches = []

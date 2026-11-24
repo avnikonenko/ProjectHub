@@ -329,8 +329,11 @@ def test_focused_retry_corrects_only_verified_endpoint_metadata(database, monkey
         assert saved['coverage']['partial']
 
 
-@pytest.mark.parametrize('patch_valid', [True, False])
-def test_large_focused_retry_uses_a_bounded_patch(database, monkeypatch, patch_valid):
+@pytest.mark.parametrize('repair', [
+    'new node', 'existing citations', 'unrequested edge', 'omitted node citation',
+    'omitted edge citation', 'wrong handoff citation',
+])
+def test_large_focused_retry_uses_a_bounded_patch(database, monkeypatch, repair):
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '120')
     source = _handoff_source()
@@ -344,12 +347,13 @@ def test_large_focused_retry_uses_a_bounded_patch(database, monkeypatch, patch_v
     contract, = focused_scheme.make_contracts([source])
     graph = _handoff_diagram(contract)
     required_edge = graph['edges'].pop()
-    for index in range(58):
+    graph['nodes'][0]['source_ids'].append(references[0])
+    for index in range(57):
         graph['nodes'].append({
             **graph['nodes'][0], 'id': f'existing{index}', 'source_ids': references,
             'description': 'Recorded observations. ' * 17,
         })
-    for start, end in islice(permutations(range(58), 2), 119):
+    for start, end in islice(permutations(range(57), 2), 119):
         graph['edges'].append({
             **required_edge, 'source': f'existing{start}', 'target': f'existing{end}',
             'type': 'uses', 'label': 'Recorded relationship between these two components.',
@@ -372,16 +376,29 @@ def test_large_focused_retry_uses_a_bounded_patch(database, monkeypatch, patch_v
             assert package['required_handoffs'] == [contract]
             assert package['missing_source_ids'] == [named['id']]
             assert {item['id'] for item in package['sources']} == {source['id'], named['id']}
-            patched_node = {**graph['nodes'][0], 'source_ids': [source['id'], named['id']]}
-            edge = required_edge if patch_valid else {**required_edge, 'target': 'existing1'}
+            patched_node = {**diagram(named['id'])['nodes'][0], 'id': 'added_section'}
+            if repair == 'existing citations':
+                original = graph['nodes'][0]
+                patched_node = {**original, 'source_ids': [*original['source_ids'], named['id']]}
+            if repair == 'omitted node citation':
+                patched_node['source_ids'].append(references[0])
+            edge = required_edge.copy()
+            if repair == 'unrequested edge':
+                edge['target'] = 'existing1'
+            if repair == 'omitted edge citation':
+                edge['source_ids'] = [*edge['source_ids'], references[0]]
+            if repair == 'wrong handoff citation':
+                edge['source_ids'] = [*edge['source_ids'], named['id']]
             return json.dumps({'nodes': [patched_node], 'edges': [edge]})
 
     manager = Manager()
     saved = focused_scheme.refresh_focused_scheme(database, 1, manager, 'Trace read into write using methods.in')
     assert manager.calls == saved['diagnostics']['ai_requests'] == 2
-    assert len(saved['graph']['nodes']) == 60
+    patch_valid = repair in ('new node', 'existing citations')
+    assert len(saved['graph']['nodes']) == (60 if repair == 'new node' else 59)
     assert len(saved['graph']['edges']) == (120 if patch_valid else 119)
-    assert saved['graph']['nodes'][-1]['description'] == graph['nodes'][-1]['description']
+    assert saved['graph']['nodes'][58]['description'] == graph['nodes'][58]['description']
     assert saved['graph']['edges'][:119] == graph['edges']
     assert saved['graph']['explanation'] == graph['explanation']
     assert saved['coverage']['partial'] is not patch_valid
+    assert references[0] in saved['graph']['nodes'][0]['source_ids']

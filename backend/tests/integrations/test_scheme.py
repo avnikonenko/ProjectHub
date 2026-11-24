@@ -746,7 +746,7 @@ def test_index_handoff_gets_one_targeted_retry(tmp_path, monkeypatch, repair):
     engine.dispose()
 
 
-@pytest.mark.parametrize('repair_node', ['item0', 'foreign-node'])
+@pytest.mark.parametrize('repair_node', ['item0', 'item1', 'foreign-node'])
 def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypatch, repair_node):
     engine, _ = initialize(tmp_path)
     with Session(engine) as db:
@@ -755,10 +755,16 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
     inspected = evidence()
     refs = [f'file:project/{"nested_component_" * 7}module_{i}.py' for i in range(6)]
     pair = ('migration', 'query')
-    inspected['sources'] += [{'id': ref, 'text': 'Inspected indexing evidence.',
-                              'path': ref, 'provenance': 'observed in code'} for ref in [*refs, *pair]]
+    inspected['sources'] += [{'id': ref, 'text': 'Inspected code.', 'path': ref,
+                             'provenance': 'observed in code'} for ref in refs]
+    inspected['sources'] += [
+        {'id': pair[0], 'path': 'migrations/index.py', 'provenance': 'observed in code',
+         'text': 'L1: CREATE VIRTUAL TABLE doc_fts USING fts5\n'
+                 'L2: CREATE TRIGGER index_doc AFTER INSERT ON docs: INSERT INTO doc_fts'},
+        {'id': pair[1], 'path': 'query.py', 'provenance': 'observed in code',
+         'text': 'L8: SELECT FROM doc_fts WHERE doc_fts MATCH'},
+    ]
     monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: deepcopy(inspected))
-    monkeypatch.setattr(scheme, '_index_workflows', lambda *_, **__: [({'id': pair[0]}, {'id': pair[1]})])
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_NODES', '60')
     monkeypatch.setenv('PROJECTHUB_SCHEME_MAX_EDGES', '120')
     response = output()
@@ -771,7 +777,10 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
             for left, right in islice(permutations(range(60), 2), 120)
         ]
     response['workflow']['nodes'][0].update(
-        label='Search indexed documents', description='Query the index populated by the document migration.')
+        label='Search indexed documents', description='A trigger populates doc_fts. Query doc_fts for matching documents.')
+    response['workflow']['nodes'][1].update(
+        label='Activity log', description='Display the name doc_fts while users update and search logs by timestamp.',
+        source_ids=refs[:4])
     raw = json.dumps(response, separators=(',', ':'))
     assert scheme.MAX_INPUT_CHARS < len(raw) < scheme._graph_response_limit(60, 120, diagrams=2)
     prompts = []
@@ -784,6 +793,7 @@ def test_large_index_retry_adds_only_verified_pair_citations(tmp_path, monkeypat
             assert set(schema['properties']) == {'additions'}
             assert len(prompt) < scheme.MAX_INPUT_CHARS
             assert '"missing_index_pairs":[["migration","query"]]' in prompt
+            assert schema['properties']['additions']['items']['properties']['node_id']['enum'] == ['item0']
             return json.dumps({'additions': [{'node_id': repair_node, 'pair_index': 0}]})
 
     try:
