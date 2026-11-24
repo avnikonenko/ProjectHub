@@ -36,14 +36,17 @@ Under **Settings → Advanced settings → Scheme**, set **Maximum nodes** (1 to
 60, default 20) and **Maximum edges** (0 to 120, default 40). The limits are
 independent and apply per diagram to Architecture, Workflow, and Focused Scheme.
 Set the edge limit to zero for a diagram with nodes only. Scheme generation
-becomes available when the updated limits finish saving.
+becomes available when the updated limits finish saving. Use **Discard edit**
+to return to the saved value after an invalid edit or failed save.
 Larger graph limits also increase the response-size budget. It starts at
 100,000 characters and can reach 400,000 for General Scheme or 250,000 for
 Focused Scheme. Descriptions, citations, and dependency explanations share
 this budget. If a response exceeds it, ProjectHub shows the limit and the
 received size. The provider's output limits still apply. When a full draft
 would exceed the repair input budget, ProjectHub can ask for targeted changes
-and verify them against the validated draft.
+and verify them against the validated draft. A citation-only index repair can
+target a workflow node that describes maintaining and querying the same
+inspected index.
 
 The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.

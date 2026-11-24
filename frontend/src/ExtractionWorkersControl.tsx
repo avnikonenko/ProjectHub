@@ -175,6 +175,7 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
   const [reload, setReload] = useState(0);
   const [drafts, setDrafts] = useState<Partial<Record<SettingField, SettingEdit>>>({});
   const [notices, setNotices] = useState<Partial<Record<SettingField, SaveNotice>>>({});
+  const [savingSchemeLimit, setSavingSchemeLimit] = useState(false);
   const [autoWorkerStatus, setAutoWorkerStatus] = useState<AutoWorkerStatus | null>(null);
   const mounted = useRef(true);
   const currentSettings = useRef<WorkerSettings | null>(null);
@@ -237,11 +238,13 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
       if (!mounted.current || latestEdits.current[field] !== edit) return;
       const setting = settingFor(currentSettings.current, field, edit.numericInput);
       const value = settingValue(setting, draft);
+      const schemeLimit = field === 'scheme_max_nodes' || field === 'scheme_max_edges';
       try {
         if (value === undefined) throw new Error('The permitted values changed. Choose another value.');
         if (setting?.value === value && setting.configured === value) {
           setNotices(previous => ({ ...previous, [field]: undefined }));
         } else {
+          if (schemeLimit) setSavingSchemeLimit(true);
           const result = settingsResponse(await patch('/settings/ai', { [field]: value }));
           if (!mounted.current) return;
           if (settingFor(result, field)?.configured !== value) {
@@ -263,6 +266,8 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
           const error = failure instanceof Error ? failure.message : 'The setting could not be saved.';
           setNotices(previous => ({ ...previous, [field]: { state: 'failed', error } }));
         }
+      } finally {
+        if (schemeLimit && mounted.current) setSavingSchemeLimit(false);
       }
     });
   }
@@ -288,6 +293,14 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
     } else {
       enqueueSave(edit);
     }
+  }
+
+  function discardSchemeEdit(field: 'scheme_max_nodes' | 'scheme_max_edges') {
+    clearTimeout(timers.current.get(field));
+    timers.current.delete(field);
+    delete latestEdits.current[field];
+    setDrafts(previous => ({ ...previous, [field]: undefined }));
+    setNotices(previous => ({ ...previous, [field]: undefined }));
   }
 
   function inputValue(field: SettingField) {
@@ -328,10 +341,10 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
   const graphEdits = [drafts.scheme_max_nodes, drafts.scheme_max_edges].filter(edit => edit !== undefined);
   const schemeLimitsNotice = graphEdits.some(edit =>
     settingValue(settingFor(settings, edit.field, edit.numericInput), edit.draft) === undefined)
-    ? 'Correct the Scheme limits in Settings before generating a diagram.'
+    ? 'Correct or discard unsaved Scheme limits in Settings before generating a diagram.'
     : graphEdits.some(edit => notices[edit.field]?.state === 'failed')
-      ? 'Retry saving the Scheme limits in Settings before generating a diagram.'
-      : graphEdits.length ? 'Saving Scheme limits…' : '';
+      ? 'Retry saving or discard unsaved Scheme limits in Settings before generating a diagram.'
+      : graphEdits.length || savingSchemeLimit ? 'Saving Scheme limits…' : '';
   useLayoutEffect(() => {
     onSchemeLimitsNotice(schemeLimitsNotice);
   }, [onSchemeLimitsNotice, schemeLimitsNotice]);
@@ -497,6 +510,9 @@ export function ExtractionWorkersControl({ active, refreshVersion = 0, onSchemeL
           </label>
           {saveFeedback(name)}
           {!valid && <Feedback>Enter a whole number from {setting.min} to {setting.max}.</Feedback>}
+          {drafts[name] && (!valid || notices[name]?.state === 'failed') && <button type="button"
+            className="secondary" disabled={loading} onClick={() => discardSchemeEdit(name)}
+            aria-label={`Discard edit to ${label}`}>Discard edit</button>}
           {setting.value !== setting.configured
             && <p><small>Startup environment overrides the saved limit ({setting.configured}).</small></p>}
         </div>;
