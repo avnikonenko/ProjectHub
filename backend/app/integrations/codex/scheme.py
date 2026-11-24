@@ -271,7 +271,8 @@ def _graph_response_limit(max_nodes, max_edges, *, diagrams):
 
 def _read_graph_response(raw, label, *, max_chars):
     if isinstance(raw, str) and len(raw) > max_chars:
-        raise CodexError(f'{label} response exceeds the {max_chars:,}-character limit.')
+        raise CodexError(f'{label} response exceeds the {max_chars:,}-character limit '
+                         f'(received {len(raw):,} characters).')
     try:
         if not isinstance(raw, str):
             raise ValueError('Response is not text')

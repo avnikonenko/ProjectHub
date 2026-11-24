@@ -4,7 +4,9 @@ from itertools import islice, permutations
 import json
 
 import pytest
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -12,6 +14,7 @@ from backend.app.db import initialize
 from backend.app.integrations.codex import focused_scheme, progress, scheme
 from backend.app.integrations.codex.generation_metrics import begin_model_request
 from backend.app.integrations.codex.protocol import CodexError
+from backend.app.integrations.codex import router as routes
 from backend.app.models import GenerationRevision, Project, ProjectKnowledge, ProjectScheme
 
 
@@ -177,8 +180,21 @@ def test_maximum_scheme_sizes_accept_large_cited_responses(tmp_path, monkeypatch
         for key in ('graph',) if focused else ('architecture', 'workflow'):
             assert len(saved[key]['nodes']) == 60 and len(saved[key]['edges']) == 120
         manager.response = raw.ljust(response_limit + 1)
-        with pytest.raises(CodexError, match=f'response exceeds the {response_limit:,}-character limit'):
-            run(manager)
+        monkeypatch.setattr(routes, 'manager_for', lambda *_: manager)
+        app = FastAPI()
+        app.state.engine = engine
+        app.include_router(routes.router)
+        base = '/api/projects/1/codex'
+        suffix = '/scheme/focused' if focused else '/scheme'
+        payload = {'confirmed': True, **({'instruction': 'Trace data transformation'} if focused else {})}
+        kind = 'focused_scheme' if focused else 'scheme'
+        with TestClient(app) as client:
+            response = client.post(base + suffix, json=payload)
+            assert response.status_code == 503
+            detail = response.json()['detail']
+            assert detail.endswith(f'{response_limit:,}-character limit (received {response_limit + 1:,} characters).')
+            status = client.get(f'{base}/generation/status', params={'kind': kind}).json()
+            assert status['state'] == 'failed' and status['latest_attempt']['error'] == detail
         with Session(engine) as db:
             assert (focused_scheme.read_focused_scheme if focused else scheme.read_scheme)(db, 1) == saved
     finally:

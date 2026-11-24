@@ -40,7 +40,8 @@ confirmation before starting the next Scheme generation.
 Larger graph limits also increase the response-size budget. It starts at
 100,000 characters and can reach 400,000 for General Scheme or 250,000 for
 Focused Scheme. Descriptions, citations, and dependency explanations share
-this budget. The provider's output limits still apply.
+this budget. If a response exceeds it, ProjectHub shows the limit and the
+received size. The provider's output limits still apply.
 
 The result records its focus. You can also choose it in **Generate → Scheme**.
 When you run Knowledge and Scheme together, Scheme uses that choice after Knowledge saves.
