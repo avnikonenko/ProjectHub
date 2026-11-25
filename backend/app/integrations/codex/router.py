@@ -1,5 +1,6 @@
 """Reviewable Codex operations; accepting knowledge never invokes these routes."""
 from contextlib import ExitStack
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 from pathlib import Path
 from uuid import UUID
@@ -30,7 +31,7 @@ from .knowledge_profiles import configure_profile_manager, use_knowledge_profile
 from .knowledge_sources import load_sources, prior_context_ids
 from .knowledge_brief import generate_knowledge_brief, publish_saved_knowledge_preview
 from .knowledge_previews import KnowledgePreviewConflict, read_knowledge_preview
-from .scheme_evidence import collect_evidence
+from .scheme_evidence import collect_evidence, dependency_repository_identity
 from .ask import answer_project, retrieve_passages
 from .scheme_ask import current_repository_passages, saved_scheme_passages
 from . import progress
@@ -839,6 +840,44 @@ def publish_knowledge_preview(project_id: int, body: KnowledgePublicationInput, 
         raise HTTPException(503, str(exc)) from exc
 
 
+def _legacy_dependency_repository_matches(db, project_id, saved, current_identity):
+    if not current_identity:
+        return False
+    try:
+        generated = datetime.fromisoformat(saved['generated_at'])
+        if generated.tzinfo is None:
+            return False
+        boundary = generated.astimezone(timezone.utc)
+        diagnostics = saved.get('diagnostics')
+        duration = diagnostics.get('duration_seconds') if isinstance(diagnostics, dict) else None
+        if type(duration) in (int, float) and duration >= 0:
+            # The stored duration is rounded to milliseconds. Allow for that
+            # rounding when checking for relinks during the generation itself.
+            boundary -= timedelta(seconds=duration, milliseconds=1)
+        started_at = boundary.isoformat()
+        path = db.scalar(select(Project.repository_path).where(Project.id == project_id))
+        if not path:
+            return False
+        root = Path(path).expanduser()
+        if dependency_repository_identity(project_id, root, root.stat(follow_symlinks=False)) != current_identity:
+            return False
+    except (KeyError, TypeError, ValueError, OSError, RuntimeError, OverflowError):
+        return False
+
+    scope = (AuditEvent.project_id == project_id, AuditEvent.entity_type == 'projects', AuditEvent.entity_id == project_id)
+    saved_path = AuditEvent.after['repository_path'].as_string()
+    path_at_generation = db.scalar(select(saved_path).where(*scope, AuditEvent.created_at <= started_at)
+                                  .order_by(AuditEvent.created_at.desc(), AuditEvent.id.desc()).limit(1))
+    if path_at_generation != path:
+        return False
+    # Even a relink back to the original path breaks the legacy proof that the
+    # repository remained linked continuously after the diagram was saved.
+    relink = db.scalar(select(AuditEvent.id).where(*scope, AuditEvent.created_at > started_at,
+        (AuditEvent.before['repository_path'].as_string().is_distinct_from(path) |
+         saved_path.is_distinct_from(path))).limit(1))
+    return relink is None
+
+
 @router.get('/scheme')
 def get_scheme(project_id: int, request: Request, db: DB):
     project(db, project_id)
@@ -858,8 +897,17 @@ def get_scheme(project_id: int, request: Request, db: DB):
     inspection['diagnostics'] = evidence.get('diagnostics', {})
     if 'dependency_inventory' in evidence:
         inventory = evidence['dependency_inventory']
-        if saved and saved.get('fingerprint') == evidence['fingerprint']:
-            inventory = saved.get('dependency_inventory', inventory)
+        if saved and inventory is not None:
+            current_identity = inventory.get('repository_identity')
+            saved_inventory = saved.get('dependency_inventory') or {}
+            saved_identity = saved_inventory.get('repository_identity')
+            if saved_identity:
+                matches = saved_identity == current_identity
+            else:
+                matches = _legacy_dependency_repository_matches(db, project_id, saved, current_identity)
+                inspection['saved_dependency_repository_matches'] = matches
+            if matches and saved_inventory and saved.get('fingerprint') == evidence.get('fingerprint'):
+                inventory = {**saved_inventory, 'repository_identity': current_identity}
         inspection['dependency_inventory'] = inventory
     return {
         'snapshot': saved,

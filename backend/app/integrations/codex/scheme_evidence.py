@@ -1044,6 +1044,13 @@ def _dependency_inventory(root_fd, paths, repository_linked):
     }}, set(imports), stopped
 
 
+def dependency_repository_identity(project_id, root, directory_stat):
+    if not stat.S_ISDIR(directory_stat.st_mode):
+        return None
+    return _digest(['scheme-dependency-repository-v1', project_id, str(root),
+                    directory_stat.st_dev, directory_stat.st_ino])
+
+
 def _qualified_name(node):
     if isinstance(node, ast.Name):
         return node.id
@@ -1708,6 +1715,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cac
         freshness_unknown = True
         limitations.add('The repository became unavailable during inspection.')
     try:
+        repository_identity = (dependency_repository_identity(project_id, root, os.fstat(root_fd))
+                               if root_fd is not None and not focus else None)
         # Included requirement files are selected from the same safe bounded path list.
         # All requirement candidates participate in markers, including not-yet-expanded includes.
         dependency_paths = paths
@@ -1722,12 +1731,13 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cac
         scope_identity = {'scope': focus.value, 'scope_policy': 18, 'requested_paths': sorted(focus.paths),
                           'selected_named_paths': sorted(requested_paths),
                           'excluded_references': sorted(focus.excluded_references)} if focus else {}
-        key = _digest({'namespace': 'scheme-inspection-v16' if focus else 'scheme-inspection-v33', 'project_id': project_id,
+        key = _digest({'namespace': 'scheme-inspection-v16' if focus else 'scheme-inspection-v34', 'project_id': project_id,
             'published_knowledge': knowledge['marker'],
             'budgets': policy, 'inventory': inventory,
             'repository': repository_path, 'patterns': patterns, 'markers': markers,
             'records': records, 'sessions': session_markers, 'limits': sorted(limitations),
-            'freshness_unknown': freshness_unknown, **scope_identity})
+            'freshness_unknown': freshness_unknown, **scope_identity,
+            **({'dependency_repository': repository_identity} if not focus else {})})
         with Session(engine) as db:
             cached = db.get(ProjectHistoryBatch, (project_id, key))
             if not metadata_stop and cached is not None and isinstance(cached.evidence, list) and len(cached.evidence) == 1:
@@ -1737,6 +1747,8 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cac
         dependency_inventory, imported_names, dependency_stop = (
             (None, set(), None) if focus else _dependency_inventory(
                 root_fd, dependency_paths, bool(repository_path)))
+        if repository_identity is not None:
+            dependency_inventory['repository_identity'] = repository_identity
         sources, dependencies = list(records), []
         scanned = set()
         files_read = 0
@@ -2200,9 +2212,14 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cac
         # Local coverage accounting describes the inspection, not changes to its sources.
         fingerprint_coverage = {key: value for key, value in result['coverage'].items()
                                 if key not in {'file_counts', 'inspection_policy', 'file_omissions'}}
+        # The identity governs matching saved dependency purposes. Preserve
+        # the existing graph freshness fingerprint across the metadata upgrade.
+        fingerprint_inventory = ({key: value for key, value in dependency_inventory.items()
+                                  if key != 'repository_identity'} if dependency_inventory is not None else None)
         result['fingerprint'] = _digest({key: result[key] for key in
-            ('sources', 'dependencies', 'dependency_inventory', 'tree', 'knowledge_context')} | {'coverage': fingerprint_coverage, 'sessions': session_markers,
-                'published_knowledge': knowledge['marker'], **scope_identity})
+            ('sources', 'dependencies', 'tree', 'knowledge_context')} | {
+                'dependency_inventory': fingerprint_inventory, 'coverage': fingerprint_coverage,
+                'sessions': session_markers, 'published_knowledge': knowledge['marker'], **scope_identity})
         if persist_cache and inspection_stop != 'time_budget' and dependency_stop != 'time_budget' and not metadata_stop:
             with Session(engine) as db:
                 db.execute(text('BEGIN IMMEDIATE'))

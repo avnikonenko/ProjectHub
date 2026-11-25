@@ -24,6 +24,7 @@ const saved = {
 };
 const current = {
   dependencies: [],
+  saved_dependency_repository_matches: true,
   dependency_inventory: {
     dependencies: [{ id: 'import', name: 'crem', constraint: '', category: 'import:python', purpose: 'Used for project work.',
       source_ids: ['import-source'], purpose_source_ids: ['purpose-source'] }],
@@ -69,11 +70,13 @@ test('an unchanged Conda declaration keeps its saved purpose and exact saved cit
   const coverage = { files_total: 1, files_scanned: 1, limitations: [] };
   const html = renderToStaticMarkup(createElement(dependencies, {
     snapshot: { dependencies: [], dependency_inventory: {
-      coverage, dependencies: [{ ...dependency, purpose: 'Provides process isolation for the local runner.',
+      coverage, repository_identity: 'first-checkout',
+      dependencies: [{ ...dependency, purpose: 'Provides process isolation for the local runner.',
         purpose_source_ids: ['manifest'] }], sources: [{ ...source, text: 'Saved manifest declaration' }],
     } },
     current: { dependencies: [], dependency_inventory: {
-      coverage, dependencies: [dependency], sources: [{ ...source, text: 'Current manifest declaration' }],
+      coverage, repository_identity: 'first-checkout',
+      dependencies: [dependency], sources: [{ ...source, text: 'Current manifest declaration' }],
     } },
     historical: false, prefix: '1-dependency',
   }));
@@ -91,9 +94,9 @@ test('a current declaration can use a matching legacy purpose without transferri
     sources: [{ id: 'new-manifest', label: 'requirements.txt', provenance: 'dependency manifest', text: 'Current declaration' }] };
   const snapshot = { ...saved, dependencies: [{ ...saved.dependencies[0], purpose: 'Used for old project work.',
     purpose_source_ids: ['purpose-source'] }] };
-  function render(constraint: string) {
+  function render(constraint: string, matches = true) {
     return renderToStaticMarkup(createElement(dependencies, {
-      snapshot, current: { dependencies: [], dependency_inventory: {
+      snapshot, current: { dependencies: [], saved_dependency_repository_matches: matches, dependency_inventory: {
         ...dependency_inventory, dependencies: [{ ...declaration, constraint }],
       } },
       historical: false, prefix: '1-dependency',
@@ -105,4 +108,23 @@ test('a current declaration can use a matching legacy purpose without transferri
   const changed = render('==2');
   assert.match(changed, /No purpose explanation available/);
   assert.doesNotMatch(changed, /Used for old project work|A supported explanation/);
+  const unverified = render('==1', false);
+  assert.match(unverified, /No purpose explanation available/);
+  assert.doesNotMatch(unverified, /Used for old project work|A supported explanation/);
+});
+
+test('relinking does not transfer a purpose even when the dependency ID and declaration match', () => {
+  const declaration = { ...saved.dependencies[0], purpose: '', source_ids: ['old-source'] };
+  const inventory = { ...current.dependency_inventory, dependencies: [declaration], sources: [saved.sources[0]] };
+  const snapshot = { ...saved, dependency_inventory: { ...inventory, repository_identity: 'original-checkout',
+    dependencies: [{ ...declaration, purpose: 'Used in the former checkout.', purpose_source_ids: ['purpose-source'] }] } };
+  const active = { dependencies: [], saved_dependency_repository_matches: true,
+    dependency_inventory: { ...inventory, repository_identity: 'replacement-checkout' } };
+  const settings = { snapshot, current: active, prefix: '1-dependency' };
+  const currentHtml = renderToStaticMarkup(createElement(dependencies, { ...settings, historical: false }));
+  assert.match(currentHtml, /No purpose explanation available/);
+  assert.doesNotMatch(currentHtml, /Used in the former checkout|A supported explanation/);
+  const historical = renderToStaticMarkup(createElement(dependencies, { ...settings, historical: true }));
+  assert.match(historical, /Used in the former checkout/);
+  assert.match(historical, /A supported explanation/);
 });

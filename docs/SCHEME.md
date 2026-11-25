@@ -136,8 +136,9 @@ module names. Each row links to its declaration or import evidence.
 The current inventory is available as soon as you open Scheme. Saved versions
 retain their own inventory. The model receives a bounded selection for
 explanations, while the table includes every dependency the local scan found.
-The current table shows saved purpose explanations for matching declarations,
-with citations to the evidence used when Scheme was generated.
+The current table shows saved purpose explanations for matching declarations
+from the same linked repository, with citations to the evidence used when
+Scheme was generated.
 Check **Dependency scan limitations** for incomplete reads or unsupported
 syntax. The scan has a 32 MiB total read limit, a 2 MiB per-file limit, and a
 ten-second time budget. Check the project's environment for installed versions.

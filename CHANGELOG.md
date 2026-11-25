@@ -4,7 +4,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 ## Unreleased
 
-- Keep saved dependency purpose explanations visible in Scheme for declarations that still match the current repository scan.
+- Keep saved dependency purpose explanations visible in Scheme for matching declarations from the same repository.
 
 ## [0.2.7] - 2026-11-24
 

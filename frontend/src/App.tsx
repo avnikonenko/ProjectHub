@@ -922,7 +922,7 @@ function ProjectWorkspace({
         )}
         {(visited.scheme || view === 'Scheme') && (
           <div hidden={view !== 'Scheme' || !!results}>
-            <Scheme base={base} generation={generation} visible={view === 'Scheme' && !results}
+            <Scheme base={base} repositoryPath={project.repository_path} generation={generation} visible={view === 'Scheme' && !results}
               schemeLimitsNotice={schemeLimitsNotice}
               onResultActivated={onResultActivated}
               focus={schemeFocus} queuedFocus={queuedSchemeFocus} onFocusChange={setSchemeFocus}

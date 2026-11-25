@@ -45,7 +45,8 @@ type SchemeResult = {
   snapshot: SchemeSnapshot | null;
   freshness: { state: string; partial: boolean; limitations: string[] };
   inspection?: { tree: TreeEntry[]; dependencies: Dependency[]; coverage: Coverage; sources?: SchemeSource[];
-    diagnostics?: SchemeDiagnostics | null; dependency_inventory?: DependencyInventory };
+    diagnostics?: SchemeDiagnostics | null; dependency_inventory?: DependencyInventory;
+    saved_dependency_repository_matches?: boolean };
 };
 
 function resultWithSnapshot(previous: SchemeResult | null, snapshot: SchemeSnapshot | null): SchemeResult | null {
@@ -439,8 +440,8 @@ function FocusedScheme({ base, generation, visible, onGenerating, schemeLimitsNo
   </div>;
 }
 
-export function Scheme({ base, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, waitingForKnowledge = false, onResultActivated, schemeLimitsNotice }: GenerationRequestProps & {
-  base: string; generation: Generation; visible: boolean;
+export function Scheme({ base, repositoryPath, generation, visible, onGenerating, onFocusedGenerating, recoveryVersion, recoveryBusy, focus, queuedFocus, onFocusChange, generationRequest = 0, generationActionId, onGenerationRequestHandled, onGenerationRequestSettled, waitingForKnowledge = false, onResultActivated, schemeLimitsNotice }: GenerationRequestProps & {
+  base: string; repositoryPath: string | null; generation: Generation; visible: boolean;
   onGenerating: (active: boolean) => void; recoveryVersion: number; recoveryBusy: boolean;
   onFocusedGenerating?: (active: boolean) => void;
   waitingForKnowledge?: boolean;
@@ -449,6 +450,7 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   schemeLimitsNotice: string;
 }) {
   const [result, setResult] = useState<SchemeResult | null>(null);
+  const [inspectionRepositoryPath, setInspectionRepositoryPath] = useState(repositoryPath);
   const [view, setView] = useState<(typeof schemeViews)[number]>('Architecture');
   const [visitedFocused, setVisitedFocused] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -465,6 +467,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
   const selectingRevision = useRef(false);
   const resultRead = useRef(0);
   const alive = useRef(true);
+  const linkedRepositoryPath = useRef(repositoryPath);
+  linkedRepositoryPath.current = repositoryPath;
   const path = base + '/codex/scheme';
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   useEffect(() => {
@@ -477,13 +481,14 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
         if (!abort.signal.aborted && resultRead.current === identity) {
           setResult(previous => selectedRevision.current !== null && previous
             ? { ...data, snapshot: previous.snapshot } : data);
+          setInspectionRepositoryPath(repositoryPath);
           setError(''); setLatestVersion(data.snapshot?.generated_at ?? null);
         }
       })
       .catch((e: Error) => { if (!abort.signal.aborted && resultRead.current === identity) setError(e.message); })
       .finally(() => { if (!abort.signal.aborted && resultRead.current === identity) setLoading(false); });
     return () => abort.abort();
-  }, [path, recoveryVersion, visible, generationRequest, refresh]);
+  }, [path, repositoryPath, recoveryVersion, visible, generationRequest, refresh]);
 
   async function generate(requestedFocus: SchemeFocus, actionId?: string) {
     if (inFlight.current || loading || recoveryBusy || revisionLoading || waitingForKnowledge || questionBusy
@@ -503,8 +508,14 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
         setRevisionId(null);
         setResult(previous => resultWithSnapshot(previous, snapshot));
         try {
+          const scanRepositoryPath = linkedRepositoryPath.current;
           const current = await api<SchemeResult>(path);
-          if (alive.current) setResult(current);
+          if (alive.current && linkedRepositoryPath.current === scanRepositoryPath) {
+            setResult(current);
+            setInspectionRepositoryPath(scanRepositoryPath);
+          } else if (alive.current) {
+            setRefresh(value => value + 1);
+          }
         } catch {
           if (alive.current) setError('Scheme saved. Could not check source freshness.');
         }
@@ -617,7 +628,8 @@ export function Scheme({ base, generation, visible, onGenerating, onFocusedGener
     </>}
     {view === 'Architecture' && result && <CodeStructure entries={snapshot?.tree ?? result.inspection?.tree ?? []}
       highlighted={new Set(snapshot?.architecture.nodes.flatMap((node) => node.paths) ?? [])} />}
-    {view === 'Dependencies' && result && <SchemeDependencies snapshot={snapshot} current={result.inspection}
+    {view === 'Dependencies' && result && <SchemeDependencies snapshot={snapshot}
+      current={repositoryPath === inspectionRepositoryPath ? result.inspection : undefined}
       historical={revisionId !== null} prefix={`${prefix}-dependency`} />}
     {view !== 'Dependencies' && !!sources.length && <details className="scheme-sources">
       <summary>Evidence used ({sources.length})</summary>

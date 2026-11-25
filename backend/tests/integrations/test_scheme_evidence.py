@@ -77,14 +77,34 @@ def test_unchanged_repository_reuses_cached_extraction_and_invalidates_changes(t
     cached = evidence.collect_evidence(engine, 1)
     assert cached['diagnostics']['cache_hits'] == 1
     assert cached['fingerprint'] == first['fingerprint']
+    identity = first['dependency_inventory']['repository_identity']
+    assert cached['dependency_inventory']['repository_identity'] == identity
+    assert len(identity) == 64 and str(repo) not in json.dumps(cached)
     monkeypatch.setattr(evidence, '_read', read)
     (repo / 'main.py').write_text('class Two: pass\n')
     changed = evidence.collect_evidence(engine, 1)
     assert changed['fingerprint'] != first['fingerprint']
+    assert changed['dependency_inventory']['repository_identity'] == identity
     with Session(engine) as db:
         db.execute(text("UPDATE codex_history_turns SET content='Changed discussion' WHERE project_id=1"))
         db.commit()
     assert evidence.collect_evidence(engine, 1)['fingerprint'] != changed['fingerprint']
+    engine.dispose()
+
+
+def test_dependency_repository_identity_changes_on_same_path_directory_replacement(tmp_path):
+    repo = repository(tmp_path)
+    (repo / 'environment.yml').write_text('dependencies:\n  - bubblewrap\n')
+    engine = setup(tmp_path, repo)
+    first = evidence.collect_evidence(engine, 1)
+    repo.rename(tmp_path / 'original')
+    repository(tmp_path)
+    (repo / 'environment.yml').write_text('dependencies:\n  - bubblewrap\n')
+    replaced = evidence.collect_evidence(engine, 1)
+    old, new = first['dependency_inventory'], replaced['dependency_inventory']
+    assert old['dependencies'] == new['dependencies']
+    assert old['repository_identity'] != new['repository_identity']
+    assert replaced['diagnostics']['cache_hits'] == 0
     engine.dispose()
 
 

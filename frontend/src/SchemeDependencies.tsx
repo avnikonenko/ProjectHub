@@ -11,10 +11,12 @@ export type DependencyInventory = {
   dependencies: Dependency[];
   sources: DependencySource[];
   coverage: { files_total: number | null; files_scanned: number; limitations: string[] };
+  repository_identity?: string;
 };
 
 type DependencyEvidence = {
   dependency_inventory?: DependencyInventory;
+  saved_dependency_repository_matches?: boolean;
   dependencies: Dependency[];
   sources?: DependencySource[];
 };
@@ -25,13 +27,19 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   const inventory = historical ? snapshot?.dependency_inventory
     : current?.dependency_inventory ?? snapshot?.dependency_inventory;
   const legacy = historical ? snapshot : snapshot ?? current;
+  const currentScan = !historical && !!current?.dependency_inventory;
+  const savedRepository = snapshot?.dependency_inventory?.repository_identity;
+  const canReuseSaved = !currentScan || (savedRepository
+    ? savedRepository === inventory?.repository_identity
+    : current?.saved_dependency_repository_matches === true);
   const sourcesById = new Map((inventory?.sources ?? legacy?.sources ?? []).map(source => [source.id, source]));
-  const savedSources = new Map([...(snapshot?.dependency_inventory?.sources ?? []), ...(snapshot?.sources ?? [])]
+  const savedSources = new Map((canReuseSaved
+    ? [...(snapshot?.dependency_inventory?.sources ?? []), ...(snapshot?.sources ?? [])] : [])
     .map(source => [source.id, source]));
-  const savedPurposes = new Map([...(snapshot?.dependencies ?? []), ...(snapshot?.dependency_inventory?.dependencies ?? [])]
+  const savedPurposes = new Map((canReuseSaved
+    ? [...(snapshot?.dependencies ?? []), ...(snapshot?.dependency_inventory?.dependencies ?? [])] : [])
     .filter(dependency => dependency.purpose).map(dependency => [dependency.id, dependency]));
   const savedCitationIds = new Map<string, string>();
-  const currentScan = !historical && !!current?.dependency_inventory;
 
   function savedCitation(id: string) {
     const known = savedCitationIds.get(id);
@@ -101,7 +109,7 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   }
   return <>
     {inventory && <p className="muted"><small>
-      {historical ? 'Saved dependency scan' : 'Repository dependency scan'} ·{' '}
+      {currentScan ? 'Repository dependency scan' : 'Saved dependency scan'} ·{' '}
       {inventory.coverage.files_scanned.toLocaleString()}{
         inventory.coverage.files_total === null ? '' : ` of ${inventory.coverage.files_total.toLocaleString()}`
       } eligible files scanned. Includes supported manifests and Python imports.
