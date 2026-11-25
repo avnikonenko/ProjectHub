@@ -175,7 +175,7 @@ test('Conda dependencies show one row with exact pins and citations for every de
   }));
   assert.equal(html.match(/<td>dask-core<\/td>/g)?.length, 1);
   assert.match(html, /<td>Conda environment<\/td>/);
-  assert.match(html, /<summary><code>2026\.6\.0 · 2024\.5\.0<\/code><\/summary>/);
+  assert.match(html, /<summary><code>=2026\.6\.0 · 2024\.5\.0<\/code><\/summary>/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-2"/);
   assert.match(html, /<code>=2024\.5\.0=build<\/code><small>Declaration<a [^>]*href="#1-dependency-source-3"/);
@@ -192,16 +192,16 @@ test('Conda dependencies show one row with exact pins and citations for every de
   assert.match(html, /Package role · .*Schedules tasks/);
 });
 
-for (const { description, constraints, summary } of [
+for (const { description, constraints, summary, category = 'environment:conda', manifest = 'environment.yml' } of [
   {
     description: 'three unique numeric versions',
     constraints: ['=2025.3=py312_0', '=2025.2', '=2025.3=py313_0', '=2024.7'],
-    summary: '2025.3 · 2025.2 · 2024.7',
+    summary: '2025.3 · =2025.2 · =2024.7',
   },
   {
     description: 'more than three unique numeric versions',
     constraints: ['=2025.3', '=2025.2', '=2024.7', '=2024.6', '=2024.5'],
-    summary: '2025.3 · 2025.2 · 2024.7 +2 more',
+    summary: '=2025.3 · =2025.2 · =2024.7 +2 more',
   },
   {
     description: 'different builds of the same numeric version',
@@ -209,18 +209,37 @@ for (const { description, constraints, summary } of [
     summary: '2025.3 (2 constraints)',
   },
   {
-    description: 'different version ranges',
+    description: 'Conda release series separately from exact versions and builds',
+    constraints: ['=1.2', '==1.2', '=1.2=linux_0', '==2.0'],
+    summary: '=1.2 · 1.2 · 2.0',
+  },
+  {
+    description: 'different Conda version ranges',
     constraints: ['>=2025.3,<2026', '>=2024.7,<2025'],
     summary: '2 declared constraints',
   },
+  {
+    description: 'Python compatible release and exact constraints by count',
+    constraints: ['~=1.2', '==1.2'],
+    summary: '2 declared constraints',
+    category: 'runtime',
+    manifest: 'requirements.txt',
+  },
+  {
+    description: 'npm caret range and exact constraints by count',
+    constraints: ['^1.2.0', '1.2.0'],
+    summary: '2 declared constraints',
+    category: 'runtime',
+    manifest: 'package.json',
+  },
 ]) {
-  test(`grouped Conda declarations summarize ${description} and retain exact details`, () => {
-    const entry = { ...saved.dependencies[0], name: 'dask-core', category: 'environment:conda' };
+  test(`grouped declarations summarize ${description} and retain exact details`, () => {
+    const entry = { ...saved.dependencies[0], name: 'sample-package', category };
     const declarations = constraints.map((constraint, index) => ({
       ...entry, id: `env-${index}`, constraint, source_ids: [`env-${index}`],
     }));
     const sources = declarations.map(({ id, constraint }) => ({
-      id, label: `${id}.yml`, text: `Declares dask-core${constraint}`, provenance: 'dependency manifest',
+      id, label: `${id}/${manifest}`, text: `Declares ${entry.name}${constraint}`, provenance: 'dependency manifest',
     }));
     const html = renderToStaticMarkup(createElement(dependencies, {
       snapshot: { dependencies: declarations, sources }, historical: true, prefix: '1-dependency',

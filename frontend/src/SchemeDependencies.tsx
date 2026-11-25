@@ -40,16 +40,17 @@ function dependencyEcosystem(dependency: Dependency, sources: Map<string, Depend
 }
 
 function compactVersions(constraints: Set<string>, ecosystem: string) {
-  const pattern = ecosystem === 'conda' ? /^={1,2}(\d+(?:\.\d+)+)(?:=[\w.-]+)?$/
+  const pattern = ecosystem === 'conda' ? /^(={1,2})(\d+(?:\.\d+)+)(=[\w.-]+)?$/
     : ecosystem === 'python' ? /^==(\d+(?:\.\d+)*)$/
     : ecosystem === 'npm' ? /^v?(\d+\.\d+\.\d+)$/
     : null;
   if (!pattern) return null;
   const versions = new Set<string>();
   for (const constraint of constraints) {
-    const version = pattern.exec(constraint)?.[1];
-    if (!version) return null;
-    versions.add(version);
+    const match = pattern.exec(constraint);
+    if (!match) return null;
+    // A bare Conda "=" is a prefix match. Exported version-and-build constraints are exact.
+    versions.add(ecosystem === 'conda' ? (match[1] === '=' && !match[3] ? constraint : match[2]) : match[1]);
   }
   return [...versions];
 }

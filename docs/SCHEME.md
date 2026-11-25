@@ -132,8 +132,9 @@ the linked repository. This includes pip requirements and local includes,
 `pyproject.toml`, `setup.py`, `setup.cfg`, Pipfile, Conda environment files,
 and npm package manifests. Imports without a matching declaration appear as
 module names. Repeated declarations of a package in the same ecosystem share a
-row. Simple version pins appear together in the collapsed row. Expand the
-constraints to see the full declarations, build strings, and sources.
+row. Simple version constraints appear together in the collapsed row. Conda
+version prefixes keep their single `=`. Expand the constraints to see the
+full declarations, build strings, and sources.
 
 The inventory is available as soon as you open Scheme. Generate a General Scheme
 to add explanations. When selected project evidence explains how a dependency
