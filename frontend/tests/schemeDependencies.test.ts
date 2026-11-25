@@ -180,8 +180,36 @@ test('Conda dependencies show one row with exact pins and citations for every de
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-2"/);
   assert.match(html, /<code>=2024\.5\.0=build<\/code><small>Declaration<a [^>]*href="#1-dependency-source-3"/);
   assert.equal(html.match(/Executes parallel tasks\./g)?.length, 1);
+  const appliesTo = [...html.matchAll(/<summary>Applies to 2 of 3 declarations<\/summary>(.*?)<\/details>/gs)];
+  assert.equal(appliesTo.length, 1);
+  const applicableDeclarations = appliesTo[0]?.[1]?.match(/<li>.*?<\/li>/gs) ?? [];
+  assert.equal(applicableDeclarations.length, 2);
+  for (const [index, declaration] of applicableDeclarations.entries()) {
+    assert.match(declaration, /<code>=2026\.6\.0<\/code>/);
+    assert.match(declaration, new RegExp(`href="#1-dependency-source-${index + 1}"`));
+  }
   assert.match(html, /More explanations \(1\)/);
   assert.match(html, /Package role · .*Schedules tasks/);
+});
+
+test('mixed pinned and unpinned declarations label only nonempty constraints as constraints', () => {
+  const entry = { ...saved.dependencies[0], name: 'dask-core', category: 'environment:conda' };
+  const declarations = [
+    { ...entry, id: 'cpu', constraint: '=2026.6.0', source_ids: ['cpu'] },
+    { ...entry, id: 'gpu', constraint: '', source_ids: ['gpu'] },
+    { ...entry, id: 'docs', constraint: '', source_ids: ['docs'] },
+  ];
+  const sources = declarations.map(({ id, constraint }) => ({
+    id, label: `${id}.yml`, text: `Declares dask-core${constraint}`, provenance: 'dependency manifest',
+  }));
+  const html = renderToStaticMarkup(createElement(dependencies, {
+    snapshot: { dependencies: declarations, sources }, historical: true, prefix: '1-dependency',
+  }));
+  assert.match(html, /<summary>1 declared constraint · 2 unpinned<\/summary>/);
+  assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
+  for (const number of [2, 3]) {
+    assert.match(html, new RegExp(`<code>Not specified</code><small>Declaration<a [^>]*href="#1-dependency-source-${number}"`));
+  }
 });
 
 test('grouping preserves distinct ecosystems and keeps mixed runtime and development groups visible', () => {
@@ -198,8 +226,12 @@ test('grouping preserves distinct ecosystems and keeps mixed runtime and develop
     },
     historical: true, prefix: '1-dependency',
   }));
-  assert.equal(html.match(/<td>older-package<\/td>/g)?.length, 3);
-  assert.match(html, /\(2 declarations\)/);
-  assert.match(html, /runtime, development:test/);
+  const rows = html.match(/<tr><td>older-package<\/td>.*?<\/tr>/gs) ?? [];
+  assert.equal(rows.length, 3);
+  const python = rows.find(row => /\bPython\b/.test(row));
+  assert.ok(python);
+  assert.match(python, /\(2 declarations\)/);
+  assert.match(python, /runtime, development:test/);
+  assert.ok(rows.some(row => /\bnpm\b/.test(row) && !/\bPython\b/.test(row)));
   assert.doesNotMatch(html, /Development dependencies/);
 });

@@ -102,6 +102,10 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
     else groups.set(key, [dependency]);
   }
   const grouped = [...groups];
+  const groupsByName = new Map<string, number>();
+  for (const [, [dependency]] of grouped) {
+    groupsByName.set(dependency.name, (groupsByName.get(dependency.name) ?? 0) + 1);
+  }
   const development = ([, items]: typeof grouped[number]) =>
     items.every(dependency => /^(development|build|test)(:|$)/i.test(dependency.category));
   const developmentDependencies = grouped.filter(development);
@@ -124,7 +128,12 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
           const first = declarations[0];
           const detectedImport = first.category.startsWith('import:');
           const categories = [...new Set(declarations.map(dependency => dependencyCategoryLabel(dependency.category)))];
-          const constraints = [...new Set(declarations.map(dependency => dependency.constraint))];
+          const constraints = new Set(declarations.map(dependency => dependency.constraint).filter(Boolean));
+          const unpinned = declarations.filter(dependency => !dependency.constraint).length;
+          const mixed = constraints.size > 0 && unpinned > 0;
+          const ecosystem = dependencyEcosystem(first, sourcesById);
+          const showEcosystem = (groupsByName.get(first.name) ?? 0) > 1 &&
+            (ecosystem === 'python' || ecosystem === 'npm');
           const purposes = new Map<string, typeof dependencies>();
           for (const dependency of declarations) {
             if (!dependency.purpose) continue;
@@ -142,13 +151,22 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
                 : entries.every(item => item.savedPurpose) && <small className="muted">Saved purpose · </small>}
               <AIEmphasis text={entry.purpose} />
               {references([...new Set(entries.flatMap(item => item.purpose_source_ids ?? []))])}
+              {entry.purpose_kind !== 'package_role' && entries.length < declarations.length &&
+                <details className="scheme-declarations">
+                  <summary>Applies to {entries.length} of {declarations.length} declarations</summary>
+                  <ul>{entries.map(dependency => <li key={dependency.id}>
+                    <code>{dependency.constraint || 'Not specified'}</code>
+                    {declaration(dependency)}
+                  </li>)}</ul>
+                </details>}
             </>;
           }
           return <tr key={key}>
             <td>{first.name}</td>
             <td>{declarations.length === 1 ? <code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>
               : <details className="scheme-declarations">
-                <summary>{constraints.length > 1 ? `${constraints.length} declared constraints`
+                <summary>{mixed || constraints.size > 1
+                  ? `${constraints.size} declared constraint${constraints.size === 1 ? '' : 's'}${mixed ? ` · ${unpinned} unpinned` : ''}`
                   : <><code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>{' '}
                     <small>({declarations.length} {detectedImport ? 'imports' : 'declarations'})</small></>}</summary>
                 <ul>{declarations.map(dependency => <li key={dependency.id}>
@@ -158,7 +176,9 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
                 </li>)}</ul>
               </details>}
             </td>
-            <td>{detectedImport ? 'Detected import' : categories.join(', ')}</td>
+            <td>{detectedImport ? 'Detected import' : categories.join(', ')}
+              {showEcosystem && <small>{ecosystem === 'python' ? 'Python' : 'npm'}</small>}
+            </td>
             <td>
               {!!orderedPurposes.length && purpose(orderedPurposes[0])}
               {orderedPurposes.length > 1 && <details>
