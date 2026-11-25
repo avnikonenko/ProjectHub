@@ -53,7 +53,8 @@ test('a historical Scheme uses its own inventory or its own legacy declarations'
   const selection = { current, historical: true, prefix: '1-dependency' };
   const legacy = renderToStaticMarkup(createElement(dependencies, { ...selection, snapshot: saved }));
   assert.match(legacy, /older-package/);
-  assert.match(legacy, /No purpose explanation available/);
+  assert.match(legacy, /<td><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
+  assert.doesNotMatch(legacy, /No purpose explanation available/);
   assert.doesNotMatch(legacy, /crem|worker.py|Saved dependency scan/);
   const historical = { ...saved, dependency_inventory: { ...current.dependency_inventory,
     dependencies: [saved.dependencies[0]], sources: [saved.sources[0]],
@@ -106,10 +107,10 @@ test('a current declaration can use a matching legacy purpose without transferri
   assert.match(unchanged, /Saved purpose · .*Used for old project work/);
   assert.match(unchanged, /A supported explanation\./);
   const changed = render('==2');
-  assert.match(changed, /No purpose explanation available/);
+  assert.match(changed, /<td><small>Declaration<a /);
   assert.doesNotMatch(changed, /Used for old project work|A supported explanation/);
   const unverified = render('==1', false);
-  assert.match(unverified, /No purpose explanation available/);
+  assert.match(unverified, /<td><small>Declaration<a /);
   assert.doesNotMatch(unverified, /Used for old project work|A supported explanation/);
 });
 
@@ -122,7 +123,7 @@ test('relinking does not transfer a purpose even when the dependency ID and decl
     dependency_inventory: { ...inventory, repository_identity: 'replacement-checkout' } };
   const settings = { snapshot, current: active, prefix: '1-dependency' };
   const currentHtml = renderToStaticMarkup(createElement(dependencies, { ...settings, historical: false }));
-  assert.match(currentHtml, /No purpose explanation available/);
+  assert.match(currentHtml, /<td><small>Declaration<a /);
   assert.doesNotMatch(currentHtml, /Used in the former checkout|A supported explanation/);
   const historical = renderToStaticMarkup(createElement(dependencies, { ...settings, historical: true }));
   assert.match(historical, /Used in the former checkout/);
