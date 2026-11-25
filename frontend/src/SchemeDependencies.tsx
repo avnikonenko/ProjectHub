@@ -25,17 +25,42 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   const inventory = historical ? snapshot?.dependency_inventory
     : current?.dependency_inventory ?? snapshot?.dependency_inventory;
   const legacy = historical ? snapshot : snapshot ?? current;
-  const dependencies = inventory?.dependencies ?? legacy?.dependencies ?? [];
   const sourcesById = new Map((inventory?.sources ?? legacy?.sources ?? []).map(source => [source.id, source]));
-  if (inventory) {
-    const savedSources = new Map(snapshot?.sources?.map(source => [source.id, source]));
-    for (const dependency of dependencies) {
-      for (const id of dependency.purpose_source_ids ?? []) {
-        const source = savedSources.get(id);
-        if (source && !sourcesById.has(id)) sourcesById.set(id, source);
-      }
+  const savedSources = new Map([...(snapshot?.dependency_inventory?.sources ?? []), ...(snapshot?.sources ?? [])]
+    .map(source => [source.id, source]));
+  const savedPurposes = new Map([...(snapshot?.dependencies ?? []), ...(snapshot?.dependency_inventory?.dependencies ?? [])]
+    .filter(dependency => dependency.purpose).map(dependency => [dependency.id, dependency]));
+  const savedCitationIds = new Map<string, string>();
+  const currentScan = !historical && !!current?.dependency_inventory;
+
+  function savedCitation(id: string) {
+    const known = savedCitationIds.get(id);
+    if (known !== undefined) return [known];
+    const source = savedSources.get(id);
+    if (!source) return [];
+    let displayId = id;
+    const existing = sourcesById.get(id);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(source)) {
+      // The same repository citation ID can refer to changed text after a scan.
+      // Preserve the archived excerpt without replacing the current declaration.
+      displayId = `saved:${id}`;
+      for (let suffix = 2; sourcesById.has(displayId); suffix++) displayId = `saved:${id}:${suffix}`;
     }
+    sourcesById.set(displayId, { ...source, id: displayId });
+    savedCitationIds.set(id, displayId);
+    return [displayId];
   }
+
+  const dependencies = (inventory?.dependencies ?? legacy?.dependencies ?? []).map(dependency => {
+    const saved = savedPurposes.get(dependency.id);
+    if (saved && saved.name === dependency.name && saved.category === dependency.category
+        && saved.constraint === dependency.constraint) {
+      return { ...dependency, purpose: saved.purpose,
+        purpose_source_ids: (saved.purpose_source_ids ?? []).flatMap(savedCitation), savedPurpose: currentScan };
+    }
+    return { ...dependency, purpose_source_ids: (dependency.purpose_source_ids ?? []).flatMap(id =>
+      sourcesById.has(id) ? [id] : savedCitation(id)), savedPurpose: false };
+  });
   const referenced = new Set(dependencies.flatMap(dependency => [...dependency.source_ids, ...(dependency.purpose_source_ids ?? [])]));
   const sources = [...sourcesById.values()].filter(source => referenced.has(source.id));
   const citations = new Map(sources.map((source, index) => [source.id, index + 1]));
@@ -46,7 +71,7 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   const development = (dependency: Dependency) => /dev|test|build/i.test(dependency.category);
   const developmentDependencies = dependencies.filter(development);
   const runtimeDependencies = dependencies.filter(dependency => !development(dependency));
-  function dependencyTable(items: Dependency[], tableLabel: string) {
+  function dependencyTable(items: typeof dependencies, tableLabel: string) {
     return <div className="scheme-table-scroll" role="region" aria-label={tableLabel} tabIndex={0}>
       <table className="diagnostic-table scheme-dependencies">
         <thead><tr><th scope="col">Dependency</th><th scope="col">Declared constraint</th><th scope="col">Category</th><th scope="col">Purpose / evidence</th></tr></thead>
@@ -61,7 +86,9 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
             <td><code>{detectedImport ? '—' : dependency.constraint || 'Not specified'}</code></td>
             <td>{detectedImport ? 'Detected import' : label(dependency.category)}</td>
             <td>
-              {dependency.purpose ? <><AIEmphasis text={dependency.purpose} />
+              {dependency.purpose ? <>
+                {dependency.savedPurpose && <small className="muted">Saved purpose · </small>}
+                <AIEmphasis text={dependency.purpose} />
                 {references(dependency.purpose_source_ids ?? [])}</>
                 : <div className="muted">No purpose explanation available</div>}
               <small>{detectedImport ? 'Import' : 'Declaration'}{references(dependency.source_ids)}

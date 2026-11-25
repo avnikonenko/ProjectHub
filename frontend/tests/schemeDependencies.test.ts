@@ -61,3 +61,48 @@ test('a historical Scheme uses its own inventory or its own legacy declarations'
   assert.match(html, /Saved dependency scan · 8 of 8 eligible files scanned/);
   assert.doesNotMatch(html, /11 of 12|crem|worker.py/);
 });
+
+test('an unchanged Conda declaration keeps its saved purpose and exact saved citation', () => {
+  const dependency = { id: 'bubblewrap-in-environment', name: 'bubblewrap', constraint: '', category: 'environment:conda',
+    purpose: '', source_ids: ['manifest'] };
+  const source = { id: 'manifest', label: 'environment.yml', provenance: 'dependency manifest' };
+  const coverage = { files_total: 1, files_scanned: 1, limitations: [] };
+  const html = renderToStaticMarkup(createElement(dependencies, {
+    snapshot: { dependencies: [], dependency_inventory: {
+      coverage, dependencies: [{ ...dependency, purpose: 'Provides process isolation for the local runner.',
+        purpose_source_ids: ['manifest'] }], sources: [{ ...source, text: 'Saved manifest declaration' }],
+    } },
+    current: { dependencies: [], dependency_inventory: {
+      coverage, dependencies: [dependency], sources: [{ ...source, text: 'Current manifest declaration' }],
+    } },
+    historical: false, prefix: '1-dependency',
+  }));
+  assert.match(html, /Saved purpose · .*Provides process isolation for the local runner/);
+  assert.doesNotMatch(html, /No purpose explanation available/);
+  assert.match(html, /runner\.<a [^>]*href="#1-dependency-source-2"/);
+  assert.match(html, /Declaration<a [^>]*href="#1-dependency-source-1"/);
+  assert.match(html, /id="1-dependency-source-1"[^>]*>.*Current manifest declaration/);
+  assert.match(html, /id="1-dependency-source-2"[^>]*>.*Saved manifest declaration/);
+});
+
+test('a current declaration can use a matching legacy purpose without transferring it to another constraint', () => {
+  const declaration = { ...saved.dependencies[0], purpose: '', source_ids: ['new-manifest'] };
+  const dependency_inventory = { ...current.dependency_inventory,
+    sources: [{ id: 'new-manifest', label: 'requirements.txt', provenance: 'dependency manifest', text: 'Current declaration' }] };
+  const snapshot = { ...saved, dependencies: [{ ...saved.dependencies[0], purpose: 'Used for old project work.',
+    purpose_source_ids: ['purpose-source'] }] };
+  function render(constraint: string) {
+    return renderToStaticMarkup(createElement(dependencies, {
+      snapshot, current: { dependencies: [], dependency_inventory: {
+        ...dependency_inventory, dependencies: [{ ...declaration, constraint }],
+      } },
+      historical: false, prefix: '1-dependency',
+    }));
+  }
+  const unchanged = render('==1');
+  assert.match(unchanged, /Saved purpose · .*Used for old project work/);
+  assert.match(unchanged, /A supported explanation\./);
+  const changed = render('==2');
+  assert.match(changed, /No purpose explanation available/);
+  assert.doesNotMatch(changed, /Used for old project work|A supported explanation/);
+});
