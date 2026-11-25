@@ -133,12 +133,14 @@ the linked repository. This includes pip requirements and local includes,
 and npm package manifests. Imports without a matching declaration appear as
 module names. Each row links to its declaration or import evidence.
 
-The current inventory is available as soon as you open Scheme. Saved versions
-retain their own inventory. The model receives a bounded selection for
-explanations, while the table includes every dependency the local scan found.
-The current table shows saved purpose explanations for matching declarations
-from the same linked repository, with citations to the evidence used when
-Scheme was generated.
+The inventory is available as soon as you open Scheme. Generate a General Scheme
+to add explanations. When selected project evidence explains how a dependency
+is used, the row links to that evidence. For other manifest declarations,
+ProjectHub asks the selected AI provider for a short **Package role** using
+only the package name and ecosystem. The declaration link shows where the package
+was listed. The AI may leave unfamiliar packages unexplained, and the explanation
+stage is bounded. Saved explanations are reused for matching declarations in the
+same linked repository.
 Check **Dependency scan limitations** for incomplete reads or unsupported
 syntax. The scan has a 32 MiB total read limit, a 2 MiB per-file limit, and a
 ten-second time budget. Check the project's environment for installed versions.

@@ -64,6 +64,64 @@ def test_graph_validates_conflicting_evidence_and_empty_workflow():
     assert dependencies[0]['name'] == 'fastapi'
     assert dependencies[0]['constraint'] == '>=1'
     assert dependencies[0]['purpose_source_ids'] == ['file:api.py']
+    assert dependencies[0]['purpose_kind'] == 'project_use'
+
+
+@pytest.mark.parametrize('invalid_roles', [False, True])
+def test_scheme_explains_declared_gromacs_without_knowledge_and_preserves_project_use(
+        tmp_path, monkeypatch, invalid_roles):
+    engine, _ = initialize(tmp_path)
+    with Session(engine) as db:
+        db.add(Project(name='MD runner'))
+        db.commit()
+    inspected = evidence()
+    declaration = {'id': 'dep:md-cpu', 'name': 'gromacs', 'constraint': '=2025.3',
+                   'category': 'environment:conda', 'source_ids': ['cpu'], 'purpose': ''}
+    inspected['dependency_inventory'] = {
+        'dependencies': [*inspected['dependencies'], declaration,
+                         {**declaration, 'id': 'dep:md-gpu', 'source_ids': ['gpu']}],
+        'sources': [{'id': key, 'label': f'env/{key}.yml', 'provenance': 'dependency manifest'}
+                    for key in ('cpu', 'gpu')],
+        'coverage': {'files_total': 2, 'files_scanned': 2, 'limitations': []},
+        'repository_identity': 'fixture',
+    }
+    monkeypatch.setattr(scheme, 'collect_evidence', lambda *_: inspected)
+
+    class Manager:
+        def generate_brief(self, prompt, schema):
+            if 'architecture' in schema['properties']:
+                assert 'gromacs' not in prompt
+                return json.dumps(output())
+            assert json.loads(prompt.split('\n', 1)[1]) == [{'id': 0, 'name': 'gromacs', 'ecosystem': 'Conda'}]
+            return json.dumps({'roles': [
+                {'id': 1 if invalid_roles else 0, 'role': 'Runs molecular dynamics simulations.'},
+            ]})
+
+    result = scheme.refresh_scheme(engine, 1, Manager())
+    inventory = result['dependency_inventory']
+    project_use, cpu, gpu = inventory['dependencies']
+    assert project_use['purpose_kind'] == 'project_use'
+    assert project_use['purpose_source_ids'] == ['file:api.py']
+    for item, manifest in ((cpu, 'cpu'), (gpu, 'gpu')):
+        assert item['source_ids'] == [manifest]
+        assert not item.get('purpose_source_ids')
+        if invalid_roles:
+            assert not item['purpose']
+            assert 'purpose_kind' not in item
+        else:
+            assert item['purpose'] == 'Runs molecular dynamics simulations.'
+            assert item['purpose_kind'] == 'package_role'
+    assert bool(inventory['coverage']['limitations']) is invalid_roles
+    assert result['diagnostics']['ai_requests'] == 2
+    with Session(engine) as db:
+        assert scheme.read_scheme(db, 1) == result
+
+
+def test_scheme_manifest_alone_does_not_establish_project_use():
+    inspected = evidence()
+    inspected['sources'][0]['provenance'] = 'dependency manifest'
+    _, _, dependencies = scheme.validate_output(json.dumps(output()), inspected)
+    assert dependencies[0]['purpose'] == ''
 
 
 def test_graph_response_distinguishes_size_limit_from_invalid_json():

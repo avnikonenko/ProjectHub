@@ -4,7 +4,7 @@ import { Empty, label } from './ui';
 
 export type Dependency = {
   id: string; name: string; constraint: string; category: string; purpose: string;
-  source_ids: string[]; purpose_source_ids?: string[];
+  source_ids: string[]; purpose_source_ids?: string[]; purpose_kind?: 'package_role' | 'project_use';
 };
 type DependencySource = BriefSource & { provenance: string };
 export type DependencyInventory = {
@@ -62,8 +62,8 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   const dependencies = (inventory?.dependencies ?? legacy?.dependencies ?? []).map(dependency => {
     const saved = savedPurposes.get(dependency.id);
     if (saved && saved.name === dependency.name && saved.category === dependency.category
-        && saved.constraint === dependency.constraint) {
-      return { ...dependency, purpose: saved.purpose,
+        && saved.constraint === dependency.constraint && (!dependency.purpose || saved.purpose_kind !== 'package_role')) {
+      return { ...dependency, purpose: saved.purpose, purpose_kind: saved.purpose_kind,
         purpose_source_ids: (saved.purpose_source_ids ?? []).flatMap(savedCitation), savedPurpose: currentScan };
     }
     return { ...dependency, purpose_source_ids: (dependency.purpose_source_ids ?? []).flatMap(id =>
@@ -95,7 +95,8 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
             <td>{detectedImport ? 'Detected import' : label(dependency.category)}</td>
             <td>
               {dependency.purpose && <>
-                {dependency.savedPurpose && <small className="muted">Saved purpose · </small>}
+                {dependency.purpose_kind === 'package_role' ? <small className="muted">Package role · </small>
+                  : dependency.savedPurpose && <small className="muted">Saved purpose · </small>}
                 <AIEmphasis text={dependency.purpose} />
                 {references(dependency.purpose_source_ids ?? [])}</>}
               <small>{detectedImport ? 'Import' : 'Declaration'}{references(dependency.source_ids)}

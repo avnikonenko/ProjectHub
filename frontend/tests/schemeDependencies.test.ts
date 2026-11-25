@@ -129,3 +129,29 @@ test('relinking does not transfer a purpose even when the dependency ID and decl
   assert.match(historical, /Used in the former checkout/);
   assert.match(historical, /A supported explanation/);
 });
+
+test('package roles preserve declaration evidence and defer to project purposes within the same repository', () => {
+  const role = { ...saved.dependencies[0], purpose: 'Isolates local processes.', purpose_kind: 'package_role' as const };
+  const projectPurpose = { ...saved.dependencies[0], purpose: 'Runs the project worker in a sandbox.',
+    purpose_kind: 'project_use' as const, purpose_source_ids: ['purpose-source'] };
+  const inventory = { ...current.dependency_inventory, repository_identity: 'checkout', sources: [saved.sources[0]] };
+  function render(scanned: typeof role | typeof projectPurpose, archived: typeof role | typeof projectPurpose,
+    repository_identity = 'checkout') {
+    return renderToStaticMarkup(createElement(dependencies, {
+      snapshot: { ...saved, dependency_inventory: { ...inventory, dependencies: [archived] } },
+      current: { dependencies: [], dependency_inventory: { ...inventory, repository_identity, dependencies: [scanned] } },
+      historical: false, prefix: '1-dependency',
+    }));
+  }
+  const separateCheckout = render(role, projectPurpose, 'relocated');
+  assert.match(separateCheckout, /Package role · .*Isolates local processes/);
+  assert.match(separateCheckout, /Declaration<a [^>]*href="#1-dependency-source-1"/);
+  assert.doesNotMatch(separateCheckout, /Runs the project worker/);
+  const sameCheckout = render(role, projectPurpose);
+  assert.match(sameCheckout, /Saved purpose · .*Runs the project worker/);
+  assert.match(sameCheckout, /A supported explanation/);
+  assert.doesNotMatch(sameCheckout, /Package role/);
+  const currentPurpose = render(projectPurpose, role);
+  assert.match(currentPurpose, /Runs the project worker/);
+  assert.doesNotMatch(currentPurpose, /Package role|Saved purpose/);
+});

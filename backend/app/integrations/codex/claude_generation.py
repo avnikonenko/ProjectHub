@@ -15,7 +15,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from . import progress
-from .ai_instructions import ai_instructions
+from .ai_instructions import ai_instructions, package_role_instructions
 from .generation_metrics import begin_model_request
 from .generation_token_budget import GenerationTokenLimitExceeded
 from .manager import TransientGenerationError, generation_timeout
@@ -450,7 +450,7 @@ class ClaudeGenerationManager:
         data = prompt.encode()
         if len(data) > _MAX_INPUT_BYTES:
             raise CodexError('Claude generation exceeded its input limit.')
-        system = _SYSTEM_PROMPT + '\n' + ai_instructions()
+        system = package_role_instructions() or (_SYSTEM_PROMPT + '\n' + ai_instructions())
         command = [binary, '--print', '--safe-mode', '--restricted', '--output-format', 'json', '--json-schema', schema,
                    '--no-session-persistence', '--tools', '', '--disallowedTools', 'mcp__*',
                    '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--setting-sources', '',

@@ -2132,7 +2132,7 @@ def collect_evidence(engine, project_id, limits=None, *, scope=None, persist_cac
                 min(source_order[ref] for ref in dependency['source_ids'])))
             if len(dependencies) > _MAX_DEPENDENCIES:
                 dependencies = dependencies[:_MAX_DEPENDENCIES]
-                limitations.add('Only up to 100 dependency declarations are supplied to AI for explanations. The local dependency inventory is separate.')
+                limitations.add('Up to 100 dependency declarations are supplied for project-use explanations. The local dependency inventory is separate.')
         excerpt_count = sum(source['provenance'] == 'Codex conversation' for source in bounded)
         tree = {}
         for relative in paths[:_MAX_PATHS]:

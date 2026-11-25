@@ -6,6 +6,7 @@ Add user-facing changes under Unreleased. Move them into a dated version section
 
 - Keep saved dependency purpose explanations visible in Scheme for matching declarations from the same repository.
 - Show source citations directly for dependencies without a supported purpose explanation.
+- Ask the selected AI provider for short package-role explanations when Scheme has a dependency declaration but no supported explanation of project use.
 
 ## [0.2.7] - 2026-11-24
 
