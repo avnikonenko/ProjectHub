@@ -203,6 +203,9 @@ def test_exact_duplicates_collapse_but_distinct_constraints_keep_stable_identity
         (repo / path).write_text(value)
 
     write(declarations)
+    (repo / 'README.md').write_text(
+        'The example adapter at version 1 or later reads records. '
+        'The example adapter below version 2 writes legacy records.\n')
     engine = setup(tmp_path, repo)
     try:
         first = evidence.collect_evidence(engine, 1)
@@ -211,12 +214,14 @@ def test_exact_duplicates_collapse_but_distinct_constraints_keep_stable_identity
         assert len(set(identifiers.values())) == 2
         assert set(identifiers) == {'>=1', '<2'}
         graph = {'nodes': [], 'edges': [], 'explanation': 'No graph evidence.'}
+        docs = next(source['id'] for source in first['sources'] if source.get('path') == 'README.md')
+        purposes = {'>=1': 'Reads records.', '<2': 'Writes legacy records.'}
         response = {'architecture': graph, 'workflow': graph, 'dependencies': [
-            {'id': item['id'], 'purpose': 'Explanation for ' + item['constraint'],
-             'source_ids': item['source_ids']} for item in first['dependencies']]}
+            {'id': item['id'], 'purpose': purposes[item['constraint']],
+             'source_ids': [docs, *item['source_ids']]} for item in first['dependencies']]}
         _, _, explained = validate_output(json.dumps(response), first)
-        assert {item['constraint']: item['purpose'] for item in explained} == {
-            '>=1': 'Explanation for >=1', '<2': 'Explanation for <2'}
+        assert {item['constraint']: item['purpose'] for item in explained} == purposes
+        assert all(item['purpose_kind'] == 'project_use' and docs in item['purpose_source_ids'] for item in explained)
         write(list(reversed(declarations[:-1])))
         changed = evidence.collect_evidence(engine, 1)
         assert changed['diagnostics']['cache_hits'] == 0
