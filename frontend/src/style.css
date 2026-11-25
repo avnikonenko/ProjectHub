@@ -1432,6 +1432,8 @@ a:focus-visible {
 .batch-timing-table :is(th, td):not(:last-child) { text-align: end; }
 .scheme-dependencies th { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
 .scheme-dependencies small { display: block; padding-top: .3rem; }
+.scheme-declarations summary small { display: inline; padding-top: 0; }
+.scheme-declarations ul { padding-inline-start: 1.2rem; }
 
 /* Keep titles, supporting details, and actions in consistent reading rows. */
 .record-row {

@@ -155,3 +155,50 @@ test('package roles preserve declaration evidence and defer to project purposes 
   assert.match(currentPurpose, /Runs the project worker/);
   assert.doesNotMatch(currentPurpose, /Package role|Saved purpose/);
 });
+
+test('Conda dependencies show one row with exact pins and citations for every declaration', () => {
+  const entry = { ...saved.dependencies[0], name: 'dask-core', category: 'environment:conda' };
+  const dependenciesFromManifests = [
+    { ...entry, id: 'cpu', constraint: '=2026.6.0', source_ids: ['cpu'], purpose: 'Executes parallel tasks.',
+      purpose_source_ids: ['purpose-source'] },
+    { ...entry, id: 'gpu', constraint: '=2026.6.0', source_ids: ['gpu'], purpose: 'Executes parallel tasks.',
+      purpose_source_ids: ['purpose-source'] },
+    { ...entry, id: 'old-env', constraint: '=2024.5.0=build', source_ids: ['old-env'],
+      purpose: 'Schedules tasks.', purpose_kind: 'package_role' as const },
+  ];
+  const sources = [...['cpu', 'gpu', 'old-env'].map(id => ({
+    id, label: `${id}.yml`, text: 'Declares dask-core', provenance: 'dependency manifest',
+  })), saved.sources[1]];
+  const html = renderToStaticMarkup(createElement(dependencies, {
+    snapshot: { dependencies: dependenciesFromManifests, sources },
+    historical: true, prefix: '1-dependency',
+  }));
+  assert.equal(html.match(/<td>dask-core<\/td>/g)?.length, 1);
+  assert.match(html, /<summary>2 declared constraints<\/summary>/);
+  assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
+  assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-2"/);
+  assert.match(html, /<code>=2024\.5\.0=build<\/code><small>Declaration<a [^>]*href="#1-dependency-source-3"/);
+  assert.equal(html.match(/Executes parallel tasks\./g)?.length, 1);
+  assert.match(html, /More explanations \(1\)/);
+  assert.match(html, /Package role · .*Schedules tasks/);
+});
+
+test('grouping preserves distinct ecosystems and keeps mixed runtime and development groups visible', () => {
+  const entries = [
+    { id: 'requirements', label: 'requirements.txt', category: 'runtime' },
+    { id: 'pyproject', label: 'pyproject.toml', category: 'development:test' },
+    { id: 'npm', label: 'frontend/package.json', category: 'runtime' },
+    { id: 'conda', label: 'env.yml', category: 'environment:conda' },
+  ];
+  const html = renderToStaticMarkup(createElement(dependencies, {
+    snapshot: {
+      dependencies: entries.map(({ id, category }) => ({ ...saved.dependencies[0], id, category, source_ids: [id] })),
+      sources: entries.map(({ id, label }) => ({ id, label, text: label, provenance: 'dependency manifest' })),
+    },
+    historical: true, prefix: '1-dependency',
+  }));
+  assert.equal(html.match(/<td>older-package<\/td>/g)?.length, 3);
+  assert.match(html, /\(2 declarations\)/);
+  assert.match(html, /runtime, development:test/);
+  assert.doesNotMatch(html, /Development dependencies/);
+});

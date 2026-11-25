@@ -6,7 +6,7 @@ export type Dependency = {
   id: string; name: string; constraint: string; category: string; purpose: string;
   source_ids: string[]; purpose_source_ids?: string[]; purpose_kind?: 'package_role' | 'project_use';
 };
-type DependencySource = BriefSource & { provenance: string };
+type DependencySource = BriefSource & { provenance: string; path?: string };
 export type DependencyInventory = {
   dependencies: Dependency[];
   sources: DependencySource[];
@@ -20,6 +20,18 @@ type DependencyEvidence = {
   dependencies: Dependency[];
   sources?: DependencySource[];
 };
+
+function dependencyEcosystem(dependency: Dependency, sources: Map<string, DependencySource>) {
+  if (dependency.category === 'environment:conda') return 'conda';
+  if (dependency.category === 'environment:pip') return 'python';
+  if (dependency.category.startsWith('import:')) return dependency.category;
+  const manifests = dependency.source_ids.flatMap(id => {
+    const source = sources.get(id);
+    return source?.provenance === 'dependency manifest' ? [source.path ?? source.label] : [];
+  });
+  if (!manifests.length) return dependency.id;
+  return manifests.some(path => path.split('/').at(-1)?.toLowerCase() === 'package.json') ? 'npm' : 'python';
+}
 
 export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   snapshot?: DependencyEvidence | null; current?: DependencyEvidence; historical: boolean; prefix: string;
@@ -76,31 +88,78 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
     const source = sourcesById.get(id);
     return source ? [source] : [];
   }));
-  const development = (dependency: Dependency) => /dev|test|build/i.test(dependency.category);
-  const developmentDependencies = dependencies.filter(development);
-  const runtimeDependencies = dependencies.filter(dependency => !development(dependency));
-  function dependencyTable(items: typeof dependencies, tableLabel: string) {
+  const groups = new Map<string, typeof dependencies>();
+  for (const dependency of dependencies) {
+    const key = JSON.stringify([dependency.name, dependencyEcosystem(dependency, sourcesById)]);
+    const group = groups.get(key);
+    if (group) group.push(dependency);
+    else groups.set(key, [dependency]);
+  }
+  const grouped = [...groups];
+  const development = ([, items]: typeof grouped[number]) =>
+    items.every(dependency => /^(development|build|test)(:|$)/i.test(dependency.category));
+  const developmentDependencies = grouped.filter(development);
+  const runtimeDependencies = grouped.filter(group => !development(group));
+
+  function declaration(dependency: Dependency) {
+    const provenance = [...new Set(dependency.source_ids.flatMap(id => {
+      const source = sourcesById.get(id);
+      return source?.provenance ? [label(source.provenance)] : [];
+    }))];
+    return <small>{dependency.category.startsWith('import:') ? 'Import' : 'Declaration'}{references(dependency.source_ids)}
+      {!!provenance.length && ` · ${provenance.join(' · ')}`}</small>;
+  }
+
+  function dependencyTable(items: typeof grouped, tableLabel: string) {
     return <div className="scheme-table-scroll" role="region" aria-label={tableLabel} tabIndex={0}>
       <table className="diagnostic-table scheme-dependencies">
         <thead><tr><th scope="col">Dependency</th><th scope="col">Declared constraint</th><th scope="col">Category</th><th scope="col">Purpose / evidence</th></tr></thead>
-        <tbody>{items.map(dependency => {
-          const detectedImport = dependency.category.startsWith('import:');
-          const provenance = [...new Set(dependency.source_ids.flatMap(id => {
-            const source = sourcesById.get(id);
-            return source?.provenance ? [label(source.provenance)] : [];
-          }))];
-          return <tr key={dependency.id}>
-            <td>{dependency.name}</td>
-            <td><code>{detectedImport ? '—' : dependency.constraint || 'Not specified'}</code></td>
-            <td>{detectedImport ? 'Detected import' : label(dependency.category)}</td>
+        <tbody>{items.map(([key, declarations]) => {
+          const first = declarations[0];
+          const detectedImport = first.category.startsWith('import:');
+          const categories = [...new Set(declarations.map(dependency => label(dependency.category)))];
+          const constraints = [...new Set(declarations.map(dependency => dependency.constraint))];
+          const purposes = new Map<string, typeof dependencies>();
+          for (const dependency of declarations) {
+            if (!dependency.purpose) continue;
+            const purposeKey = JSON.stringify([dependency.purpose_kind ?? 'project_use', dependency.purpose]);
+            const matching = purposes.get(purposeKey);
+            if (matching) matching.push(dependency);
+            else purposes.set(purposeKey, [dependency]);
+          }
+          const orderedPurposes = [...purposes.values()].sort(([a], [b]) =>
+            Number(a.purpose_kind === 'package_role') - Number(b.purpose_kind === 'package_role'));
+          function purpose(entries: typeof dependencies) {
+            const [entry] = entries;
+            return <>
+              {entry.purpose_kind === 'package_role' ? <small className="muted">Package role · </small>
+                : entries.every(item => item.savedPurpose) && <small className="muted">Saved purpose · </small>}
+              <AIEmphasis text={entry.purpose} />
+              {references([...new Set(entries.flatMap(item => item.purpose_source_ids ?? []))])}
+            </>;
+          }
+          return <tr key={key}>
+            <td>{first.name}</td>
+            <td>{declarations.length === 1 ? <code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>
+              : <details className="scheme-declarations">
+                <summary>{constraints.length > 1 ? `${constraints.length} declared constraints`
+                  : <><code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>{' '}
+                    <small>({declarations.length} {detectedImport ? 'imports' : 'declarations'})</small></>}</summary>
+                <ul>{declarations.map(dependency => <li key={dependency.id}>
+                  {!detectedImport && <code>{dependency.constraint || 'Not specified'}</code>}
+                  {categories.length > 1 && ` · ${label(dependency.category)}`}
+                  {declaration(dependency)}
+                </li>)}</ul>
+              </details>}
+            </td>
+            <td>{detectedImport ? 'Detected import' : categories.join(', ')}</td>
             <td>
-              {dependency.purpose && <>
-                {dependency.purpose_kind === 'package_role' ? <small className="muted">Package role · </small>
-                  : dependency.savedPurpose && <small className="muted">Saved purpose · </small>}
-                <AIEmphasis text={dependency.purpose} />
-                {references(dependency.purpose_source_ids ?? [])}</>}
-              <small>{detectedImport ? 'Import' : 'Declaration'}{references(dependency.source_ids)}
-                {!!provenance.length && ` · ${provenance.join(' · ')}`}</small>
+              {!!orderedPurposes.length && purpose(orderedPurposes[0])}
+              {orderedPurposes.length > 1 && <details>
+                <summary>More explanations ({orderedPurposes.length - 1})</summary>
+                <ul>{orderedPurposes.slice(1).map(entries => <li key={entries[0].id}>{purpose(entries)}</li>)}</ul>
+              </details>}
+              {declarations.length === 1 && declaration(first)}
             </td>
           </tr>;
         })}</tbody>

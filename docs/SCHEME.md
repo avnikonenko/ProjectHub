@@ -131,7 +131,8 @@ The Dependencies tab scans supported manifests and safe Python source files in
 the linked repository. This includes pip requirements and local includes,
 `pyproject.toml`, `setup.py`, `setup.cfg`, Pipfile, Conda environment files,
 and npm package manifests. Imports without a matching declaration appear as
-module names. Each row links to its declaration or import evidence.
+module names. Repeated declarations of a package in the same ecosystem share a
+row. Expand its constraints to see each exact declaration and its source.
 
 The inventory is available as soon as you open Scheme. Generate a General Scheme
 to add explanations. When selected project evidence explains how a dependency
