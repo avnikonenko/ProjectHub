@@ -174,6 +174,7 @@ test('Conda dependencies show one row with exact pins and citations for every de
     historical: true, prefix: '1-dependency',
   }));
   assert.equal(html.match(/<td>dask-core<\/td>/g)?.length, 1);
+  assert.match(html, /<td>Conda environment<\/td>/);
   assert.match(html, /<summary>2 declared constraints<\/summary>/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-2"/);

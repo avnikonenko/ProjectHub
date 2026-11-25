@@ -21,6 +21,12 @@ type DependencyEvidence = {
   sources?: DependencySource[];
 };
 
+function dependencyCategoryLabel(category: string) {
+  if (category === 'environment:conda') return 'Conda environment';
+  if (category === 'environment:pip') return 'Pip environment';
+  return label(category);
+}
+
 function dependencyEcosystem(dependency: Dependency, sources: Map<string, DependencySource>) {
   if (dependency.category === 'environment:conda') return 'conda';
   if (dependency.category === 'environment:pip') return 'python';
@@ -117,7 +123,7 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
         <tbody>{items.map(([key, declarations]) => {
           const first = declarations[0];
           const detectedImport = first.category.startsWith('import:');
-          const categories = [...new Set(declarations.map(dependency => label(dependency.category)))];
+          const categories = [...new Set(declarations.map(dependency => dependencyCategoryLabel(dependency.category)))];
           const constraints = [...new Set(declarations.map(dependency => dependency.constraint))];
           const purposes = new Map<string, typeof dependencies>();
           for (const dependency of declarations) {
@@ -147,7 +153,7 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
                     <small>({declarations.length} {detectedImport ? 'imports' : 'declarations'})</small></>}</summary>
                 <ul>{declarations.map(dependency => <li key={dependency.id}>
                   {!detectedImport && <code>{dependency.constraint || 'Not specified'}</code>}
-                  {categories.length > 1 && ` · ${label(dependency.category)}`}
+                  {categories.length > 1 && ` · ${dependencyCategoryLabel(dependency.category)}`}
                   {declaration(dependency)}
                 </li>)}</ul>
               </details>}

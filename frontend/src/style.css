@@ -1430,7 +1430,12 @@ a:focus-visible {
 .batch-timing-table :is(th, td) { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .file-coverage-table { min-width: 33rem; }
 .batch-timing-table :is(th, td):not(:last-child) { text-align: end; }
-.scheme-dependencies th { white-space: nowrap; overflow-wrap: normal; word-break: normal; }
+.scheme-dependencies { table-layout: fixed; min-width: 46rem; }
+.scheme-dependencies th { text-align: start; white-space: nowrap; }
+.scheme-dependencies th:nth-child(1) { width: 18%; }
+.scheme-dependencies th:nth-child(2) { width: 27%; }
+.scheme-dependencies th:nth-child(3) { width: 18%; }
+.scheme-dependencies td { overflow-wrap: anywhere; word-break: normal; }
 .scheme-dependencies small { display: block; padding-top: .3rem; }
 .scheme-declarations summary small { display: inline; padding-top: 0; }
 .scheme-declarations ul { padding-inline-start: 1.2rem; }
