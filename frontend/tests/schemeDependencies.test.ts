@@ -175,7 +175,7 @@ test('Conda dependencies show one row with exact pins and citations for every de
   }));
   assert.equal(html.match(/<td>dask-core<\/td>/g)?.length, 1);
   assert.match(html, /<td>Conda environment<\/td>/);
-  assert.match(html, /<summary>2 declared constraints<\/summary>/);
+  assert.match(html, /<summary><code>2026\.6\.0 · 2024\.5\.0<\/code><\/summary>/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-1"/);
   assert.match(html, /<code>=2026\.6\.0<\/code><small>Declaration<a [^>]*href="#1-dependency-source-2"/);
   assert.match(html, /<code>=2024\.5\.0=build<\/code><small>Declaration<a [^>]*href="#1-dependency-source-3"/);
@@ -191,6 +191,47 @@ test('Conda dependencies show one row with exact pins and citations for every de
   assert.match(html, /More explanations \(1\)/);
   assert.match(html, /Package role · .*Schedules tasks/);
 });
+
+for (const { description, constraints, summary } of [
+  {
+    description: 'three unique numeric versions',
+    constraints: ['=2025.3=py312_0', '=2025.2', '=2025.3=py313_0', '=2024.7'],
+    summary: '2025.3 · 2025.2 · 2024.7',
+  },
+  {
+    description: 'more than three unique numeric versions',
+    constraints: ['=2025.3', '=2025.2', '=2024.7', '=2024.6', '=2024.5'],
+    summary: '2025.3 · 2025.2 · 2024.7 +2 more',
+  },
+  {
+    description: 'different builds of the same numeric version',
+    constraints: ['=2025.3=py312_0', '=2025.3=py313_0'],
+    summary: '2025.3 (2 constraints)',
+  },
+  {
+    description: 'different version ranges',
+    constraints: ['>=2025.3,<2026', '>=2024.7,<2025'],
+    summary: '2 declared constraints',
+  },
+]) {
+  test(`grouped Conda declarations summarize ${description} and retain exact details`, () => {
+    const entry = { ...saved.dependencies[0], name: 'dask-core', category: 'environment:conda' };
+    const declarations = constraints.map((constraint, index) => ({
+      ...entry, id: `env-${index}`, constraint, source_ids: [`env-${index}`],
+    }));
+    const sources = declarations.map(({ id, constraint }) => ({
+      id, label: `${id}.yml`, text: `Declares dask-core${constraint}`, provenance: 'dependency manifest',
+    }));
+    const html = renderToStaticMarkup(createElement(dependencies, {
+      snapshot: { dependencies: declarations, sources }, historical: true, prefix: '1-dependency',
+    }));
+    assert.equal(html.match(/<summary>(.*?)<\/summary>/)?.[1]?.replace(/<[^>]*>/g, ''), summary);
+    for (const [index, constraint] of constraints.entries()) {
+      const escaped = constraint.replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+      assert.ok(html.includes(`<code>${escaped}</code><small>Declaration<a class="brief-reference" href="#1-dependency-source-${index + 1}"`));
+    }
+  });
+}
 
 test('mixed pinned and unpinned declarations label only nonempty constraints as constraints', () => {
   const entry = { ...saved.dependencies[0], name: 'dask-core', category: 'environment:conda' };

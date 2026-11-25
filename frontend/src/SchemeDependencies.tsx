@@ -39,6 +39,21 @@ function dependencyEcosystem(dependency: Dependency, sources: Map<string, Depend
   return manifests.some(path => path.split('/').at(-1)?.toLowerCase() === 'package.json') ? 'npm' : 'python';
 }
 
+function compactVersions(constraints: Set<string>, ecosystem: string) {
+  const pattern = ecosystem === 'conda' ? /^={1,2}(\d+(?:\.\d+)+)(?:=[\w.-]+)?$/
+    : ecosystem === 'python' ? /^==(\d+(?:\.\d+)*)$/
+    : ecosystem === 'npm' ? /^v?(\d+\.\d+\.\d+)$/
+    : null;
+  if (!pattern) return null;
+  const versions = new Set<string>();
+  for (const constraint of constraints) {
+    const version = pattern.exec(constraint)?.[1];
+    if (!version) return null;
+    versions.add(version);
+  }
+  return [...versions];
+}
+
 export function SchemeDependencies({ snapshot, current, historical, prefix }: {
   snapshot?: DependencyEvidence | null; current?: DependencyEvidence; historical: boolean; prefix: string;
 }) {
@@ -132,6 +147,7 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
           const unpinned = declarations.filter(dependency => !dependency.constraint).length;
           const mixed = constraints.size > 0 && unpinned > 0;
           const ecosystem = dependencyEcosystem(first, sourcesById);
+          const versions = constraints.size > 1 && !mixed ? compactVersions(constraints, ecosystem) : null;
           const showEcosystem = (groupsByName.get(first.name) ?? 0) > 1 &&
             (ecosystem === 'python' || ecosystem === 'npm');
           const purposes = new Map<string, typeof dependencies>();
@@ -165,7 +181,11 @@ export function SchemeDependencies({ snapshot, current, historical, prefix }: {
             <td>{first.name}</td>
             <td>{declarations.length === 1 ? <code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>
               : <details className="scheme-declarations">
-                <summary>{mixed || constraints.size > 1
+                <summary>{versions ? <>
+                  <code>{versions.slice(0, 3).join(' · ')}</code>
+                  {versions.length > 3 && <small>{' '}+{versions.length - 3} more</small>}
+                  {versions.length === 1 && <small>{' '}({constraints.size} constraints)</small>}
+                </> : mixed || constraints.size > 1
                   ? `${constraints.size} declared constraint${constraints.size === 1 ? '' : 's'}${mixed ? ` · ${unpinned} unpinned` : ''}`
                   : <><code>{detectedImport ? '—' : first.constraint || 'Not specified'}</code>{' '}
                     <small>({declarations.length} {detectedImport ? 'imports' : 'declarations'})</small></>}</summary>
